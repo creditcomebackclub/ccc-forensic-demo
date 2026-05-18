@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    font-family: 'Geist', system-ui, sans-serif;
+    background-color: #FAFAF7;
+    color: #1A1A1A;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+}
+
+@layer components {
+  .ccc-display {
+    font-family: 'Fraunces', serif;
+    letter-spacing: -0.01em;
+  }
+
+  .ccc-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1 font-medium uppercase rounded-sm border text-[11px] px-2 py-0.5 tracking-wide;
+  }
+
+  .pill-navy { background-color: #EEF1F7; color: #1B2A4A; border-color: #D5DCE8; }
+  .pill-gold { background-color: #FAF3DC; color: #A88A37; border-color: #E8D89A; }
+  .pill-red { background-color: #FBEDEB; color: #C44A3F; border-color: #F0CFCB; }
+  .pill-green { background-color: #E6F0EA; color: #2E7D5C; border-color: #C8DDD0; }
+  .pill-neutral { background-color: #F4F2EB; color: #6B6B66; border-color: #E8E6DF; }
+}
+
+/* Print styles for letter export */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .letter-print-area, .letter-print-area * {
+    visibility: visible;
+  }
+  .letter-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
