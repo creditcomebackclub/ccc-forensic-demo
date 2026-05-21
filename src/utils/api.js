@@ -1,48 +1,120 @@
-// src/utils/api.js
-// Client-side wrapper for the Netlify function.
-
 const API_ENDPOINT = '/api/audit';
 
 export async function runAudit(pdfBase64) {
-  const res = await fetch(API_ENDPOINT, {
+  const apiKey = localStorage.getItem('ccc_api_key');
+  if (!apiKey) {
+    const key = prompt('Enter your Anthropic API key (sk-ant-...):');
+    if (!key) throw new Error('API key required');
+    localStorage.setItem('ccc_api_key', key);
+  }
+
+  const key = localStorage.getItem('ccc_api_key');
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode: 'audit', pdfBase64 }),
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 8192,
+      system: await getSystemPrompt(),
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
+          },
+          {
+            type: 'text',
+            text: 'AUDIT_JSON_MODE\n\nPerform a full forensic Metro 2 and FCRA audit of the attached credit report. Return the complete JSON object per the schema in your instructions. Identify every violation. Classify accounts A, B, or C. Rank into Batch 1 top 5 and Batch 2 remaining. Output JSON only. No prose. No code fences.'
+          }
+        ]
+      }]
+    })
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `API error ${res.status}`);
   }
 
-  return res.json();
+  const data = await res.json();
+  const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  const json = extractJSON(rawText);
+  if (!json) throw new Error('Failed to parse audit results. Raw: ' + rawText.substring(0, 500));
+  return { audit: json };
 }
 
 export async function generateLetter(account, client) {
-  const res = await fetch(API_ENDPOINT, {
+  const key = localStorage.getItem('ccc_api_key');
+  if (!key) throw new Error('API key not set');
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode: 'letter', account, client }),
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 8192,
+      system: await getSystemPrompt(),
+      messages: [{
+        role: 'user',
+        content: `LETTER_HTML_MODE\n\nGenerate the Phase 1 dispute letter HTML for this account.\n\nData:\n${JSON.stringify({ account, client }, null, 2)}\n\nFollow the 16-step structure. For Type C include section 1692g(b) demands. Output complete HTML only. No prose. No fences.`
+      }]
+    })
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `API error ${res.status}`);
   }
 
-  return res.json();
+  const data = await res.json();
+  const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  return { html: extractHTML(rawText) };
 }
 
-// Convert a File to base64 (used for credit report PDF upload)
+async function getSystemPrompt() {
+  const { MASTER_SYSTEM_PROMPT } = await import('./prompts/masterPrompt.js');
+  return MASTER_SYSTEM_PROMPT;
+}
+
+function extractJSON(text) {
+  const cleaned = text.trim();
+  try { return JSON.parse(cleaned); } catch {}
+  const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/s);
+  if (fenced) { try { return JSON.parse(fenced[1].trim()); } catch {} }
+  const first = cleaned.indexOf('{');
+  const last = cleaned.lastIndexOf('}');
+  if (first !== -1 && last !== -1 && last > first) {
+    try { return JSON.parse(cleaned.substring(first, last + 1)); } catch {} 
+  }
+  return null;
+}
+
+function extractHTML(text) {
+  const fenced = text.match(/```(?:html)?\s*([\s\S]*?)```/s);
+  if (fenced) return fenced[1].trim();
+  const lower = text.toLowerCase();
+  const start = lower.indexOf('<!doctype') !== -1 ? lower.indexOf('<!doctype') : lower.indexOf('<html');
+  if (start === -1) return text.trim();
+  const end = lower.lastIndexOf('</html>');
+  return end !== -1 ? text.substring(start, end + 7) : text.substring(start).trim();
+}
+
 export function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      // Strip the data URL prefix: "data:application/pdf;base64,..."
-      const result = reader.result;
-      const base64 = result.split(',')[1];
-      resolve(base64);
-    };
+    reader.onload = () => resolve(reader.result.split(',')[1]);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
