@@ -110,14 +110,25 @@ function callClaude(apiKey, messages, systemPrompt) {
 }
 
 function extractJSON(text) {
-  try { return JSON.parse(text); } catch {}
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenced) { try { return JSON.parse(fenced[1]); } catch {} }
-  const first = text.indexOf('{');
-  const last = text.lastIndexOf('}');
+  // Clean the text first
+  const cleaned = text.trim();
+  
+  // Try direct parse
+  try { return JSON.parse(cleaned); } catch {}
+  
+  // Strip code fences
+  const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/s);
+  if (fenced) { try { return JSON.parse(fenced[1].trim()); } catch {} }
+  
+  // Find outermost braces
+  const first = cleaned.indexOf('{');
+  const last = cleaned.lastIndexOf('}');
   if (first !== -1 && last !== -1 && last > first) {
-    try { return JSON.parse(text.substring(first, last + 1)); } catch {} 
+    try { return JSON.parse(cleaned.substring(first, last + 1)); } catch {}
   }
+  
+  // Log what we got for debugging
+  console.error('JSON parse failed. Raw response start:', cleaned.substring(0, 500));
   return null;
 }
 
@@ -196,8 +207,7 @@ exports.handler = async (event) => {
 
       const rawText = (response.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
       const json = extractJSON(rawText);
-      if (!json) return resp(500, { error: 'Failed to parse audit JSON from Claude', raw: rawText.substring(0, 2000) });
-      return resp(200, { audit: json });
+      if (!json) return resp(500, { error: 'Failed to parse audit JSON from Claude. Raw response: ' + rawText.substring(0, 3000) });
 
     } else if (mode === 'letter') {
       if (!account || !client) return resp(400, { error: 'account and client required' });
