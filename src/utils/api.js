@@ -3,27 +3,28 @@ import { MASTER_SYSTEM_PROMPT } from "../prompts/masterPrompt.js";
 const API_ENDPOINT = '/api/audit';
 
 export async function runAudit(pdfBase64) {
-  const apiKey = localStorage.getItem('ccc_api_key');
+  let apiKey = localStorage.getItem('ccc_api_key');
   if (!apiKey) {
     const key = prompt('Enter your Anthropic API key (sk-ant-...):');
     if (!key) throw new Error('API key required');
     localStorage.setItem('ccc_api_key', key);
+    apiKey = key;
   }
 
-  const key = localStorage.getItem('ccc_api_key');
+  const today = new Date().toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'});
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': key,
+      'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-5',
       max_tokens: 8192,
-      system: await getSystemPrompt(),
+      system: MASTER_SYSTEM_PROMPT,
       messages: [{
         role: 'user',
         content: [
@@ -33,7 +34,7 @@ export async function runAudit(pdfBase64) {
           },
           {
             type: 'text',
-            text: `AUDIT_JSON_MODE\n\nToday's date is ${new Date().toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'})}.\n\nPerform a full forensic Metro 2 and FCRA audit` of the attached credit report. Return the complete JSON object per the schema in your instructions. Identify every violation. Classify accounts A, B, or C. Rank into Batch 1 top 5 and Batch 2 remaining. Output JSON only. No prose. No code fences.'
+            text: 'AUDIT_JSON_MODE\n\nToday is ' + today + '. Perform a full forensic Metro 2 and FCRA audit of the attached credit report. Return the complete JSON object per the schema in your instructions. Identify every violation. Classify accounts A, B, or C. Rank into Batch 1 top 5 and Batch 2 remaining. Output JSON only. No prose. No code fences.'
           }
         ]
       }]
@@ -42,7 +43,7 @@ export async function runAudit(pdfBase64) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `API error ${res.status}`);
+    throw new Error(err.error?.message || 'API error ' + res.status);
   }
 
   const data = await res.json();
@@ -53,31 +54,33 @@ export async function runAudit(pdfBase64) {
 }
 
 export async function generateLetter(account, client) {
-  const key = localStorage.getItem('ccc_api_key');
-  if (!key) throw new Error('API key not set');
+  const apiKey = localStorage.getItem('ccc_api_key');
+  if (!apiKey) throw new Error('API key not set');
+
+  const today = new Date().toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'});
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': key,
+      'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-5',
       max_tokens: 8192,
-      system: await getSystemPrompt(),
+      system: MASTER_SYSTEM_PROMPT,
       messages: [{
         role: 'user',
-        content: `LETTER_HTML_MODE\n\nToday's date is ${new Date().toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'})}. Use this exact date at the top of the letter.\n\nGenerate the Phase 1 dispute letter HTML` for this account.\n\nData:\n${JSON.stringify({ account, client }, null, 2)}\n\nFollow the 16-step structure. For Type C include section 1692g(b) demands. Output complete HTML only. No prose. No fences.`
+        content: 'LETTER_HTML_MODE\n\nToday is ' + today + '. Use this exact date at the top of the letter.\n\nGenerate the Phase 1 dispute letter HTML for this account.\n\nData:\n' + JSON.stringify({ account, client }, null, 2) + '\n\nFollow the 16-step structure. For Type C include section 1692g(b) demands. Output complete HTML only. No prose. No fences.'
       }]
     })
   });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `API error ${res.status}`);
+    throw new Error(err.error?.message || 'API error ' + res.status);
   }
 
   const data = await res.json();
@@ -85,20 +88,15 @@ export async function generateLetter(account, client) {
   return { html: extractHTML(rawText) };
 }
 
-async function getSystemPrompt() {
-  const { MASTER_SYSTEM_PROMPT } = await import('../prompts/masterPrompt.js');
-  return MASTER_SYSTEM_PROMPT;
-}
-
 function extractJSON(text) {
   const cleaned = text.trim();
-  try { return JSON.parse(cleaned); } catch {}
+  try { return JSON.parse(cleaned); } catch(e) {}
   const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/s);
-  if (fenced) { try { return JSON.parse(fenced[1].trim()); } catch {} }
+  if (fenced) { try { return JSON.parse(fenced[1].trim()); } catch(e) {} }
   const first = cleaned.indexOf('{');
   const last = cleaned.lastIndexOf('}');
   if (first !== -1 && last !== -1 && last > first) {
-    try { return JSON.parse(cleaned.substring(first, last + 1)); } catch {} 
+    try { return JSON.parse(cleaned.substring(first, last + 1)); } catch(e) {}
   }
   return null;
 }
