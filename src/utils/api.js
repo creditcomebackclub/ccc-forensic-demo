@@ -86,7 +86,7 @@ export async function generateLetter(account, client) {
 }
 
 async function getSystemPrompt() {
-  const { MASTER_SYSTEM_PROMPT } = await import('../src/prompts/masterPrompt.js');
+  const { MASTER_SYSTEM_PROMPT } = await import('../prompts/masterPrompt.js');
   return MASTER_SYSTEM_PROMPT;
 }
 
