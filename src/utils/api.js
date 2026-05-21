@@ -91,8 +91,8 @@ export async function generateLetter(account, client) {
 function extractJSON(text) {
   const cleaned = text.trim();
   try { return JSON.parse(cleaned); } catch(e) {}
-  const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/s);
-  if (fenced) { try { return JSON.parse(fenced[1].trim()); } catch(e) {} }
+  const stripped = cleaned.replace(/^```[a-z]*\n/i, '').replace(/\n```$/i, '').trim();
+  try { return JSON.parse(stripped); } catch(e) {}
   const first = cleaned.indexOf('{');
   const last = cleaned.lastIndexOf('}');
   if (first !== -1 && last !== -1 && last > first) {
