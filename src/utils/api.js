@@ -1,3 +1,5 @@
+import { MASTER_SYSTEM_PROMPT } from "./prompts/masterPrompt.js";
+
 const API_ENDPOINT = '/api/audit';
 
 export async function runAudit(pdfBase64) {
@@ -84,7 +86,7 @@ export async function generateLetter(account, client) {
 }
 
 async function getSystemPrompt() {
-  const { MASTER_SYSTEM_PROMPT } = await import('./prompts/masterPrompt.js');
+  const { MASTER_SYSTEM_PROMPT } = await import('../src/prompts/masterPrompt.js');
   return MASTER_SYSTEM_PROMPT;
 }
 
