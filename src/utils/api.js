@@ -1,4 +1,4 @@
-import { MASTER_SYSTEM_PROMPT } from "./prompts/masterPrompt.js";
+import { MASTER_SYSTEM_PROMPT } from "../prompts/masterPrompt.js";
 
 const API_ENDPOINT = '/api/audit';
 
