@@ -1,6 +1,5 @@
 import { MASTER_SYSTEM_PROMPT } from "../prompts/masterPrompt.js";
-
-const API_ENDPOINT = '/api/audit';
+import { saveAudit, saveLetter } from "./storage.js";
 
 export async function runAudit(pdfBase64) {
   let apiKey = localStorage.getItem('ccc_api_key');
@@ -50,6 +49,9 @@ export async function runAudit(pdfBase64) {
   const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
   const json = extractJSON(rawText);
   if (!json) throw new Error('Failed to parse audit results. Raw: ' + rawText.substring(0, 500));
+
+  try { await saveAudit(json); } catch (e) { console.warn('Audit save failed (non-fatal):', e); }
+
   return { audit: json };
 }
 
@@ -85,7 +87,11 @@ export async function generateLetter(account, client) {
 
   const data = await res.json();
   const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  return { html: extractHTML(rawText) };
+  const html = extractHTML(rawText);
+
+  try { await saveLetter(account, client, html); } catch (e) { console.warn('Letter save failed (non-fatal):', e); }
+
+  return { html };
 }
 
 function extractJSON(text) {
@@ -102,7 +108,7 @@ function extractJSON(text) {
 }
 
 function extractHTML(text) {
-  const fenced = text.match(/```(?:html)?\s*([\s\S]*?)```/s);
+  const fenced = text.match(/```(?:html)?\s*([\s\S]*?)```/);
   if (fenced) return fenced[1].trim();
   const lower = text.toLowerCase();
   const start = lower.indexOf('<!doctype') !== -1 ? lower.indexOf('<!doctype') : lower.indexOf('<html');
