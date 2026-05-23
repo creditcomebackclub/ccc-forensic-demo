@@ -82,10 +82,33 @@ export async function saveLetter(account, client, html) {
     savedAt: new Date().toISOString(),
     date,
     html,
+    mailedDate: null,
+    responseOutcome: null,
+    responseDate: null,
   };
   await reqToPromise(tx(db, STORE_LETTERS, 'readwrite').put(record));
   db.close();
   return record.id;
+}
+
+export async function updateLetter(id, patch) {
+  const db = await openDB();
+  const result = await new Promise((resolve, reject) => {
+    const t = db.transaction(STORE_LETTERS, 'readwrite');
+    const store = t.objectStore(STORE_LETTERS);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const existing = getReq.result;
+      if (!existing) { reject(new Error('Letter not found: ' + id)); return; }
+      const updated = Object.assign({}, existing, patch);
+      const putReq = store.put(updated);
+      putReq.onsuccess = () => resolve(updated);
+      putReq.onerror = () => reject(putReq.error);
+    };
+    getReq.onerror = () => reject(getReq.error);
+  });
+  db.close();
+  return result;
 }
 
 export async function listClients() {
