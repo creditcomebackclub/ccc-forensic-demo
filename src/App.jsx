@@ -5,6 +5,7 @@ import AuditProgress from './components/AuditProgress';
 import AuditResults from './components/AuditResults';
 import LetterViewer from './components/LetterViewer';
 import ClientsPage from './components/ClientsPage';
+import MethodologyPage from './components/MethodologyPage';
 import { runAudit, fileToBase64 } from './utils/api';
 
 const STATE = {
@@ -17,6 +18,7 @@ const STATE = {
 const VIEW = {
   AUDIT: 'audit',
   CLIENTS: 'clients',
+  METHODOLOGY: 'methodology',
 };
 
 export default function App() {
@@ -70,6 +72,10 @@ export default function App() {
         <div className="flex-1 overflow-auto p-8">
           {view === VIEW.CLIENTS && (
             <ClientsPage onOpenAudit={handleOpenSavedAudit} />
+          )}
+
+          {view === VIEW.METHODOLOGY && (
+            <MethodologyPage />
           )}
 
           {view === VIEW.AUDIT && (
@@ -127,7 +133,7 @@ function Sidebar({ view, onNavigate }) {
       <nav className="flex-1 py-3">
         <NavItem icon={LayoutDashboard} label="New Audit" active={view === 'audit'} onClick={() => onNavigate('audit')} />
         <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients')} />
-        <NavItem icon={BookOpen} label="Methodology" />
+        <NavItem icon={BookOpen} label="Methodology" active={view === 'methodology'} onClick={() => onNavigate('methodology')} />
       </nav>
 
       <div className="border-t border-navy-light px-5 py-4">
@@ -171,6 +177,15 @@ function TopBar({ view, state }) {
       <header className="px-8 py-5 border-b border-border bg-white">
         <h1 className="ccc-display text-2xl text-ink font-medium">Clients</h1>
         <p className="text-[12px] mt-0.5 text-ink-muted">Saved audits and letters on this device</p>
+      </header>
+    );
+  }
+
+  if (view === 'methodology') {
+    return (
+      <header className="px-8 py-5 border-b border-border bg-white">
+        <h1 className="ccc-display text-2xl text-ink font-medium">Methodology</h1>
+        <p className="text-[12px] mt-0.5 text-ink-muted">The Setup &amp; Spike operating doctrine</p>
       </header>
     );
   }
