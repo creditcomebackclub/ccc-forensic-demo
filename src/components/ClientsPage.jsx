@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Users, FileText, Mail, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield } from 'lucide-react';
-import { listClients, adminListClients, deleteClient, updateLetter } from '../utils/storage';
+import { Users, FileText, Mail, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap } from 'lucide-react';
+import { listClients, adminListClients, deleteClient, updateLetter, toggleVip } from '../utils/storage';
+import ResponseAnalyzer from './ResponseAnalyzer';
 
 const WINDOW_DAYS = 30;
+const VIP_RESPONSE_DAYS = 1;
+const STD_RESPONSE_DAYS = 3;
 
 function todayISO() {
   const d = new Date();
@@ -13,22 +16,24 @@ function todayISO() {
 function fmt(iso) {
   if (!iso) return '';
   const s = String(iso).length === 10 ? iso + 'T00:00:00' : iso;
-  try {
-    return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch (e) { return iso; }
+  try { return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+  catch (e) { return iso; }
 }
 
 function fmtTime(iso) {
   if (!iso) return '';
-  try {
-    return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  } catch (e) { return iso; }
+  try { return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  catch (e) { return iso; }
 }
 
 function daysBetween(aIso, bIso) {
   const a = new Date(String(aIso).slice(0, 10) + 'T00:00:00');
   const b = new Date(String(bIso).slice(0, 10) + 'T00:00:00');
   return Math.round((b - a) / 86400000);
+}
+
+function hoursBetween(aIso, bIso) {
+  return Math.round((new Date(bIso) - new Date(aIso)) / 3600000);
 }
 
 function letterStatus(l) {
@@ -49,33 +54,32 @@ function letterStatus(l) {
   return { code: 'window_closed', label: 'Window elapsed · ready to escalate', tone: 'red' };
 }
 
-function StatusBadge({ status }) {
-  const map = {
-    neutral: 'bg-gray-100 text-gray-600',
-    amber: 'bg-amber-50 text-amber-700',
-    green: 'bg-green-50 text-green-700',
-    red: 'bg-red-50 text-red-700',
-  };
-  return (
-    <span className={'inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm ' + (map[status.tone] || map.neutral)}>
-      {status.label}
-    </span>
-  );
+function responseUrgency(l, isVip) {
+  if (l.responseOutcome !== 'received' || !l.responseDate) return null;
+  const deadline = isVip ? VIP_RESPONSE_DAYS : STD_RESPONSE_DAYS;
+  const hoursLeft = (deadline * 24) - hoursBetween(l.responseDate, new Date().toISOString());
+  if (hoursLeft <= 0) return { label: 'Response overdue', tone: 'red' };
+  if (isVip) return { label: 'VIP · ' + Math.max(0, Math.round(hoursLeft)) + 'h to respond', tone: 'red' };
+  const daysLeft = Math.ceil(hoursLeft / 24);
+  return { label: daysLeft + 'd to respond', tone: daysLeft <= 1 ? 'red' : 'amber' };
+}
+
+function StatusBadge({ label, tone }) {
+  const map = { neutral: 'bg-gray-100 text-gray-600', amber: 'bg-amber-50 text-amber-700', green: 'bg-green-50 text-green-700', red: 'bg-red-50 text-red-700' };
+  return <span className={'inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm ' + (map[tone] || map.neutral)}>{label}</span>;
 }
 
 function AuditorTag({ name }) {
   if (!name) return null;
-  return (
-    <span className="inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-navy text-gold">
-      {name}
-    </span>
-  );
+  return <span className="inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-navy text-gold">{name}</span>;
 }
 
-function LetterRow({ l, isAdmin, onView, onChange }) {
+function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
+  const urgency = responseUrgency(l, isVip);
+  const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
 
   const save = async (patch) => {
     try {
@@ -83,7 +87,6 @@ function LetterRow({ l, isAdmin, onView, onChange }) {
       setMode(null);
       onChange();
     } catch (e) {
-      console.error('Update letter failed', e);
       alert('Could not save: ' + (e.message || e));
     }
   };
@@ -93,23 +96,34 @@ function LetterRow({ l, isAdmin, onView, onChange }) {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="text-[12px] text-ink min-w-0">
           <span className="font-medium">{l.furnisher}</span>
-          <span className="text-ink-muted">{' '}· {l.phase} · {fmtTime(l.savedAt)}</span>
-          {l.mailedDate && <span className="text-ink-muted">{' '}· mailed {fmt(l.mailedDate)}</span>}
+          <span className="text-ink-muted"> · </span>
+          <span className={isPhase3 ? 'font-medium' : 'text-ink-muted'} style={{ color: isPhase3 ? '#C9A84C' : undefined }}>{l.phase}</span>
+          <span className="text-ink-muted"> · {fmtTime(l.savedAt)}</span>
+          {l.mailedDate && <span className="text-ink-muted"> · mailed {fmt(l.mailedDate)}</span>}
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
           {isAdmin && <AuditorTag name={l.auditorName} />}
-          <StatusBadge status={status} />
+          {urgency && <StatusBadge label={urgency.label} tone={urgency.tone} />}
+          <StatusBadge label={status.label} tone={status.tone} />
           <button onClick={() => onView(l)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">View</button>
+          {!isAdmin && !isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response') && (
+            <button
+              onClick={() => onAnalyze(l)}
+              className="flex items-center gap-1 text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-sm"
+              style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}
+            >
+              <Zap size={11} strokeWidth={2} /> Analyze
+            </button>
+          )}
         </div>
       </div>
 
-      {!isAdmin && (
+      {!isAdmin && !isPhase3 && (
         <div className="mt-1.5 flex items-center gap-3 flex-wrap">
           {mode === 'mailing' && (
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-ink-muted">Mail date:</span>
-              <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)}
-                className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
+              <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
               <button onClick={() => save({ mailedDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
               <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
             </div>
@@ -117,8 +131,7 @@ function LetterRow({ l, isAdmin, onView, onChange }) {
           {mode === 'responding' && (
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-ink-muted">Response date:</span>
-              <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)}
-                className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
+              <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
               <button onClick={() => save({ responseOutcome: 'received', responseDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
               <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
             </div>
@@ -150,6 +163,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
   const [clients, setClients] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [analyzingLetter, setAnalyzingLetter] = useState(null);
+  const [togglingVip, setTogglingVip] = useState(null);
 
   const load = async () => {
     try {
@@ -167,7 +182,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
 
   const openLetter = (letter) => {
     const w = window.open('', '_blank');
-    if (!w) { alert('Popup blocked. Allow popups for this site to view letters.'); return; }
+    if (!w) { alert('Popup blocked — allow popups to view letters.'); return; }
     w.document.open();
     w.document.write(letter.html);
     w.document.close();
@@ -177,6 +192,18 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
     await deleteClient(name);
     setConfirmDelete(null);
     load();
+  };
+
+  const handleVipToggle = async (clientName, currentVip) => {
+    setTogglingVip(clientName);
+    try {
+      await toggleVip(clientName, !currentVip);
+      await load();
+    } catch (e) {
+      alert('Could not update VIP status: ' + (e.message || e));
+    } finally {
+      setTogglingVip(null);
+    }
   };
 
   if (clients === null) {
@@ -193,9 +220,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
       <div className="max-w-3xl mx-auto text-center py-20">
         <Users size={28} className="mx-auto mb-3 text-ink-faint" strokeWidth={1.5} />
         <h2 className="ccc-display text-xl text-ink font-medium">No saved clients yet</h2>
-        <p className="text-[13px] text-ink-muted mt-2">
-          Run an audit and it will be saved here automatically.
-        </p>
+        <p className="text-[13px] text-ink-muted mt-2">Run an audit and it will be saved here automatically.</p>
       </div>
     );
   }
@@ -203,11 +228,18 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
   const totalAudits = clients.reduce((n, c) => n + c.audits.length, 0);
   const totalLetters = clients.reduce((n, c) => n + c.letters.length, 0);
   const totalRipe = clients.reduce((n, c) => n + c.letters.filter((l) => letterStatus(l).code === 'window_closed').length, 0);
+  const needsResponse = clients.reduce((n, c) => n + c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3')).length, 0);
+
+  const sortedClients = [...clients].sort((a, b) => {
+    if (a.isVip && !b.isVip) return -1;
+    if (!a.isVip && b.isVip) return 1;
+    return (b.lastActivity || '').localeCompare(a.lastActivity || '');
+  });
 
   return (
     <div className="max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           {isAdmin && (
             <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-navy text-gold">
               <Shield size={11} strokeWidth={2} /> Admin View
@@ -216,6 +248,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
           <p className="text-[12px] text-ink-muted">
             {clients.length} client{clients.length === 1 ? '' : 's'} · {totalAudits} audit{totalAudits === 1 ? '' : 's'} · {totalLetters} letter{totalLetters === 1 ? '' : 's'}
             {totalRipe > 0 && <span className="text-red-600 font-medium"> · {totalRipe} ready to escalate</span>}
+            {needsResponse > 0 && <span className="text-amber-600 font-medium"> · {needsResponse} need Phase 3</span>}
           </p>
         </div>
         <button onClick={load} className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
@@ -224,46 +257,57 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
       </div>
 
       <div className="space-y-3">
-        {clients.map((c) => {
+        {sortedClients.map((c) => {
           const isOpen = !!expanded[c.name];
           const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
           const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
+          const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3')).length;
           const auditors = isAdmin ? [...new Set([
             ...c.audits.map((a) => a.auditorName),
             ...c.letters.map((l) => l.auditorName),
           ].filter(Boolean))] : [];
 
           return (
-            <div key={c.name} className="bg-white border border-border rounded overflow-hidden">
-              <button onClick={() => toggle(c.name)} className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-gray-50">
-                {isOpen
-                  ? <ChevronDown size={16} strokeWidth={1.75} className="text-ink-muted shrink-0" />
-                  : <ChevronRight size={16} strokeWidth={1.75} className="text-ink-muted shrink-0" />}
-                <div className="flex-1 min-w-0">
-                  <div className="ccc-display text-[15px] text-ink font-medium">{c.name}</div>
+            <div key={c.name} className="bg-white rounded overflow-hidden" style={{ border: c.isVip ? '1px solid #C9A84C' : '1px solid #E5E7EB' }}>
+              <div className="flex items-center gap-3 px-5 py-4">
+                <button onClick={() => toggle(c.name)} className="shrink-0">
+                  {isOpen ? <ChevronDown size={16} strokeWidth={1.75} className="text-ink-muted" /> : <ChevronRight size={16} strokeWidth={1.75} className="text-ink-muted" />}
+                </button>
+                <button onClick={() => toggle(c.name)} className="flex-1 min-w-0 text-left">
+                  <div className="flex items-center gap-2">
+                    <div className="ccc-display text-[15px] text-ink font-medium">{c.name}</div>
+                    {c.isVip && (
+                      <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium" style={{ backgroundColor: '#C9A84C', color: '#1B2A4A' }}>
+                        <Star size={9} strokeWidth={2.5} /> VIP
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2 flex-wrap mt-0.5">
                     {c.address && <span className="text-[11px] text-ink-muted truncate">{c.address}</span>}
                     {isAdmin && auditors.map((a) => (
                       <span key={a} className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-navy text-gold">{a}</span>
                     ))}
                   </div>
-                </div>
+                </button>
                 <div className="flex items-center gap-3 text-[11px] text-ink-muted shrink-0 flex-wrap justify-end">
-                  {ripe > 0 && (
-                    <span className="inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-red-50 text-red-700">
-                      {ripe} to escalate
-                    </span>
-                  )}
-                  {awaiting > 0 && (
-                    <span className="inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-amber-50 text-amber-700">
-                      {awaiting} awaiting
-                    </span>
-                  )}
+                  {needsPhase3 > 0 && <StatusBadge label={needsPhase3 + ' need Phase 3'} tone="amber" />}
+                  {ripe > 0 && <StatusBadge label={ripe + ' to escalate'} tone="red" />}
+                  {awaiting > 0 && <StatusBadge label={awaiting + ' awaiting'} tone="amber" />}
                   <span className="flex items-center gap-1"><FileText size={13} strokeWidth={1.75} />{c.audits.length}</span>
                   <span className="flex items-center gap-1"><Mail size={13} strokeWidth={1.75} />{c.letters.length}</span>
-                  <span className="hidden sm:block">{fmtTime(c.lastActivity)}</span>
+                  {!isAdmin && (
+                    <button
+                      onClick={() => handleVipToggle(c.name, c.isVip)}
+                      disabled={togglingVip === c.name}
+                      className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border transition-colors"
+                      style={{ borderColor: c.isVip ? '#C9A84C' : '#E5E7EB', color: c.isVip ? '#C9A84C' : '#9CA3AF' }}
+                    >
+                      <Star size={10} strokeWidth={2} />
+                      {togglingVip === c.name ? '…' : c.isVip ? 'VIP' : 'Set VIP'}
+                    </button>
+                  )}
                 </div>
-              </button>
+              </div>
 
               {isOpen && (
                 <div className="border-t border-border px-5 py-4 space-y-4">
@@ -274,18 +318,11 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
                       <div key={a.id} className="flex items-center justify-between py-1.5 flex-wrap gap-2">
                         <div className="text-[12px] text-ink">
                           Report {a.reportDate}
-                          <span className="text-ink-muted">
-                            {' '}· {(a.audit && a.audit.accountsTargeted) || (a.audit && a.audit.accounts && a.audit.accounts.length) || 0} accounts
-                            {' '}· {(a.audit && a.audit.totalViolations) || 0} violations
-                          </span>
-                          {isAdmin && a.auditorName && (
-                            <span className="ml-2 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-navy text-gold">{a.auditorName}</span>
-                          )}
+                          <span className="text-ink-muted"> · {(a.audit && a.audit.accountsTargeted) || 0} accounts · {(a.audit && a.audit.totalViolations) || 0} violations</span>
+                          {isAdmin && a.auditorName && <span className="ml-2 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-navy text-gold">{a.auditorName}</span>}
                           <span className="text-ink-faint text-[11px] ml-2">{fmtTime(a.savedAt)}</span>
                         </div>
-                        <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">
-                          Open
-                        </button>
+                        <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
                       </div>
                     ))}
                   </div>
@@ -294,7 +331,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
                     <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Letters</div>
                     {c.letters.length === 0 && <div className="text-[12px] text-ink-muted">None</div>}
                     {c.letters.map((l) => (
-                      <LetterRow key={l.id} l={l} isAdmin={isAdmin} onView={openLetter} onChange={load} />
+                      <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} />
                     ))}
                   </div>
 
@@ -303,12 +340,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
                       {confirmDelete === c.name ? (
                         <div className="flex items-center gap-3">
                           <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
-                          <button onClick={() => handleDelete(c.name)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm hover:bg-red-700">
-                            Confirm Delete
-                          </button>
-                          <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
-                            Cancel
-                          </button>
+                          <button onClick={() => handleDelete(c.name)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
+                          <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
                         </div>
                       ) : (
                         <button onClick={() => setConfirmDelete(c.name)} className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-red-600">
@@ -323,6 +356,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
           );
         })}
       </div>
+
+      {analyzingLetter && (
+        <ResponseAnalyzer
+          letter={analyzingLetter}
+          onClose={() => setAnalyzingLetter(null)}
+          onSaved={() => { setAnalyzingLetter(null); load(); }}
+        />
+      )}
     </div>
   );
 }

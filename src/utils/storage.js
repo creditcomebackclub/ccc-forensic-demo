@@ -30,6 +30,26 @@ export async function getProfile() {
   return data;
 }
 
+export async function toggleVip(clientName, isVip) {
+  const userId = await getUserId();
+  const { error } = await supabase.from('clients').upsert({
+    user_id: userId,
+    name: clientName,
+    is_vip: isVip,
+  }, { onConflict: 'user_id,name' });
+  if (error) throw error;
+}
+
+async function getClientMeta(userId) {
+  const { data } = await supabase
+    .from('clients')
+    .select('name,is_vip')
+    .eq('user_id', userId);
+  const map = new Map();
+  for (const c of (data || [])) map.set(c.name, c);
+  return map;
+}
+
 export async function saveAudit(audit) {
   const userId = await getUserId();
   const clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
@@ -48,6 +68,13 @@ export async function saveAudit(audit) {
     audit,
   });
   if (error) throw error;
+
+  await supabase.from('clients').upsert({
+    user_id: userId,
+    name: clientName,
+    address: clientAddress,
+  }, { onConflict: 'user_id,name', ignoreDuplicates: true });
+
   return id;
 }
 
@@ -132,7 +159,7 @@ function buildClientMap(audits, letters, profiles) {
   const map = new Map();
   const ensure = (name) => {
     if (!map.has(name)) {
-      map.set(name, { name, address: null, audits: [], letters: [], lastActivity: '' });
+      map.set(name, { name, address: null, audits: [], letters: [], lastActivity: '', isVip: false });
     }
     return map.get(name);
   };
@@ -159,33 +186,44 @@ function buildClientMap(audits, letters, profiles) {
 
 export async function listClients() {
   const userId = await getUserId();
-  const [auditsRes, lettersRes] = await Promise.all([
+  const [auditsRes, lettersRes, metaMap] = await Promise.all([
     supabase.from('audits').select('*').eq('user_id', userId).order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').eq('user_id', userId).order('saved_at', { ascending: false }),
+    getClientMeta(userId),
   ]);
   if (auditsRes.error) throw auditsRes.error;
   if (lettersRes.error) throw lettersRes.error;
-  return buildClientMap(
+
+  const out = buildClientMap(
     (auditsRes.data || []).map(normalizeAudit),
     (lettersRes.data || []).map(normalizeLetter),
     []
   );
+  out.forEach((c) => { const meta = metaMap.get(c.name); c.isVip = meta ? !!meta.is_vip : false; });
+  return out;
 }
 
 export async function adminListClients() {
-  const [auditsRes, lettersRes, profilesRes] = await Promise.all([
+  const userId = await getUserId();
+  const [auditsRes, lettersRes, profilesRes, metaRes] = await Promise.all([
     supabase.from('audits').select('*').order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').order('saved_at', { ascending: false }),
     supabase.from('profiles').select('*'),
+    supabase.from('clients').select('name,is_vip,user_id'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
   if (lettersRes.error) throw lettersRes.error;
   if (profilesRes.error) throw profilesRes.error;
-  return buildClientMap(
+
+  const out = buildClientMap(
     (auditsRes.data || []).map(normalizeAudit),
     (lettersRes.data || []).map(normalizeLetter),
     profilesRes.data || []
   );
+
+  const vipSet = new Set((metaRes.data || []).filter((c) => c.is_vip).map((c) => c.name));
+  out.forEach((c) => { c.isVip = vipSet.has(c.name); });
+  return out;
 }
 
 export async function deleteClient(clientName) {
@@ -193,6 +231,7 @@ export async function deleteClient(clientName) {
   const [a, b] = await Promise.all([
     supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
     supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
+    supabase.from('clients').delete().eq('user_id', userId).eq('name', clientName),
   ]);
   if (a.error) throw a.error;
   if (b.error) throw b.error;
