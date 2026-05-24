@@ -51,12 +51,7 @@ export default function AuthPage() {
     <div className="min-h-screen bg-bg flex items-center justify-center p-6">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div
-            className="w-12 h-12 rounded flex items-center justify-center text-[15px] font-bold bg-gold text-navy-dark mx-auto mb-4"
-            style={{ fontFamily: 'Fraunces, serif' }}
-          >
-            CCC
-          </div>
+          <img src="/logo.jpg" alt="Credit Comeback Club" className="w-24 h-24 mx-auto mb-4 object-contain rounded" />
           <h1 className="ccc-display text-2xl text-ink font-medium">Credit Comeback Club</h1>
           <p className="text-[11px] uppercase tracking-[0.18em] text-gold mt-1">Forensic Suite</p>
         </div>
