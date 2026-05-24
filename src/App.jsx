@@ -103,9 +103,7 @@ function Sidebar({ view, onNavigate, displayName, initials, onSignOut }) {
     <aside className="w-60 flex flex-col border-r border-navy-light bg-navy-dark">
       <div className="px-5 py-5 border-b border-navy-light">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded flex items-center justify-center text-[13px] font-bold bg-gold text-navy-dark" style={{ fontFamily: 'Fraunces, serif' }}>
-            CCC
-          </div>
+          <img src="/logo.jpg" alt="CCC" className="w-8 h-8 object-contain rounded" />
           <div>
             <div className="text-white text-[13px] font-medium leading-tight ccc-display">Credit Comeback</div>
             <div className="text-[10px] uppercase tracking-[0.18em] text-gold">Forensic Suite</div>
