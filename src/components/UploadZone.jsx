@@ -56,7 +56,7 @@ export default function UploadZone({ onAuditStart, disabled }) {
             Drop 3-bureau credit report
           </h2>
           <p className="text-[13px] mt-2 text-ink-muted">
-            MyScoreIQ · PrivacyGuard · Credit Karma 3B PDF
+            ScoreSense · MyScoreIQ · PrivacyGuard · SmartCredit · IdentityIQ
           </p>
           <button className="mt-6 px-5 py-2.5 rounded-sm text-[12px] uppercase tracking-wider font-medium bg-navy text-white hover:bg-navy-dark transition-colors">
             Or browse files
