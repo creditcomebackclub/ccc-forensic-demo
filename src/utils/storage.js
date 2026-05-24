@@ -1,11 +1,4 @@
-// src/utils/storage.js
-// IndexedDB persistence for CCC Forensic Suite.
-// Pure client-side — no server, no network. Data lives in this browser.
-
-const DB_NAME = 'ccc_forensic';
-const DB_VERSION = 1;
-const STORE_AUDITS = 'audits';
-const STORE_LETTERS = 'letters';
+import { supabase } from './supabase';
 
 function slug(s) {
   return String(s || 'unknown')
@@ -15,107 +8,95 @@ function slug(s) {
 }
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
 }
 
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_AUDITS)) {
-        const s = db.createObjectStore(STORE_AUDITS, { keyPath: 'id' });
-        s.createIndex('clientName', 'clientName', { unique: false });
-      }
-      if (!db.objectStoreNames.contains(STORE_LETTERS)) {
-        const s = db.createObjectStore(STORE_LETTERS, { keyPath: 'id' });
-        s.createIndex('clientName', 'clientName', { unique: false });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function tx(db, store, mode) {
-  return db.transaction(store, mode).objectStore(store);
-}
-
-function reqToPromise(request) {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
+async function getUserId() {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+  return user.id;
 }
 
 export async function saveAudit(audit) {
-  const db = await openDB();
+  const userId = await getUserId();
   const clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
   const clientAddress = (audit && audit.client && audit.client.address) || null;
   const reportDate = (audit && audit.client && audit.client.reportDate) || todayISO();
-  const record = {
-    id: slug(clientName) + '__' + reportDate,
-    clientName,
-    clientAddress,
-    reportDate,
-    savedAt: new Date().toISOString(),
+  const id = slug(clientName) + '__' + reportDate;
+
+  const { error } = await supabase.from('audits').upsert({
+    id,
+    user_id: userId,
+    client_name: clientName,
+    client_address: clientAddress,
+    report_date: reportDate,
+    saved_at: new Date().toISOString(),
     audit,
-  };
-  await reqToPromise(tx(db, STORE_AUDITS, 'readwrite').put(record));
-  db.close();
-  return record.id;
+  });
+  if (error) throw error;
+  return id;
 }
 
 export async function saveLetter(account, client, html) {
-  const db = await openDB();
+  const userId = await getUserId();
   const clientName = (client && client.name) || 'Unknown Client';
   const furnisher = (account && account.furnisher) || 'Unknown Furnisher';
   const accountId = (account && (account.id || account.accountNumberMasked)) || '';
   const date = todayISO();
-  const record = {
-    id: slug(clientName) + '__' + slug(furnisher) + '__' + date,
-    clientName,
+  const id = slug(clientName) + '__' + slug(furnisher) + '__' + date;
+
+  const { error } = await supabase.from('letters').upsert({
+    id,
+    user_id: userId,
+    client_name: clientName,
     furnisher,
-    accountId,
+    account_id: accountId,
     phase: 'Phase 1',
     type: (account && account.type) || null,
-    savedAt: new Date().toISOString(),
+    saved_at: new Date().toISOString(),
     date,
     html,
-    mailedDate: null,
-    responseOutcome: null,
-    responseDate: null,
-  };
-  await reqToPromise(tx(db, STORE_LETTERS, 'readwrite').put(record));
-  db.close();
-  return record.id;
+    mailed_date: null,
+    response_outcome: null,
+    response_date: null,
+  });
+  if (error) throw error;
+  return id;
 }
 
 export async function updateLetter(id, patch) {
-  const db = await openDB();
-  const result = await new Promise((resolve, reject) => {
-    const t = db.transaction(STORE_LETTERS, 'readwrite');
-    const store = t.objectStore(STORE_LETTERS);
-    const getReq = store.get(id);
-    getReq.onsuccess = () => {
-      const existing = getReq.result;
-      if (!existing) { reject(new Error('Letter not found: ' + id)); return; }
-      const updated = Object.assign({}, existing, patch);
-      const putReq = store.put(updated);
-      putReq.onsuccess = () => resolve(updated);
-      putReq.onerror = () => reject(putReq.error);
-    };
-    getReq.onerror = () => reject(getReq.error);
-  });
-  db.close();
-  return result;
+  const userId = await getUserId();
+  const mapped = {};
+  if ('mailedDate' in patch) mapped.mailed_date = patch.mailedDate;
+  if ('responseOutcome' in patch) mapped.response_outcome = patch.responseOutcome;
+  if ('responseDate' in patch) mapped.response_date = patch.responseDate;
+
+  const { data, error } = await supabase
+    .from('letters')
+    .update(mapped)
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
 }
 
 export async function listClients() {
-  const db = await openDB();
-  const audits = await reqToPromise(tx(db, STORE_AUDITS, 'readonly').getAll());
-  const letters = await reqToPromise(tx(db, STORE_LETTERS, 'readonly').getAll());
-  db.close();
+  const userId = await getUserId();
+
+  const [auditsRes, lettersRes] = await Promise.all([
+    supabase.from('audits').select('*').eq('user_id', userId).order('saved_at', { ascending: false }),
+    supabase.from('letters').select('*').eq('user_id', userId).order('saved_at', { ascending: false }),
+  ]);
+
+  if (auditsRes.error) throw auditsRes.error;
+  if (lettersRes.error) throw lettersRes.error;
+
+  const audits = auditsRes.data || [];
+  const letters = lettersRes.data || [];
 
   const map = new Map();
   const ensure = (name) => {
@@ -126,35 +107,49 @@ export async function listClients() {
   };
 
   for (const a of audits) {
-    const c = ensure(a.clientName);
-    c.address = c.address || a.clientAddress;
-    c.audits.push(a);
-    if (a.savedAt > c.lastActivity) c.lastActivity = a.savedAt;
+    const c = ensure(a.client_name);
+    c.address = c.address || a.client_address;
+    c.audits.push({
+      id: a.id,
+      clientName: a.client_name,
+      clientAddress: a.client_address,
+      reportDate: a.report_date,
+      savedAt: a.saved_at,
+      audit: a.audit,
+    });
+    if (a.saved_at > c.lastActivity) c.lastActivity = a.saved_at;
   }
+
   for (const l of letters) {
-    const c = ensure(l.clientName);
-    c.letters.push(l);
-    if (l.savedAt > c.lastActivity) c.lastActivity = l.savedAt;
+    const c = ensure(l.client_name);
+    c.letters.push({
+      id: l.id,
+      clientName: l.client_name,
+      furnisher: l.furnisher,
+      accountId: l.account_id,
+      phase: l.phase,
+      type: l.type,
+      savedAt: l.saved_at,
+      date: l.date,
+      html: l.html,
+      mailedDate: l.mailed_date,
+      responseOutcome: l.response_outcome,
+      responseDate: l.response_date,
+    });
+    if (l.saved_at > c.lastActivity) c.lastActivity = l.saved_at;
   }
 
   const out = Array.from(map.values());
-  out.forEach((c) => {
-    c.audits.sort((x, y) => (y.savedAt || '').localeCompare(x.savedAt || ''));
-    c.letters.sort((x, y) => (y.savedAt || '').localeCompare(x.savedAt || ''));
-  });
   out.sort((x, y) => (y.lastActivity || '').localeCompare(x.lastActivity || ''));
   return out;
 }
 
 export async function deleteClient(clientName) {
-  const db = await openDB();
-  for (const store of [STORE_AUDITS, STORE_LETTERS]) {
-    const objStore = tx(db, store, 'readwrite');
-    const idx = objStore.index('clientName');
-    const keys = await reqToPromise(idx.getAllKeys(clientName));
-    for (const k of keys) {
-      await reqToPromise(objStore.delete(k));
-    }
-  }
-  db.close();
+  const userId = await getUserId();
+  const [a, b] = await Promise.all([
+    supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
+    supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
+  ]);
+  if (a.error) throw a.error;
+  if (b.error) throw b.error;
 }
