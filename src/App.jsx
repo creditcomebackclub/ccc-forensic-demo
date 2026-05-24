@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, BookOpen, Users, Settings, AlertCircle, LogOut } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import AuditProgress from './components/AuditProgress';
 import AuditResults from './components/AuditResults';
@@ -8,6 +8,7 @@ import ClientsPage from './components/ClientsPage';
 import MethodologyPage from './components/MethodologyPage';
 import AuthPage from './components/AuthPage';
 import { supabase } from './utils/supabase';
+import { getProfile } from './utils/storage';
 import { runAudit, fileToBase64 } from './utils/api';
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
@@ -15,6 +16,7 @@ const VIEW = { AUDIT: 'audit', CLIENTS: 'clients', METHODOLOGY: 'methodology' };
 
 export default function App() {
   const [session, setSession] = useState(undefined);
+  const [profile, setProfile] = useState(null);
   const [view, setView] = useState(VIEW.AUDIT);
   const [state, setState] = useState(STATE.IDLE);
   const [auditResult, setAuditResult] = useState(null);
@@ -26,9 +28,16 @@ export default function App() {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (!session) setProfile(null);
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (session) {
+      getProfile().then(setProfile).catch((e) => console.error('Profile load failed', e));
+    }
+  }, [session]);
 
   if (session === undefined) {
     return (
@@ -41,13 +50,9 @@ export default function App() {
   if (!session) return <AuthPage />;
 
   const user = session.user;
-  const displayName = (user.user_metadata && user.user_metadata.full_name) || user.email || 'Auditor';
-  const initials = displayName
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+  const isAdmin = profile && profile.role === 'admin';
+  const displayName = (profile && profile.full_name) || (user.user_metadata && user.user_metadata.full_name) || user.email || 'Auditor';
+  const initials = displayName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
   const handleAuditStart = async (file) => {
     setView(VIEW.AUDIT);
@@ -73,11 +78,11 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-bg flex">
-      <Sidebar view={view} onNavigate={setView} displayName={displayName} initials={initials} onSignOut={handleSignOut} />
+      <Sidebar view={view} onNavigate={setView} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} />
       <main className="flex-1 flex flex-col">
-        <TopBar view={view} state={state} />
+        <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
-          {view === VIEW.CLIENTS && <ClientsPage onOpenAudit={handleOpenSavedAudit} />}
+          {view === VIEW.CLIENTS && <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} />}
           {view === VIEW.METHODOLOGY && <MethodologyPage />}
           {view === VIEW.AUDIT && (
             <>
@@ -98,7 +103,7 @@ export default function App() {
   );
 }
 
-function Sidebar({ view, onNavigate, displayName, initials, onSignOut }) {
+function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut }) {
   return (
     <aside className="w-60 flex flex-col border-r border-navy-light bg-navy-dark">
       <div className="px-5 py-5 border-b border-navy-light">
@@ -124,7 +129,11 @@ function Sidebar({ view, onNavigate, displayName, initials, onSignOut }) {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-white text-[12px] truncate">{displayName}</div>
-            <div className="text-[10px] uppercase tracking-wider text-gray-400">Auditor</div>
+            <div className="text-[10px] uppercase tracking-wider text-gray-400 flex items-center gap-1">
+              {isAdmin ? (
+                <><Shield size={10} strokeWidth={2} className="text-gold" /><span className="text-gold">Admin</span></>
+              ) : 'Auditor'}
+            </div>
           </div>
           <button onClick={onSignOut} title="Sign out" className="text-gray-400 hover:text-gold transition-colors">
             <LogOut size={14} strokeWidth={1.5} />
@@ -152,11 +161,13 @@ function NavItem({ icon: Icon, label, active, onClick }) {
   );
 }
 
-function TopBar({ view, state }) {
+function TopBar({ view, state, isAdmin }) {
   if (view === 'clients') return (
     <header className="px-8 py-5 border-b border-border bg-white">
       <h1 className="ccc-display text-2xl text-ink font-medium">Clients</h1>
-      <p className="text-[12px] mt-0.5 text-ink-muted">Saved audits and letters</p>
+      <p className="text-[12px] mt-0.5 text-ink-muted">
+        {isAdmin ? 'All clients across all auditors' : 'Your saved audits and letters'}
+      </p>
     </header>
   );
   if (view === 'methodology') return (

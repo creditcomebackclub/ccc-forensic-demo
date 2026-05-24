@@ -19,6 +19,17 @@ async function getUserId() {
   return user.id;
 }
 
+export async function getProfile() {
+  const userId = await getUserId();
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 export async function saveAudit(audit) {
   const userId = await getUserId();
   const clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
@@ -29,6 +40,7 @@ export async function saveAudit(audit) {
   const { error } = await supabase.from('audits').upsert({
     id,
     user_id: userId,
+    created_by: userId,
     client_name: clientName,
     client_address: clientAddress,
     report_date: reportDate,
@@ -50,6 +62,7 @@ export async function saveLetter(account, client, html) {
   const { error } = await supabase.from('letters').upsert({
     id,
     user_id: userId,
+    created_by: userId,
     client_name: clientName,
     furnisher,
     account_id: accountId,
@@ -84,20 +97,38 @@ export async function updateLetter(id, patch) {
   return data;
 }
 
-export async function listClients() {
-  const userId = await getUserId();
+function normalizeAudit(a) {
+  return {
+    id: a.id,
+    clientName: a.client_name,
+    clientAddress: a.client_address,
+    reportDate: a.report_date,
+    savedAt: a.saved_at,
+    createdBy: a.created_by,
+    audit: a.audit,
+  };
+}
 
-  const [auditsRes, lettersRes] = await Promise.all([
-    supabase.from('audits').select('*').eq('user_id', userId).order('saved_at', { ascending: false }),
-    supabase.from('letters').select('*').eq('user_id', userId).order('saved_at', { ascending: false }),
-  ]);
+function normalizeLetter(l) {
+  return {
+    id: l.id,
+    clientName: l.client_name,
+    furnisher: l.furnisher,
+    accountId: l.account_id,
+    phase: l.phase,
+    type: l.type,
+    savedAt: l.saved_at,
+    createdBy: l.created_by,
+    date: l.date,
+    html: l.html,
+    mailedDate: l.mailed_date,
+    responseOutcome: l.response_outcome,
+    responseDate: l.response_date,
+  };
+}
 
-  if (auditsRes.error) throw auditsRes.error;
-  if (lettersRes.error) throw lettersRes.error;
-
-  const audits = auditsRes.data || [];
-  const letters = lettersRes.data || [];
-
+function buildClientMap(audits, letters, profiles) {
+  const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
   const map = new Map();
   const ensure = (name) => {
     if (!map.has(name)) {
@@ -107,41 +138,54 @@ export async function listClients() {
   };
 
   for (const a of audits) {
-    const c = ensure(a.client_name);
-    c.address = c.address || a.client_address;
-    c.audits.push({
-      id: a.id,
-      clientName: a.client_name,
-      clientAddress: a.client_address,
-      reportDate: a.report_date,
-      savedAt: a.saved_at,
-      audit: a.audit,
-    });
-    if (a.saved_at > c.lastActivity) c.lastActivity = a.saved_at;
+    const c = ensure(a.clientName);
+    c.address = c.address || a.clientAddress;
+    const profile = profileMap.get(a.createdBy);
+    c.audits.push({ ...a, auditorName: profile ? (profile.full_name || profile.email) : null });
+    if (a.savedAt > c.lastActivity) c.lastActivity = a.savedAt;
   }
 
   for (const l of letters) {
-    const c = ensure(l.client_name);
-    c.letters.push({
-      id: l.id,
-      clientName: l.client_name,
-      furnisher: l.furnisher,
-      accountId: l.account_id,
-      phase: l.phase,
-      type: l.type,
-      savedAt: l.saved_at,
-      date: l.date,
-      html: l.html,
-      mailedDate: l.mailed_date,
-      responseOutcome: l.response_outcome,
-      responseDate: l.response_date,
-    });
-    if (l.saved_at > c.lastActivity) c.lastActivity = l.saved_at;
+    const c = ensure(l.clientName);
+    const profile = profileMap.get(l.createdBy);
+    c.letters.push({ ...l, auditorName: profile ? (profile.full_name || profile.email) : null });
+    if (l.savedAt > c.lastActivity) c.lastActivity = l.savedAt;
   }
 
   const out = Array.from(map.values());
   out.sort((x, y) => (y.lastActivity || '').localeCompare(x.lastActivity || ''));
   return out;
+}
+
+export async function listClients() {
+  const userId = await getUserId();
+  const [auditsRes, lettersRes] = await Promise.all([
+    supabase.from('audits').select('*').eq('user_id', userId).order('saved_at', { ascending: false }),
+    supabase.from('letters').select('*').eq('user_id', userId).order('saved_at', { ascending: false }),
+  ]);
+  if (auditsRes.error) throw auditsRes.error;
+  if (lettersRes.error) throw lettersRes.error;
+  return buildClientMap(
+    (auditsRes.data || []).map(normalizeAudit),
+    (lettersRes.data || []).map(normalizeLetter),
+    []
+  );
+}
+
+export async function adminListClients() {
+  const [auditsRes, lettersRes, profilesRes] = await Promise.all([
+    supabase.from('audits').select('*').order('saved_at', { ascending: false }),
+    supabase.from('letters').select('*').order('saved_at', { ascending: false }),
+    supabase.from('profiles').select('*'),
+  ]);
+  if (auditsRes.error) throw auditsRes.error;
+  if (lettersRes.error) throw lettersRes.error;
+  if (profilesRes.error) throw profilesRes.error;
+  return buildClientMap(
+    (auditsRes.data || []).map(normalizeAudit),
+    (lettersRes.data || []).map(normalizeLetter),
+    profilesRes.data || []
+  );
 }
 
 export async function deleteClient(clientName) {
