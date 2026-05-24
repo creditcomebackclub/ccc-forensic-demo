@@ -106,7 +106,7 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze }) {
           {urgency && <StatusBadge label={urgency.label} tone={urgency.tone} />}
           <StatusBadge label={status.label} tone={status.tone} />
           <button onClick={() => onView(l)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">View</button>
-          {!isAdmin && !isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response') && (
+          {!isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response') && (
             <button
               onClick={() => onAnalyze(l)}
               className="flex items-center gap-1 text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-sm"
@@ -295,7 +295,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
                   {awaiting > 0 && <StatusBadge label={awaiting + ' awaiting'} tone="amber" />}
                   <span className="flex items-center gap-1"><FileText size={13} strokeWidth={1.75} />{c.audits.length}</span>
                   <span className="flex items-center gap-1"><Mail size={13} strokeWidth={1.75} />{c.letters.length}</span>
-                  {!isAdmin && (
+                  {(
                     <button
                       onClick={() => handleVipToggle(c.name, c.isVip)}
                       disabled={togglingVip === c.name}
@@ -335,7 +335,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
                     ))}
                   </div>
 
-                  {!isAdmin && (
+                  {(
                     <div className="pt-2 border-t border-border">
                       {confirmDelete === c.name ? (
                         <div className="flex items-center gap-3">
