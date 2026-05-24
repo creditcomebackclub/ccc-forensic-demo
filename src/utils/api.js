@@ -22,7 +22,7 @@ export async function runAudit(pdfBase64) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-5',
-      max_tokens: 8192,
+      max_tokens: 16000,
       system: MASTER_SYSTEM_PROMPT,
       messages: [{
         role: 'user',
@@ -71,7 +71,7 @@ export async function generateLetter(account, client) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-5',
-      max_tokens: 8192,
+      max_tokens: 16000,
       system: MASTER_SYSTEM_PROMPT,
       messages: [{
         role: 'user',
