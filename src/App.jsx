@@ -9,6 +9,7 @@ import MethodologyPage from './components/MethodologyPage';
 import AuthPage from './components/AuthPage';
 import TeamPage from './components/TeamPage';
 import DashboardPage from './components/DashboardPage';
+import SettingsModal from './components/SettingsModal';
 import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
 import { runAudit, fileToBase64 } from './utils/api';
@@ -25,6 +26,7 @@ export default function App() {
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState(null);
   const [activeLetter, setActiveLetter] = useState(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
@@ -80,7 +82,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-bg flex">
-      <Sidebar view={view} onNavigate={setView} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} />
+      <Sidebar view={view} onNavigate={setView} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} />
       <main className="flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
@@ -105,11 +107,14 @@ export default function App() {
       {activeLetter && auditResult && (
         <LetterViewer account={activeLetter} client={auditResult.client} onClose={() => setActiveLetter(null)} />
       )}
+      {showSettings && (
+        <SettingsModal onClose={() => setShowSettings(false)} displayName={displayName} email={user.email} />
+      )}
     </div>
   );
 }
 
-function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut }) {
+function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, onSettings }) {
   return (
     <aside className="w-60 flex flex-col border-r border-navy-light bg-navy-dark">
       <div className="px-5 py-5 border-b border-navy-light">
@@ -145,6 +150,9 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut }
               ) : 'Auditor'}
             </div>
           </div>
+          <button onClick={onSettings} title="Settings" className="text-gray-400 hover:text-gold transition-colors mr-1">
+            <Settings size={14} strokeWidth={1.5} />
+          </button>
           <button onClick={onSignOut} title="Sign out" className="text-gray-400 hover:text-gold transition-colors">
             <LogOut size={14} strokeWidth={1.5} />
           </button>
