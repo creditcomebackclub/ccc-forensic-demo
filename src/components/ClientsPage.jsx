@@ -118,7 +118,7 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze }) {
         </div>
       </div>
 
-      {!isPhase3 && (
+      {(
         <div className="mt-1.5 flex items-center gap-3 flex-wrap">
           {mode === 'mailing' && (
             <div className="flex items-center gap-2">
