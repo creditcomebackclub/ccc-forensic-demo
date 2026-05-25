@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import AuditProgress from './components/AuditProgress';
 import AuditResults from './components/AuditResults';
