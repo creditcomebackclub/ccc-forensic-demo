@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import AuditProgress from './components/AuditProgress';
 import AuditResults from './components/AuditResults';
@@ -8,17 +8,18 @@ import ClientsPage from './components/ClientsPage';
 import MethodologyPage from './components/MethodologyPage';
 import AuthPage from './components/AuthPage';
 import TeamPage from './components/TeamPage';
+import DashboardPage from './components/DashboardPage';
 import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
 import { runAudit, fileToBase64 } from './utils/api';
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
-const VIEW = { AUDIT: 'audit', CLIENTS: 'clients', METHODOLOGY: 'methodology', TEAM: 'team' };
+const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', METHODOLOGY: 'methodology', TEAM: 'team' };
 
 export default function App() {
   const [session, setSession] = useState(undefined);
   const [profile, setProfile] = useState(null);
-  const [view, setView] = useState(VIEW.AUDIT);
+  const [view, setView] = useState(VIEW.DASHBOARD);
   const [state, setState] = useState(STATE.IDLE);
   const [auditResult, setAuditResult] = useState(null);
   const [fileName, setFileName] = useState('');
@@ -83,6 +84,9 @@ export default function App() {
       <main className="flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
+          {view === VIEW.DASHBOARD && (
+            <DashboardPage isAdmin={isAdmin} onNavigate={setView} onAuditStart={handleAuditStart} />
+          )}
           {view === VIEW.CLIENTS && <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} />}
           {view === VIEW.METHODOLOGY && <MethodologyPage />}
           {view === VIEW.TEAM && isAdmin && <TeamPage currentUserId={user.id} />}
@@ -119,6 +123,7 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut }
       </div>
 
       <nav className="flex-1 py-3">
+        <NavItem icon={Home} label="Dashboard" active={view === 'dashboard'} onClick={() => onNavigate('dashboard')} />
         <NavItem icon={LayoutDashboard} label="New Audit" active={view === 'audit'} onClick={() => onNavigate('audit')} />
         <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients')} />
         <NavItem icon={BookOpen} label="Methodology" active={view === 'methodology'} onClick={() => onNavigate('methodology')} />
@@ -167,12 +172,18 @@ function NavItem({ icon: Icon, label, active, onClick }) {
 }
 
 function TopBar({ view, state, isAdmin }) {
+  if (view === 'dashboard') return (
+    <header className="px-8 py-5 border-b border-border bg-white">
+      <h1 className="ccc-display text-2xl text-ink font-medium">Dashboard</h1>
+      <p className="text-[12px] mt-0.5 text-ink-muted">
+        {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+      </p>
+    </header>
+  );
   if (view === 'clients') return (
     <header className="px-8 py-5 border-b border-border bg-white">
       <h1 className="ccc-display text-2xl text-ink font-medium">Clients</h1>
-      <p className="text-[12px] mt-0.5 text-ink-muted">
-        {isAdmin ? 'All clients across all auditors' : 'Your saved audits and letters'}
-      </p>
+      <p className="text-[12px] mt-0.5 text-ink-muted">{isAdmin ? 'All clients across all auditors' : 'Your saved audits and letters'}</p>
     </header>
   );
   if (view === 'methodology') return (
