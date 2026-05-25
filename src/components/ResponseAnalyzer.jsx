@@ -52,6 +52,52 @@ RESPOND IN THIS EXACT JSON FORMAT:
   }
 }`;
 
+async function analyzeNonResponse({ phase1Html, clientName, furnisher, accountId, mailedDate }) {
+  const apiKey = localStorage.getItem('anthropic_api_key');
+  if (!apiKey) throw new Error('API key not set — go to Settings to add your Anthropic API key');
+
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const mailed = mailedDate ? new Date(mailedDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'unknown date';
+
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: `Today: ${today}\nClient: ${clientName}\nFurnisher: ${furnisher}\nAccount: ${accountId}\nLetter mailed: ${mailed}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER (no response was received within 30 days):\n${phase1Html}\n\nThe furnisher failed to respond within the 30-day statutory window. This is an automatic 15 U.S.C. 1681s-2(b) violation. Classify this as NON_RESPONSE and generate three Phase 3 CRA letters citing the failure to respond. Return only valid JSON matching the specified format.`
+        }
+      ]
+    }
+  ];
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 8000,
+      system: SYSTEM_PROMPT,
+      messages,
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || 'Analysis failed');
+  }
+
+  const data = await res.json();
+  const text = data.content.map((b) => b.text || '').join('');
+  const clean = text.replace(/```json|```/g, '').trim();
+  return JSON.parse(clean);
+}
+
 async function analyzeResponse({ phase1Html, responseBase64, responseType, clientName, furnisher, accountId }) {
   const apiKey = localStorage.getItem('anthropic_api_key');
   if (!apiKey) throw new Error('API key not set — go to Settings to add your Anthropic API key');
@@ -154,7 +200,8 @@ const OUTCOME_CONFIG = {
 };
 
 export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
-  const [step, setStep] = useState('upload');
+  const isNonResponse = letter.responseOutcome === 'no_response';
+  const [step, setStep] = useState(isNonResponse ? 'nonresponse' : 'upload');
   const [file, setFile] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState(null);
@@ -229,6 +276,28 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
         </div>
 
         <div className="flex-1 overflow-auto p-6">
+          {step === 'nonresponse' && (
+            <div>
+              <div className="rounded p-4 border mb-5" style={{ backgroundColor: '#FEF2F2', borderColor: '#FECACA' }}>
+                <div className="text-[11px] uppercase tracking-wider font-medium text-red-600 mb-1">Non-Response Confirmed</div>
+                <div className="text-[13px] text-ink font-medium">{letter.furnisher} failed to respond within the 30-day statutory window</div>
+                <div className="text-[12px] text-ink-muted mt-1">This is an automatic 15 U.S.C. §1681s-2(b) violation. Claude will generate three Phase 3 CRA letters citing the non-response as the primary violation — no document upload needed.</div>
+              </div>
+              {letter.mailedDate && (
+                <div className="text-[12px] text-ink-muted mb-4">
+                  Letter mailed: <span className="text-ink font-medium">{letter.mailedDate}</span> · 30-day window expired
+                </div>
+              )}
+              {error && <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2 mb-4">{error}</div>}
+              {analyzing && (
+                <div className="text-center py-4">
+                  <div className="text-[13px] text-ink-muted mb-1">Generating Phase 3 non-response letters…</div>
+                  <div className="text-[11px] text-ink-faint">Citing blown 30-day window · §1681s-2(b) automatic violation</div>
+                </div>
+              )}
+            </div>
+          )}
+
           {step === 'upload' && (
             <div>
               <p className="text-[13px] text-ink-muted mb-5 max-w-xl">
@@ -343,6 +412,36 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
             {saved ? 'Close' : 'Cancel'}
           </button>
           <div className="flex items-center gap-3">
+            {step === 'nonresponse' && !saved && (
+              <button
+                onClick={async () => {
+                  setAnalyzing(true);
+                  setError(null);
+                  try {
+                    const result = await analyzeNonResponse({
+                      phase1Html: letter.html,
+                      clientName: letter.clientName,
+                      furnisher: letter.furnisher,
+                      accountId: letter.accountId || '',
+                      mailedDate: letter.mailedDate,
+                    });
+                    setAnalysis(result);
+                    setStep('results');
+                  } catch (e) {
+                    setError(e.message || 'Generation failed');
+                  } finally {
+                    setAnalyzing(false);
+                  }
+                }}
+                disabled={analyzing}
+                className="flex items-center gap-2 px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
+                style={{ backgroundColor: analyzing ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}
+              >
+                <Zap size={13} strokeWidth={2} />
+                {analyzing ? 'Generating…' : 'Generate Phase 3 Letters'}
+              </button>
+            )}
+
             {step === 'upload' && (
               <button onClick={handleAnalyze} disabled={!file || analyzing}
                 className="flex items-center gap-2 px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
