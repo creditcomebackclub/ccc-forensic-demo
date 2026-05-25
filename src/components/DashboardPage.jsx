@@ -60,7 +60,8 @@ function computeDashboard(clients) {
       const st = letterStatus(l);
 
       if (st.code === 'awaiting') awaiting++;
-      if (st.code === 'window_closed') {
+      const hasPhase3 = c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher);
+      if (st.code === 'window_closed' && !hasPhase3) {
         escalate++;
         actions.push({
           type: 'escalate', priority: c.isVip ? 0 : 1,
@@ -68,7 +69,7 @@ function computeDashboard(clients) {
           label: 'Window closed — ready to escalate', tone: 'red', savedAt: l.savedAt,
         });
       }
-      if (st.code === 'no_response') {
+      if (st.code === 'no_response' && !hasPhase3) {
         actions.push({
           type: 'no_response', priority: c.isVip ? 0 : 1,
           client: c.name, furnisher: l.furnisher, isVip: c.isVip,
@@ -241,6 +242,8 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
       }
     };
     load();
+    const interval = setInterval(load, 60000);
+    return () => clearInterval(interval);
   }, [isAdmin]);
 
   if (!dash) {
