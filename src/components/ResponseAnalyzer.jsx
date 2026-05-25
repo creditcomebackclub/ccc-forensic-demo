@@ -81,7 +81,7 @@ async function analyzeNonResponse({ phase1Html, clientName, furnisher, accountId
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-5',
-      max_tokens: 8000,
+      max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages,
     })
@@ -134,7 +134,7 @@ async function analyzeResponse({ phase1Html, responseBase64, responseType, clien
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-5',
-      max_tokens: 8000,
+      max_tokens: 16000,
       system: SYSTEM_PROMPT,
       messages,
     })
