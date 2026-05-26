@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Users, FileText, Mail, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { Users, FileText, Mail, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X } from 'lucide-react';
 import { listClients, adminListClients, deleteClient, updateLetter, toggleVip } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 
@@ -37,32 +37,39 @@ function hoursBetween(aIso, bIso) {
 }
 
 function letterStatus(l) {
-  if (l.responseOutcome === 'received') {
-    return { code: 'received', label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
-  }
-  if (l.responseOutcome === 'no_response') {
-    return { code: 'no_response', label: 'No response confirmed', tone: 'red' };
-  }
-  if (!l.mailedDate) {
-    return { code: 'not_mailed', label: 'Not mailed', tone: 'neutral' };
-  }
+  if (l.responseOutcome === 'received') return { code: 'received', label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
+  if (l.responseOutcome === 'no_response') return { code: 'no_response', label: 'No response confirmed', tone: 'red' };
+  if (!l.mailedDate) return { code: 'not_mailed', label: 'Not mailed', tone: 'neutral' };
   const elapsed = daysBetween(l.mailedDate, todayISO());
   const remaining = WINDOW_DAYS - elapsed;
-  if (remaining > 0) {
-    return { code: 'awaiting', label: 'Awaiting · ' + remaining + 'd left', tone: 'amber' };
-  }
+  if (remaining > 0) return { code: 'awaiting', label: 'Awaiting · ' + remaining + 'd left', tone: 'amber' };
   return { code: 'window_closed', label: 'Window elapsed · ready to escalate', tone: 'red' };
 }
 
-function responseUrgency(l, isVip) {
-  if (l.responseOutcome !== 'received' || !l.responseDate) return null;
-  const deadline = isVip ? VIP_RESPONSE_DAYS : STD_RESPONSE_DAYS;
-  const hoursLeft = (deadline * 24) - hoursBetween(l.responseDate, new Date().toISOString());
-  if (hoursLeft <= 0) return { label: 'Response overdue', tone: 'red' };
-  if (isVip) return { label: 'VIP · ' + Math.max(0, Math.round(hoursLeft)) + 'h to respond', tone: 'red' };
-  const daysLeft = Math.ceil(hoursLeft / 24);
-  return { label: daysLeft + 'd to respond', tone: daysLeft <= 1 ? 'red' : 'amber' };
+function clientMatchesFilter(c, filter) {
+  if (!filter) return true;
+  const openLetters = c.letters.filter((l) => !l.phase?.startsWith('Phase 3'));
+  switch (filter) {
+    case 'active': return openLetters.length > 0;
+    case 'awaiting': return openLetters.some((l) => letterStatus(l).code === 'awaiting');
+    case 'escalate': return openLetters.some((l) => {
+      const st = letterStatus(l);
+      const hasPhase3 = c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher);
+      return (st.code === 'window_closed' || st.code === 'no_response') && !hasPhase3;
+    });
+    case 'phase3': return c.letters.some((l) => l.phase?.startsWith('Phase 3'));
+    case 'received': return openLetters.some((l) => l.responseOutcome === 'received');
+    default: return true;
+  }
 }
+
+const FILTER_LABELS = {
+  active: 'Active Campaigns',
+  awaiting: 'Awaiting Response',
+  escalate: 'Ready to Escalate',
+  phase3: 'Phase 3 Active',
+  received: 'Response Received',
+};
 
 function StatusBadge({ label, tone }) {
   const map = { neutral: 'bg-gray-100 text-gray-600', amber: 'bg-amber-50 text-amber-700', green: 'bg-green-50 text-green-700', red: 'bg-red-50 text-red-700' };
@@ -78,17 +85,24 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
-  const urgency = responseUrgency(l, isVip);
   const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
+
+  const urgency = (() => {
+    if (l.responseOutcome !== 'received' || !l.responseDate) return null;
+    const deadline = isVip ? VIP_RESPONSE_DAYS : STD_RESPONSE_DAYS;
+    const hoursLeft = (deadline * 24) - hoursBetween(l.responseDate, new Date().toISOString());
+    if (hoursLeft <= 0) return { label: 'Response overdue', tone: 'red' };
+    if (isVip) return { label: 'VIP · ' + Math.max(0, Math.round(hoursLeft)) + 'h to respond', tone: 'red' };
+    const daysLeft = Math.ceil(hoursLeft / 24);
+    return { label: daysLeft + 'd to respond', tone: daysLeft <= 1 ? 'red' : 'amber' };
+  })();
 
   const save = async (patch) => {
     try {
       await updateLetter(l.id, patch);
       setMode(null);
       onChange();
-    } catch (e) {
-      alert('Could not save: ' + (e.message || e));
-    }
+    } catch (e) { alert('Could not save: ' + (e.message || e)); }
   };
 
   return (
@@ -107,64 +121,62 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze }) {
           <StatusBadge label={status.label} tone={status.tone} />
           <button onClick={() => onView(l)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">View</button>
           {!isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response') && (
-            <button
-              onClick={() => onAnalyze(l)}
+            <button onClick={() => onAnalyze(l)}
               className="flex items-center gap-1 text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-sm"
-              style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}
-            >
+              style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}>
               <Zap size={11} strokeWidth={2} /> Analyze
             </button>
           )}
         </div>
       </div>
 
-      {(
-        <div className="mt-1.5 flex items-center gap-3 flex-wrap">
-          {mode === 'mailing' && (
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-ink-muted">Mail date:</span>
-              <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
-              <button onClick={() => save({ mailedDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
-              <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
-            </div>
-          )}
-          {mode === 'responding' && (
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-ink-muted">Response date:</span>
-              <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
-              <button onClick={() => save({ responseOutcome: 'received', responseDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
-              <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
-            </div>
-          )}
-          {mode === null && (
-            <>
-              {!l.mailedDate && (
-                <button onClick={() => { setDateVal(todayISO()); setMode('mailing'); }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Mark mailed</button>
-              )}
-              {l.mailedDate && !l.responseOutcome && (
-                <>
-                  <button onClick={() => { setDateVal(todayISO()); setMode('responding'); }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Log response</button>
-                  <button onClick={() => save({ responseOutcome: 'no_response' })} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-red-600">Mark no response</button>
-                  <button onClick={() => { setDateVal(l.mailedDate); setMode('mailing'); }} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Edit mail date</button>
-                </>
-              )}
-              {l.responseOutcome && (
-                <button onClick={() => save({ responseOutcome: null, responseDate: null })} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Reset response</button>
-              )}
-            </>
-          )}
-        </div>
-      )}
+      <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+        {mode === 'mailing' && (
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-ink-muted">Mail date:</span>
+            <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
+            <button onClick={() => save({ mailedDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
+            <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
+          </div>
+        )}
+        {mode === 'responding' && (
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-ink-muted">Response date:</span>
+            <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
+            <button onClick={() => save({ responseOutcome: 'received', responseDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
+            <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
+          </div>
+        )}
+        {mode === null && (
+          <>
+            {!l.mailedDate && (
+              <button onClick={() => { setDateVal(todayISO()); setMode('mailing'); }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Mark mailed</button>
+            )}
+            {l.mailedDate && !l.responseOutcome && (
+              <>
+                <button onClick={() => { setDateVal(todayISO()); setMode('responding'); }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Log response</button>
+                <button onClick={() => save({ responseOutcome: 'no_response' })} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-red-600">Mark no response</button>
+                <button onClick={() => { setDateVal(l.mailedDate); setMode('mailing'); }} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Edit mail date</button>
+              </>
+            )}
+            {l.responseOutcome && (
+              <button onClick={() => save({ responseOutcome: null, responseDate: null })} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Reset response</button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-export default function ClientsPage({ onOpenAudit, isAdmin }) {
+export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter }) {
   const [clients, setClients] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [analyzingLetter, setAnalyzingLetter] = useState(null);
   const [togglingVip, setTogglingVip] = useState(null);
+  const [activeFilter, setActiveFilter] = useState(initialFilter || null);
+  const clientRefs = useRef({});
 
   const load = async () => {
     try {
@@ -177,6 +189,19 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
   };
 
   useEffect(() => { load(); }, [isAdmin]);
+
+  useEffect(() => {
+    if (!jumpTo || !clients) return;
+    setExpanded((prev) => ({ ...prev, [jumpTo]: true }));
+    setTimeout(() => {
+      const el = clientRefs.current[jumpTo];
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 150);
+  }, [jumpTo, clients]);
+
+  useEffect(() => {
+    if (initialFilter) setActiveFilter(initialFilter);
+  }, [initialFilter]);
 
   const toggle = (name) => setExpanded((prev) => ({ ...prev, [name]: !prev[name] }));
 
@@ -225,20 +250,24 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
     );
   }
 
-  const totalAudits = clients.reduce((n, c) => n + c.audits.length, 0);
-  const totalLetters = clients.reduce((n, c) => n + c.letters.length, 0);
-  const totalRipe = clients.reduce((n, c) => n + c.letters.filter((l) => letterStatus(l).code === 'window_closed').length, 0);
-  const needsResponse = clients.reduce((n, c) => n + c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3')).length, 0);
-
   const sortedClients = [...clients].sort((a, b) => {
     if (a.isVip && !b.isVip) return -1;
     if (!a.isVip && b.isVip) return 1;
     return (b.lastActivity || '').localeCompare(a.lastActivity || '');
   });
 
+  const filteredClients = activeFilter
+    ? sortedClients.filter((c) => clientMatchesFilter(c, activeFilter))
+    : sortedClients;
+
+  const totalAudits = clients.reduce((n, c) => n + c.audits.length, 0);
+  const totalLetters = clients.reduce((n, c) => n + c.letters.length, 0);
+  const totalRipe = clients.reduce((n, c) => n + c.letters.filter((l) => letterStatus(l).code === 'window_closed').length, 0);
+  const needsResponse = clients.reduce((n, c) => n + c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3')).length, 0);
+
   return (
     <div className="max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3 flex-wrap">
           {isAdmin && (
             <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-navy text-gold">
@@ -256,8 +285,21 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
         </button>
       </div>
 
+      {activeFilter && (
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-[11px] text-ink-muted">Filtered:</span>
+          <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider px-2 py-1 rounded-sm bg-navy text-gold">
+            {FILTER_LABELS[activeFilter] || activeFilter}
+            <button onClick={() => setActiveFilter(null)} className="hover:text-white ml-1">
+              <X size={11} strokeWidth={2.5} />
+            </button>
+          </span>
+          <span className="text-[11px] text-ink-muted">{filteredClients.length} of {clients.length} clients</span>
+        </div>
+      )}
+
       <div className="space-y-3">
-        {sortedClients.map((c) => {
+        {filteredClients.map((c) => {
           const isOpen = !!expanded[c.name];
           const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
           const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
@@ -268,7 +310,15 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
           ].filter(Boolean))] : [];
 
           return (
-            <div key={c.name} className="bg-white rounded overflow-hidden" style={{ border: c.isVip ? '1px solid #C9A84C' : '1px solid #E5E7EB' }}>
+            <div
+              key={c.name}
+              ref={(el) => { clientRefs.current[c.name] = el; }}
+              className="bg-white rounded overflow-hidden transition-shadow"
+              style={{
+                border: c.name === jumpTo ? '2px solid #C9A84C' : (c.isVip ? '1px solid #C9A84C' : '1px solid #E5E7EB'),
+                boxShadow: c.name === jumpTo ? '0 0 0 3px rgba(201,168,76,0.15)' : 'none',
+              }}
+            >
               <div className="flex items-center gap-3 px-5 py-4">
                 <button onClick={() => toggle(c.name)} className="shrink-0">
                   {isOpen ? <ChevronDown size={16} strokeWidth={1.75} className="text-ink-muted" /> : <ChevronRight size={16} strokeWidth={1.75} className="text-ink-muted" />}
@@ -295,17 +345,15 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
                   {awaiting > 0 && <StatusBadge label={awaiting + ' awaiting'} tone="amber" />}
                   <span className="flex items-center gap-1"><FileText size={13} strokeWidth={1.75} />{c.audits.length}</span>
                   <span className="flex items-center gap-1"><Mail size={13} strokeWidth={1.75} />{c.letters.length}</span>
-                  {(
-                    <button
-                      onClick={() => handleVipToggle(c.name, c.isVip)}
-                      disabled={togglingVip === c.name}
-                      className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border transition-colors"
-                      style={{ borderColor: c.isVip ? '#C9A84C' : '#E5E7EB', color: c.isVip ? '#C9A84C' : '#9CA3AF' }}
-                    >
-                      <Star size={10} strokeWidth={2} />
-                      {togglingVip === c.name ? '…' : c.isVip ? 'VIP' : 'Set VIP'}
-                    </button>
-                  )}
+                  <button
+                    onClick={() => handleVipToggle(c.name, c.isVip)}
+                    disabled={togglingVip === c.name}
+                    className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border transition-colors"
+                    style={{ borderColor: c.isVip ? '#C9A84C' : '#E5E7EB', color: c.isVip ? '#C9A84C' : '#9CA3AF' }}
+                  >
+                    <Star size={10} strokeWidth={2} />
+                    {togglingVip === c.name ? '…' : c.isVip ? 'VIP' : 'Set VIP'}
+                  </button>
                 </div>
               </div>
 
@@ -335,21 +383,19 @@ export default function ClientsPage({ onOpenAudit, isAdmin }) {
                     ))}
                   </div>
 
-                  {(
-                    <div className="pt-2 border-t border-border">
-                      {confirmDelete === c.name ? (
-                        <div className="flex items-center gap-3">
-                          <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
-                          <button onClick={() => handleDelete(c.name)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
-                          <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
-                        </div>
-                      ) : (
-                        <button onClick={() => setConfirmDelete(c.name)} className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-red-600">
-                          <Trash2 size={13} strokeWidth={1.75} /> Delete client
-                        </button>
-                      )}
-                    </div>
-                  )}
+                  <div className="pt-2 border-t border-border">
+                    {confirmDelete === c.name ? (
+                      <div className="flex items-center gap-3">
+                        <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
+                        <button onClick={() => handleDelete(c.name)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
+                        <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setConfirmDelete(c.name)} className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-red-600">
+                        <Trash2 size={13} strokeWidth={1.75} /> Delete client
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

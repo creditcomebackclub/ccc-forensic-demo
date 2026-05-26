@@ -58,15 +58,16 @@ function computeDashboard(clients) {
     for (const l of c.letters) {
       if (l.phase?.startsWith('Phase 3')) { phase3++; continue; }
       const st = letterStatus(l);
+      const hasPhase3 = c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher);
 
       if (st.code === 'awaiting') awaiting++;
-      const hasPhase3 = c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher);
       if (st.code === 'window_closed' && !hasPhase3) {
         escalate++;
         actions.push({
           type: 'escalate', priority: c.isVip ? 0 : 1,
           client: c.name, furnisher: l.furnisher, isVip: c.isVip,
           label: 'Window closed — ready to escalate', tone: 'red', savedAt: l.savedAt,
+          filter: 'escalate',
         });
       }
       if (st.code === 'no_response' && !hasPhase3) {
@@ -74,6 +75,7 @@ function computeDashboard(clients) {
           type: 'no_response', priority: c.isVip ? 0 : 1,
           client: c.name, furnisher: l.furnisher, isVip: c.isVip,
           label: 'No response logged', tone: 'red', savedAt: l.savedAt,
+          filter: 'escalate',
         });
       }
       if (st.code === 'received') {
@@ -86,6 +88,7 @@ function computeDashboard(clients) {
             label: hoursLeft <= 0 ? 'Phase 3 overdue' : (c.isVip ? Math.max(0, Math.round(hoursLeft)) + 'h to respond (VIP)' : Math.ceil(hoursLeft / 24) + 'd to respond'),
             tone: hoursLeft <= 0 ? 'red' : c.isVip ? 'red' : 'amber',
             savedAt: l.responseDate || l.savedAt,
+            filter: 'received',
           });
         }
       }
@@ -114,16 +117,24 @@ function Pill({ label, tone }) {
   return <span className={'text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm ' + (map[tone] || map.neutral)}>{label}</span>;
 }
 
-function StatCard({ icon: Icon, label, value, sub, tone }) {
+function StatCard({ icon: Icon, label, value, sub, tone, onClick, clickable }) {
   const toneColor = tone === 'red' ? '#DC2626' : tone === 'amber' ? '#D97706' : tone === 'green' ? '#15803D' : '#1B2A4A';
   return (
-    <div className="bg-white border border-border rounded p-5">
+    <div
+      onClick={onClick}
+      className={'bg-white border border-border rounded p-5 transition-all ' + (clickable ? 'cursor-pointer hover:border-navy hover:shadow-sm' : '')}
+    >
       <div className="flex items-center justify-between mb-3">
         <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">{label}</div>
         <Icon size={15} strokeWidth={1.75} style={{ color: toneColor }} />
       </div>
       <div className="text-3xl font-medium ccc-display" style={{ color: toneColor }}>{value}</div>
       {sub && <div className="text-[11px] text-ink-muted mt-1">{sub}</div>}
+      {clickable && value > 0 && (
+        <div className="text-[10px] uppercase tracking-wider mt-2 flex items-center gap-1" style={{ color: toneColor }}>
+          View all <ChevronRight size={10} strokeWidth={2} />
+        </div>
+      )}
     </div>
   );
 }
@@ -159,38 +170,30 @@ async function connectGoogleCalendar() {
 function CalendarWidget() {
   const [events, setEvents] = useState(undefined);
   const [connecting, setConnecting] = useState(false);
-
   useEffect(() => { fetchCalendarEvents().then(setEvents); }, []);
 
-  if (events === undefined) {
-    return (
-      <div className="bg-white border border-border rounded p-5 flex items-center justify-center h-32">
-        <div className="text-[12px] text-ink-muted">Loading calendar…</div>
-      </div>
-    );
-  }
+  if (events === undefined) return (
+    <div className="bg-white border border-border rounded p-5 flex items-center justify-center h-32">
+      <div className="text-[12px] text-ink-muted">Loading calendar…</div>
+    </div>
+  );
 
-  if (events === null) {
-    return (
-      <div className="bg-white border border-border rounded p-5">
-        <div className="flex items-center gap-2 mb-4">
-          <Calendar size={14} strokeWidth={1.75} className="text-ink-muted" />
-          <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Calendar</div>
-        </div>
-        <div className="text-center py-3">
-          <div className="text-[12px] text-ink-muted mb-3">Connect Google Calendar to see upcoming events</div>
-          <button
-            onClick={() => { setConnecting(true); connectGoogleCalendar(); }}
-            disabled={connecting}
-            className="px-4 py-2 text-[11px] uppercase tracking-wider rounded-sm transition-colors"
-            style={{ backgroundColor: connecting ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}
-          >
-            {connecting ? 'Connecting…' : 'Connect Google Calendar'}
-          </button>
-        </div>
+  if (events === null) return (
+    <div className="bg-white border border-border rounded p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <Calendar size={14} strokeWidth={1.75} className="text-ink-muted" />
+        <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Calendar</div>
       </div>
-    );
-  }
+      <div className="text-center py-3">
+        <div className="text-[12px] text-ink-muted mb-3">Connect Google Calendar to see upcoming events</div>
+        <button onClick={() => { setConnecting(true); connectGoogleCalendar(); }} disabled={connecting}
+          className="px-4 py-2 text-[11px] uppercase tracking-wider rounded-sm transition-colors"
+          style={{ backgroundColor: connecting ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
+          {connecting ? 'Connecting…' : 'Connect Google Calendar'}
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="bg-white border border-border rounded p-5">
@@ -206,12 +209,8 @@ function CalendarWidget() {
           return (
             <div key={e.id || i} className="flex items-start gap-3 py-2 border-b border-border last:border-b-0">
               <div className="text-center shrink-0 w-10">
-                <div className="text-[10px] uppercase tracking-wider text-ink-faint">
-                  {start ? new Date(start).toLocaleDateString('en-US', { month: 'short' }) : ''}
-                </div>
-                <div className="text-[16px] font-medium text-navy ccc-display leading-tight">
-                  {start ? new Date(start).getDate() : ''}
-                </div>
+                <div className="text-[10px] uppercase tracking-wider text-ink-faint">{start ? new Date(start).toLocaleDateString('en-US', { month: 'short' }) : ''}</div>
+                <div className="text-[16px] font-medium text-navy ccc-display leading-tight">{start ? new Date(start).getDate() : ''}</div>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-[12px] text-ink font-medium truncate">{e.summary || 'Untitled'}</div>
@@ -237,7 +236,6 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
         const list = isAdmin ? await adminListClients() : await listClients();
         setDash(computeDashboard(list));
       } catch (e) {
-        console.error('Dashboard load failed', e);
         setDash({ actions: [], awaiting: 0, escalate: 0, phase3: 0, active: 0, recentActivity: [], vipClients: [] });
       }
     };
@@ -246,13 +244,14 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
     return () => clearInterval(interval);
   }, [isAdmin]);
 
-  if (!dash) {
-    return (
-      <div className="max-w-5xl mx-auto text-center py-20 text-ink-muted">
-        <div className="text-[13px]">Loading dashboard…</div>
-      </div>
-    );
-  }
+  const handleActionClick = (action) => onNavigate('clients', { jumpTo: action.client, filter: action.filter });
+  const handleStatClick = (filter) => onNavigate('clients', { filter });
+
+  if (!dash) return (
+    <div className="max-w-5xl mx-auto text-center py-20 text-ink-muted">
+      <div className="text-[13px]">Loading dashboard…</div>
+    </div>
+  );
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -265,7 +264,8 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
           </div>
           <div className="space-y-2">
             {dash.actions.map((a, i) => (
-              <div key={i} className="bg-white border rounded px-4 py-3 flex items-center justify-between gap-3"
+              <div key={i} onClick={() => handleActionClick(a)}
+                className="bg-white border rounded px-4 py-3 flex items-center justify-between gap-3 cursor-pointer hover:shadow-sm transition-all group"
                 style={{ borderColor: a.tone === 'red' ? '#FECACA' : '#FDE68A' }}>
                 <div className="flex items-center gap-3 min-w-0">
                   {a.isVip && (
@@ -275,16 +275,13 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
                     </span>
                   )}
                   <div className="min-w-0">
-                    <div className="text-[12px] text-ink font-medium truncate">{a.client}</div>
+                    <div className="text-[12px] text-ink font-medium truncate group-hover:text-navy">{a.client}</div>
                     <div className="text-[11px] text-ink-muted">{a.furnisher}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <Pill label={a.label} tone={a.tone} />
-                  <button onClick={() => onNavigate('clients')}
-                    className="text-[11px] uppercase tracking-wider text-navy hover:text-gold flex items-center gap-1">
-                    View <ChevronRight size={12} strokeWidth={2} />
-                  </button>
+                  <ChevronRight size={14} strokeWidth={2} className="text-ink-faint group-hover:text-navy transition-colors" />
                 </div>
               </div>
             ))}
@@ -293,10 +290,10 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
       )}
 
       <div className="grid grid-cols-4 gap-4">
-        <StatCard icon={Activity} label="Active Campaigns" value={dash.active} sub="accounts in dispute" tone="navy" />
-        <StatCard icon={Clock} label="Awaiting Response" value={dash.awaiting} sub={WINDOW_DAYS + '-day windows open'} tone={dash.awaiting > 0 ? 'amber' : 'navy'} />
-        <StatCard icon={Zap} label="Ready to Escalate" value={dash.escalate} sub="windows closed" tone={dash.escalate > 0 ? 'red' : 'navy'} />
-        <StatCard icon={TrendingUp} label="Phase 3 Active" value={dash.phase3} sub="CRA letters sent" tone={dash.phase3 > 0 ? 'green' : 'navy'} />
+        <StatCard icon={Activity} label="Active Campaigns" value={dash.active} sub="accounts in dispute" tone="navy" clickable={dash.active > 0} onClick={() => handleStatClick('active')} />
+        <StatCard icon={Clock} label="Awaiting Response" value={dash.awaiting} sub={WINDOW_DAYS + '-day windows open'} tone={dash.awaiting > 0 ? 'amber' : 'navy'} clickable={dash.awaiting > 0} onClick={() => handleStatClick('awaiting')} />
+        <StatCard icon={Zap} label="Ready to Escalate" value={dash.escalate} sub="windows closed" tone={dash.escalate > 0 ? 'red' : 'navy'} clickable={dash.escalate > 0} onClick={() => handleStatClick('escalate')} />
+        <StatCard icon={TrendingUp} label="Phase 3 Active" value={dash.phase3} sub="CRA letters sent" tone={dash.phase3 > 0 ? 'green' : 'navy'} clickable={dash.phase3 > 0} onClick={() => handleStatClick('phase3')} />
       </div>
 
       <div className="grid grid-cols-12 gap-4">
@@ -308,22 +305,22 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
           {dash.recentActivity.length === 0 && <div className="text-[12px] text-ink-muted py-2">No activity yet — run your first audit</div>}
           <div className="space-y-0">
             {dash.recentActivity.map((a, i) => (
-              <div key={i} className="flex items-start gap-3 py-2 border-b border-border last:border-b-0">
+              <div key={i} onClick={() => onNavigate('clients', { jumpTo: a.client })}
+                className="flex items-start gap-3 py-2 border-b border-border last:border-b-0 cursor-pointer hover:bg-gray-50 rounded transition-colors group">
                 <div className="shrink-0 mt-0.5">
-                  {a.type === 'audit'
-                    ? <FileText size={13} strokeWidth={1.75} className="text-navy" />
-                    : <Mail size={13} strokeWidth={1.75} className="text-ink-muted" />}
+                  {a.type === 'audit' ? <FileText size={13} strokeWidth={1.75} className="text-navy" /> : <Mail size={13} strokeWidth={1.75} className="text-ink-muted" />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[12px] text-ink font-medium truncate">{a.client}</div>
+                  <div className="text-[12px] text-ink font-medium truncate group-hover:text-navy">{a.client}</div>
                   <div className="text-[11px] text-ink-muted truncate">
-                    {a.type === 'audit'
-                      ? `${a.accounts} accounts · ${a.violations} violations`
-                      : `${a.furnisher} · ${a.phase}`}
+                    {a.type === 'audit' ? `${a.accounts} accounts · ${a.violations} violations` : `${a.furnisher} · ${a.phase}`}
                     {isAdmin && a.auditorName && <span className="ml-1 text-gold">· {a.auditorName}</span>}
                   </div>
                 </div>
-                <div className="text-[10px] text-ink-faint shrink-0">{fmtTime(a.savedAt)}</div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="text-[10px] text-ink-faint">{fmtTime(a.savedAt)}</div>
+                  <ChevronRight size={11} strokeWidth={2} className="text-ink-faint group-hover:text-navy transition-colors" />
+                </div>
               </div>
             ))}
           </div>
@@ -342,16 +339,15 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
                   const ripe = openLetters.filter((l) => letterStatus(l).code === 'window_closed').length;
                   const needsPhase3 = openLetters.filter((l) => l.responseOutcome === 'received').length;
                   return (
-                    <div key={i} className="flex items-center justify-between py-2 border-b last:border-b-0" style={{ borderColor: '#F4F1E8' }}>
-                      <div className="text-[12px] text-ink font-medium">{c.name}</div>
+                    <div key={i} onClick={() => onNavigate('clients', { jumpTo: c.name })}
+                      className="flex items-center justify-between py-2 border-b last:border-b-0 cursor-pointer hover:bg-amber-50 rounded px-1 transition-colors group"
+                      style={{ borderColor: '#F4F1E8' }}>
+                      <div className="text-[12px] text-ink font-medium group-hover:text-navy">{c.name}</div>
                       <div className="flex items-center gap-2">
                         {needsPhase3 > 0 && <Pill label="needs Phase 3" tone="amber" />}
                         {ripe > 0 && <Pill label="escalate" tone="red" />}
                         {!ripe && !needsPhase3 && <Pill label="on track" tone="green" />}
-                        <button onClick={() => onNavigate('clients')}
-                          className="text-[11px] text-navy hover:text-gold uppercase tracking-wider flex items-center gap-0.5">
-                          View <ChevronRight size={11} strokeWidth={2} />
-                        </button>
+                        <ChevronRight size={11} strokeWidth={2} className="text-ink-faint group-hover:text-navy transition-colors" />
                       </div>
                     </div>
                   );

@@ -21,6 +21,7 @@ export default function App() {
   const [session, setSession] = useState(undefined);
   const [profile, setProfile] = useState(null);
   const [view, setView] = useState(VIEW.DASHBOARD);
+  const [clientsContext, setClientsContext] = useState(null);
   const [state, setState] = useState(STATE.IDLE);
   const [auditResult, setAuditResult] = useState(null);
   const [fileName, setFileName] = useState('');
@@ -58,6 +59,15 @@ export default function App() {
   const displayName = (profile && profile.full_name) || (user.user_metadata && user.user_metadata.full_name) || user.email || 'Auditor';
   const initials = displayName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
+  const handleNavigate = (viewName, context = null) => {
+    if (viewName === 'clients' && context) {
+      setClientsContext(context);
+    } else {
+      setClientsContext(null);
+    }
+    setView(viewName);
+  };
+
   const handleAuditStart = async (file) => {
     setView(VIEW.AUDIT);
     setState(STATE.PROCESSING);
@@ -82,14 +92,16 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-bg flex">
-      <Sidebar view={view} onNavigate={setView} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} />
+      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} />
       <main className="flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
           {view === VIEW.DASHBOARD && (
-            <DashboardPage isAdmin={isAdmin} onNavigate={setView} onAuditStart={handleAuditStart} />
+            <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} onAuditStart={handleAuditStart} />
           )}
-          {view === VIEW.CLIENTS && <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} />}
+          {view === VIEW.CLIENTS && (
+            <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || null} filter={clientsContext?.filter || null} />
+          )}
           {view === VIEW.METHODOLOGY && <MethodologyPage />}
           {view === VIEW.TEAM && isAdmin && <TeamPage currentUserId={user.id} />}
           {view === VIEW.AUDIT && (
