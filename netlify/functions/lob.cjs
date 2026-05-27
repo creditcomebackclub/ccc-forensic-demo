@@ -63,7 +63,7 @@ exports.handler = async (event) => {
     }
 
     if (action === 'send_letter') {
-      const { toAddress, fromAddress, pdfBase64, description } = payload;
+      const { toAddress, fromAddress, pdfBase64, remoteUrl, description } = payload;
       const letterPayload = {
         description: description || 'CCC Dispute Letter',
         to: {
@@ -84,7 +84,7 @@ exports.handler = async (event) => {
           address_zip: fromAddress.zip,
           address_country: 'US',
         },
-        file: Buffer.from(pdfBase64, 'base64').toString('utf8'),
+        file: remoteUrl,
         color: false,
         double_sided: false,
         address_placement: 'top_first_page',
@@ -92,8 +92,7 @@ exports.handler = async (event) => {
         extra_service: 'certified',
       };
       const result = await lobRequest('/v1/letters', 'POST', letterPayload, apiKey);
-      console.log('LOB RESPONSE:', result.status, JSON.stringify(result.body).slice(0, 500));
-      return { statusCode: result.status, body: JSON.stringify(result.body) };
+return { statusCode: result.status, body: JSON.stringify(result.body) };
     }
 
     if (action === 'get_tracking') {

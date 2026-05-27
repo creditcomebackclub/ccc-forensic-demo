@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Send, CheckCircle, AlertCircle, MapPin } from 'lucide-react';
 import { getDocuments, getDocumentBase64 } from '../utils/documents';
+import { supabase } from '../utils/supabase';
 
 const LOB_FUNCTION_URL = '/.netlify/functions/lob';
 
@@ -86,7 +87,16 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
     setSending(true);
     setError(null);
     try {
-      const htmlBase64 = btoa(unescape(encodeURIComponent(letter.html)));
+      // Upload letter HTML to Supabase Storage and get signed URL for Lob
+      const { data: { user } } = await supabase.auth.getUser();
+      const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
+      const tempPath = user.id + '/temp-letters/' + slug(letter.clientName) + '-' + slug(letter.furnisher) + '-' + Date.now() + '.html';
+      const htmlBlob = new Blob([letter.html], { type: 'text/html' });
+      const { error: uploadErr } = await supabase.storage.from('documents').upload(tempPath, htmlBlob, { upsert: true });
+      if (uploadErr) throw new Error('Could not upload letter for mailing: ' + uploadErr.message);
+      const { data: urlData, error: urlErr } = await supabase.storage.from('documents').createSignedUrl(tempPath, 3600);
+      if (urlErr) throw new Error('Could not get letter URL: ' + urlErr.message);
+      const remoteUrl = urlData.signedUrl;
 
       const enclosures = [];
       if (idDoc) {
@@ -101,7 +111,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
       const res = await callLob('send_letter', {
         toAddress: toAddr,
         fromAddress: FROM_ADDRESS,
-        pdfBase64: htmlBase64,
+        remoteUrl,
         description: letter.clientName + ' — ' + letter.furnisher + ' — ' + letter.phase,
         enclosures,
       });
