@@ -84,7 +84,7 @@ exports.handler = async (event) => {
           address_zip: fromAddress.zip,
           address_country: 'US',
         },
-        file: '<html>' + Buffer.from(pdfBase64, 'base64').toString('utf8') + '</html>',
+        file: Buffer.from(pdfBase64, 'base64').toString('utf8'),
         color: false,
         double_sided: false,
         address_placement: 'top_first_page',
