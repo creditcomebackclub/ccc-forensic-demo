@@ -154,8 +154,19 @@ Scan every credit report for:
 10. Legal Obligations recap (FCRA §623, Reg V, Metro 2)
 11. Required Corrections (numbered demands list with specific Metro 2 field updates + Type C §1692g(b) demands)
 12. Failure to Comply — CFPB complaint, state AG, §1681n damages, FDCPA §1692k for Type C
-13. Documentation Requirements (written confirmation required)
-14. Closing: "I expect your prompt attention to this matter and full compliance with FCRA requirements."
+13. Documentation Requirements — demand ALL of the following in writing:
+   - Specific identification of every record reviewed during investigation
+   - Explanation of how those records support accuracy of each disputed element
+   - Copies of documentation relied upon (redacted if necessary but sufficient to demonstrate verification)
+   - For charge-off accounts with active balance: (a) original credit agreement, (b) itemized transaction history showing how the balance was calculated post-charge-off, (c) internal records showing charge-off date and charge-off amount, (d) written explanation of how a charged-off account can simultaneously carry a current balance under Metro 2 standards
+   - Confirmation of all Metro 2 corrections submitted to each CRA with dates and corrected field values
+   - Form letters, "verified as reported" responses, or automated replies are deemed non-responsive and legally insufficient under Johnson v. MBNA, 357 F.3d 426
+14. Closing — before the signature block, add ONE devastating sentence that frames the core violation as a logical impossibility specific to this account. Examples by violation type:
+   - Charge-off with active balance: "A charged-off account reporting an active balance and past due amount is a logical impossibility — charge-off by definition represents debt deemed uncollectible and written off for tax purposes, and it cannot simultaneously carry an active financial obligation."
+   - Re-aged DOFD: "A Date of First Delinquency set after the Date of Last Payment is a mathematical impossibility that exposes this reporting as fabricated."
+   - Cross-bureau asymmetry: "The same account cannot simultaneously have [X] at one bureau and [Y] at another — at least one version is definitionally false."
+   - Status paradox: "An account cannot simultaneously be [Status A] and carry [contradictory data point] — this is a Metro 2 integrity failure with no lawful explanation."
+   Then close: "I expect your prompt attention to this matter and full compliance with FCRA requirements within thirty (30) days."
 15. Signature block: "Consumer — All Rights Reserved"
 16. Certified mail + Enclosures line
 
