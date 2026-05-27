@@ -116,6 +116,19 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze, onLobMail }
           <span className={isPhase3 ? 'font-medium' : 'text-ink-muted'} style={{ color: isPhase3 ? '#C9A84C' : undefined }}>{l.phase}</span>
           <span className="text-ink-muted"> · {fmtTime(l.savedAt)}</span>
           {l.mailedDate && <span className="text-ink-muted"> · mailed {fmt(l.mailedDate)}</span>}
+          {l.trackingNumber && (
+            
+              href={"https://tools.usps.com/go/TrackConfirmAction?tLabels=" + l.trackingNumber}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2"
+            >
+              USPS #{l.trackingNumber.slice(-8)}
+            </a>
+          )}
+          {l.lobId && !l.trackingNumber && (
+            <span className="text-[10px] text-ink-faint ml-2">Lob: {l.lobId.slice(0, 12)}…</span>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
           {isAdmin && <AuditorTag name={l.auditorName} />}
