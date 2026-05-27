@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Users, FileText, Mail, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X } from 'lucide-react';
 import { listClients, adminListClients, deleteClient, updateLetter, toggleVip } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
+import DocumentManager from './DocumentManager';
+import LobMailer from './LobMailer';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_DAYS = 1;
