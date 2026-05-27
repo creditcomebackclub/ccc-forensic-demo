@@ -81,7 +81,7 @@ function AuditorTag({ name }) {
   return <span className="inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-navy text-gold">{name}</span>;
 }
 
-function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze }) {
+function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze, onLobMail }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
@@ -150,7 +150,13 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze }) {
         {mode === null && (
           <>
             {!l.mailedDate && (
-              <button onClick={() => { setDateVal(todayISO()); setMode('mailing'); }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Mark mailed</button>
+              <div className="flex items-center gap-3 flex-wrap">
+                <button onClick={() => { setDateVal(todayISO()); setMode('mailing'); }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Mark mailed</button>
+                <button onClick={() => onLobMail(l)}
+                  className="flex items-center gap-1 text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-sm border border-navy text-navy hover:bg-navy hover:text-gold transition-colors">
+                  <Send size={11} strokeWidth={2} /> Send via Lob
+                </button>
+              </div>
             )}
             {l.mailedDate && !l.responseOutcome && (
               <>
@@ -379,8 +385,12 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Letters</div>
                     {c.letters.length === 0 && <div className="text-[12px] text-ink-muted">None</div>}
                     {c.letters.map((l) => (
-                      <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} />
+                      <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter} />
                     ))}
+                  </div>
+
+                  <div>
+                    <DocumentManager clientName={c.name} onChanged={load} />
                   </div>
 
                   <div className="pt-2 border-t border-border">
@@ -402,6 +412,22 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           );
         })}
       </div>
+
+      {lobMailerLetter && (
+        <LobMailer
+          letter={lobMailerLetter}
+          onClose={() => setLobMailerLetter(null)}
+          onSent={async (data) => {
+            await updateLetter(lobMailerLetter.id, {
+              mailedDate: data.mailedDate,
+              lobId: data.lobId,
+              trackingNumber: data.trackingNumber,
+            });
+            setLobMailerLetter(null);
+            load();
+          }}
+        />
+      )}
 
       {analyzingLetter && (
         <ResponseAnalyzer
