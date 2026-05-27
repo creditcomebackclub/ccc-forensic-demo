@@ -181,6 +181,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [analyzingLetter, setAnalyzingLetter] = useState(null);
   const [togglingVip, setTogglingVip] = useState(null);
+  const [lobMailerLetter, setLobMailerLetter] = useState(null);
   const [activeFilter, setActiveFilter] = useState(initialFilter || null);
   const clientRefs = useRef({});
 
