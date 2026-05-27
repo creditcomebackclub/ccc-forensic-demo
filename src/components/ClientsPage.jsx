@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Users, FileText, Mail, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X } from 'lucide-react';
+import { Users, FileText, Mail, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X, Send } from 'lucide-react';
 import { listClients, adminListClients, deleteClient, updateLetter, toggleVip } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
