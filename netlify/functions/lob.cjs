@@ -92,6 +92,7 @@ exports.handler = async (event) => {
         extra_service: 'certified',
       };
       const result = await lobRequest('/v1/letters', 'POST', letterPayload, apiKey);
+      console.log('LOB RESPONSE:', result.status, JSON.stringify(result.body).slice(0, 500));
       return { statusCode: result.status, body: JSON.stringify(result.body) };
     }
 
