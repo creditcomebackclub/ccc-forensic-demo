@@ -42,7 +42,8 @@ function letterStatus(l) {
   if (l.responseOutcome === 'received') return { code: 'received', label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
   if (l.responseOutcome === 'no_response') return { code: 'no_response', label: 'No response confirmed', tone: 'red' };
   if (!l.mailedDate) return { code: 'not_mailed', label: 'Not mailed', tone: 'neutral' };
-  const elapsed = daysBetween(l.mailedDate, todayISO());
+  const clockStart = l.deliveredAt ? l.deliveredAt.slice(0, 10) : l.mailedDate;
+  const elapsed = daysBetween(clockStart, todayISO());
   const remaining = WINDOW_DAYS - elapsed;
   if (remaining > 0) return { code: 'awaiting', label: 'Awaiting · ' + remaining + 'd left', tone: 'amber' };
   return { code: 'window_closed', label: 'Window elapsed · ready to escalate', tone: 'red' };
@@ -174,7 +175,9 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze, onLobMail }
           <>
             {!l.mailedDate && (
               <div className="flex items-center gap-3 flex-wrap">
-                <button onClick={() => { setDateVal(todayISO()); setMode('mailing'); }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Mark mailed</button>
+                {!l.lobId && (
+                  <button onClick={() => { setDateVal(todayISO()); setMode('mailing'); }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Mark mailed</button>
+                )}
                 <button onClick={() => onLobMail(l)}
                   className="flex items-center gap-1 text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-sm border border-navy text-navy hover:bg-navy hover:text-gold transition-colors">
                   <Send size={11} strokeWidth={2} /> Send via Lob
