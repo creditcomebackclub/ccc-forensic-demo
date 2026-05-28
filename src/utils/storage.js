@@ -112,6 +112,10 @@ export async function updateLetter(id, patch) {
   if ('mailedDate' in patch) mapped.mailed_date = patch.mailedDate;
   if ('responseOutcome' in patch) mapped.response_outcome = patch.responseOutcome;
   if ('responseDate' in patch) mapped.response_date = patch.responseDate;
+  if ('lobId' in patch) mapped.lob_id = patch.lobId;
+  if ('trackingNumber' in patch) mapped.tracking_number = patch.trackingNumber;
+  if ('trackingStatus' in patch) mapped.tracking_status = patch.trackingStatus;
+  if ('deliveredAt' in patch) mapped.delivered_at = patch.deliveredAt;
 
   const { data, error } = await supabase
     .from('letters')
@@ -151,6 +155,10 @@ function normalizeLetter(l) {
     mailedDate: l.mailed_date,
     responseOutcome: l.response_outcome,
     responseDate: l.response_date,
+    lobId: l.lob_id,
+    trackingNumber: l.tracking_number,
+    trackingStatus: l.tracking_status,
+    deliveredAt: l.delivered_at,
   };
 }
 
