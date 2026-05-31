@@ -149,7 +149,7 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
         <div className="flex items-center gap-2.5">
           <img src="/logo.jpg" alt="CCC" className="w-8 h-8 object-contain rounded" />
           <div>
-            <div className="text-white text-[13px] font-medium leading-tight ccc-display">Credit Comeback</div>
+            <div className="text-white text-[13px] font-medium leading-tight ccc-display">Credit Comeback Club</div>
             <div className="text-[10px] uppercase tracking-[0.18em] text-gold">Forensic Suite</div>
           </div>
         </div>
