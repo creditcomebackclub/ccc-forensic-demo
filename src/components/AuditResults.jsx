@@ -255,11 +255,11 @@ function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, e
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    onGenerateLetter(a);
+                    if ([...existingLetters].some((lf) => { const af = (a.furnisher || '').toLowerCase().trim(); return lf.includes(af) || af.includes(lf) || lf.split('/').map(s=>s.trim()).some(p => af.includes(p) || p.includes(af)); })) return; onGenerateLetter(a);
                   }}
-                  className="text-[10px] uppercase tracking-wider px-2.5 py-1.5 rounded-sm flex items-center gap-1 bg-navy text-white hover:bg-navy-dark transition-colors"
+                  className={`text-[10px] uppercase tracking-wider px-2.5 py-1.5 rounded-sm flex items-center gap-1 transition-colors ${[...existingLetters].some((lf) => { const af = (a.furnisher || '').toLowerCase().trim(); return lf.includes(af) || af.includes(lf) || lf.split('/').map(s=>s.trim()).some(p => af.includes(p) || p.includes(af)); }) ? 'bg-green-600 text-white cursor-default' : 'bg-navy text-white hover:bg-navy-dark'}`}
                 >
-                  <Mail size={10} /> Letter
+                  {[...existingLetters].some((lf) => { const af = (a.furnisher || '').toLowerCase().trim(); return lf.includes(af) || af.includes(lf) || lf.split('/').map(s=>s.trim()).some(p => af.includes(p) || p.includes(af)); }) ? <><CheckCircle size={10} /> Done</> : <><Mail size={10} /> Letter</>}
                 </button>
               </td>
             </tr>
