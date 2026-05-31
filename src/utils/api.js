@@ -160,16 +160,9 @@ export async function generateLetter(account, client) {
 
   const htmlMatch = rawText.match(/<!DOCTYPE[\s\S]*<\/html>/i) || rawText.match(/<html[\s\S]*<\/html>/i);
   const html = htmlMatch ? htmlMatch[0] : rawText;
+  if (!html || html.trim().length < 100) throw new Error('Letter generation returned empty content — please try again');
 
-  await saveLetter({
-    clientName: client.name,
-    furnisher: account.furnisher,
-    accountId: account.accountNumber,
-    phase: 'Phase 1',
-    type: account.accountClassification,
-    html,
-    date: t,
-  });
+  await saveLetter(account, client, html);
 
   return { html };
 }
