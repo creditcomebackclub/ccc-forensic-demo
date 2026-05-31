@@ -1,118 +1,134 @@
-import React, { useState, useRef } from 'react';
-import { Upload, FileText, X, Sparkles, Scale, Mail } from 'lucide-react';
+import React, { useState } from 'react';
+import { Upload, FileText, X, ChevronDown, ChevronUp, Info } from 'lucide-react';
 
-export default function UploadZone({ onAuditStart, disabled }) {
-  const [dragOver, setDragOver] = useState(false);
-  const [file, setFile] = useState(null);
-  const inputRef = useRef(null);
+const MODES = [
+  { id: 'combined', label: '3-Bureau Combined', desc: 'Single PDF containing all three bureaus — ScoreFusion, IdentityIQ, MyScoreIQ' },
+  { id: 'individual', label: '3 Individual Reports', desc: 'Upload one PDF per bureau — parsed independently for maximum accuracy', badge: 'Most Accurate' },
+  { id: 'single', label: 'Single Bureau', desc: 'One bureau report only — useful for monitoring a specific bureau mid-campaign' },
+];
 
-  const handleFile = (f) => {
-    if (!f) return;
-    if (f.type !== 'application/pdf') {
-      alert('Please upload a PDF credit report.');
-      return;
-    }
-    if (f.size > 30 * 1024 * 1024) {
-      alert('File too large. Max 30MB.');
-      return;
-    }
-    setFile(f);
+function DropZone({ label, file, onFile, onClear }) {
+  const [dragging, setDragging] = useState(false);
+  return (
+    <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
+      onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files[0]; if (f) onFile(f); }}
+      className={'border-2 rounded transition-colors ' + (dragging ? 'border-navy bg-blue-50' : file ? 'border-green-400 bg-green-50' : 'border-dashed border-border bg-gray-50')}>
+      {file ? (
+        <div className="flex items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileText size={16} strokeWidth={1.75} className="text-green-600 shrink-0" />
+            <div className="min-w-0">
+              <div className="text-[12px] text-ink font-medium truncate">{label}</div>
+              <div className="text-[11px] text-ink-muted truncate">{file.name}</div>
+            </div>
+          </div>
+          <button onClick={onClear} className="text-ink-faint hover:text-red-600 shrink-0 ml-2"><X size={14} strokeWidth={2} /></button>
+        </div>
+      ) : (
+        <label className="flex flex-col items-center justify-center py-6 px-4 cursor-pointer">
+          <Upload size={20} className="text-ink-faint mb-2" strokeWidth={1.5} />
+          <div className="text-[12px] text-ink font-medium mb-0.5">{label}</div>
+          <div className="text-[10px] text-ink-muted">Drop PDF or click to browse</div>
+          <input type="file" accept=".pdf" className="hidden" onChange={(e) => { if (e.target.files[0]) onFile(e.target.files[0]); }} />
+        </label>
+      )}
+    </div>
+  );
+}
+
+export default function UploadZone({ onAuditStart }) {
+  const [mode, setMode] = useState('combined');
+  const [selectedBureau, setSelectedBureau] = useState('Equifax');
+  const [files, setFiles] = useState({});
+  const [showInfo, setShowInfo] = useState(false);
+
+  const setFile = (key, file) => setFiles((p) => ({ ...p, [key]: file }));
+  const clearFile = (key) => setFiles((p) => { const n = { ...p }; delete n[key]; return n; });
+
+  const canSubmit = () => {
+    if (mode === 'combined') return !!files.combined;
+    if (mode === 'individual') return !!(files.Equifax && files.Experian && files.TransUnion);
+    if (mode === 'single') return !!files[selectedBureau];
+    return false;
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setDragOver(false);
-    handleFile(e.dataTransfer.files[0]);
-  };
-
-  const handleStart = () => {
-    if (file) onAuditStart(file);
+  const handleSubmit = () => {
+    if (!canSubmit()) return;
+    if (mode === 'combined') onAuditStart({ mode: 'combined', file: files.combined });
+    else if (mode === 'individual') onAuditStart({ mode: 'individual', files: { equifax: files.Equifax, experian: files.Experian, transunion: files.TransUnion } });
+    else if (mode === 'single') onAuditStart({ mode: 'single', file: files[selectedBureau], bureau: selectedBureau });
   };
 
   return (
-    <div className="max-w-3xl mx-auto">
-      {!file ? (
-        <div
-          onDrop={handleDrop}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onClick={() => inputRef.current?.click()}
-          className={`border-2 border-dashed rounded p-16 text-center cursor-pointer transition-all ${
-            dragOver ? 'bg-navy/5 border-navy' : 'bg-white border-border hover:bg-gray-50'
-          }`}
-        >
-          <input
-            ref={inputRef}
-            type="file"
-            accept="application/pdf"
-            onChange={(e) => handleFile(e.target.files[0])}
-            className="hidden"
-          />
-          <Upload size={36} strokeWidth={1.25} className="mx-auto mb-4 text-navy" />
-          <h2 className="ccc-display text-2xl text-ink font-medium">
-            Drop 3-bureau credit report
-          </h2>
-          <p className="text-[13px] mt-2 text-ink-muted">
-            ScoreSense · MyScoreIQ · PrivacyGuard · SmartCredit · IdentityIQ
-          </p>
-          <button className="mt-6 px-5 py-2.5 rounded-sm text-[12px] uppercase tracking-wider font-medium bg-navy text-white hover:bg-navy-dark transition-colors">
-            Or browse files
-          </button>
-          <p className="text-[10px] uppercase tracking-[0.15em] mt-6 text-ink-faint">
-            Auto-pipeline · Forensic Audit → Classification → Phase 1 Letters
-          </p>
-        </div>
-      ) : (
-        <div className="bg-white border border-border rounded p-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded bg-navy/5 flex items-center justify-center">
-              <FileText size={18} className="text-navy" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="font-medium text-ink truncate">{file.name}</div>
-              <div className="text-[11px] text-ink-muted">
-                {(file.size / 1024 / 1024).toFixed(2)} MB · Ready to audit
-              </div>
-            </div>
-            <button
-              onClick={() => setFile(null)}
-              className="p-2 hover:bg-gray-100 rounded transition-colors"
-              disabled={disabled}
-            >
-              <X size={16} className="text-ink-muted" />
-            </button>
-          </div>
-
-          <button
-            onClick={handleStart}
-            disabled={disabled}
-            className="w-full mt-5 px-4 py-3 text-[12px] uppercase tracking-wider rounded-sm font-medium flex items-center justify-center gap-2 bg-gold text-navy-dark hover:bg-gold-dark hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Sparkles size={14} />
-            Run Forensic Audit
-          </button>
-        </div>
-      )}
-
-      <div className="grid grid-cols-3 gap-4 mt-6">
-        {[
-          { icon: Sparkles, title: 'Forensic Audit', desc: 'Per-account violation matrix' },
-          { icon: Scale, title: 'Account Classification', desc: 'Type A / B / C routing' },
-          { icon: Mail, title: 'Phase 1 Letters', desc: 'Generated per account' },
-        ].map((s, i) => {
-          const Icon = s.icon;
-          return (
-            <div key={i} className="p-4 border border-border rounded bg-white">
-              <Icon size={16} className="text-gold" strokeWidth={1.75} />
-              <div className="text-[13px] font-medium mt-2 text-ink">{s.title}</div>
-              <div className="text-[11px] mt-0.5 text-ink-muted">{s.desc}</div>
-            </div>
-          );
-        })}
+    <div className="max-w-2xl mx-auto">
+      <div className="mb-6">
+        <h2 className="ccc-display text-xl text-ink font-medium mb-1">Select Report Format</h2>
+        <p className="text-[12px] text-ink-muted">Choose how you're uploading the client's credit report.</p>
       </div>
+      <div className="space-y-2 mb-6">
+        {MODES.map((m) => (
+          <div key={m.id} onClick={() => setMode(m.id)}
+            className={'border rounded p-4 cursor-pointer transition-all ' + (mode === m.id ? 'border-navy bg-blue-50' : 'border-border bg-white hover:border-navy')}>
+            <div className="flex items-center gap-3">
+              <div className={'w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ' + (mode === m.id ? 'border-navy' : 'border-gray-300')}>
+                {mode === m.id && <div className="w-2 h-2 rounded-full bg-navy" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] text-ink font-medium">{m.label}</div>
+                <div className="text-[11px] text-ink-muted">{m.desc}</div>
+              </div>
+              {m.badge && <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-amber-50 text-amber-700 shrink-0">{m.badge}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mb-4">
+        <button onClick={() => setShowInfo(!showInfo)} className="flex items-center gap-1.5 text-[11px] text-ink-muted hover:text-ink">
+          <Info size={13} strokeWidth={1.75} />
+          {showInfo ? 'Hide' : 'Show'} token usage info
+          {showInfo ? <ChevronUp size={12} strokeWidth={2} /> : <ChevronDown size={12} strokeWidth={2} />}
+        </button>
+        {showInfo && (
+          <div className="mt-2 border border-border rounded-sm p.3 bg-gray-50 text-[11px] text-ink-muted space-y-1">
+            <p><strong className="text-ink">3-Bureau Combined:</strong> 1 API call (~$0.08-0.15). Fastest.</p>
+            <p><strong className="text-ink">3 Individual Reports:</strong> 4 API calls (~$0.25-0.45). Most accurate. Takes 4-5 minutes.</p>
+            <p><strong className="text-ink">Single Bureau:</strong> 1 API call (~$0.08-0.15). No cross-bureau analysis.</p>
+          </div>
+        )}
+      </div>
+      <div className="space-y-3 mb-6">
+        {mode === 'combined' && (
+          <DropZone label="Three-Bureau Report (PDF)" file={files.combined} onFile={(f) => setFile('combined', f)} onClear={() => clearFile('combined')} />
+        )}
+        {mode === 'individual' && (
+          <>
+            <DropZone label="Equifax Report (PDF)" file={files.Equifax} onFile={(f) => setFile('Equifax', f)} onClear={() => clearFile('Equifax')} />
+            <DropZone label="Experian Report (PDF)" file={files.Experian} onFile={(f) => setFile('Experian', f)} onClear={() => clearFile('Experian')} />
+            <DropZone label="TransUnion Report (PDF)" file={files.TransUnion} onFile={(f) => setFile('TransUnion', f)} onClear={() => clearFile('TransUnion')} />
+          </>
+        )}
+        {mode === 'single' && (
+          <>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[11px] text-ink-muted">Bureau:</span>
+              {['Equifax', 'Experian', 'TransUnion'].map((b) => (
+                <button key={b} onClick={() => { setSelectedBureau(b); clearFile(b); }}
+                  className={'px-3 py-1 text-[11px] uppercase tracking-wider rounded-sm border transition-colors ' + (selectedBureau === b ? 'bg-navy text-gold border-navy' : 'border-border text-ink-muted hover:border-navy')}>
+                  {b}
+                </button>
+              ))}
+            </div>
+            <DropZone label={selectedBureau + ' Report (PDF)'} file={files[selectedBureau]} onFile={(f) => setFile(selectedBureau, f)} onClear={() => clearFile(selectedBureau)} />
+          </>
+        )}
+      </div>
+      <button onClick={handleSubmit} disabled={!canSubmit()}
+        className="w-full py-3 text-[13px] uppercase tracking-wider rounded-sm transition-colors font-medium"
+        style={{ backgroundColor: canSubmit() ? '#1B2A4A' : '#B5BBC9', color: '#C9A84C' }}>
+        {mode === 'combined' && 'Run Forensic Audit'}
+        {mode === 'individual' && (canSubmit() ? 'Run 3-Bureau Forensic Audit (4 API calls, ~5 min)' : 'Upload all 3 bureau reports to continue')}
+        {mode === 'single' && 'Run Single Bureau Audit'}
+      </button>
     </div>
   );
 }
