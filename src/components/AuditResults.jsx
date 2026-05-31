@@ -38,6 +38,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset }) {
     if (!clientName) return;
     supabase.from('letters').select('furnisher').eq('client_name', clientName)
       .then(({ data }) => {
+        console.log('letters query result:', data, 'for client:', clientName);
         if (data) setExistingLetters(new Set(data.map((l) => (l.furnisher || '').toLowerCase().trim())));
       });
   }, [audit && audit.client && audit.client.name]);
