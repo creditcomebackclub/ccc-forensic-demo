@@ -12,7 +12,7 @@ import DashboardPage from './components/DashboardPage';
 import SettingsModal from './components/SettingsModal';
 import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
-import { runAudit, fileToBase64 } from './utils/api';
+import { runAudit, runTripleBureauAudit, runSingleBureauAudit, fileToBase64 } from './utils/api';
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
 const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', METHODOLOGY: 'methodology', TEAM: 'team' };
@@ -68,14 +68,30 @@ export default function App() {
     setView(viewName);
   };
 
-  const handleAuditStart = async (file) => {
+  const handleAuditStart = async (payload) => {
     setView(VIEW.AUDIT);
     setState(STATE.PROCESSING);
-    setFileName(file.name);
     setError(null);
     try {
-      const base64 = await fileToBase64(file);
-      const res = await runAudit(base64);
+      let res;
+      if (!payload.mode || payload.mode === 'combined') {
+        const file = payload.file || payload;
+        setFileName(file.name || 'report.pdf');
+        const base64 = await fileToBase64(file);
+        res = await runAudit(base64);
+      } else if (payload.mode === 'individual') {
+        setFileName('3-Bureau Individual Audit');
+        const [eq, exp, tu] = await Promise.all([
+          fileToBase64(payload.files.equifax),
+          fileToBase64(payload.files.experian),
+          fileToBase64(payload.files.transunion),
+        ]);
+        res = await runTripleBureauAudit(eq, exp, tu, (msg) => setFileName(msg));
+      } else if (payload.mode === 'single') {
+        setFileName(payload.bureau + ' Single Bureau Audit');
+        const base64 = await fileToBase64(payload.file);
+        res = await runSingleBureauAudit(base64, payload.bureau);
+      }
       setAuditResult(res.audit);
       setState(STATE.RESULTS);
     } catch (err) {
