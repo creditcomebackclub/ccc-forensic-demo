@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { supabase } from '../utils/supabase';
 import {
-  CheckCircle2, Download, ArrowRight, Sparkles, MapPin, Calendar,
+  CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
   FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale,
 } from 'lucide-react';
 
@@ -30,6 +31,16 @@ function SeverityBar({ severity }) {
 }
 
 export default function AuditResults({ audit, onGenerateLetter, onReset }) {
+  const [existingLetters, setExistingLetters] = React.useState(new Set());
+
+  React.useEffect(() => {
+    const clientName = audit && audit.client && audit.client.name;
+    if (!clientName) return;
+    supabase.from('letters').select('furnisher').eq('client_name', clientName)
+      .then(({ data }) => {
+        if (data) setExistingLetters(new Set(data.map((l) => (l.furnisher || '').toLowerCase().trim())));
+      });
+  }, [audit && audit.client && audit.client.name]);
   const [selectedAccount, setSelectedAccount] = useState(null);
 
   const totalBalance = audit.accounts.reduce((sum, a) => sum + (a.balance || 0), 0);
@@ -123,7 +134,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset }) {
         subtitle="Top accounts by balance × violation strength · Send now"
         accounts={batch1}
         onSelect={setSelectedAccount}
-        onGenerateLetter={onGenerateLetter}
+        onGenerateLetter={onGenerateLetter} existingLetters={existingLetters}
         emphasis
       />
 
@@ -134,7 +145,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset }) {
           subtitle="Staggered for postage cost control · Send next"
           accounts={batch2}
           onSelect={setSelectedAccount}
-          onGenerateLetter={onGenerateLetter}
+          onGenerateLetter={onGenerateLetter} existingLetters={existingLetters}
         />
       )}
 
@@ -176,14 +187,14 @@ export default function AuditResults({ audit, onGenerateLetter, onReset }) {
         <AccountDetail
           account={selectedAccount}
           onClose={() => setSelectedAccount(null)}
-          onGenerateLetter={onGenerateLetter}
+          onGenerateLetter={onGenerateLetter} existingLetters={existingLetters}
         />
       )}
     </div>
   );
 }
 
-function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, emphasis }) {
+function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, emphasis, existingLetters = new Set() }) {
   return (
     <div className="bg-white border border-border rounded">
       <div className={`px-5 py-3.5 border-b border-border ${emphasis ? 'bg-navy-dark text-white' : ''}`}>
@@ -258,7 +269,7 @@ function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, e
   );
 }
 
-function AccountDetail({ account, onClose, onGenerateLetter }) {
+function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = new Set() }) {
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6" onClick={onClose}>
       <div
@@ -330,7 +341,7 @@ function AccountDetail({ account, onClose, onGenerateLetter }) {
             }}
             className="w-full px-4 py-3 text-[12px] uppercase tracking-wider rounded-sm font-medium flex items-center justify-center gap-2 bg-gold text-navy-dark hover:bg-gold-dark hover:text-white transition-colors"
           >
-            <Sparkles size={14} /> Generate Phase 1 Letter
+            {existingLetters.has((account.furnisher || '').toLowerCase().trim()) ? <><CheckCircle size={14} className="text-green-600" /> Letter Generated</> : <><Sparkles size={14} /> Generate Phase 1 Letter</>}
             <ArrowRight size={12} />
           </button>
         </div>
