@@ -121,22 +121,12 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze, onLobMail }
             <a href={"https://tools.usps.com/go/TrackConfirmAction?tLabels=" + l.trackingNumber} target="_blank" rel="noopener noreferrer" className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2">USPS #{l.trackingNumber ? l.trackingNumber.slice(-8) : ""}</a>
           )}
           {l.lobId && !l.trackingNumber && (
-            <span className="text-[10px] text-ink-faint ml-2">Lob: {l.lobId.slice(0, 12)}</span>
+            <span className="text-[10px] text-ink-faint ml-2">Lob: {l.lobId ? l.lobId.slice(0, 12) : ""}</span>
           )}
           {l.trackingStatus && (
             <span className={'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm ml-1 ' + (l.trackingStatus === 'Delivered' ? 'bg-green-50 text-green-700' : l.trackingStatus.includes('Returned') ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700')}>
               {l.trackingStatus}
             </span>
-          )}
-          {l.trackingStatus && (
-            <span className={'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm ml-1 ' +
-              (l.trackingStatus === 'Delivered' ? 'bg-green-50 text-green-700' :
-               l.trackingStatus.includes('Returned') ? 'bg-red-50 text-red-700' :
-               'bg-blue-50 text-blue-700')}>
-              {l.trackingStatus}
-            </span>
-          )}
-            <span className="text-[10px] text-ink-faint ml-2">Lob: {l.lobId.slice(0, 12)}…</span>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
