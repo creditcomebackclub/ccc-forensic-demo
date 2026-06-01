@@ -199,6 +199,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [togglingVip, setTogglingVip] = useState(null);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
   const [activeFilter, setActiveFilter] = useState(initialFilter || null);
+  const [editingEmail, setEditingEmail] = useState(null);
+  const [emailVal, setEmailVal] = useState('');
+  const [sendingLpoa, setSendingLpoa] = useState(null);
+  const [showCreateClient, setShowCreateClient] = useState(false);
   const clientRefs = useRef({});
 
   const load = async () => {
