@@ -9,6 +9,8 @@ import MethodologyPage from './components/MethodologyPage';
 import AuthPage from './components/AuthPage';
 import TeamPage from './components/TeamPage';
 import DashboardPage from './components/DashboardPage';
+import ClientSetupFlow from './components/ClientSetupFlow';
+import ClientPortal from './components/ClientPortal';
 import SettingsModal from './components/SettingsModal';
 import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
@@ -28,20 +30,61 @@ export default function App() {
   const [error, setError] = useState(null);
   const [activeLetter, setActiveLetter] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [isClient, setIsClient] = useState(false);
+  const [clientOnboarded, setClientOnboarded] = useState(false);
+  const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
-      if (!session) setProfile(null);
+      if (!session) { setProfile(null); setIsClient(false); return; }
+      if (_event === 'SIGNED_IN') {
+        // Check if this is a magic link login (password_hash is null = no password set yet)
+        const { data: { user } } = await supabase.auth.getUser();
+        // Check if client profile exists for this email
+        const { data: cp } = await supabase.from('client_profiles').select('*').eq('email', user.email).maybeSingle();
+        if (cp) {
+          setIsClient(true);
+          setClientOnboarded(cp.onboarding_complete === true);
+          // Detect if they need password setup (first magic link login)
+          // We use a flag in user metadata to track this
+          const needsSetup = !user.user_metadata?.password_set;
+          setNeedsPasswordSetup(needsSetup);
+          // Link user_id if not yet linked
+          if (!cp.user_id) {
+            await supabase.from('client_profiles').update({ user_id: user.id }).eq('email', user.email);
+          }
+        }
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (session) {
-      getProfile().then(setProfile).catch((e) => console.error('Profile load failed', e));
-    }
+    if (!session) return;
+    const loadProfileAndRole = async () => {
+      try {
+        const prof = await getProfile();
+        setProfile(prof);
+        // Check if this user is a client
+        const { data: cp } = await supabase.from('client_profiles')
+          .select('*').eq('email', session.user.email).maybeSingle();
+        if (cp) {
+          setIsClient(true);
+          setClientOnboarded(cp.onboarding_complete || false);
+          const needsSetup = !session.user.user_metadata?.password_set;
+          setNeedsPasswordSetup(needsSetup);
+          if (!cp.user_id) {
+            await supabase.from('client_profiles')
+              .update({ user_id: session.user.id }).eq('email', session.user.email);
+          }
+        }
+      } catch (e) {
+        console.error('Profile load failed', e);
+      }
+    };
+    loadProfileAndRole();
   }, [session]);
 
   if (session === undefined) {
@@ -53,6 +96,21 @@ export default function App() {
   }
 
   if (!session) return <AuthPage />;
+
+  // Client portal routing
+  if (isClient) {
+    if (needsPasswordSetup) {
+      return <ClientSetupFlow session={session} onComplete={() => {
+        setNeedsPasswordSetup(false);
+        setClientOnboarded(true);
+        supabase.auth.updateUser({ data: { password_set: true } });
+      }} />;
+    }
+    if (!clientOnboarded) {
+      return <ClientSetupFlow session={session} onComplete={() => setClientOnboarded(true)} />;
+    }
+    return <ClientPortal session={session} onSignOut={() => supabase.auth.signOut()} />;
+  }
 
   const user = session.user;
   const isAdmin = profile && profile.role === 'admin';
