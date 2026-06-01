@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Users, FileText, Mail, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X, Send } from 'lucide-react';
+import { Users, FileText, Mail, UserPlus, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X, Send } from 'lucide-react';
 import { listClients, adminListClients, deleteClient, updateLetter, toggleVip, updateClientEmail } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
@@ -278,6 +278,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     }
   };
 
+  // Render modal at top level
+  const createModal = showCreateClient ? (
+    <CreateClientModal
+      onClose={() => setShowCreateClient(false)}
+      onCreated={() => { setShowCreateClient(false); load(); }}
+    />
+  ) : null;
+
   if (clients === null) {
     return (
       <div className="max-w-3xl mx-auto text-center py-20 text-ink-muted">
@@ -327,9 +335,18 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             {needsResponse > 0 && <span className="text-amber-600 font-medium"> · {needsResponse} need Phase 3</span>}
           </p>
         </div>
-        <button onClick={load} className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
-          <RefreshCw size={13} strokeWidth={1.75} /> Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <button onClick={() => setShowCreateClient(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm transition-colors"
+              style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}>
+              <UserPlus size={12} strokeWidth={2} /> New Client
+            </button>
+          )}
+          <button onClick={load} className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
+            <RefreshCw size={13} strokeWidth={1.75} /> Refresh
+          </button>
+        </div>
       </div>
 
       {activeFilter && (
@@ -515,6 +532,92 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           onSaved={() => { setAnalyzingLetter(null); load(); }}
         />
       )}
+      {createModal}
+    </div>
+  );
+}
+
+
+function CreateClientModal({ onClose, onCreated }) {
+  const [name, setName] = React.useState('');
+  const [email, setEmail] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [success, setSuccess] = React.useState(false);
+
+  const handleCreate = async () => {
+    if (!name.trim() || !email.trim()) { setError('Name and email are required.'); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const { supabase } = await import('../utils/supabase');
+
+      // Create client_profiles row
+      const { error: cpError } = await supabase.from('client_profiles').upsert({
+        full_name: name.trim(),
+        email: email.trim().toLowerCase(),
+        onboarding_complete: false,
+      }, { onConflict: 'email' });
+      if (cpError) throw cpError;
+
+      // Send magic link via Supabase
+      const { error: authError } = await supabase.auth.signInWithOtp({
+        email: email.trim().toLowerCase(),
+        options: {
+          emailRedirectTo: window.location.origin,
+          data: { full_name: name.trim() },
+        },
+      });
+      if (authError) throw authError;
+
+      setSuccess(true);
+      setTimeout(() => { onCreated(); }, 2000);
+    } catch (e) {
+      setError(e.message || 'Could not create client');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={onClose}>
+      <div className="bg-white border border-border rounded w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-border flex items-center justify-between">
+          <h2 className="text-[14px] font-medium text-ink">New Client</h2>
+          <button onClick={onClose} className="text-ink-faint hover:text-ink">✕</button>
+        </div>
+        <div className="p-4 space-y-3">
+          {success ? (
+            <div className="bg-green-50 border border-green-200 rounded-sm p-3 text-[13px] text-green-700 text-center">
+              ✓ Invite sent to {email}
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Full Name</label>
+                <input type="text" value={name} onChange={e => setName(e.target.value)}
+                  placeholder="Client full name"
+                  className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                  onKeyDown={e => e.key === 'Enter' && handleCreate()} />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Email Address</label>
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                  placeholder="client@email.com"
+                  className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                  onKeyDown={e => e.key === 'Enter' && handleCreate()} />
+              </div>
+              {error && <div className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
+              <div className="text-[11px] text-ink-muted">Client will receive a magic link to set up their password and complete enrollment.</div>
+              <button onClick={handleCreate} disabled={loading}
+                className="w-full py-2.5 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
+                style={{ backgroundColor: loading ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
+                {loading ? 'Creating…' : 'Create Client & Send Invite'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
