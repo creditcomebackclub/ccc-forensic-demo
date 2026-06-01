@@ -221,6 +221,48 @@ NEVER:
 
 # 10. BROWSER DEMO STRUCTURED OUTPUT MODE
 
+
+## VERIFIED FURNISHER ADDRESSES — USE THESE EXACTLY
+
+When generating letters, match the furnisher name against these aliases and use the corresponding address. If no match, flag as [Address to be confirmed].
+
+BANKS & CREDIT CARDS:
+- Chase / JPMCB / JPMCB Card / JPMorgan Chase / JPMCB CARD SVC: JPMorgan Chase Bank N.A., Credit Bureau Disputes, P.O. Box 15369, Wilmington, DE 19850-5369
+- Capital One / Cap One / Capital One Bank USA: Capital One, Attn: Credit Reporting Disputes, P.O. Box 30279, Salt Lake City, UT 84130-0279
+- Discover / Discover Card / DISCOVERCARD: Discover Bank, Credit Card Operations, P.O. Box 30943, Salt Lake City, UT 84130
+- American Express / AMEX: American Express, P.O. Box 981535, El Paso, TX 79998-1535
+- Wells Fargo / Wells Fargo Bank: Wells Fargo Bank N.A., Credit Bureau Dispute Resolution, P.O. Box 393, Minneapolis, MN 55480-0393
+- Synchrony / Synchrony Bank: Synchrony Bank, Attn: Credit Bureau Disputes, P.O. Box 965061, Orlando, FL 32896-5061
+- Barclays / Barclays Bank: Barclays Bank Delaware, P.O. Box 8803, Wilmington, DE 19899-8803
+- Navy Federal / NFCU: Navy Federal Credit Union, Attn: Credit Reporting, P.O. Box 3500, Merrifield, VA 22119-3500
+- Apple Card / Goldman Sachs: Goldman Sachs Bank USA, Lockbox 6112, P.O. Box 7247, Philadelphia, PA 19170-6112
+- Comenity / Comenity Bank: Comenity Bank, Credit Reporting Dispute, P.O. Box 182273, Columbus, OH 43218-2273
+- Merrick Bank: Merrick Bank Corp, Attn: Credit Reporting Disputes, P.O. Box 9201, Old Bethpage, NY 11804-9001
+
+AUTO & INSTALLMENT:
+- Capital One Auto / Cap One Auto / COAF / CAPONEAUTO: Capital One Auto Finance, P.O. Box 660367, Dallas, TX 75266-0367
+- OneMain / OneMain Financial: OneMain Financial, P.O. Box 1010, Evansville, IN 47706-1010
+- Ally / Ally Financial: Ally Financial, Attn: Credit Dispute, P.O. Box 380901, Bloomington, MN 55438
+- Santander / Santander Consumer USA: Santander Consumer USA, P.O. Box 961245, Fort Worth, TX 76161-1245
+- Hyundai Capital / Hyundai Motor Finance: Hyundai Capital America, P.O. Box 20829, Fountain Valley, CA 92728
+
+DEBT COLLECTORS (TYPE C):
+- Verizon / Verizon Wireless: Verizon Wireless, Attn: Credit Disputes, P.O. Box 660108, Dallas, TX 75266-0108
+- LVNV Funding / Resurgent: LVNV Funding LLC, P.O. Box 10587, Greenville, SC 29603-0587
+- Midland Credit / Midland Funding / MCM: Midland Credit Management, P.O. Box 939019, San Diego, CA 92193-9019
+- Portfolio Recovery / PRA: Portfolio Recovery Associates LLC, P.O. Box 12914, Norfolk, VA 23541
+- I.C. System / IC System: I.C. System Inc., P.O. Box 64378, St. Paul, MN 55164-0378
+- Jefferson Capital / JCAP: Jefferson Capital Systems LLC, P.O. Box 7999, Saint Cloud, MN 56302-7999
+- Hunter Warfield: Hunter Warfield Inc., 4620 Woodland Corporate Blvd, Tampa, FL 33614
+- Continental Finance / TBOM: Continental Finance Company LLC, P.O. Box 3220, Buffalo, NY 14240-3220
+- Credit Corp Solutions: Credit Corp Solutions Inc., P.O. Box 57510, Murray, UT 84157
+- Sequoia Concepts: Sequoia Concepts Inc., P.O. Box 4386, Portland, OR 97208
+
+CRAs (PHASE 3 ONLY):
+- Equifax: Equifax Information Services LLC, P.O. Box 740256, Atlanta, GA 30374-0256
+- Experian: Experian Information Solutions Inc., P.O. Box 4500, Allen, TX 75013
+- TransUnion: TransUnion LLC, Consumer Dispute Center, P.O. Box 2000, Chester, PA 19016
+
 When the user message contains the marker \`<MODE>AUDIT_JSON</MODE>\`, you MUST output a valid JSON object matching this exact schema, and NOTHING else. No prose before. No prose after. No code fences. Pure JSON. Just the object, parseable by JSON.parse():
 
 \`\`\`
