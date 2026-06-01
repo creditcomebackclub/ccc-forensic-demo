@@ -30,6 +30,14 @@ export async function getProfile() {
   return data;
 }
 
+export async function updateClientEmail(clientName, email) {
+  const userId = await getUserId();
+  const { error } = await supabase.from('clients').upsert({
+    user_id: userId, name: clientName, email,
+  }, { onConflict: 'user_id,name' });
+  if (error) throw error;
+}
+
 export async function toggleVip(clientName, isVip) {
   const userId = await getUserId();
   const { error } = await supabase.from('clients').upsert({
@@ -217,7 +225,7 @@ export async function adminListClients() {
     supabase.from('audits').select('*').order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').order('saved_at', { ascending: false }),
     supabase.from('profiles').select('*'),
-    supabase.from('clients').select('name,is_vip,user_id'),
+    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
   if (lettersRes.error) throw lettersRes.error;
@@ -230,7 +238,12 @@ export async function adminListClients() {
   );
 
   const vipSet = new Set((metaRes.data || []).filter((c) => c.is_vip).map((c) => c.name));
-  out.forEach((c) => { c.isVip = vipSet.has(c.name); });
+  const metaMap2 = new Map((metaRes.data || []).map((c) => [c.name, c]));
+  out.forEach((c) => {
+    c.isVip = vipSet.has(c.name);
+    const meta = metaMap2.get(c.name);
+    if (meta) { c.email = meta.email || null; c.lpoaSigned = meta.lpoa_signed || false; c.lpoaSignedAt = meta.lpoa_signed_at || null; }
+  });
   return out;
 }
 

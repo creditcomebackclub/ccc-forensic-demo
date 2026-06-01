@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Credit Comeback Club — Authorization</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #F5F5F0; min-height: 100vh; }
+  .header { background: #1B2A4A; padding: 20px 24px; }
+  .header h1 { color: #C9A84C; font-size: 18px; font-weight: bold; }
+  .header p { color: #fff; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }
+  .container { max-width: 720px; margin: 0 auto; padding: 32px 16px; }
+  .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 4px; overflow: hidden; margin-bottom: 24px; }
+  .card-header { background: #1B2A4A; padding: 16px 24px; }
+  .card-header h2 { color: #fff; font-size: 15px; font-weight: bold; }
+  .card-header p { color: #C9A84C; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }
+  .card-body { padding: 24px; }
+  .lpoa-text { font-size: 12px; line-height: 1.6; color: #333; max-height: 400px; overflow-y: auto; border: 1px solid #E5E7EB; padding: 16px; border-radius: 4px; background: #FAFAFA; }
+  .lpoa-text h3 { font-size: 11px; background: #1B2A4A; color: #fff; padding: 5px 10px; margin: 12px -16px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .lpoa-text h3:first-child { margin-top: -16px; }
+  .lpoa-text p { margin: 8px 0; }
+  .lpoa-text ul { margin: 8px 0; padding-left: 20px; }
+  .lpoa-text li { margin: 4px 0; }
+  .sign-section { margin-top: 24px; padding-top: 24px; border-top: 1px solid #E5E7EB; }
+  .sign-section h3 { font-size: 14px; font-weight: bold; color: #1B2A4A; margin-bottom: 8px; }
+  .sign-section p { font-size: 12px; color: #666; margin-bottom: 16px; }
+  .consent-box { background: #FFF3CD; border: 1px solid #FDE68A; border-radius: 4px; padding: 12px 16px; margin-bottom: 16px; font-size: 12px; color: #7D4E00; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: #666; margin-bottom: 4px; font-weight: bold; }
+  .field input { width: 100%; border: 1px solid #E5E7EB; border-radius: 4px; padding: 10px 12px; font-size: 13px; }
+  .field input:focus { outline: none; border-color: #1B2A4A; }
+  .btn { display: block; width: 100%; padding: 14px 32px; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.1em; border-radius: 4px; border: none; cursor: pointer; background: #1B2A4A; color: #C9A84C; }
+  .btn:hover { background: #2A3C5F; }
+  .btn:disabled { background: #B5BBC9; color: #fff; cursor: default; }
+  .signed-box { background: #E8F5E9; border: 1px solid #4CAF50; border-radius: 4px; padding: 24px; text-align: center; }
+  .signed-box h3 { color: #1B5E20; font-size: 18px; margin-bottom: 8px; }
+  .signed-box p { color: #2E7D32; font-size: 13px; margin-top: 8px; }
+  .error { color: #DC2626; font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Credit Comeback Club</h1>
+  <p>Limited Power of Attorney — Credit Dispute Authorization</p>
+</div>
+<div class="container">
+  <div class="card">
+    <div class="card-header">
+      <h2>Credit Dispute Authorization</h2>
+      <p id="client-name-header">Please review and sign below</p>
+    </div>
+    <div class="card-body">
+      <div class="lpoa-text">
+        <h3>1. Parties</h3>
+        <p>This Limited Power of Attorney is between <strong id="client-name-doc">[Client Name]</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, 3088 Colorado Ave, Grand Junction, CO 81504, 970-644-0063 ("Attorney-in-Fact").</p>
+        <h3>2. Grant of Authority</h3>
+        <p>Principal authorizes Credit Comeback Club to act on Principal's behalf exclusively for credit dispute activities, including:</p>
+        <ul>
+          <li>Prepare and submit dispute letters to data furnishers under 15 U.S.C. §1681s-2(b)</li>
+          <li>Prepare and submit dispute letters to Equifax, Experian, and TransUnion under 15 U.S.C. §1681i</li>
+          <li>Send certified mail on behalf of Principal for credit disputes</li>
+          <li>Receive and respond to furnisher and bureau correspondence</li>
+          <li>Submit CFPB, FTC, and state AG complaints for FCRA/FDCPA violations</li>
+          <li>Review Principal's credit reports through ScoreFusion monitoring</li>
+          <li>Sign dispute correspondence as "By: Credit Comeback Club, Authorized Representative"</li>
+        </ul>
+        <h3>3. Limitations</h3>
+        <p>This authorization does NOT grant authority to make financial decisions, access financial accounts, dispute accurate information, create a new credit identity, or settle legal claims without explicit written consent.</p>
+        <h3>4. Fee Structure</h3>
+        <p>First Work Fee: $49 after audit delivery. Per-delete: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. ScoreFusion monitoring: $16/month (Principal's direct responsibility).</p>
+        <h3>5. No Guarantee</h3>
+        <p>No specific outcome is guaranteed. Results vary by credit profile and creditor response.</p>
+        <h3>6. Duration & Revocation</h3>
+        <p>Effective until written revocation, dispute completion, or agreement termination. To revoke: email info@creditcomebackclub.com with subject "LPOA REVOCATION — [Your Name]."</p>
+        <h3>7. Governing Law</h3>
+        <p>Governed by Colorado law and applicable federal law including CROA (15 U.S.C. §1679 et seq.) and FCRA (15 U.S.C. §1681 et seq.).</p>
+        <h3>8. ESIGN Disclosure</h3>
+        <p>By clicking "I Agree & Sign," you provide an electronic signature legally binding under the ESIGN Act (15 U.S.C. §7001). Your name, timestamp, and IP address are recorded as evidence of consent.</p>
+      </div>
+
+      <div class="sign-section" id="sign-section">
+        <h3>Sign This Authorization</h3>
+        <p>Confirm your identity and provide your electronic signature below.</p>
+        <div class="field">
+          <label>Full Legal Name *</label>
+          <input type="text" id="signer-name" placeholder="Type your full legal name exactly as it appears on your ID" />
+        </div>
+        <div class="field">
+          <label>Today's Date</label>
+          <input type="text" id="sign-date" readonly />
+        </div>
+        <div class="consent-box">
+          By clicking "I Agree &amp; Sign" below, I confirm I have read and agree to the Limited Power of Attorney above, and I authorize Credit Comeback Club to act on my behalf for credit dispute services. I understand this constitutes a legally binding electronic signature under the ESIGN Act (15 U.S.C. §7001).
+        </div>
+        <button class="btn" id="sign-btn" onclick="handleSign()">✓ &nbsp; I Agree &amp; Sign This Authorization</button>
+        <div class="error" id="sign-error" style="display:none;"></div>
+      </div>
+
+      <div id="signed-confirmation" style="display:none;">
+        <div class="signed-box">
+          <h3>✓ Authorization Signed</h3>
+          <p>Thank you, <strong id="signed-name"></strong>.</p>
+          <p>Your authorization has been recorded electronically per the ESIGN Act.</p>
+          <p id="signed-meta" style="font-size:11px;color:#666;margin-top:12px;"></p>
+          <div style="margin-top:16px;padding:12px;background:#fff;border:1px solid #c8e6c9;border-radius:4px;text-align:left;font-size:12px;">
+            <p><strong>Client:</strong> <span id="signed-name-2"></span></p>
+            <p style="margin-top:4px;"><strong>Attorney-in-Fact:</strong> Christopher Holland, Founder — Credit Comeback Club</p>
+            <p style="margin-top:4px;color:#666;font-size:11px;" id="signed-meta"></p>
+          </div>
+          <p style="margin-top:16px;">Credit Comeback Club will begin your forensic audit shortly. You will receive updates by email.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p style="text-align:center;font-size:11px;color:#999;padding-bottom:32px;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com | 970-644-0063</p>
+</div>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const clientName = decodeURIComponent(params.get('client') || '');
+  document.getElementById('sign-date').value = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  if (clientName) {
+    document.getElementById('client-name-header').textContent = clientName;
+    document.getElementById('client-name-doc').textContent = clientName;
+    document.getElementById('signer-name').value = clientName;
+  }
+  async function handleSign() {
+    const name = document.getElementById('signer-name').value.trim();
+    const errEl = document.getElementById('sign-error');
+    errEl.style.display = 'none';
+    if (!name) { errEl.textContent = 'Please enter your full legal name.'; errEl.style.display = 'block'; return; }
+    const btn = document.getElementById('sign-btn');
+    btn.disabled = true; btn.textContent = 'Signing...';
+    try {
+      const res = await fetch('/.netlify/functions/send-lpoa', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sign', clientName: clientName || name, signedAt: new Date().toISOString() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Sign failed');
+      document.getElementById('sign-section').style.display = 'none';
+      document.getElementById('signed-confirmation').style.display = 'block';
+      document.getElementById('signed-name').textContent = name;
+      if (document.getElementById('signed-name-2')) document.getElementById('signed-name-2').textContent = name;
+      const now = new Date().toLocaleString('en-US');
+      document.getElementById('signed-meta').textContent = 'Client signed: ' + now + ' | Attorney-in-Fact: Christopher Holland, Founder — Credit Comeback Club | Recorded per ESIGN Act (15 U.S.C. §7001)';
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'I Agree & Sign This Authorization';
+      errEl.textContent = 'Could not record signature: ' + e.message; errEl.style.display = 'block';
+    }
+  }
+</script>
+</body>
+</html>

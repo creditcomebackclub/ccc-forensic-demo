@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Users, FileText, Mail, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X, Send } from 'lucide-react';
-import { listClients, adminListClients, deleteClient, updateLetter, toggleVip } from '../utils/storage';
+import { listClients, adminListClients, deleteClient, updateLetter, toggleVip, updateClientEmail } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
 import LobMailer from './LobMailer';
@@ -254,6 +254,26 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     }
   };
 
+  const handleSendLpoa = async (c) => {
+    if (!c.email) { alert('Add client email first'); return; }
+    setSendingLpoa(c.name);
+    try {
+      const lpoaUrl = window.location.origin + '/lpoa-sign.html?client=' + encodeURIComponent(c.name);
+      const res = await fetch('/.netlify/functions/send-lpoa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'send', clientName: c.name, clientEmail: c.email, lpoaUrl }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Send failed');
+      alert('LPOA sent to ' + c.email);
+    } catch (e) {
+      alert('Could not send LPOA: ' + e.message);
+    } finally {
+      setSendingLpoa(null);
+    }
+  };
+
   if (clients === null) {
     return (
       <div className="max-w-3xl mx-auto text-center py-20 text-ink-muted">
@@ -357,6 +377,21 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   </div>
                   <div className="flex items-center gap-2 flex-wrap mt-0.5">
                     {c.address && <span className="text-[11px] text-ink-muted truncate">{c.address}</span>}
+                  {editingEmail === c.name ? (
+                    <div className="flex items-center gap-2 mt-1" onClick={(e) => e.stopPropagation()}>
+                      <input type="email" value={emailVal} onChange={(e) => setEmailVal(e.target.value)}
+                        className="text-[11px] border border-border rounded-sm px-2 py-0.5 w-48"
+                        placeholder="client@email.com" autoFocus
+                        onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
+                      <button onClick={() => { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
+                      <button onClick={() => setEditingEmail(null)} className="text-[10px] text-ink-muted">Cancel</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[11px] text-ink-muted">{c.email || <span className="text-amber-600">No email</span>}</span>
+                      <button onClick={(e) => { e.stopPropagation(); setEditingEmail(c.name); setEmailVal(c.email || ''); }} className="text-[10px] text-ink-faint hover:text-navy">✎</button>
+                    </div>
+                  )}
                     {isAdmin && auditors.map((a) => (
                       <span key={a} className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-navy text-gold">{a}</span>
                     ))}
@@ -368,6 +403,29 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   {awaiting > 0 && <StatusBadge label={awaiting + ' awaiting'} tone="amber" />}
                   <span className="flex items-center gap-1"><FileText size={13} strokeWidth={1.75} />{c.audits.length}</span>
                   <span className="flex items-center gap-1"><Mail size={13} strokeWidth={1.75} />{c.letters.length}</span>
+                  {c.lpoaSigned ? (
+                    <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-green-50 text-green-700 border border-green-200">
+                      ✓ LPOA Signed
+                    </span>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleSendLpoa(c); }}
+                        disabled={!c.email || sendingLpoa === c.name}
+                        className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border border-amber-400 text-amber-700 hover:bg-amber-50 transition-colors"
+                        title={!c.email ? 'Add email first' : 'Send LPOA for signature'}
+                      >
+                        {sendingLpoa === c.name ? 'Sending…' : '✉ Send LPOA'}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); window.open('/lpoa-sign.html?client=' + encodeURIComponent(c.name), '_blank'); }}
+                        className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors"
+                        title="Preview LPOA"
+                      >
+                        Preview
+                      </button>
+                    </div>
+                  )}
                   <button
                     onClick={() => handleVipToggle(c.name, c.isVip)}
                     disabled={togglingVip === c.name}
