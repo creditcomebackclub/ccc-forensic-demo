@@ -67,6 +67,11 @@ export default function App() {
       try {
         const prof = await getProfile();
         setProfile(prof);
+        // Skip client check for admin/auditor roles
+        if (prof && (prof.role === 'admin' || prof.role === 'auditor')) {
+          setIsClient(false);
+          return;
+        }
         // Check if this user is a client
         const { data: cp } = await supabase.from('client_profiles')
           .select('*').eq('email', session.user.email).maybeSingle();
