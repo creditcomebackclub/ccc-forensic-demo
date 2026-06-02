@@ -114,7 +114,7 @@ export default function App() {
     if (!clientOnboarded) {
       return <ClientSetupFlow session={session} onComplete={() => setClientOnboarded(true)} />;
     }
-    return <ClientPortal session={session} onSignOut={() => supabase.auth.signOut()} />;
+    return <ClientPortal session={session} onSignOut={async () => { try { await supabase.auth.signOut(); } catch(e) {} localStorage.clear(); sessionStorage.clear(); window.location.href = '/'; }} />;
   }
 
   const user = session.user;
@@ -167,7 +167,7 @@ export default function App() {
   const handleReset = () => { setView(VIEW.AUDIT); setState(STATE.IDLE); setAuditResult(null); setError(null); };
   const handleGenerateLetter = (account) => setActiveLetter(account);
   const handleOpenSavedAudit = (audit) => { setAuditResult(audit); setState(STATE.RESULTS); setView(VIEW.AUDIT); };
-  const handleSignOut = async () => { await supabase.auth.signOut(); };
+  const handleSignOut = async () => { try { await supabase.auth.signOut(); } catch(e) {} localStorage.clear(); sessionStorage.clear(); window.location.href = '/'; };
 
   return (
     <div className="min-h-screen bg-bg flex">
