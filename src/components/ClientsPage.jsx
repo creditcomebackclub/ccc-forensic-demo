@@ -191,6 +191,43 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze, onLobMail }
   );
 }
 
+
+function parseFurnisherAddress(furnisher) {
+  const map = {
+    'capital one bank': { name: 'Capital One', line1: 'P.O. Box 30279', city: 'Salt Lake City', state: 'UT', zip: '84130-0279' },
+    'capital one auto': { name: 'Capital One Auto Finance', line1: 'P.O. Box 660367', city: 'Dallas', state: 'TX', zip: '75266-0367' },
+    'caponeauto': { name: 'Capital One Auto Finance', line1: 'P.O. Box 660367', city: 'Dallas', state: 'TX', zip: '75266-0367' },
+    'discover': { name: 'Discover Bank', line1: 'P.O. Box 30943', city: 'Salt Lake City', state: 'UT', zip: '84130' },
+    'jpmcb': { name: 'JPMorgan Chase Bank N.A.', line1: 'P.O. Box 15369', city: 'Wilmington', state: 'DE', zip: '19850-5369' },
+    'chase': { name: 'JPMorgan Chase Bank N.A.', line1: 'P.O. Box 15369', city: 'Wilmington', state: 'DE', zip: '19850-5369' },
+    'verizon': { name: 'Verizon Wireless', line1: 'P.O. Box 660108', city: 'Dallas', state: 'TX', zip: '75266-0108' },
+    'american express': { name: 'American Express', line1: 'P.O. Box 981535', city: 'El Paso', state: 'TX', zip: '79998-1535' },
+    'amex': { name: 'American Express', line1: 'P.O. Box 981535', city: 'El Paso', state: 'TX', zip: '79998-1535' },
+    'wells fargo': { name: 'Wells Fargo Bank N.A.', line1: 'P.O. Box 393', city: 'Minneapolis', state: 'MN', zip: '55480-0393' },
+    'synchrony': { name: 'Synchrony Bank', line1: 'P.O. Box 965061', city: 'Orlando', state: 'FL', zip: '32896-5061' },
+    'navy federal': { name: 'Navy Federal Credit Union', line1: 'P.O. Box 3500', city: 'Merrifield', state: 'VA', zip: '22119-3500' },
+    'onemain': { name: 'OneMain Financial', line1: 'P.O. Box 1010', city: 'Evansville', state: 'IN', zip: '47706-1010' },
+    'ally': { name: 'Ally Financial', line1: 'P.O. Box 380901', city: 'Bloomington', state: 'MN', zip: '55438' },
+    'lvnv': { name: 'LVNV Funding LLC', line1: 'P.O. Box 10587', city: 'Greenville', state: 'SC', zip: '29603-0587' },
+    'midland': { name: 'Midland Credit Management', line1: 'P.O. Box 939019', city: 'San Diego', state: 'CA', zip: '92193-9019' },
+    'portfolio recovery': { name: 'Portfolio Recovery Associates LLC', line1: 'P.O. Box 12914', city: 'Norfolk', state: 'VA', zip: '23541' },
+    'jefferson capital': { name: 'Jefferson Capital Systems LLC', line1: 'P.O. Box 7999', city: 'Saint Cloud', state: 'MN', zip: '56302-7999' },
+    'hunter warfield': { name: 'Hunter Warfield Inc.', line1: '4620 Woodland Corporate Blvd', city: 'Tampa', state: 'FL', zip: '33614' },
+    'merrick bank': { name: 'Merrick Bank Corp', line1: 'P.O. Box 9201', city: 'Old Bethpage', state: 'NY', zip: '11804-9001' },
+    'barclays': { name: 'Barclays Bank Delaware', line1: 'P.O. Box 8803', city: 'Wilmington', state: 'DE', zip: '19899-8803' },
+    'comenity': { name: 'Comenity Bank', line1: 'P.O. Box 182273', city: 'Columbus', state: 'OH', zip: '43218-2273' },
+    'santander': { name: 'Santander Consumer USA', line1: 'P.O. Box 961245', city: 'Fort Worth', state: 'TX', zip: '76161-1245' },
+    'hyundai': { name: 'Hyundai Capital America', line1: 'P.O. Box 20829', city: 'Fountain Valley', state: 'CA', zip: '92728' },
+    'credit corp': { name: 'Credit Corp Solutions Inc.', line1: 'P.O. Box 57510', city: 'Murray', state: 'UT', zip: '84157' },
+    'sequoia': { name: 'Sequoia Concepts Inc.', line1: 'P.O. Box 4386', city: 'Portland', state: 'OR', zip: '97208' },
+    'continental finance': { name: 'Continental Finance Company LLC', line1: 'P.O. Box 3220', city: 'Buffalo', state: 'NY', zip: '14240-3220' },
+  };
+  const lower = (furnisher || '').toLowerCase();
+  for (const [key, addr] of Object.entries(map)) {
+    if (lower.includes(key)) return addr;
+  }
+  return null;
+}
 export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter }) {
   const [clients, setClients] = useState(null);
   const [expanded, setExpanded] = useState({});
@@ -512,6 +549,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       {lobMailerLetter && (
         <LobMailer
           letter={lobMailerLetter}
+          furnisherAddress={lobMailerLetter ? parseFurnisherAddress(lobMailerLetter.furnisher) : null}
           onClose={() => setLobMailerLetter(null)}
           onSent={async (data) => {
             await updateLetter(lobMailerLetter.id, {

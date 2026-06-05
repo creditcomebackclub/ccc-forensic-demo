@@ -22,6 +22,7 @@ const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', METHO
 export default function App() {
   const [session, setSession] = useState(undefined);
   const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [view, setView] = useState(VIEW.DASHBOARD);
   const [clientsContext, setClientsContext] = useState(null);
   const [state, setState] = useState(STATE.IDLE);
@@ -64,6 +65,7 @@ export default function App() {
   useEffect(() => {
     if (!session) return;
     const loadProfileAndRole = async () => {
+      setProfileLoading(true);
       try {
         const prof = await getProfile();
         setProfile(prof);
@@ -87,6 +89,8 @@ export default function App() {
         }
       } catch (e) {
         console.error('Profile load failed', e);
+      } finally {
+        setProfileLoading(false);
       }
     };
     loadProfileAndRole();
@@ -101,6 +105,14 @@ export default function App() {
   }
 
   if (!session) return <AuthPage />;
+
+  if (profileLoading || (session && !profile)) {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center">
+        <div className="text-[13px] text-ink-muted">Loading…</div>
+      </div>
+    );
+  }
 
   // Client portal routing
   if (isClient) {
