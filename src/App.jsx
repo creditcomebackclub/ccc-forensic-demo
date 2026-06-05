@@ -64,13 +64,13 @@ export default function App() {
     // Refresh session when tab becomes visible again
     const handleVisibility = async () => {
       if (document.visibilityState === 'visible') {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          setSession(session);
-        } else {
-          setSession(null);
-          setProfile(null);
-        }
+        try {
+          const { data: { session: currentSession } } = await supabase.auth.getSession();
+          if (currentSession) {
+            setSession(currentSession);
+            if (!profile) await loadUser(currentSession);
+          }
+        } catch(e) { console.error('visibility refresh error:', e); }
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
