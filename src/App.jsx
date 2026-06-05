@@ -36,65 +36,86 @@ export default function App() {
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
+    const initAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        setSession(session);
+        await loadUser(session);
+      } else {
+        setSession(null);
+        setProfileLoading(false);
+      }
+    };
+    initAuth();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
-      if (!session) { setProfile(null); setIsClient(false); return; }
-      if (_event === 'SIGNED_IN') {
-        // Check if this is a magic link login (password_hash is null = no password set yet)
-        const { data: { user } } = await supabase.auth.getUser();
-        // Check if client profile exists for this email
-        const { data: cp } = await supabase.from('client_profiles').select('*').eq('email', user.email).maybeSingle();
-        if (cp) {
-          setIsClient(true);
-          setClientOnboarded(cp.onboarding_complete === true);
-          // Detect if they need password setup (first magic link login)
-          // We use a flag in user metadata to track this
-          const needsSetup = !user.user_metadata?.password_set;
-          setNeedsPasswordSetup(needsSetup);
-          // Link user_id if not yet linked
-          if (!cp.user_id) {
-            await supabase.from('client_profiles').update({ user_id: user.id }).eq('email', user.email);
-          }
-        }
+      if (!session) {
+        setProfile(null);
+        setIsClient(false);
+        setProfileLoading(false);
+        return;
       }
+      await loadUser(session);
     });
     return () => subscription.unsubscribe();
   }, []);
 
-  useEffect(() => {
-    if (!session) return;
-    const loadProfileAndRole = async () => {
-      setProfileLoading(true);
-      try {
-        const prof = await getProfile();
+  const loadUser = async (session) => {
+    setProfileLoading(true);
+    try {
+      const email = session.user.email;
+
+      // Direct Supabase query — bypass getProfile complexity
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .maybeSingle();
+
+      if (prof && (prof.role === 'admin' || prof.role === 'auditor')) {
         setProfile(prof);
-        // Skip client check for admin/auditor roles
-        if (prof && (prof.role === 'admin' || prof.role === 'auditor')) {
-          setIsClient(false);
-          return;
-        }
-        // Check if this user is a client
-        const { data: cp } = await supabase.from('client_profiles')
-          .select('*').eq('email', session.user.email).maybeSingle();
-        if (cp) {
-          setIsClient(true);
-          setClientOnboarded(cp.onboarding_complete || false);
-          const needsSetup = !session.user.user_metadata?.password_set;
-          setNeedsPasswordSetup(needsSetup);
-          if (!cp.user_id) {
-            await supabase.from('client_profiles')
-              .update({ user_id: session.user.id }).eq('email', session.user.email);
-          }
-        }
-      } catch (e) {
-        console.error('Profile load failed', e);
-      } finally {
+        setIsClient(false);
         setProfileLoading(false);
+        return;
       }
-    };
-    loadProfileAndRole();
-  }, [session]);
+
+      // Check client_profiles
+      const { data: cp } = await supabase
+        .from('client_profiles')
+        .select('*')
+        .eq('email', email)
+        .maybeSingle();
+
+      if (cp) {
+        setIsClient(true);
+        setClientOnboarded(cp.onboarding_complete === true);
+        setNeedsPasswordSetup(!session.user.user_metadata?.password_set);
+        if (!cp.user_id) {
+          await supabase.from('client_profiles').update({ user_id: session.user.id }).eq('email', email);
+        }
+        setProfile(prof || { id: session.user.id, email, role: 'client' });
+        setProfileLoading(false);
+        return;
+      }
+
+      // No profile found — create one
+      if (!prof) {
+        const fullName = session.user.user_metadata?.full_name || email;
+        await supabase.from('profiles').insert({ id: session.user.id, full_name: fullName, role: 'auditor' });
+        setProfile({ id: session.user.id, full_name: fullName, role: 'auditor' });
+      } else {
+        setProfile(prof);
+      }
+      setIsClient(false);
+    } catch (e) {
+      console.error('loadUser error:', e);
+      // On error still clear loading state
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
 
   if (session === undefined) {
     return (
