@@ -56,7 +56,10 @@ export default function App() {
         setProfileLoading(false);
         return;
       }
-      await loadUser(session);
+      // Only reload user on actual auth events, not token refreshes
+      if (_event === 'SIGNED_IN' || _event === 'USER_UPDATED') {
+        await loadUser(session);
+      }
     });
     return () => subscription.unsubscribe();
   }, []);
