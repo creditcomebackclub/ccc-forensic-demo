@@ -94,11 +94,12 @@ export default function App() {
       const email = session.user.email;
 
       // Direct Supabase query — bypass getProfile complexity
-      const { data: prof, error: profErr } = await supabase
+      const { data: profArr } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', session.user.id)
-        .maybeSingle();
+        .limit(1);
+      const prof = profArr && profArr.length > 0 ? profArr[0] : null;
 
       if (prof && (prof.role === 'admin' || prof.role === 'auditor')) {
         setProfile(prof);
@@ -108,11 +109,12 @@ export default function App() {
       }
 
       // Check client_profiles
-      const { data: cp, error: cpErr } = await supabase
+      const { data: cpArr } = await supabase
         .from('client_profiles')
         .select('*')
         .eq('email', email)
-        .maybeSingle();
+        .limit(1);
+      const cp = cpArr && cpArr.length > 0 ? cpArr[0] : null;
 
       if (cp) {
         setIsClient(true);
