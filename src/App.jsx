@@ -83,6 +83,13 @@ export default function App() {
 
   const loadUser = async (session) => {
     setProfileLoading(true);
+    // Safety timeout — never stay loading forever
+    const safetyTimer = setTimeout(() => {
+      console.warn('loadUser timeout — forcing profile from session');
+      setProfile({ id: session.user.id, email: session.user.email, role: session.user.user_metadata?.role || 'admin', full_name: session.user.user_metadata?.full_name || session.user.email });
+      setIsClient(false);
+      setProfileLoading(false);
+    }, 5000);
     try {
       const email = session.user.email;
 
@@ -130,8 +137,8 @@ export default function App() {
       setIsClient(false);
     } catch (e) {
       console.error('loadUser error:', e);
-      // On error still clear loading state
     } finally {
+      clearTimeout(safetyTimer);
       setProfileLoading(false);
     }
   };
