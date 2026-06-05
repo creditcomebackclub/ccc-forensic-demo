@@ -61,7 +61,24 @@ export default function App() {
         await loadUser(session);
       }
     });
-    return () => subscription.unsubscribe();
+    // Refresh session when tab becomes visible again
+    const handleVisibility = async () => {
+      if (document.visibilityState === 'visible') {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          setSession(session);
+        } else {
+          setSession(null);
+          setProfile(null);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, []);
 
   const loadUser = async (session) => {
