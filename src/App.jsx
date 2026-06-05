@@ -94,7 +94,7 @@ export default function App() {
       const email = session.user.email;
 
       // Direct Supabase query — bypass getProfile complexity
-      const { data: prof } = await supabase
+      const { data: prof, error: profErr } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', session.user.id)
@@ -108,7 +108,7 @@ export default function App() {
       }
 
       // Check client_profiles
-      const { data: cp } = await supabase
+      const { data: cp, error: cpErr } = await supabase
         .from('client_profiles')
         .select('*')
         .eq('email', email)
@@ -174,7 +174,7 @@ export default function App() {
     if (!clientOnboarded) {
       return <ClientSetupFlow session={session} onComplete={() => setClientOnboarded(true)} />;
     }
-    return <ClientPortal session={session} onSignOut={async () => { try { await supabase.auth.signOut(); } catch(e) {} localStorage.clear(); sessionStorage.clear(); window.location.href = '/'; }} />;
+    return <ClientPortal session={session} onSignOut={async () => { try { await supabase.auth.signOut(); } catch(e) {} window.location.href = '/'; }} />;
   }
 
   const user = session.user;
@@ -227,7 +227,7 @@ export default function App() {
   const handleReset = () => { setView(VIEW.AUDIT); setState(STATE.IDLE); setAuditResult(null); setError(null); };
   const handleGenerateLetter = (account) => setActiveLetter(account);
   const handleOpenSavedAudit = (audit) => { setAuditResult(audit); setState(STATE.RESULTS); setView(VIEW.AUDIT); };
-  const handleSignOut = async () => { try { await supabase.auth.signOut(); } catch(e) {} localStorage.clear(); sessionStorage.clear(); window.location.href = '/'; };
+  const handleSignOut = async () => { try { await supabase.auth.signOut(); } catch(e) {} window.location.href = '/'; };
 
   return (
     <div className="min-h-screen bg-bg flex">
