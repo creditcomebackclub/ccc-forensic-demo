@@ -61,16 +61,14 @@ export default function App() {
         await loadUser(session);
       }
     });
-    // Refresh session when tab becomes visible again
+    // On tab focus — if profile is missing, hard reload to restore state
     const handleVisibility = async () => {
       if (document.visibilityState === 'visible') {
-        try {
-          const { data: { session: currentSession } } = await supabase.auth.getSession();
-          if (currentSession) {
-            setSession(currentSession);
-            if (!profile) await loadUser(currentSession);
-          }
-        } catch(e) { console.error('visibility refresh error:', e); }
+        const token = localStorage.getItem(Object.keys(localStorage).find(k => k.includes('auth-token')) || '');
+        if (token) {
+          // Session exists but app state is lost — reload cleanly
+          window.location.reload();
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
