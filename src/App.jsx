@@ -91,13 +91,15 @@ export default function App() {
     try {
       const email = session.user.email;
 
-      // Direct Supabase query — bypass getProfile complexity
-      const { data: profArr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', session.user.id)
-        .limit(1);
-      const prof = profArr && profArr.length > 0 ? profArr[0] : null;
+      // Raw fetch — supabase client hangs intermittently
+      const _url = import.meta.env.VITE_SUPABASE_URL;
+      const _key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const _tok = session.access_token;
+      const _pr = await fetch(_url + '/rest/v1/profiles?id=eq.' + session.user.id + '&limit=1', {
+        headers: { apikey: _key, Authorization: 'Bearer ' + _tok }
+      });
+      const _prd = await _pr.json();
+      const prof = Array.isArray(_prd) && _prd.length > 0 ? _prd[0] : null;
 
       if (prof && (prof.role === 'admin' || prof.role === 'auditor')) {
         setProfile(prof);
@@ -106,13 +108,11 @@ export default function App() {
         return;
       }
 
-      // Check client_profiles
-      const { data: cpArr } = await supabase
-        .from('client_profiles')
-        .select('*')
-        .eq('email', email)
-        .limit(1);
-      const cp = cpArr && cpArr.length > 0 ? cpArr[0] : null;
+      const _cr = await fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email) + '&limit=1', {
+        headers: { apikey: _key, Authorization: 'Bearer ' + _tok }
+      });
+      const _crd = await _cr.json();
+      const cp = Array.isArray(_crd) && _crd.length > 0 ? _crd[0] : null;
 
       if (cp) {
         setIsClient(true);
