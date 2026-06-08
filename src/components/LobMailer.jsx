@@ -123,6 +123,25 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
         mailedDate: new Date().toISOString().slice(0, 10),
         trackingNumber: res.tracking_number || null,
       });
+      // Fire phase1_mailed notification
+      try {
+        const { supabase } = await import('../utils/supabase');
+        const { data: cp } = await supabase.from('client_profiles').select('email,full_name').ilike('full_name', letter.clientName).limit(1);
+        if (cp && cp.length > 0 && cp[0].email) {
+          fetch('/.netlify/functions/send-lpoa', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'send_phase_notification',
+              clientName: cp[0].full_name,
+              clientEmail: cp[0].email,
+              phase: 'phase1_mailed',
+              furnisher: letter.furnisher,
+              trackingNumber: res.tracking_number || '',
+            }),
+          }).catch(function(e) { console.warn('Phase notification failed:', e); });
+        }
+      } catch(e) { console.warn('Phase notification error:', e); }
     } catch (e) {
       setError(e.message || 'Send failed');
     } finally {

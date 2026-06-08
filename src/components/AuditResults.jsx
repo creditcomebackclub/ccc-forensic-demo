@@ -30,6 +30,51 @@ function SeverityBar({ severity }) {
   );
 }
 
+async function emailAuditToClient(audit) {
+  const clientName = (audit.client && audit.client.name) || '';
+  if (!clientName) { alert('No client name in audit'); return; }
+
+  // Look up client email from client_profiles
+  const { supabase } = await import('../utils/supabase');
+  const { data: cp } = await supabase.from('client_profiles').select('email,full_name').eq('full_name', clientName).limit(1);
+  const clientEmail = cp && cp.length > 0 ? cp[0].email : null;
+
+  if (!clientEmail) {
+    const email = prompt('Enter client email address:');
+    if (!email) return;
+    await sendAuditEmail(audit, clientName, email);
+  } else {
+    if (confirm('Send audit summary to ' + clientEmail + '?')) {
+      await sendAuditEmail(audit, clientName, clientEmail);
+    }
+  }
+}
+
+async function sendAuditEmail(audit, clientName, clientEmail) {
+  const batch1 = (audit.accounts || []).filter(function(a) { return a.batch === 1; });
+  try {
+    const res = await fetch('/.netlify/functions/send-lpoa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'send_audit',
+        clientName: clientName,
+        clientEmail: clientEmail,
+        auditSummary: audit.executiveSummary || '',
+        scores: audit.scores || {},
+        accountsTargeted: audit.accountsTargeted || (audit.accounts && audit.accounts.length) || 0,
+        totalViolations: audit.totalViolations || 0,
+        batch1: batch1.map(function(a) { return { furnisher: a.furnisher, accountClassification: a.accountClassification, primaryViolation: a.primaryViolation }; }),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Send failed');
+    alert('Audit summary sent to ' + clientEmail);
+  } catch (e) {
+    alert('Could not send: ' + e.message);
+  }
+}
+
 function generateAuditPDF(audit) {
   var clientName = (audit.client && audit.client.name) || 'Client';
   var today = new Date().toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'});
@@ -88,6 +133,11 @@ export default function AuditResults({ audit, onGenerateLetter, onReset }) {
           onClick={function() { generateAuditPDF(audit); }}
           className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
           <Download size={13} strokeWidth={1.75} /> Download PDF
+        </button>
+        <button
+          onClick={function() { emailAuditToClient(audit); }}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
+          <Mail size={13} strokeWidth={1.75} /> Email Client
         </button>
         <button
           onClick={onReset}

@@ -83,5 +83,95 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ signed: true, signatureData }) };
   }
 
+  // Send audit summary email to client
+  if (action === 'send_audit') {
+    const { clientName, clientEmail, auditSummary, scores, accountsTargeted, totalViolations, batch1 } = payload;
+    if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
+    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+
+    const scoreRow = Object.entries(scores || {}).map(([b, s]) => `<td style="text-align:center;padding:8px 16px;"><div style="font-size:22px;font-weight:bold;color:#1B2A4A;">${s || '—'}</div><div style="font-size:10px;color:#666;text-transform:uppercase;">${b}</div></td>`).join('');
+    const batchRows = (batch1 || []).map(a => `<tr><td style="padding:6px 8px;font-size:12px;">${a.furnisher}</td><td style="padding:6px 8px;font-size:12px;text-align:center;">${a.accountClassification || '—'}</td><td style="padding:6px 8px;font-size:12px;">${a.primaryViolation || '—'}</td></tr>`).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
+      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
+        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
+        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Your Forensic Audit is Ready</p>
+      </div>
+      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
+        <p>Hi ${clientName},</p>
+        <p>Your forensic credit audit is complete. Here's what we found:</p>
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;"><tr>${scoreRow}</tr></table>
+        <div style="background:#f5f5f0;border-radius:4px;padding:12px 16px;margin:16px 0;">
+          <strong>${accountsTargeted}</strong> accounts targeted &nbsp;|&nbsp; <strong>${totalViolations}</strong> violations identified
+        </div>
+        ${batchRows ? `<p><strong>Priority Accounts (Batch 1):</strong></p>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;margin:8px 0;">
+          <thead><tr style="background:#1B2A4A;color:#fff;"><th style="padding:6px 8px;text-align:left;">Furnisher</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;text-align:left;">Primary Violation</th></tr></thead>
+          <tbody>${batchRows}</tbody>
+        </table>` : ''}
+        <p>${auditSummary || 'Phase 1 dispute letters are being prepared and will be mailed via certified mail shortly.'}</p>
+        <p>You can track your dispute progress anytime in your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a>.</p>
+        <p>Questions? Reply to this email or call 970-644-0063.</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
+      </div>
+    </body></html>`;
+
+    try {
+      await sendViaSendGrid(sgKey, clientEmail, 'Your Credit Comeback Club Forensic Audit is Ready', html);
+      return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+    } catch (e) {
+      return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    }
+  }
+
+  // Automated phase notification emails
+  if (action === 'send_phase_notification') {
+    const { clientName, clientEmail, phase, furnisher, trackingNumber, details } = payload;
+    if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
+    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+
+    const subjects = {
+      phase1_mailed: 'Your Dispute Letter Has Been Mailed — ' + furnisher,
+      phase1_delivered: 'Dispute Letter Delivered — ' + furnisher + ' Has 30 Days to Respond',
+      phase2_analyzed: 'Response Analysis Complete — ' + furnisher,
+      phase3_mailed: 'Phase 3 Escalation Mailed to Credit Bureaus — ' + furnisher,
+    };
+
+    const bodies = {
+      phase1_mailed: `<p>Your Phase 1 dispute letter to <strong>${furnisher}</strong> has been mailed via USPS Certified Mail.</p>
+        ${trackingNumber ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}" style="color:#1B2A4A;">USPS Tracking ${trackingNumber.slice(-8)}</a></p>` : ''}
+        <p>The furnisher has 30 days from delivery to respond. We will monitor the response and notify you of next steps.</p>`,
+      phase1_delivered: `<p>Your dispute letter to <strong>${furnisher}</strong> has been delivered. Their 30-day response window has begun.</p>
+        <p>We will monitor for their response and prepare Phase 3 escalation letters in advance.</p>`,
+      phase2_analyzed: `<p>We have analyzed <strong>${furnisher}</strong>'s response to your dispute letter.</p>
+        <p>${details || 'Phase 3 escalation letters have been prepared and will be mailed to the credit bureaus shortly.'}</p>`,
+      phase3_mailed: `<p>Phase 3 escalation letters have been mailed to Equifax, Experian, and TransUnion regarding <strong>${furnisher}</strong>.</p>
+        <p>The bureaus now have 30 days to investigate and respond. Deletions typically occur within this window when the furnisher failed to conduct a reasonable investigation.</p>`,
+    };
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
+      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
+        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
+        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Campaign Update</p>
+      </div>
+      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
+        <p>Hi ${clientName},</p>
+        ${bodies[phase] || '<p>' + (details || 'Your dispute campaign has been updated.') + '</p>'}
+        <p>Log in to your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a> to see full details and tracking.</p>
+        <p>Questions? Reply to this email or call 970-644-0063.</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
+      </div>
+    </body></html>`;
+
+    try {
+      await sendViaSendGrid(sgKey, clientEmail, subjects[phase] || 'Credit Comeback Club Update', html);
+      return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+    } catch (e) {
+      return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    }
+  }
+
   return { statusCode: 400, body: JSON.stringify({ error: 'Unknown action: ' + action }) };
 };
