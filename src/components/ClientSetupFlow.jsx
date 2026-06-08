@@ -6,6 +6,7 @@ export default function ClientSetupFlow({ session, onComplete }) {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [error, setError] = useState(null);
 
   const handleSetPassword = async () => {
@@ -309,17 +310,46 @@ function ClientOnboardingModal({ session, onComplete }) {
                   <span className="text-ink">{signature ? 'Signature: Drawn' : 'Signature: Not drawn'}</span>
                 </div>
               </div>
-              <div className="bg-amber-50 border border-amber-200 rounded-sm p-3 text-[11px] text-amber-800">
-                By clicking Complete Enrollment, you authorize Credit Comeback Club to act as your representative for credit dispute purposes per the LPOA. Your electronic authorization is valid under the ESIGN Act (15 U.S.C. §7001).
+              {/* Service Agreement */}
+              <div className="border border-border rounded-sm overflow-hidden">
+                <div className="bg-navy px-3 py-2">
+                  <span className="text-[11px] uppercase tracking-wider text-gold font-medium">Client Service Agreement</span>
+                </div>
+                <div className="p-3 max-h-48 overflow-y-auto text-[11px] text-ink-muted space-y-2 bg-gray-50">
+                  <p><strong className="text-ink">Services:</strong> Credit Comeback Club ("CCC") will perform a forensic Metro 2 and FCRA audit of your credit reports and prepare direct furnisher dispute letters on your behalf.</p>
+                  <p><strong className="text-ink">Fee Schedule (Pay-Per-Delete):</strong></p>
+                  <p>• First Work Fee: $49 (due after audit delivery, before letters are mailed — covers postage and processing)</p>
+                  <p>• Type A deletion (original creditor, derogatory): $125 per bureau</p>
+                  <p>• Type B deletion (original creditor, paid/current): $75 per bureau</p>
+                  <p>• Type C deletion (debt collector/buyer): $150 per bureau</p>
+                  <p>• Public Record deletion: $175 per bureau</p>
+                  <p>• No deletion = no charge. You only pay for confirmed removals.</p>
+                  <p><strong className="text-ink">Credit Monitoring:</strong> ScoreFusion monitoring at $16/month is the client's direct responsibility and is required to track dispute progress.</p>
+                  <p><strong className="text-ink">No Guarantee:</strong> CCC makes no guarantee of specific outcomes. Results vary by credit profile and creditor response. CCC does not guarantee deletion of any specific account.</p>
+                  <p><strong className="text-ink">Prohibited Practices:</strong> CCC does not dispute accurate information, create new credit identities, or advise clients to misrepresent their identity to any creditor or agency.</p>
+                  <p><strong className="text-ink">CROA Compliance:</strong> This agreement complies with the Credit Repair Organizations Act (15 U.S.C. §1679 et seq.). You have the right to cancel within 3 business days of signing.</p>
+                  <p><strong className="text-ink">Governing Law:</strong> This agreement is governed by Colorado law. Any disputes shall be resolved in Mesa County, Colorado.</p>
+                  <p><strong className="text-ink">Contact:</strong> Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063 | creditcomebackclub@gmail.com</p>
+                </div>
               </div>
+
+              {/* Consent checkbox */}
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="checkbox" checked={agreedToTerms} onChange={(e) => setAgreedToTerms(e.target.checked)}
+                  className="mt-0.5 shrink-0" />
+                <span className="text-[11px] text-ink-muted">
+                  I have read and agree to the Client Service Agreement above. I authorize Credit Comeback Club to dispute credit information on my behalf per the Limited Power of Attorney. I understand my electronic signature is legally binding under the ESIGN Act (15 U.S.C. §7001).
+                </span>
+              </label>
+
               {error && <div className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
               <div className="flex gap-2">
                 <button onClick={() => setStep(3)} className="flex-1 py-2.5 text-[12px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-ink transition-colors">
                   ← Back
                 </button>
-                <button onClick={handleComplete} disabled={loading}
+                <button onClick={handleComplete} disabled={loading || !agreedToTerms}
                   className="flex-1 py-2.5 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                  style={{ backgroundColor: loading ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
+                  style={{ backgroundColor: (loading || !agreedToTerms) ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
                   {loading ? 'Saving…' : '✓ Complete Enrollment'}
                 </button>
               </div>

@@ -53,7 +53,7 @@ RESPOND IN THIS EXACT JSON FORMAT:
 }`;
 
 async function analyzeNonResponse({ phase1Html, clientName, furnisher, accountId, mailedDate }) {
-  const apiKey = localStorage.getItem('anthropic_api_key');
+  const apiKey = localStorage.getItem('ccc_api_key');
   if (!apiKey) throw new Error('API key not set — go to Settings to add your Anthropic API key');
 
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -99,7 +99,7 @@ async function analyzeNonResponse({ phase1Html, clientName, furnisher, accountId
 }
 
 async function analyzeResponse({ phase1Html, responseBase64, responseType, clientName, furnisher, accountId }) {
-  const apiKey = localStorage.getItem('anthropic_api_key');
+  const apiKey = localStorage.getItem('ccc_api_key');
   if (!apiKey) throw new Error('API key not set — go to Settings to add your Anthropic API key');
 
   const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
