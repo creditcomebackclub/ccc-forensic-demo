@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Loader2, Printer, Download, Mail } from 'lucide-react';
 import { generateLetter } from '../utils/api';
+import { supabase } from '../utils/supabase';
 
 export default function LetterViewer({ account, client, onClose }) {
   const [loading, setLoading] = useState(true);
@@ -12,7 +13,21 @@ export default function LetterViewer({ account, client, onClose }) {
     setLoading(true);
     setError(null);
 
-    generateLetter(account, client)
+    const fetchSigAndGenerate = async () => {
+      let enrichedClient = { ...client };
+      try {
+        const { data: cp } = await supabase
+          .from('client_profiles')
+          .select('signature_data,full_name')
+          .eq('full_name', client.name)
+          .limit(1);
+        if (cp && cp.length > 0 && cp[0].signature_data) {
+          enrichedClient.signatureData = cp[0].signature_data;
+        }
+      } catch(e) { console.warn('Could not fetch signature:', e); }
+      return generateLetter(account, enrichedClient);
+    };
+    fetchSigAndGenerate()
       .then((res) => {
         if (cancelled) return;
         setHtml(res.html);
