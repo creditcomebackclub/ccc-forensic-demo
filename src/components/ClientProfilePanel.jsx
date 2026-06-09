@@ -40,6 +40,59 @@ function Field({ label, value, onSave, type = 'text', placeholder = '' }) {
   );
 }
 
+
+function PasswordField({ label, value, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const [val, setVal] = useState(value || '');
+
+  const save = async () => {
+    await onSave(val);
+    setEditing(false);
+    setVisible(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <div className="relative flex-1">
+          <input
+            type={visible ? 'text' : 'password'}
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            autoFocus
+            className="w-full border border-border rounded-sm px-2 py-1 text-[12px] focus:outline-none focus:border-navy pr-7"
+            onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
+          />
+          <button onClick={() => setVisible(!visible)}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-ink-faint hover:text-navy text-[10px]">
+            {visible ? '○' : '●'}
+          </button>
+        </div>
+        <button onClick={save} className="text-green-600 hover:text-green-700"><Check size={13} strokeWidth={2} /></button>
+        <button onClick={() => setEditing(false)} className="text-ink-faint hover:text-red-600"><X size={13} strokeWidth={2} /></button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 group">
+      <span className="text-[12px] text-ink font-mono">
+        {value ? (visible ? value : '••••••••') : <span className="text-ink-faint italic">Not set</span>}
+      </span>
+      {value && (
+        <button onClick={() => setVisible(!visible)} className="text-ink-faint hover:text-navy text-[10px]">
+          {visible ? '○' : '●'}
+        </button>
+      )}
+      <button onClick={() => { setVal(value || ''); setEditing(true); }}
+        className="opacity-0 group-hover:opacity-100 text-ink-faint hover:text-navy transition-opacity">
+        <Edit2 size={11} strokeWidth={2} />
+      </button>
+    </div>
+  );
+}
+
 function TextareaField({ label, value, onSave }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(value || '');
@@ -124,7 +177,7 @@ export default function ClientProfilePanel({ client, onChanged }) {
             onSave={(v) => save({ date_of_birth: v })} />
         </Row>
         <Row label="SSN Last 4">
-          <Field value={client.ssnLast4} placeholder="XXXX" type="password"
+          <PasswordField value={client.ssnLast4}
             onSave={(v) => save({ ssn_last4: v })} />
         </Row>
       </Section>
@@ -137,6 +190,10 @@ export default function ClientProfilePanel({ client, onChanged }) {
         <Row label="Login Email">
           <Field value={client.monitoringEmail} placeholder="client@email.com"
             onSave={(v) => save({ monitoring_email: v })} />
+        </Row>
+        <Row label="Password">
+          <PasswordField value={client.monitoringPassword}
+            onSave={(v) => save({ monitoring_password: v })} />
         </Row>
         <Row label="Portal">
           <div className="flex items-center gap-2">
