@@ -144,17 +144,25 @@ function Pill({ label, tone }) {
 
 function StatCard({ icon: Icon, label, value, sub, tone, onClick, clickable }) {
   const toneColor = tone === 'red' ? '#DC2626' : tone === 'amber' ? '#D97706' : tone === 'green' ? '#15803D' : '#1B2A4A';
+  const toneBg = tone === 'red' ? '#FEF2F2' : tone === 'amber' ? '#FFFBEB' : tone === 'green' ? '#F0FDF4' : '#EEF1F7';
   return (
-    <div onClick={onClick} className={'bg-white border border-border rounded p-5 transition-all ' + (clickable ? 'cursor-pointer hover:border-navy hover:shadow-sm' : '')}>
+    <div onClick={onClick}
+      className={'transition-all ' + (clickable ? 'cursor-pointer' : '')}
+      style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, padding: 20, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', ...(clickable ? {} : {}) }}
+      onMouseEnter={e => { if (clickable) { e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'; e.currentTarget.style.borderColor = '#D1D5DB'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
+      onMouseLeave={e => { if (clickable) { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)'; e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.transform = 'translateY(0)'; } }}
+    >
       <div className="flex items-center justify-between mb-3">
-        <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">{label}</div>
-        <Icon size={15} strokeWidth={1.75} style={{ color: toneColor }} />
+        <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF', fontWeight: 600 }}>{label}</div>
+        <div style={{ background: toneBg, borderRadius: 6, padding: '5px 5px', display: 'flex' }}>
+          <Icon size={13} strokeWidth={2} style={{ color: toneColor }} />
+        </div>
       </div>
-      <div className="text-3xl font-medium ccc-display" style={{ color: toneColor }}>{value}</div>
-      {sub && <div className="text-[11px] text-ink-muted mt-1">{sub}</div>}
+      <div style={{ fontSize: 32, fontWeight: 700, color: '#111827', lineHeight: 1, marginBottom: 4 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>{sub}</div>}
       {clickable && value > 0 && (
-        <div className="text-[10px] uppercase tracking-wider mt-2 flex items-center gap-1" style={{ color: toneColor }}>
-          View all <ChevronRight size={10} strokeWidth={2} />
+        <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 8, display: 'flex', alignItems: 'center', gap: 3, color: toneColor, fontWeight: 600 }}>
+          View <ChevronRight size={10} strokeWidth={2.5} />
         </div>
       )}
     </div>
@@ -218,7 +226,7 @@ function QuickActionPanel({ action, onDone, onCancel }) {
 function VelocityChart({ data }) {
   const max = Math.max(...data.flatMap((d) => [d.letters, d.mailed]), 1);
   return (
-    <div className="bg-white border border-border rounded p-5">
+    <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 10, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
       <div className="flex items-center gap-2 mb-4">
         <BarChart2 size={14} strokeWidth={1.75} className="text-navy" />
         <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Pipeline Velocity</div>
@@ -243,6 +251,96 @@ function VelocityChart({ data }) {
       )}
     </div>
   );
+}
+
+
+async function checkAndSendNotifications(clients) {
+  const today = new Date();
+  for (const client of clients) {
+    // Get client email from client_profiles
+    let clientEmail = null;
+    try {
+      const { supabase } = await import('../utils/supabase');
+      const { data: cp } = await supabase.from('client_profiles').select('email').eq('full_name', client.name).limit(1);
+      if (!cp || cp.length === 0) continue;
+      clientEmail = cp[0].email;
+      if (!clientEmail) continue;
+
+      for (const letter of (client.letters || [])) {
+        if (!letter.mailedDate) continue;
+        const clockStart = letter.deliveredAt ? letter.deliveredAt.slice(0, 10) : letter.mailedDate;
+        const daysElapsed = Math.round((today - new Date(clockStart + 'T00:00:00')) / 86400000);
+        const sent = letter.notificationsSent || [];
+
+        // Day 7 check-in
+        if (daysElapsed >= 7 && daysElapsed < 8 && !sent.includes('day7')) {
+          await fetch('/.netlify/functions/send-lpoa', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'send_campaign_update', clientName: client.name, clientEmail, updateType: 'day7_checkin', furnisher: letter.furnisher, daysElapsed }),
+          }).catch(() => {});
+          await supabase.from('letters').update({ notifications_sent: [...sent, 'day7'] }).eq('id', letter.id);
+        }
+
+        // Day 28-30 approaching
+        if (daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
+          await fetch('/.netlify/functions/send-lpoa', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'send_campaign_update', clientName: client.name, clientEmail, updateType: 'day30_approaching', furnisher: letter.furnisher, daysElapsed }),
+          }).catch(() => {});
+          await supabase.from('letters').update({ notifications_sent: [...sent, 'day30'] }).eq('id', letter.id);
+        }
+
+        // Educational email series (based on enrollment date, not letter date)
+        const enrollmentDate = client.enrollmentDate || clockStart;
+        const daysSinceEnrollment = Math.round((today - new Date(enrollmentDate + 'T00:00:00')) / 86400000);
+
+        if (daysSinceEnrollment >= 1 && daysSinceEnrollment < 3 && !sent.includes('edu1')) {
+          await fetch('/.netlify/functions/send-lpoa', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'send_educational', clientName: client.name, clientEmail, emailNumber: 1 }),
+          }).catch(() => {});
+          await supabase.from('letters').update({ notifications_sent: [...sent, 'edu1'] }).eq('id', letter.id);
+        }
+        if (daysSinceEnrollment >= 7 && daysSinceEnrollment < 9 && !sent.includes('edu2')) {
+          await fetch('/.netlify/functions/send-lpoa', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'send_educational', clientName: client.name, clientEmail, emailNumber: 2 }),
+          }).catch(() => {});
+          await supabase.from('letters').update({ notifications_sent: [...sent, 'edu2'] }).eq('id', letter.id);
+        }
+        if (daysSinceEnrollment >= 14 && daysSinceEnrollment < 16 && !sent.includes('edu3')) {
+          await fetch('/.netlify/functions/send-lpoa', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'send_educational', clientName: client.name, clientEmail, emailNumber: 3 }),
+          }).catch(() => {});
+          await supabase.from('letters').update({ notifications_sent: [...sent, 'edu3'] }).eq('id', letter.id);
+        }
+        if (daysSinceEnrollment >= 30 && daysSinceEnrollment < 32 && !sent.includes('edu4')) {
+          await fetch('/.netlify/functions/send-lpoa', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'send_educational', clientName: client.name, clientEmail, emailNumber: 4 }),
+          }).catch(() => {});
+          await supabase.from('letters').update({ notifications_sent: [...sent, 'edu4'] }).eq('id', letter.id);
+        }
+        if (daysSinceEnrollment >= 45 && daysSinceEnrollment < 47 && !sent.includes('edu5')) {
+          await fetch('/.netlify/functions/send-lpoa', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'send_educational', clientName: client.name, clientEmail, emailNumber: 5 }),
+          }).catch(() => {});
+          await supabase.from('letters').update({ notifications_sent: [...sent, 'edu5'] }).eq('id', letter.id);
+        }
+
+        // Day 35+ no response escalation
+        if (daysElapsed >= 35 && letter.responseOutcome === 'no_response' && !sent.includes('day35')) {
+          await fetch('/.netlify/functions/send-lpoa', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'send_campaign_update', clientName: client.name, clientEmail, updateType: 'day35_escalation', furnisher: letter.furnisher, daysElapsed }),
+          }).catch(() => {});
+          await supabase.from('letters').update({ notifications_sent: [...sent, 'day35'] }).eq('id', letter.id);
+        }
+      }
+    } catch(e) { console.warn('Notification check error:', e); }
+  }
 }
 
 export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
@@ -274,20 +372,20 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
   );
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-5" style={{ padding: "24px 32px" }}>
 
       {dash.actions.length > 0 && (
         <div>
-          <div className="flex items-center gap-2 mb-3">
-            <AlertCircle size={14} strokeWidth={2} className="text-red-600" />
-            <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Action Required</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <div style={{ background: "#FEF2F2", borderRadius: 6, padding: "4px 4px", display: "flex" }}><AlertCircle size={13} strokeWidth={2} style={{ color: "#DC2626" }} /></div>
+            <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "#374151", fontWeight: 600 }}>Action Required</span>
           </div>
           <div className="space-y-1">
             {dash.actions.map((a, i) => (
               <div key={i}>
                 <div
                   onClick={() => setActiveAction(activeAction?.letter?.id === a.letter?.id ? null : a)}
-                  className="bg-white border rounded px-4 py-3 flex items-center justify-between gap-3 cursor-pointer hover:shadow-sm transition-all group"
+                  className="flex items-center justify-between gap-3 cursor-pointer transition-all group" style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: '12px 16px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
                   style={{ borderColor: activeAction?.letter?.id === a.letter?.id ? '#1B2A4A' : (a.tone === 'red' ? '#FECACA' : '#FDE68A') }}
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -311,7 +409,7 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
         </div>
       )}
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-4 gap-3">
         <StatCard icon={Activity} label="Active Campaigns" value={dash.active} sub="accounts in dispute" tone="navy" clickable={dash.active > 0} onClick={() => handleStatClick('active')} />
         <StatCard icon={Clock} label="Awaiting Response" value={dash.awaiting} sub={WINDOW_DAYS + '-day windows open'} tone={dash.awaiting > 0 ? 'amber' : 'navy'} clickable={dash.awaiting > 0} onClick={() => handleStatClick('awaiting')} />
         <StatCard icon={Zap} label="Ready to Escalate" value={dash.escalate} sub="windows closed" tone={dash.escalate > 0 ? 'red' : 'navy'} clickable={dash.escalate > 0} onClick={() => handleStatClick('escalate')} />
@@ -320,7 +418,7 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
 
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-5 space-y-4">
-          <div className="bg-white border border-border rounded p-5">
+          <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 10, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
             <div className="flex items-center gap-2 mb-4">
               <AlertCircle size={14} strokeWidth={1.75} className="text-red-600" />
               <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Today's Priority Queue</div>
@@ -352,7 +450,7 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
             )}
           </div>
 
-          <div className="bg-white border border-border rounded p-5">
+          <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 10, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
             <div className="flex items-center gap-2 mb-4">
               <Activity size={14} strokeWidth={1.75} className="text-navy" />
               <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Recent Activity</div>
@@ -413,7 +511,7 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
           )}
 
           {dash.windowCountdown.length > 0 && (
-            <div className="bg-white border border-border rounded p-5">
+            <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 10, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
               <div className="flex items-center gap-2 mb-4">
                 <Clock size={14} strokeWidth={1.75} className="text-amber-600" />
                 <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">30-Day Window Countdown</div>
@@ -444,7 +542,7 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
           )}
 
           {dash.mailingQueue.length > 0 && (
-            <div className="bg-white border border-border rounded p-5">
+            <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 10, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
               <div className="flex items-center gap-2 mb-4">
                 <Send size={14} strokeWidth={1.75} className="text-navy" />
                 <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Ready to Mail</div>

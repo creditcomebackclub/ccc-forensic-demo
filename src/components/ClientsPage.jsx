@@ -464,9 +464,17 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   <span className="flex items-center gap-1"><FileText size={13} strokeWidth={1.75} />{c.audits.length}</span>
                   <span className="flex items-center gap-1"><Mail size={13} strokeWidth={1.75} />{c.letters.length}</span>
                   {c.lpoaSigned ? (
-                    <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-green-50 text-green-700 border border-green-200">
-                      ✓ LPOA Signed
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-green-50 text-green-700 border border-green-200">
+                        ✓ LPOA Signed
+                      </span>
+                      {c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl && (
+                        <a href={c.lpoaSignatureData.lpoaUrl} target="_blank" rel="noopener noreferrer"
+                          className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
+                          View
+                        </a>
+                      )}
+                    </div>
                   ) : (
                     <div className="flex items-center gap-1">
                       <button

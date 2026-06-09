@@ -172,6 +172,7 @@ function normalizeLetter(l) {
     html: l.html,
     mailedDate: l.mailed_date,
     responseOutcome: l.response_outcome,
+    notificationsSent: l.notifications_sent || [],
     responseDate: l.response_date,
     lobId: l.lob_id,
     trackingNumber: l.tracking_number,
@@ -235,7 +236,7 @@ export async function adminListClients() {
     supabase.from('audits').select('*').order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').order('saved_at', { ascending: false }),
     supabase.from('profiles').select('*'),
-    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,phone,date_of_birth,ssn_last4,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,monitoring_password'),
+    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,ssn_last4,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,monitoring_password'),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
