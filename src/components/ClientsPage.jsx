@@ -516,14 +516,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     ))}
                   </div>
 
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Letters</div>
-                    {c.letters.length === 0 && <div className="text-[12px] text-ink-muted">None</div>}
-                    {c.letters.map((l) => (
-                      <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter} />
-                    ))}
-                  </div>
-
                   {/* Tab nav */}
                   <div className="flex gap-1 border-b border-border mb-4">
                     {['Letters', 'Profile', 'Documents'].map((tab) => (

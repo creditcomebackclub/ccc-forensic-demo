@@ -231,11 +231,12 @@ export async function listClients() {
 
 export async function adminListClients() {
   const userId = await getUserId();
-  const [auditsRes, lettersRes, profilesRes, metaRes] = await Promise.all([
+  const [auditsRes, lettersRes, profilesRes, metaRes, portalRes] = await Promise.all([
     supabase.from('audits').select('*').order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').order('saved_at', { ascending: false }),
     supabase.from('profiles').select('*'),
     supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,phone,date_of_birth,ssn_last4,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start'),
+    supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
   if (lettersRes.error) throw lettersRes.error;
@@ -249,8 +250,17 @@ export async function adminListClients() {
 
   const vipSet = new Set((metaRes.data || []).filter((c) => c.is_vip).map((c) => c.name));
   const metaMap2 = new Map((metaRes.data || []).map((c) => [c.name, c]));
+  const portalMap = new Map((portalRes.data || []).map((p) => [p.full_name, p]));
   out.forEach((c) => {
     c.isVip = vipSet.has(c.name);
+    // Auto-populate from client_profiles if clients table is missing data
+    const portal = portalMap.get(c.name);
+    if (portal) {
+      if (!c.email && portal.email) c.email = portal.email;
+      c.portalOnboarded = portal.onboarding_complete || false;
+      c.signatureData = portal.signature_data || null;
+      c.agreementSigned = !!portal.agreement_signed_at;
+    }
     const meta = metaMap2.get(c.name);
     if (meta) {
       c.email = meta.email || null;
