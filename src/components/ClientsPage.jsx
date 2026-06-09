@@ -3,6 +3,7 @@ import { Users, FileText, Mail, UserPlus, Trash2, ChevronDown, ChevronRight, Ref
 import { listClients, adminListClients, deleteClient, updateLetter, toggleVip, updateClientEmail } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
+import ClientProfilePanel from './ClientProfilePanel';
 import LobMailer from './LobMailer';
 
 const WINDOW_DAYS = 30;
@@ -237,6 +238,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
   const [activeFilter, setActiveFilter] = useState(initialFilter || null);
   const [editingEmail, setEditingEmail] = useState(null);
+  const [activeTab, setActiveTab] = useState({});
   const [emailVal, setEmailVal] = useState('');
   const [sendingLpoa, setSendingLpoa] = useState(null);
   const [showCreateClient, setShowCreateClient] = useState(false);
@@ -522,9 +524,42 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     ))}
                   </div>
 
-                  <div>
-                    <DocumentManager clientName={c.name} onChanged={load} />
+                  {/* Tab nav */}
+                  <div className="flex gap-1 border-b border-border mb-4">
+                    {['Letters', 'Profile', 'Documents'].map((tab) => (
+                      <button key={tab}
+                        onClick={() => setActiveTab((p) => ({ ...p, [c.name]: tab }))}
+                        className={'px-3 py-1.5 text-[11px] uppercase tracking-wider transition-colors ' +
+                          ((activeTab[c.name] || 'Letters') === tab
+                            ? 'border-b-2 border-navy text-navy font-medium'
+                            : 'text-ink-muted hover:text-ink')}>
+                        {tab}
+                      </button>
+                    ))}
                   </div>
+
+                  {/* Letters tab */}
+                  {(activeTab[c.name] || 'Letters') === 'Letters' && (
+                    <div className="space-y-1">
+                      {c.letters.length === 0 ? (
+                        <p className="text-[12px] text-ink-muted py-4 text-center">No letters yet — run an audit to generate Phase 1 letters.</p>
+                      ) : (
+                        c.letters.map((l) => (
+                          <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter} />
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {/* Profile tab */}
+                  {(activeTab[c.name] || 'Letters') === 'Profile' && (
+                    <ClientProfilePanel client={c} onChanged={load} />
+                  )}
+
+                  {/* Documents tab */}
+                  {(activeTab[c.name] || 'Letters') === 'Documents' && (
+                    <DocumentManager clientName={c.name} onChanged={load} />
+                  )}
 
                   <div className="pt-2 border-t border-border">
                     {confirmDelete === c.name ? (

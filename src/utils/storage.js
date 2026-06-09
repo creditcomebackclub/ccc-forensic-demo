@@ -30,6 +30,16 @@ export async function getProfile() {
   return data;
 }
 
+export async function updateClientProfile(clientName, fields) {
+  const userId = await getUserId();
+  const { error } = await supabase.from('clients').upsert({
+    user_id: userId,
+    name: clientName,
+    ...fields,
+  }, { onConflict: 'user_id,name' });
+  if (error) throw error;
+}
+
 export async function updateClientEmail(clientName, email) {
   const userId = await getUserId();
   const { error } = await supabase.from('clients').upsert({
@@ -225,7 +235,7 @@ export async function adminListClients() {
     supabase.from('audits').select('*').order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').order('saved_at', { ascending: false }),
     supabase.from('profiles').select('*'),
-    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at'),
+    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,phone,date_of_birth,ssn_last4,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
   if (lettersRes.error) throw lettersRes.error;
@@ -242,7 +252,25 @@ export async function adminListClients() {
   out.forEach((c) => {
     c.isVip = vipSet.has(c.name);
     const meta = metaMap2.get(c.name);
-    if (meta) { c.email = meta.email || null; c.lpoaSigned = meta.lpoa_signed || false; c.lpoaSignedAt = meta.lpoa_signed_at || null; }
+    if (meta) {
+      c.email = meta.email || null;
+      c.lpoaSigned = meta.lpoa_signed || false;
+      c.lpoaSignedAt = meta.lpoa_signed_at || null;
+      c.phone = meta.phone || null;
+      c.dateOfBirth = meta.date_of_birth || null;
+      c.ssnLast4 = meta.ssn_last4 || null;
+      c.monitoringService = meta.monitoring_service || 'Privacy Guard';
+      c.monitoringEmail = meta.monitoring_email || null;
+      c.monitoringEnrolled = meta.monitoring_enrolled || false;
+      c.monitoringPortalUrl = meta.monitoring_portal_url || 'https://www.privacyguard.com';
+      c.referralSource = meta.referral_source || null;
+      c.notes = meta.notes || null;
+      c.tags = meta.tags || [];
+      c.enrollmentDate = meta.enrollment_date || null;
+      c.scoreEqStart = meta.score_eq_start || null;
+      c.scoreExpStart = meta.score_exp_start || null;
+      c.scoreTuStart = meta.score_tu_start || null;
+    }
   });
   return out;
 }
