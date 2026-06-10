@@ -238,6 +238,7 @@ BANKS & CREDIT CARDS:
 - Apple Card / Goldman Sachs: Goldman Sachs Bank USA, Lockbox 6112, P.O. Box 7247, Philadelphia, PA 19170-6112
 - Comenity / Comenity Bank: Comenity Bank, Credit Reporting Dispute, P.O. Box 182273, Columbus, OH 43218-2273
 - Merrick Bank: Merrick Bank Corp, Attn: Credit Reporting Disputes, P.O. Box 9201, Old Bethpage, NY 11804-9001
+- USALLIANCE / US Alliance Federal Credit Union / USALLIANCE Financial: USALLIANCE Financial, Attn: Credit Dispute, 411 Theodore Fremd Avenue Suite 350, Rye, NY 10580-1426
 
 AUTO & INSTALLMENT:
 - Capital One Auto / Cap One Auto / COAF / CAPONEAUTO: Capital One Auto Finance, P.O. Box 660367, Dallas, TX 75266-0367

@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign Authorization</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #F8F9FA; min-height: 100vh; }
+  .header { background: #1B2A4A; padding: 16px 24px; }
+  .header h1 { color: #C9A84C; font-size: 16px; font-weight: bold; }
+  .header p { color: rgba(255,255,255,0.5); font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 3px; }
+  .container { max-width: 680px; margin: 0 auto; padding: 24px 16px; }
+  .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
+  .card-header { background: #1B2A4A; padding: 14px 20px; }
+  .card-header h2 { color: #fff; font-size: 13px; font-weight: bold; }
+  .card-header p { color: #C9A84C; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 3px; }
+  .card-body { padding: 20px; }
+  .lpoa-text { font-size: 11px; line-height: 1.7; color: #374151; max-height: 360px; overflow-y: auto; border: 1px solid #E5E7EB; padding: 16px; border-radius: 6px; background: #FAFAFA; }
+  .lpoa-text h3 { font-size: 10px; background: #1B2A4A; color: #fff; padding: 4px 10px; margin: 12px -16px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .lpoa-text h3:first-child { margin-top: -16px; }
+  .lpoa-text p { margin: 8px 0; }
+  .lpoa-text ul { padding-left: 18px; margin: 6px 0; }
+  .lpoa-text li { margin: 3px 0; }
+  .sig-section { margin-top: 20px; }
+  .sig-section h3 { font-size: 12px; font-weight: bold; color: #1B2A4A; margin-bottom: 6px; }
+  .sig-section p { font-size: 11px; color: #6B7280; margin-bottom: 12px; }
+  .canvas-wrap { border: 1px solid #E5E7EB; border-radius: 6px; overflow: hidden; }
+  canvas { display: block; width: 100%; touch-action: none; background: #FAFAFA; cursor: crosshair; }
+  .canvas-footer { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-top: 1px solid #E5E7EB; background: #fff; }
+  .canvas-footer span { font-size: 10px; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.06em; }
+  .clear-btn { font-size: 10px; color: #9CA3AF; background: none; border: none; cursor: pointer; text-transform: uppercase; letter-spacing: 0.06em; }
+  .clear-btn:hover { color: #DC2626; }
+  .consent { background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 6px; padding: 12px 14px; margin: 16px 0; font-size: 11px; color: #92400E; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: #6B7280; font-weight: 600; margin-bottom: 4px; }
+  .field input { width: 100%; border: 1px solid #E5E7EB; border-radius: 6px; padding: 9px 12px; font-size: 13px; }
+  .field input:focus { outline: none; border-color: #1B2A4A; }
+  .btn { display: block; width: 100%; padding: 13px; font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.07em; border-radius: 6px; border: none; cursor: pointer; background: #1B2A4A; color: #C9A84C; transition: background 0.15s; }
+  .btn:hover { background: #243659; }
+  .btn:disabled { background: #D1D5DB; color: #fff; cursor: default; }
+  .error { color: #DC2626; font-size: 12px; margin-top: 8px; padding: 8px 12px; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 6px; }
+  .success { background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; padding: 28px; text-align: center; }
+  .success h3 { color: #15803D; font-size: 18px; margin-bottom: 8px; }
+  .success p { color: #166534; font-size: 13px; margin-top: 6px; }
+  .success .meta { font-size: 11px; color: #6B7280; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Credit Dispute Authorization</h1>
+  <p>Limited Power of Attorney</p>
+</div>
+<div class="container">
+  <div class="card" id="main-card">
+    <div class="card-header">
+      <h2>Review & Sign Authorization</h2>
+      <p id="client-name-header">Please read and sign below</p>
+    </div>
+    <div class="card-body">
+      <div class="lpoa-text">
+        <h3>1. Parties</h3>
+        <p>This Limited Power of Attorney is between <strong id="client-name-doc">[Client Name]</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, 3088 Colorado Ave, Grand Junction, CO 81504 ("Attorney-in-Fact").</p>
+        <h3>2. Grant of Authority</h3>
+        <p>Principal authorizes Credit Comeback Club to act exclusively for credit dispute activities:</p>
+        <ul>
+          <li>Prepare and submit dispute letters to data furnishers under 15 U.S.C. §1681s-2(b)</li>
+          <li>Prepare and submit dispute letters to Equifax, Experian, and TransUnion</li>
+          <li>Send certified mail on behalf of Principal for credit disputes</li>
+          <li>Receive and respond to furnisher and bureau correspondence</li>
+          <li>Submit CFPB, FTC, and state AG complaints for FCRA/FDCPA violations</li>
+          <li>Sign dispute correspondence as "By: Credit Comeback Club, Authorized Representative"</li>
+        </ul>
+        <h3>3. Limitations</h3>
+        <p>This authorization does NOT grant authority to make financial decisions, access financial accounts, dispute accurate information, create a new credit identity, or settle legal claims without explicit written consent.</p>
+        <h3>4. Fee Structure</h3>
+        <p>First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.</p>
+        <h3>5. No Guarantee</h3>
+        <p>No specific outcome is guaranteed. Results vary by credit profile and creditor response.</p>
+        <h3>6. Duration & Revocation</h3>
+        <p>Effective until written revocation or dispute completion. To revoke: email creditcomebackclub@gmail.com with "LPOA REVOCATION — [Your Name]."</p>
+        <h3>7. ESIGN Disclosure</h3>
+        <p>By signing below, you provide a legally binding electronic signature under the ESIGN Act (15 U.S.C. §7001). Your name, drawn signature, timestamp, and IP are recorded.</p>
+      </div>
+
+      <div class="sig-section">
+        <h3>Draw Your Signature</h3>
+        <p>Use your mouse or finger to sign in the box below.</p>
+        <div class="canvas-wrap">
+          <canvas id="sig-canvas" height="120"></canvas>
+          <div class="canvas-footer">
+            <span>Sign above</span>
+            <button class="clear-btn" onclick="clearSig()">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:16px;">
+        <label>Full Legal Name *</label>
+        <input type="text" id="signer-name" placeholder="Type your full legal name" />
+      </div>
+
+      <div class="consent">
+        By clicking "I Agree &amp; Sign" I confirm I have read and agree to the authorization above. I understand this is a legally binding electronic signature under the ESIGN Act (15 U.S.C. §7001).
+      </div>
+
+      <button class="btn" id="sign-btn" onclick="handleSign()">✓ &nbsp; I Agree &amp; Sign This Authorization</button>
+      <div class="error" id="sign-error" style="display:none;"></div>
+    </div>
+  </div>
+
+  <div class="success" id="success-box" style="display:none;">
+    <div style="font-size:32px;margin-bottom:8px;">✓</div>
+    <h3>Authorization Signed</h3>
+    <p>Thank you, <strong id="signed-name"></strong>.</p>
+    <p>Your authorization has been recorded. Credit Comeback Club will begin your dispute campaign shortly.</p>
+    <div class="meta" id="signed-meta"></div>
+  </div>
+
+  <p style="text-align:center;font-size:11px;color:#9CA3AF;padding:16px 0 32px;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com | 970-644-0063</p>
+</div>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const clientName = decodeURIComponent(params.get('client') || '');
+  const token = params.get('token') || '';
+
+  if (clientName) {
+    document.getElementById('client-name-header').textContent = clientName;
+    document.getElementById('client-name-doc').textContent = clientName;
+    document.getElementById('signer-name').value = clientName;
+  }
+
+  // Canvas setup
+  const canvas = document.getElementById('sig-canvas');
+  const ctx = canvas.getContext('2d');
+  let drawing = false;
+  let hasSig = false;
+
+  function resizeCanvas() {
+    const w = canvas.parentElement.clientWidth;
+    canvas.width = w;
+    canvas.height = 120;
+    ctx.strokeStyle = '#1B2A4A';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+  }
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+
+  function getPos(e) {
+    const r = canvas.getBoundingClientRect();
+    const src = e.touches ? e.touches[0] : e;
+    return { x: src.clientX - r.left, y: src.clientY - r.top };
+  }
+
+  canvas.addEventListener('mousedown', e => { drawing = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); });
+  canvas.addEventListener('mousemove', e => { if (!drawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); hasSig = true; });
+  canvas.addEventListener('mouseup', () => drawing = false);
+  canvas.addEventListener('mouseleave', () => drawing = false);
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); drawing = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); }, { passive: false });
+  canvas.addEventListener('touchmove', e => { e.preventDefault(); if (!drawing) return; const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); hasSig = true; }, { passive: false });
+  canvas.addEventListener('touchend', () => drawing = false);
+
+  function clearSig() { ctx.clearRect(0, 0, canvas.width, canvas.height); hasSig = false; }
+
+  async function handleSign() {
+    const name = document.getElementById('signer-name').value.trim();
+    const errEl = document.getElementById('sign-error');
+    errEl.style.display = 'none';
+
+    if (!name) { errEl.textContent = 'Please enter your full legal name.'; errEl.style.display = 'block'; return; }
+    if (!hasSig) { errEl.textContent = 'Please draw your signature above.'; errEl.style.display = 'block'; return; }
+
+    const btn = document.getElementById('sign-btn');
+    btn.disabled = true;
+    btn.textContent = 'Signing…';
+
+    const signatureData = canvas.toDataURL('image/png');
+
+    try {
+      const res = await fetch('/.netlify/functions/sign-lpoa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientName: clientName || name,
+          signerName: name,
+          signatureData,
+          signedAt: new Date().toISOString(),
+          token,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Sign failed');
+
+      document.getElementById('main-card').style.display = 'none';
+      document.getElementById('success-box').style.display = 'block';
+      document.getElementById('signed-name').textContent = name;
+      document.getElementById('signed-meta').textContent = 'Signed: ' + new Date().toLocaleString('en-US') + ' | Recorded under ESIGN Act (15 U.S.C. §7001)';
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = '✓  I Agree & Sign This Authorization';
+      errEl.textContent = 'Could not record signature: ' + e.message;
+      errEl.style.display = 'block';
+    }
+  }
+</script>
+</body>
+</html>

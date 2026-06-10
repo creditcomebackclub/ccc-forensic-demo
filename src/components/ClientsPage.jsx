@@ -301,15 +301,15 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     if (!c.email) { alert('Add client email first'); return; }
     setSendingLpoa(c.name);
     try {
-      const lpoaUrl = window.location.origin + '/lpoa-sign.html?client=' + encodeURIComponent(c.name);
+      const signingUrl = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(c.name);
       const res = await fetch('/.netlify/functions/send-lpoa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'send', clientName: c.name, clientEmail: c.email, lpoaUrl }),
+        body: JSON.stringify({ action: 'send', clientName: c.name, clientEmail: c.email, lpoaUrl: signingUrl }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Send failed');
-      alert('LPOA sent to ' + c.email);
+      alert('LPOA signing link sent to ' + c.email);
     } catch (e) {
       alert('Could not send LPOA: ' + e.message);
     } finally {
