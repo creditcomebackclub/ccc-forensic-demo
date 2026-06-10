@@ -232,7 +232,7 @@ BANKS & CREDIT CARDS:
 - Discover / Discover Card / DISCOVERCARD: Discover Bank, Credit Card Operations, P.O. Box 30943, Salt Lake City, UT 84130
 - American Express / AMEX: American Express, P.O. Box 981535, El Paso, TX 79998-1535
 - Wells Fargo / Wells Fargo Bank: Wells Fargo Bank N.A., Credit Bureau Dispute Resolution, P.O. Box 393, Minneapolis, MN 55480-0393
-- Synchrony / Synchrony Bank: Synchrony Bank, Attn: Credit Bureau Disputes, P.O. Box 965061, Orlando, FL 32896-5061
+- Synchrony / Synchrony Bank / Synchrony Suzuki / Suzuki Finance / Synchrony Financial: Synchrony Bank, Attn: Credit Bureau Disputes, P.O. Box 965061, Orlando, FL 32896-5061
 - Barclays / Barclays Bank: Barclays Bank Delaware, P.O. Box 8803, Wilmington, DE 19899-8803
 - Navy Federal / NFCU: Navy Federal Credit Union, Attn: Credit Reporting, P.O. Box 3500, Merrifield, VA 22119-3500
 - Apple Card / Goldman Sachs: Goldman Sachs Bank USA, Lockbox 6112, P.O. Box 7247, Philadelphia, PA 19170-6112
