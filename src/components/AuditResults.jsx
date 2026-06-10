@@ -40,13 +40,11 @@ async function emailAuditToClient(audit) {
   const clientEmail = cp && cp.length > 0 ? cp[0].email : null;
 
   if (!clientEmail) {
-    const email = prompt('Enter client email address:');
-    if (!email) return;
-    await sendAuditEmail(audit, clientName, email);
-  } else {
-    if (confirm('Send audit summary to ' + clientEmail + '?')) {
-      await sendAuditEmail(audit, clientName, clientEmail);
-    }
+    alert('No email on file for ' + clientName + '. Add their email in the client card first.');
+    return;
+  }
+  if (confirm('Send audit summary to ' + clientEmail + '?')) {
+    await sendAuditEmail(audit, clientName, clientEmail);
   }
 }
 

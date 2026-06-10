@@ -325,7 +325,7 @@ When the user message contains \`<MODE>LETTER_HTML</MODE>\` followed by an accou
 - Open directly with date → sender → recipient (NO CCC branding header)
 - Follow the 16-step structure in Section 7 exactly
 - For Type C, include §1692g(b) demands
-- Include certified mail notation at bottom
+- Include certified mail notation at bottom. Enclosures line must read: "Enclosures: (1) Government-Issued Photo ID; (2) Proof of Current Address; (3) Limited Power of Attorney" — never mention credit report as an enclosure
 - Be print-ready (use @page CSS for letter dimensions)
 - Output ONLY the HTML — no markdown code fences, no prose explanation
 

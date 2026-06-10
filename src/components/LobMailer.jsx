@@ -98,14 +98,79 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
       if (urlErr) throw new Error('Could not get letter URL: ' + urlErr.message);
       const remoteUrl = urlData.signedUrl;
 
-      const enclosures = [];
+      // Build enclosure pages to append to letter
+      let enclosurePages = '';
+
+      // Fetch LPOA from clients table
+      try {
+        const { data: clientMeta } = await supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
+        if (clientMeta && clientMeta.length > 0 && clientMeta[0].lpoa_signature_data && clientMeta[0].lpoa_signature_data.lpoaUrl) {
+          const lpoaRes = await fetch(clientMeta[0].lpoa_signature_data.lpoaUrl);
+          const lpoaHtml = await lpoaRes.text();
+          // Extract body content from LPOA HTML
+          const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+          const lpoaBody = bodyMatch ? bodyMatch[1] : lpoaHtml;
+          enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
+            + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure 1 of ' + (idDoc ? (addressDoc ? '3' : '2') : '1') + ' — Limited Power of Attorney</div>'
+            + lpoaBody + '</div>';
+        }
+      } catch(e) { console.warn('Could not fetch LPOA:', e); }
+
+      // Add ID document
       if (idDoc) {
         const b64 = await getDocumentBase64(idDoc.storage_path);
-        enclosures.push({ type: 'id', base64: b64, fileName: idDoc.file_name });
+        const isImg = idDoc.file_name && /.(jpg|jpeg|png)$/i.test(idDoc.file_name);
+        enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
+          + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Government-Issued Photo ID</div>'
+          + (isImg ? '<img src="data:image/' + (idDoc.file_name.endsWith('.png') ? 'png' : 'jpeg') + ';base64,' + b64 + '" style="max-width:100%;max-height:700px;" />' : '<p>ID document attached (PDF format)</p>')
+          + '</div>';
       }
+
+      // Add address proof
       if (addressDoc) {
         const b64 = await getDocumentBase64(addressDoc.storage_path);
-        enclosures.push({ type: 'address', base64: b64, fileName: addressDoc.file_name });
+        const isImg = addressDoc.file_name && /.(jpg|jpeg|png)$/i.test(addressDoc.file_name);
+        enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
+          + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Proof of Current Address</div>'
+          + (isImg ? '<img src="data:image/' + (addressDoc.file_name.endsWith('.png') ? 'png' : 'jpeg') + ';base64,' + b64 + '" style="max-width:100%;max-height:700px;" />' : '<p>Address document attached (PDF format)</p>')
+          + '</div>';
+      }
+
+      // Merge letter HTML with enclosure pages
+      let mergedHtml = letter.html;
+      if (enclosurePages) {
+        mergedHtml = mergedHtml.replace('</body>', enclosurePages + '</body>');
+        if (!mergedHtml.includes('</body>')) mergedHtml += enclosurePages;
+        // Re-upload merged HTML
+        const mergedBlob = new Blob([mergedHtml], { type: 'text/html' });
+        const mergedPath = user.id + '/temp-letters/' + slug(letter.clientName) + '-' + slug(letter.furnisher) + '-merged-' + Date.now() + '.html';
+        await supabase.storage.from('documents').upload(mergedPath, mergedBlob, { upsert: true });
+        const { data: mergedUrlData } = await supabase.storage.from('documents').createSignedUrl(mergedPath, 3600);
+        if (mergedUrlData) {
+          // Use merged URL instead
+          const mergedRemoteUrl = mergedUrlData.signedUrl;
+          const res = await callLob('send_letter', {
+            toAddress: toAddr,
+            fromAddress: FROM_ADDRESS,
+            remoteUrl: mergedRemoteUrl,
+            description: letter.clientName + ' — ' + letter.furnisher + ' — ' + letter.phase + ' (w/ enclosures)',
+            enclosures: [],
+          });
+          setResult(res);
+          setStep('sent');
+          onSent({ lobId: res.id, mailedDate: new Date().toISOString().slice(0, 10), trackingNumber: res.tracking_number || null });
+          // Fire phase notification
+          try {
+            const { data: cp } = await supabase.from('client_profiles').select('email,full_name').ilike('full_name', letter.clientName).limit(1);
+            if (cp && cp.length > 0 && cp[0].email) {
+              fetch('/.netlify/functions/send-lpoa', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'send_phase_notification', clientName: cp[0].full_name, clientEmail: cp[0].email, phase: 'phase1_mailed', furnisher: letter.furnisher, trackingNumber: res.tracking_number || '' }),
+              }).catch(e => console.warn('Phase notification failed:', e));
+            }
+          } catch(e) {}
+          return; // Exit early — already handled
+        }
       }
 
       const res = await callLob('send_letter', {
@@ -113,7 +178,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
         fromAddress: FROM_ADDRESS,
         remoteUrl,
         description: letter.clientName + ' — ' + letter.furnisher + ' — ' + letter.phase,
-        enclosures,
+        enclosures: [],
       });
 
       setResult(res);
