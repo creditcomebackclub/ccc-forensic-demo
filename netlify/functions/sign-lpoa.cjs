@@ -71,7 +71,8 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseKey) return { statusCode: 500, body: JSON.stringify({ error: 'SUPABASE_SERVICE_ROLE_KEY not configured' }) };
 
   let payload;
   try { payload = JSON.parse(event.body); }
@@ -112,6 +113,10 @@ exports.handler = async (event) => {
       req.end();
     });
 
+    if (storageRes.status < 200 || storageRes.status >= 300) {
+      throw new Error('Signature upload failed: ' + storageRes.status + ' ' + storageRes.body);
+    }
+
     // Get public URL
     const sigUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + encodeURIComponent(clientName) + '/signature.png';
 
@@ -120,7 +125,7 @@ exports.handler = async (event) => {
     const lpoaBuffer = Buffer.from(lpoaHtml, 'utf8');
 
     // Upload LPOA HTML
-    await new Promise((resolve, reject) => {
+    const lpoaUploadRes = await new Promise((resolve, reject) => {
       const path = '/storage/v1/object/client-docs/standalone/' + encodeURIComponent(clientName) + '/lpoa-signed.html';
       const u = new URL(supabaseUrl + path);
       const options = {
@@ -134,12 +139,16 @@ exports.handler = async (event) => {
         },
       };
       const req = https.request(options, (res) => {
-        let raw = ''; res.on('data', c => raw += c); res.on('end', () => resolve({ status: res.statusCode }));
+        let raw = ''; res.on('data', c => raw += c); res.on('end', () => resolve({ status: res.statusCode, body: raw }));
       });
       req.on('error', reject);
       req.write(lpoaBuffer);
       req.end();
     });
+
+    if (lpoaUploadRes.status < 200 || lpoaUploadRes.status >= 300) {
+      throw new Error('LPOA upload failed: ' + lpoaUploadRes.status + ' ' + lpoaUploadRes.body);
+    }
 
     const lpoaUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + encodeURIComponent(clientName) + '/lpoa-signed.html';
 
@@ -152,7 +161,7 @@ exports.handler = async (event) => {
       method: 'Canvas drawn signature — standalone LPOA signing page',
     };
 
-    await supabaseRequest(
+    const patchRes = await supabaseRequest(
       '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName),
       'PATCH',
       {
@@ -163,6 +172,10 @@ exports.handler = async (event) => {
       supabaseUrl,
       supabaseKey
     );
+
+    if (patchRes.status < 200 || patchRes.status >= 300) {
+      throw new Error('Clients table update failed: ' + patchRes.status + ' ' + JSON.stringify(patchRes.body));
+    }
 
     return { statusCode: 200, body: JSON.stringify({ signed: true, sigUrl, lpoaUrl }) };
   } catch (e) {

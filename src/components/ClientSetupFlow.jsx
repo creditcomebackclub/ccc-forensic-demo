@@ -131,6 +131,11 @@ function ClientOnboardingModal({ session, onComplete }) {
   };
 
   const handleComplete = async () => {
+    if (!signature) {
+      setError('Please draw your signature in Step 3 before completing enrollment.');
+      setStep(3);
+      return;
+    }
     setLoading(true);
     setError(null);
     const userId = session.user.id;
