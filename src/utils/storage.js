@@ -69,6 +69,35 @@ async function getClientMeta(userId) {
 }
 
 export async function saveAudit(audit) {
+  // Auto-populate starting scores if not already set
+  try {
+    const userId = await getUserId();
+    const clientName = audit.client && audit.client.name;
+    const scores = audit.client && audit.client.scores;
+    if (clientName && scores) {
+      const { data: existing } = await supabase.from('clients')
+        .select('score_eq_start,score_exp_start,score_tu_start')
+        .eq('name', clientName)
+        .eq('user_id', userId)
+        .limit(1);
+      const hasScores = existing && existing.length > 0 && (existing[0].score_eq_start || existing[0].score_exp_start || existing[0].score_tu_start);
+      if (!hasScores) {
+        const eq = scores.equifax || scores.eq || null;
+        const exp = scores.experian || scores.exp || null;
+        const tu = scores.transunion || scores.tu || null;
+        if (eq || exp || tu) {
+          await supabase.from('clients').upsert({
+            user_id: userId,
+            name: clientName,
+            score_eq_start: eq ? parseInt(eq) : null,
+            score_exp_start: exp ? parseInt(exp) : null,
+            score_tu_start: tu ? parseInt(tu) : null,
+          }, { onConflict: 'user_id,name' });
+        }
+      }
+    }
+  } catch(e) { console.warn('Could not auto-populate scores:', e); }
+
   const userId = await getUserId();
   const clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
   const clientAddress = (audit && audit.client && audit.client.address) || null;

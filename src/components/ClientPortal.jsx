@@ -56,6 +56,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const [clientMeta, setClientMeta] = useState(null);
   const [letters, setLetters] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [auditHistory, setAuditHistory] = useState([]);
   const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => { loadData(); }, [session]);
@@ -65,12 +66,14 @@ export default function ClientPortal({ session, onSignOut }) {
       const { data: cp } = await supabase.from('client_profiles').select('*').eq('user_id', session.user.id).single();
       setProfile(cp);
       if (cp) {
-        const [lettersRes, metaRes] = await Promise.all([
+        const [lettersRes, metaRes, auditsRes] = await Promise.all([
           supabase.from('letters').select('*').eq('client_name', cp.full_name).order('saved_at', { ascending: true }),
           supabase.from('clients').select('*').eq('name', cp.full_name).limit(1),
+          supabase.from('audits').select('scores,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5),
         ]);
         setLetters(lettersRes.data || []);
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
+        setAuditHistory(auditsRes.data || []);
       }
     } catch (e) { console.error('Portal load error:', e); }
     finally { setLoading(false); }
