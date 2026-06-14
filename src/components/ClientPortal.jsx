@@ -2,27 +2,67 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
 import { LogOut, FileText, Mail, CheckCircle, Clock, AlertCircle, Shield, TrendingUp, ExternalLink, ChevronRight, Star, Calendar } from 'lucide-react';
 
-function ScoreBar({ label, start, current }) {
-  const diff = (start && current) ? current - start : null;
-  const pct = current ? Math.min(100, Math.max(0, ((current - 300) / 550) * 100)) : 0;
+function ScoreMeter({ label, start, current }) {
+  const score = current || start || null;
+  const diff = (start && current && current !== start) ? current - start : null;
+  const pct = score ? Math.min(100, Math.max(0, ((score - 300) / 550) * 100)) : 0;
+  const startPct = start ? Math.min(100, Math.max(0, ((start - 300) / 550) * 100)) : 0;
+
+  const getColor = (s) => {
+    if (!s) return '#9CA3AF';
+    if (s >= 750) return '#15803D';
+    if (s >= 700) return '#16A34A';
+    if (s >= 650) return '#D97706';
+    if (s >= 600) return '#EA580C';
+    return '#DC2626';
+  };
+
+  const getRating = (s) => {
+    if (!s) return '';
+    if (s >= 750) return 'Excellent';
+    if (s >= 700) return 'Good';
+    if (s >= 650) return 'Fair';
+    if (s >= 600) return 'Poor';
+    return 'Very Poor';
+  };
+
   return (
-    <div className="flex-1">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] uppercase tracking-wider text-ink-faint">{label}</span>
-        <div className="flex items-center gap-1.5">
-          <span className="text-[16px] font-bold" style={{ color: '#1B2A4A' }}>{current || '—'}</span>
-          {diff !== null && (
-            <span className="text-[11px] font-medium" style={{ color: diff > 0 ? '#15803D' : diff < 0 ? '#DC2626' : '#666' }}>
-              {diff > 0 ? '+' : ''}{diff}
-            </span>
+    <div style={{ flex: 1, minWidth: 140 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF', fontWeight: 600 }}>{label}</span>
+        {diff !== null && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: diff > 0 ? '#15803D' : diff < 0 ? '#DC2626' : '#6B7280', background: diff > 0 ? '#F0FDF4' : diff < 0 ? '#FEF2F2' : '#F9FAFB', padding: '1px 6px', borderRadius: 4 }}>
+            {diff > 0 ? '▲ +' : diff < 0 ? '▼ ' : ''}{diff}
+          </span>
+        )}
+      </div>
+
+      <div style={{ position: 'relative', marginBottom: 8 }}>
+        <div style={{ height: 8, background: '#F3F4F6', borderRadius: 8, position: 'relative' }}>
+          <div style={{ position: 'absolute', inset: 0, borderRadius: 8, background: 'linear-gradient(90deg, #DC2626 0%, #EA580C 20%, #D97706 40%, #16A34A 65%, #15803D 100%)', opacity: 0.15 }} />
+          {start && current && current !== start && (
+            <div style={{ position: 'absolute', top: -2, width: 3, height: 12, background: '#9CA3AF', borderRadius: 2, left: startPct + '%', transform: 'translateX(-50%)' }} title={'Started: ' + start} />
           )}
+          <div style={{ height: '100%', borderRadius: 8, transition: 'width 0.8s ease', background: getColor(score), width: pct + '%', position: 'relative' }}>
+            <div style={{ position: 'absolute', right: -1, top: -3, width: 14, height: 14, borderRadius: '50%', background: getColor(score), border: '2px solid #fff', boxShadow: '0 1px 4px rgba(0,0,0,0.2)' }} />
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+          <span style={{ fontSize: 9, color: '#D1D5DB' }}>300</span>
+          <span style={{ fontSize: 9, color: '#D1D5DB' }}>850</span>
         </div>
       </div>
-      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-        <div className="h-full rounded-full transition-all duration-500"
-          style={{ width: pct + '%', background: 'linear-gradient(90deg, #1B2A4A, #C9A84C)' }} />
+
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span style={{ fontSize: 28, fontWeight: 800, color: getColor(score), lineHeight: 1 }}>{score || '—'}</span>
+        <span style={{ fontSize: 11, color: getColor(score), fontWeight: 600 }}>{getRating(score)}</span>
       </div>
-      {start && <div className="text-[9px] text-ink-faint mt-0.5">Started at {start}</div>}
+      {start && current && current !== start && (
+        <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>Started at {start}</div>
+      )}
+      {start && (!current || current === start) && (
+        <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>Enrollment score</div>
+      )}
     </div>
   );
 }
@@ -69,7 +109,7 @@ export default function ClientPortal({ session, onSignOut }) {
         const [lettersRes, metaRes, auditsRes] = await Promise.all([
           supabase.from('letters').select('*').eq('client_name', cp.full_name).order('saved_at', { ascending: true }),
           supabase.from('clients').select('*').eq('name', cp.full_name).limit(1),
-          supabase.from('audits').select('scores,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5),
+          supabase.from('audits').select('audit,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5),
         ]);
         setLetters(lettersRes.data || []);
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
@@ -91,6 +131,9 @@ export default function ClientPortal({ session, onSignOut }) {
   const deletions = letters.filter(l => l.response_outcome === 'deleted');
   const isVip = clientMeta && clientMeta.is_vip;
   const firstName = (profile && profile.full_name || '').split(' ')[0] || 'there';
+
+  // Most recent audit's scores, pulled from the jsonb audit blob
+  const latestScores = (auditHistory.length > 0 && auditHistory[0].audit && auditHistory[0].audit.scores) || null;
 
   const timeline = [];
   letters.forEach(l => {
@@ -170,20 +213,40 @@ export default function ClientPortal({ session, onSignOut }) {
               ))}
             </div>
 
-            {clientMeta && (clientMeta.score_eq_start || clientMeta.score_exp_start || clientMeta.score_tu_start) && (
-              <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 20 }}>
-                <div className="flex items-center gap-2 mb-4">
-                  <TrendingUp size={14} style={{ color: '#C9A84C' }} strokeWidth={2} />
-                  <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#1B2A4A' }}>Score Progress</span>
-                </div>
-                <div className="flex gap-6">
-                  <ScoreBar label="Equifax" start={clientMeta.score_eq_start} current={clientMeta.score_eq_start} />
-                  <ScoreBar label="Experian" start={clientMeta.score_exp_start} current={clientMeta.score_exp_start} />
-                  <ScoreBar label="TransUnion" start={clientMeta.score_tu_start} current={clientMeta.score_tu_start} />
-                </div>
-                <p style={{ fontSize: 11, color: '#9CA3AF', marginTop: 10 }}>Scores update as deletions are confirmed. Pull your latest report to track progress.</p>
+            <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ background: '#1B2A4A', padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <TrendingUp size={14} style={{ color: '#C9A84C' }} strokeWidth={2} />
+                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#C9A84C' }}>Credit Score Tracker</span>
               </div>
-            )}
+              <div style={{ padding: 20 }}>
+                {clientMeta && (clientMeta.score_eq_start || clientMeta.score_exp_start || clientMeta.score_tu_start) ? (
+                  <>
+                    <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                      <ScoreMeter label="Equifax"
+                        start={clientMeta.score_eq_start}
+                        current={latestScores ? latestScores.equifax : clientMeta.score_eq_start} />
+                      <ScoreMeter label="Experian"
+                        start={clientMeta.score_exp_start}
+                        current={latestScores ? latestScores.experian : clientMeta.score_exp_start} />
+                      <ScoreMeter label="TransUnion"
+                        start={clientMeta.score_tu_start}
+                        current={latestScores ? latestScores.transunion : clientMeta.score_tu_start} />
+                    </div>
+                    {auditHistory.length > 0 && (
+                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #F3F4F6', fontSize: 11, color: '#9CA3AF' }}>
+                        Last updated: {new Date(auditHistory[0].saved_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {auditHistory.length > 1 && ' · ' + auditHistory.length + ' audits on file'}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                    <TrendingUp size={24} style={{ color: '#E5E7EB', margin: '0 auto 8px' }} strokeWidth={1.5} />
+                    <p style={{ fontSize: 12, color: '#9CA3AF' }}>Score tracking will appear here once your audit is complete.</p>
+                  </div>
+                )}
+              </div>
+            </div>
 
             <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
               <Shield size={15} style={{ color: '#15803D' }} strokeWidth={1.75} />
