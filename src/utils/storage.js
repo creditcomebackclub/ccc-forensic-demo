@@ -175,6 +175,17 @@ export async function updateLetter(id, patch) {
   return data;
 }
 
+export async function deleteLetter(id) {
+  const userId = await getUserId();
+  const { error } = await supabase
+    .from('letters')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', userId);
+  if (error) throw error;
+  return true;
+}
+
 function normalizeAudit(a) {
   return {
     id: a.id,

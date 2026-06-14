@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Users, FileText, Mail, UserPlus, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X, Send } from 'lucide-react';
-import { listClients, adminListClients, deleteClient, updateLetter, toggleVip, updateClientEmail } from '../utils/storage';
+import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
@@ -109,6 +109,17 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze, onLobMail }
     } catch (e) { alert('Could not save: ' + (e.message || e)); }
   };
 
+  const handleDelete = async () => {
+    const confirmMsg = l.mailedDate
+      ? 'This letter was already mailed via certified mail on ' + fmt(l.mailedDate) + '. Deleting it only removes it from CCC\'s tracking system \u2014 it does NOT recall the physical mail already sent to ' + l.furnisher + '. This cannot be undone. Continue?'
+      : 'Delete this letter draft for ' + l.furnisher + '? This cannot be undone.';
+    if (!window.confirm(confirmMsg)) return;
+    try {
+      await deleteLetter(l.id);
+      onChange();
+    } catch (e) { alert('Could not delete: ' + (e.message || e)); }
+  };
+
   return (
     <div className="py-2 border-b border-border last:border-b-0">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -135,6 +146,7 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze, onLobMail }
           {urgency && <StatusBadge label={urgency.label} tone={urgency.tone} />}
           <StatusBadge label={status.label} tone={status.tone} />
           <button onClick={() => onView(l)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">View</button>
+          <button onClick={handleDelete} className="text-[11px] uppercase tracking-wider text-ink-faint hover:text-red-600" title="Delete letter">Delete</button>
           {!isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response') && (
             <button onClick={() => onAnalyze(l)}
               className="flex items-center gap-1 text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-sm"
