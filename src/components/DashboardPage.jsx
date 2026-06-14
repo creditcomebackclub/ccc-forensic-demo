@@ -385,8 +385,7 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart }) {
               <div key={i}>
                 <div
                   onClick={() => setActiveAction(activeAction?.letter?.id === a.letter?.id ? null : a)}
-                  className="flex items-center justify-between gap-3 cursor-pointer transition-all group" style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: '12px 16px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}
-                  style={{ borderColor: activeAction?.letter?.id === a.letter?.id ? '#1B2A4A' : (a.tone === 'red' ? '#FECACA' : '#FDE68A') }}
+                  className="flex items-center justify-between gap-3 cursor-pointer transition-all group" style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: '12px 16px', boxShadow: '0 1px 2px rgba(0,0,0,0.04)', borderColor: activeAction?.letter?.id === a.letter?.id ? '#1B2A4A' : (a.tone === 'red' ? '#FECACA' : '#FDE68A') }}
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     {a.isVip && <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium shrink-0" style={{ backgroundColor: '#C9A84C', color: '#1B2A4A' }}><Star size={9} strokeWidth={2.5} /> VIP</span>}
