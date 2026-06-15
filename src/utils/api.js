@@ -155,7 +155,7 @@ export async function generateLetter(account, client) {
   const t = today();
   const rawText = await claudeCall(apiKey, [{
     type: 'text',
-    text: `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nGenerate the Phase 1 dispute letter HTML for this account.\n\nData:\n${JSON.stringify({ account, client, clientSignature: client.signatureData || null }, null, 2)}\n\nFollow the 16-step structure. For Type C include section 1692g(b) demands. If clientSignature is provided embed it in the signature block. Output complete HTML only. No prose. No fences.`,
+    text: `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nGenerate the Phase 1 dispute letter HTML for this account.\n\nData:\n${JSON.stringify({ account, client, clientSignature: client.signatureData || null }, null, 2)}\n\nFollow the 16-step structure. For Type C include section 1692g(b) demands. If clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or any tracking/article number field or placeholder anywhere in the letter \u2014 this value is assigned later during mailing and is not known at generation time. If referencing the mailing method, state only "Sent via Certified Mail" with no number. Output complete HTML only. No prose. No fences.`,
   }], 16000);
 
   const htmlMatch = rawText.match(/<!DOCTYPE[\s\S]*<\/html>/i) || rawText.match(/<html[\s\S]*<\/html>/i);
