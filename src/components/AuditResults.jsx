@@ -104,10 +104,9 @@ export default function AuditResults({ audit, onGenerateLetter, onReset }) {
   React.useEffect(() => {
     const clientName = audit && audit.client && audit.client.name;
     if (!clientName) return;
-    supabase.from('letters').select('furnisher').eq('client_name', clientName)
+    supabase.from('letters').select('account_id').eq('client_name', clientName)
       .then(({ data }) => {
-        console.log('letters query result:', data, 'for client:', clientName);
-        if (data) setExistingLetters(new Set(data.map((l) => (l.furnisher || '').toLowerCase().trim())));
+        if (data) setExistingLetters(new Set(data.map((l) => l.account_id).filter(Boolean)));
       });
   }, [audit && audit.client && audit.client.name]);
   const [selectedAccount, setSelectedAccount] = useState(null);
@@ -333,11 +332,11 @@ function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, e
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if ([...existingLetters].some((lf) => { const af = (a.furnisher || '').toLowerCase().trim(); return lf.includes(af) || af.includes(lf) || lf.split('/').map(s=>s.trim()).some(p => af.includes(p) || p.includes(af)); })) return; onGenerateLetter(a);
+                    if (existingLetters.has(a.id)) return; onGenerateLetter(a);
                   }}
-                  className={`text-[10px] uppercase tracking-wider px-2.5 py-1.5 rounded-sm flex items-center gap-1 transition-colors ${[...existingLetters].some((lf) => { const af = (a.furnisher || '').toLowerCase().trim(); return lf.includes(af) || af.includes(lf) || lf.split('/').map(s=>s.trim()).some(p => af.includes(p) || p.includes(af)); }) ? 'bg-green-600 text-white cursor-default' : 'bg-navy text-white hover:bg-navy-dark'}`}
+                  className={`text-[10px] uppercase tracking-wider px-2.5 py-1.5 rounded-sm flex items-center gap-1 transition-colors ${existingLetters.has(a.id) ? 'bg-green-600 text-white cursor-default' : 'bg-navy text-white hover:bg-navy-dark'}`}
                 >
-                  {[...existingLetters].some((lf) => { const af = (a.furnisher || '').toLowerCase().trim(); return lf.includes(af) || af.includes(lf) || lf.split('/').map(s=>s.trim()).some(p => af.includes(p) || p.includes(af)); }) ? <><CheckCircle size={10} /> Done</> : <><Mail size={10} /> Letter</>}
+                  {existingLetters.has(a.id) ? <><CheckCircle size={10} /> Done</> : <><Mail size={10} /> Letter</>}
                 </button>
               </td>
             </tr>
