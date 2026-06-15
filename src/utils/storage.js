@@ -125,7 +125,7 @@ export async function saveAudit(audit) {
   return id;
 }
 
-export async function saveLetter(account, client, html) {
+export async function saveLetter(account, client, html, summary) {
   const userId = await getUserId();
   const clientName = (client && client.name) || 'Unknown Client';
   const furnisher = (account && account.furnisher) || 'Unknown Furnisher';
@@ -145,6 +145,7 @@ export async function saveLetter(account, client, html) {
     saved_at: new Date().toISOString(),
     date,
     html,
+    summary: summary || null,
     mailed_date: null,
     response_outcome: null,
     response_date: null,
@@ -210,6 +211,7 @@ function normalizeLetter(l) {
     createdBy: l.created_by,
     date: l.date,
     html: l.html,
+    summary: l.summary,
     mailedDate: l.mailed_date,
     responseOutcome: l.response_outcome,
     notificationsSent: l.notifications_sent || [],

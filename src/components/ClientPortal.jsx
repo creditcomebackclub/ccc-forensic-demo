@@ -309,6 +309,11 @@ export default function ClientPortal({ session, onSignOut }) {
                         {l.response_outcome === 'deleted' ? '🏆 Deleted' : l.response_outcome === 'received' ? 'Response Received' : l.tracking_status === 'Delivered' ? 'Delivered' : l.mailed_date ? 'In Transit' : 'Pending'}
                       </span>
                     </div>
+                    {l.summary && (
+                      <div style={{ fontSize: 12, color: '#4B5563', marginTop: 10, paddingTop: 10, borderTop: '1px solid #F3F4F6', lineHeight: 1.5 }}>
+                        {l.summary}
+                      </div>
+                    )}
                     {l.mailed_date && (
                       <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 8 }}>
                         Mailed {new Date(l.mailed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}

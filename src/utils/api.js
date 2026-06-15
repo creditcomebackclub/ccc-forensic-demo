@@ -150,6 +150,18 @@ export async function runSingleBureauAudit(pdfBase64, bureau) {
   return { audit: json, bureau };
 }
 
+export async function generateLetterSummary(account) {
+  const apiKey = getApiKey();
+  const rawText = await claudeCall(apiKey, [{
+    type: 'text',
+    text: `Write a 2-3 sentence plain-English summary for a non-expert client explaining what is being disputed on this account and why, based on the data below. Avoid legal jargon and statute citations \u2014 explain the core problem in everyday terms (e.g. "this account shows two things that can't both be true at the same time"). End with a brief note on what we're asking the furnisher to do. Output plain text only. No markdown, no headers, no fences, no prose before or after.\n\nAccount data:\n${JSON.stringify({ furnisher: account.furnisher, status: account.status, balance: account.balance, primaryViolation: account.primaryViolation, violations: account.violations }, null, 2)}`,
+  }], 1024);
+
+  const summary = (rawText || '').trim();
+  if (!summary) throw new Error('Letter summary generation returned empty content');
+  return summary;
+}
+
 export async function generateLetter(account, client) {
   const apiKey = getApiKey();
   const t = today();
@@ -162,9 +174,16 @@ export async function generateLetter(account, client) {
   const html = htmlMatch ? htmlMatch[0] : rawText;
   if (!html || html.trim().length < 100) throw new Error('Letter generation returned empty content — please try again');
 
-  await saveLetter(account, client, html);
+  let summary = null;
+  try {
+    summary = await generateLetterSummary(account);
+  } catch (e) {
+    console.warn('Could not generate letter summary:', e);
+  }
 
-  return { html };
+  await saveLetter(account, client, html, summary);
+
+  return { html, summary };
 }
 
 export function fileToBase64(file) {
