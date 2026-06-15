@@ -131,7 +131,8 @@ export async function saveLetter(account, client, html, summary) {
   const furnisher = (account && account.furnisher) || 'Unknown Furnisher';
   const accountId = (account && (account.id || account.accountNumberMasked)) || '';
   const date = todayISO();
-  const id = slug(clientName) + '__' + slug(furnisher) + '__' + date;
+  const acctSuffix = accountId ? '__' + slug(String(accountId)) : '';
+  const id = slug(clientName) + '__' + slug(furnisher) + acctSuffix + '__' + date;
 
   const { error } = await supabase.from('letters').upsert({
     id,
