@@ -27,7 +27,7 @@ function ScoreMeter({ label, start, current }) {
   };
 
   return (
-    <div style={{ flex: 1, minWidth: 140 }}>
+    <div className="w-full" style={{ flex: 1, minWidth: 140 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
         <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF', fontWeight: 600 }}>{label}</span>
         {diff !== null && (
@@ -162,11 +162,11 @@ export default function ClientPortal({ session, onSignOut }) {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>{profile && profile.full_name}</span>
+          <div className="flex items-center gap-2 sm:gap-4">
+            <span className="hidden sm:inline" style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>{profile && profile.full_name}</span>
             <button onClick={onSignOut} className="flex items-center gap-1 hover:opacity-100 transition-opacity"
               style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              <LogOut size={12} strokeWidth={1.75} /> Sign Out
+              <LogOut size={14} strokeWidth={1.75} /> <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
         </div>
@@ -220,7 +220,7 @@ export default function ClientPortal({ session, onSignOut }) {
               <div style={{ padding: 20 }}>
                 {clientMeta && (clientMeta.score_eq_start || clientMeta.score_exp_start || clientMeta.score_tu_start) ? (
                   <>
-                    <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                    <div className="flex flex-col sm:flex-row" style={{ gap: 24 }}>
                       <ScoreMeter label="Equifax"
                         start={clientMeta.score_eq_start}
                         current={latestScores ? latestScores.equifax : clientMeta.score_eq_start} />
