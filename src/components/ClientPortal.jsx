@@ -154,7 +154,7 @@ export default function ClientPortal({ session, onSignOut }) {
         <div className="max-w-3xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="Credit Comeback Club"
-              style={{ height: 36, width: 36, borderRadius: 6, objectFit: 'cover' }} />
+              style={{ height: 48, width: 48, borderRadius: 8, objectFit: 'cover', border: '2px solid #C9A84C' }} />
             <div>
               <div style={{ color: '#C9A84C', fontWeight: 700, fontSize: 14 }}>Credit Comeback Club</div>
               <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
