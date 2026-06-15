@@ -24,6 +24,16 @@ export default function LetterViewer({ account, client, onClose }) {
         if (cp && cp.length > 0 && cp[0].signature_data) {
           enrichedClient.signatureData = cp[0].signature_data;
         }
+        if (!enrichedClient.signatureData) {
+          const { data: c } = await supabase
+            .from('clients')
+            .select('lpoa_signature_data,name')
+            .eq('name', client.name)
+            .limit(1);
+          if (c && c.length > 0 && c[0].lpoa_signature_data && c[0].lpoa_signature_data.signatureUrl) {
+            enrichedClient.signatureData = c[0].lpoa_signature_data.signatureUrl;
+          }
+        }
       } catch(e) { console.warn('Could not fetch signature:', e); }
       return generateLetter(account, enrichedClient);
     };
