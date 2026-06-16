@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const https = require('https');
 
 function supabaseRequest(path, method, body, url, key) {
@@ -34,21 +33,6 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
 
-  const secret = process.env.LOB_WEBHOOK_SECRET;
-  if (secret) {
-    const signature = event.headers['lob-signature'] || event.headers['x-lob-signature'];
-    if (signature) {
-      const expectedSig = crypto
-        .createHmac('sha256', secret)
-        .update(event.body)
-        .digest('hex');
-      if (signature !== expectedSig) {
-        console.error('Lob webhook signature mismatch');
-        return { statusCode: 401, body: JSON.stringify({ error: 'Invalid signature' }) };
-      }
-    }
-  }
-
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -64,8 +48,9 @@ exports.handler = async (event) => {
   const eventType = payload.event_type && payload.event_type.id;
   const lobLetter = payload.body;
   const lobId = lobLetter && lobLetter.id;
+  const trackingNumber = lobLetter && lobLetter.tracking_number;
 
-  console.log('Lob webhook received:', eventType, 'lob_id:', lobId);
+  console.log('Lob webhook received:', eventType, 'lob_id:', lobId, 'tracking:', trackingNumber);
 
   if (!eventType || !lobId) {
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'missing event_type or lob_id' }) };
@@ -85,10 +70,10 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'unhandled event type' }) };
   }
 
+  // Build patch — always update tracking status, capture tracking number if present
   const patch = { tracking_status: trackingStatus };
-  if (eventType === 'letter.delivered') {
-    patch.delivered_at = new Date().toISOString();
-  }
+  if (trackingNumber) patch.tracking_number = trackingNumber;
+  if (eventType === 'letter.delivered') patch.delivered_at = new Date().toISOString();
 
   const updateRes = await supabaseRequest(
     '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId),
@@ -104,5 +89,5 @@ exports.handler = async (event) => {
   }
 
   console.log('Updated tracking for lob_id:', lobId, '->', trackingStatus);
-  return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus }) };
+  return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus, trackingNumber }) };
 };
