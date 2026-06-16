@@ -109,7 +109,7 @@ function generateAuditPDF(audit) {
         (topViolations ? '<div style="font-size:10px;color:#6B7280;margin-top:6px"><strong>Key issues found:</strong><ul style="margin:4px 0 0 16px;padding:0">' + topViolations + '</ul></div>' : '') +
         '</div>';
     }).join('') +
-    '</div>', '<div class="s"><h2>Accounts Targeted</h2><table><thead><tr><th>Furnisher</th><th>Acct</th><th>Type</th><th>Status</th><th>Balance</th><th>Viol</th><th>Batch</th></tr></thead><tbody>', rows, '</tbody></table></div>', '<div class="s"><h2>Violation Detail</h2><table><thead><tr><th>Furnisher</th><th>Field</th><th>Currently</th><th>Should Be</th><th>Reason</th></tr></thead><tbody>', vrows, '</tbody></table></div>', '<div style="padding:12px 32px;font-size:10px;color:#999">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063</div></body></html>'];
+    '</div>', '<div class="s"><h2>Accounts Targeted</h2><table><thead><tr><th>Furnisher</th><th>Acct</th><th>Type</th><th>Status</th><th>Balance</th><th>Viol</th><th>Batch</th></tr></thead><tbody>', rows, '</tbody></table></div>', /* Violation detail table removed from client PDF — forensic detail kept in admin view only */ '<div style="padding:12px 32px;font-size:10px;color:#999">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063</div></body></html>'];
   var html = parts.join('');
   var blob = new Blob([html], {type: 'text/html'});
   var url = URL.createObjectURL(blob);
