@@ -107,6 +107,47 @@ function generateAuditPDF(audit) {
         '</div>' +
         '<p style="font-size:11px;color:#374151;line-height:1.6;margin:0 0 8px">' + plan + '</p>' +
         (topViolations ? '<div style="font-size:10px;color:#6B7280;margin-top:6px"><strong>Key issues found:</strong><ul style="margin:4px 0 0 16px;padding:0">' + topViolations + '</ul></div>' : '') +
+        (function() {
+          var batchWeek = (a.batch === 1) ? 1 : 3;
+          var isTypeC = a.type === 'C';
+          var steps = [];
+          if (isTypeC) {
+            steps = [
+              ['Week ' + batchWeek, 'Two certified letters mailed simultaneously — debt validation demand + furnisher dispute'],
+              ['Day ' + (batchWeek * 7 + 3) + '-' + (batchWeek * 7 + 5), 'USPS delivery confirmed, 30-day response clock starts'],
+              ['Day ' + (batchWeek * 7 + 30), 'Debt validation + dispute response deadline'],
+              ['Day ' + (batchWeek * 7 + 36) + '-' + (batchWeek * 7 + 40), 'CCC reviews response — Phase 2 analysis'],
+              ['Week ' + (batchWeek + 6), 'Phase 3 escalation mailed to Equifax'],
+              ['Week ' + (batchWeek + 8), 'Phase 3 escalation mailed to Experian'],
+              ['Week ' + (batchWeek + 10), 'Phase 3 escalation mailed to TransUnion'],
+              ['Day 90–120', 'Bureau investigation windows close → deletion, correction, or further escalation'],
+            ];
+          } else {
+            steps = [
+              ['Week ' + batchWeek, 'Phase 1 certified letter mailed directly to ' + a.furnisher],
+              ['Day ' + (batchWeek * 7 + 3) + '-' + (batchWeek * 7 + 5), 'USPS delivery confirmed, 30-day response clock starts'],
+              ['Day ' + (batchWeek * 7 + 30), 'Furnisher response deadline under FCRA §1681s-2(b)'],
+              ['Day ' + (batchWeek * 7 + 36) + '-' + (batchWeek * 7 + 40), 'CCC reviews response — Phase 2 analysis'],
+              ['Week ' + (batchWeek + 6), 'Phase 3 escalation mailed to Equifax'],
+              ['Week ' + (batchWeek + 8), 'Phase 3 escalation mailed to Experian'],
+              ['Week ' + (batchWeek + 10), 'Phase 3 escalation mailed to TransUnion'],
+              ['Day 90–120', 'Bureau investigation windows close → deletion, correction, or further escalation'],
+            ];
+          }
+          var rows = steps.map(function(s, i) {
+            var bg = i % 2 === 0 ? '#F8FAFC' : '#fff';
+            var isLast = i === steps.length - 1;
+            return '<tr style="background:' + bg + '">' +
+              '<td style="padding:5px 8px;font-size:10px;font-weight:700;color:#1B2A4A;white-space:nowrap;border-bottom:1px solid #E5E7EB;width:90px">' + s[0] + '</td>' +
+              '<td style="padding:5px 8px;font-size:10px;color:#374151;border-bottom:1px solid #E5E7EB">' + s[1] + '</td>' +
+              '</tr>';
+          }).join('');
+          return '<div style="margin-top:12px;border:1px solid #DBEAFE;border-radius:5px;overflow:hidden">' +
+            '<div style="background:#1B2A4A;padding:5px 10px;font-size:10px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:0.06em">Projected Process Timeline</div>' +
+            '<table style="width:100%;border-collapse:collapse">' + rows + '</table>' +
+            '<div style="padding:5px 10px;font-size:9px;color:#9CA3AF;background:#F9FAFB;border-top:1px solid #E5E7EB">Timeline reflects typical dispute process windows under FCRA. Actual dates depend on mailing date and furnisher response. Results vary — no specific outcome is guaranteed.</div>' +
+            '</div>';
+        })() +
         '</div>';
     }).join('') +
     '</div>', '<div class="s"><h2>Accounts Targeted</h2><table><thead><tr><th>Furnisher</th><th>Acct</th><th>Type</th><th>Status</th><th>Balance</th><th>Viol</th><th>Batch</th></tr></thead><tbody>', rows, '</tbody></table></div>', /* Violation detail table removed from client PDF — forensic detail kept in admin view only */ '<div style="padding:12px 32px;font-size:10px;color:#999">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063</div></body></html>'];
