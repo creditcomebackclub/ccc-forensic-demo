@@ -82,7 +82,7 @@ function generateAuditPDF(audit) {
   }).join('');
   var vrows = (audit.accounts || []).flatMap(function(a) {
     return (a.violations || []).map(function(v) {
-      var cells = [a.furnisher, v.field || '-', v.currentValue || '-', v.expectedValue || '-', v.reason || '-'];
+      var cells = [a.furnisher, v.field || '-', v.currentlyReports || v.currentValue || '-', v.shouldReport || v.expectedValue || '-', v.statute || v.reason || '-'];
       return '<tr>' + cells.map(function(c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
     });
   }).join('');
@@ -392,11 +392,11 @@ function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = n
                   <div className="text-[11px] mt-2 grid grid-cols-2 gap-3">
                     <div>
                       <div className="text-[9px] uppercase tracking-wider text-ink-faint">Currently</div>
-                      <div className="text-ink-muted ccc-mono">{v.currentlyReports}</div>
+                      <div className="text-ink-muted ccc-mono">{v.currentlyReports || v.currentValue || <span className="text-ink-faint italic">See issue above</span>}</div>
                     </div>
                     <div>
                       <div className="text-[9px] uppercase tracking-wider text-ink-faint">Should Be</div>
-                      <div className="text-green-700 ccc-mono">{v.shouldReport}</div>
+                      <div className="text-green-700 ccc-mono">{v.shouldReport || v.expectedValue || <span className="text-ink-faint italic">See issue above</span>}</div>
                     </div>
                   </div>
                   <div className="ccc-mono text-[10px] text-gold-dark mt-2 pt-2 border-t border-gray-100">
@@ -407,8 +407,18 @@ function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = n
             </div>
           </div>
 
+          <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: 16 }}>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#15803D', fontWeight: 600, marginBottom: 6 }}>The Game Plan — In Plain English</div>
+            <div style={{ fontSize: 12, color: '#1B2A4A', lineHeight: 1.6 }}>
+              {account.type === 'C'
+                ? <>We're going to hit <strong>{account.furnisher}</strong> with two simultaneous certified letters — one demanding debt validation under federal debt collection law (they have to prove you owe this and that they have the right to collect it), and one disputing the inaccurate reporting directly. If they can't validate the debt within 30 days, they're legally required to stop reporting it. If they don't respond or respond inadequately, we escalate to all three credit bureaus with their silence or weak response as evidence against them.</>
+                : <>We're going to send a certified letter directly to <strong>{account.furnisher}</strong> demanding they fix or remove the inaccurate information on your credit report — specifically, {account.primaryViolation ? account.primaryViolation.toLowerCase() : 'the violations identified above'}. They have 30 days to respond with original source documentation. If they can't back up what they're reporting, they have to correct or delete it. If they ignore us or send a weak response, we take that to the credit bureaus as proof they can't defend their reporting.</>
+              }
+            </div>
+          </div>
+
           <div className="bg-navy-dark text-white rounded p-4 text-[12px]">
-            <div className="text-[10px] uppercase tracking-wider text-gold mb-1">Dispute Strategy</div>
+            <div className="text-[10px] uppercase tracking-wider text-gold mb-1">Dispute Strategy — Technical</div>
             <div>{account.strategy}</div>
           </div>
 
