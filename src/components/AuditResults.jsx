@@ -34,10 +34,14 @@ async function emailAuditToClient(audit) {
   const clientName = (audit.client && audit.client.name) || '';
   if (!clientName) { alert('No client name in audit'); return; }
 
-  // Look up client email from client_profiles
+  // Look up client email — check client_profiles first, fall back to clients table
   const { supabase } = await import('../utils/supabase');
   const { data: cp } = await supabase.from('client_profiles').select('email,full_name').eq('full_name', clientName).limit(1);
-  const clientEmail = cp && cp.length > 0 ? cp[0].email : null;
+  let clientEmail = cp && cp.length > 0 ? cp[0].email : null;
+  if (!clientEmail) {
+    const { data: cm } = await supabase.from('clients').select('email').eq('name', clientName).limit(1);
+    clientEmail = cm && cm.length > 0 ? cm[0].email : null;
+  }
 
   if (!clientEmail) {
     alert('No email on file for ' + clientName + '. Add their email in the client card first.');
