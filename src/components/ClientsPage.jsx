@@ -218,6 +218,8 @@ function parseFurnisherAddress(furnisher) {
     'amex': { name: 'American Express', line1: 'P.O. Box 981535', city: 'El Paso', state: 'TX', zip: '79998-1535' },
     'wells fargo': { name: 'Wells Fargo Bank N.A.', line1: 'P.O. Box 393', city: 'Minneapolis', state: 'MN', zip: '55480-0393' },
     'synchrony': { name: 'Synchrony Bank', line1: 'P.O. Box 965061', city: 'Orlando', state: 'FL', zip: '32896-5061' },
+    'syncb': { name: 'Synchrony Bank', line1: 'P.O. Box 965061', city: 'Orlando', state: 'FL', zip: '32896-5061' },
+    'suzuki': { name: 'Synchrony Bank', line1: 'P.O. Box 965061', city: 'Orlando', state: 'FL', zip: '32896-5061' },
     'navy federal': { name: 'Navy Federal Credit Union', line1: 'P.O. Box 3500', city: 'Merrifield', state: 'VA', zip: '22119-3500' },
     'onemain': { name: 'OneMain Financial', line1: 'P.O. Box 1010', city: 'Evansville', state: 'IN', zip: '47706-1010' },
     'ally': { name: 'Ally Financial', line1: 'P.O. Box 380901', city: 'Bloomington', state: 'MN', zip: '55438' },
