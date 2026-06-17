@@ -85,7 +85,7 @@ exports.handler = async (event) => {
           address_country: 'US',
         },
         file: remoteUrl,
-        color: false,
+        color: true,
         double_sided: false,
         address_placement: 'top_first_page',
         mail_type: 'usps_first_class',
