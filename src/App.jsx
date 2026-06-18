@@ -30,6 +30,7 @@ export default function App() {
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState(null);
   const [activeLetter, setActiveLetter] = useState(null);
+  const [auditClientName, setAuditClientName] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [isClient, setIsClient] = useState(false);
   const [clientOnboarded, setClientOnboarded] = useState(false);
@@ -226,7 +227,7 @@ export default function App() {
 
   const handleReset = () => { setView(VIEW.AUDIT); setState(STATE.IDLE); setAuditResult(null); setError(null); };
   const handleGenerateLetter = (account) => setActiveLetter(account);
-  const handleOpenSavedAudit = (audit) => { setAuditResult(audit); setState(STATE.RESULTS); setView(VIEW.AUDIT); };
+  const handleOpenSavedAudit = (audit) => { setAuditResult(audit); setState(STATE.RESULTS); setView(VIEW.AUDIT); setAuditClientName(audit && audit.client && audit.client.name || null); };
   const handleSignOut = async () => { try { await supabase.auth.signOut(); } catch(e) {} window.location.href = '/'; };
 
   return (
@@ -239,7 +240,7 @@ export default function App() {
             <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} onAuditStart={handleAuditStart} />
           )}
           {view === VIEW.CLIENTS && (
-            <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || null} filter={clientsContext?.filter || null} />
+            <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} />
           )}
           {view === VIEW.METHODOLOGY && <MethodologyPage />}
           {view === VIEW.TEAM && isAdmin && <TeamPage currentUserId={user.id} />}
