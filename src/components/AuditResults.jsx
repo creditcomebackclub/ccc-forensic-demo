@@ -191,6 +191,11 @@ export default function AuditResults({ audit, onGenerateLetter, onReset }) {
           </div>
         </div>
         <button
+          onClick={onReset}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
+          ← Back to Clients
+        </button>
+        <button
           onClick={function() { generateAuditPDF(audit); }}
           className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
           <Download size={13} strokeWidth={1.75} /> Download PDF
