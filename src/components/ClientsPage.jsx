@@ -626,6 +626,33 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         />
       )}
       {createModal}
+      {modalAudit && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ background: '#1B2A4A', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            <span style={{ color: '#C9A84C', fontWeight: 700, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Audit — {modalAudit.client && modalAudit.client.name}
+            </span>
+            <button onClick={() => setModalAudit(null)}
+              style={{ color: 'rgba(255,255,255,0.6)', background: 'none', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 4, padding: '4px 12px', fontSize: 11, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              ✕ Close
+            </button>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', background: '#F8F9FA' }}>
+            <AuditResults
+              audit={modalAudit}
+              onGenerateLetter={(account) => setModalActiveLetter(account)}
+              onReset={() => setModalAudit(null)}
+            />
+            {modalActiveLetter && (
+              <LetterViewer
+                account={modalActiveLetter}
+                client={modalAudit.client}
+                onClose={() => setModalActiveLetter(null)}
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -711,34 +738,6 @@ function CreateClientModal({ onClose, onCreated }) {
           )}
         </div>
       </div>
-    </div>
-      {modalAudit && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <div style={{ background: '#1B2A4A', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            <span style={{ color: '#C9A84C', fontWeight: 700, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Audit — {modalAudit.client && modalAudit.client.name}
-            </span>
-            <button onClick={() => setModalAudit(null)}
-              style={{ color: 'rgba(255,255,255,0.6)', background: 'none', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 4, padding: '4px 12px', fontSize: 11, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              ✕ Close
-            </button>
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto', background: '#F8F9FA' }}>
-            <AuditResults
-              audit={modalAudit}
-              onGenerateLetter={(account) => setModalActiveLetter(account)}
-              onReset={() => setModalAudit(null)}
-            />
-            {modalActiveLetter && (
-              <LetterViewer
-                account={modalActiveLetter}
-                client={modalAudit.client}
-                onClose={() => setModalActiveLetter(null)}
-              />
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
