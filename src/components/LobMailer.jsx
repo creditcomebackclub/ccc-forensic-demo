@@ -107,11 +107,14 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
         if (clientMeta && clientMeta.length > 0 && clientMeta[0].lpoa_signature_data && clientMeta[0].lpoa_signature_data.lpoaUrl) {
           const lpoaRes = await fetch(clientMeta[0].lpoa_signature_data.lpoaUrl);
           const lpoaHtml = await lpoaRes.text();
-          // Extract body content from LPOA HTML
+          // Extract style + body content from LPOA HTML to preserve navy/gold branding
+          const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+          const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
           const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
           const lpoaBody = bodyMatch ? bodyMatch[1] : lpoaHtml;
-          enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
-            + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure 1 of ' + (idDoc ? (addressDoc ? '3' : '2') : '1') + ' — Limited Power of Attorney</div>'
+          enclosurePages += '<div style="page-break-before:always;font-family:Arial,sans-serif;font-size:12px;">'
+            + lpoaStyle
+            + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure 1 of ' + (idDoc ? (addressDoc ? '3' : '2') : '1') + ' — Limited Power of Attorney</div>'
             + lpoaBody + '</div>';
         }
       } catch(e) { console.warn('Could not fetch LPOA:', e); }
