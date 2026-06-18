@@ -120,7 +120,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
       if (idDoc) {
         const b64 = await getDocumentBase64(idDoc.storage_path);
         const isImg = idDoc.file_name && /.(jpg|jpeg|png)$/i.test(idDoc.file_name);
-        enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
+        enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;filter:grayscale(100%);-webkit-filter:grayscale(100%);">'
           + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Government-Issued Photo ID</div>'
           + (isImg ? '<img src="data:image/' + (idDoc.file_name.endsWith('.png') ? 'png' : 'jpeg') + ';base64,' + b64 + '" style="max-width:100%;max-height:700px;" />' : '<p>ID document attached (PDF format)</p>')
           + '</div>';
@@ -130,7 +130,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
       if (addressDoc) {
         const b64 = await getDocumentBase64(addressDoc.storage_path);
         const isImg = addressDoc.file_name && /.(jpg|jpeg|png)$/i.test(addressDoc.file_name);
-        enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
+        enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;filter:grayscale(100%);-webkit-filter:grayscale(100%);">'
           + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Proof of Current Address</div>'
           + (isImg ? '<img src="data:image/' + (addressDoc.file_name.endsWith('.png') ? 'png' : 'jpeg') + ';base64,' + b64 + '" style="max-width:100%;max-height:700px;" />' : '<p>Address document attached (PDF format)</p>')
           + '</div>';
