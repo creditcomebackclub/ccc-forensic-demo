@@ -248,7 +248,7 @@ export default function App() {
               {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
               {state === STATE.PROCESSING && <AuditProgress fileName={fileName} />}
               {state === STATE.RESULTS && auditResult && (
-                <AuditResults audit={auditResult} onGenerateLetter={handleGenerateLetter} onReset={handleReset} />
+                <AuditResults audit={auditResult} onGenerateLetter={handleGenerateLetter} onReset={handleReset} onBackToClients={() => setView(VIEW.CLIENTS)} />
               )}
               {state === STATE.ERROR && <ErrorView error={error} onReset={handleReset} />}
             </>

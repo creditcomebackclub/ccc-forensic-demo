@@ -162,7 +162,7 @@ function generateAuditPDF(audit) {
   setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
 }
 
-export default function AuditResults({ audit, onGenerateLetter, onReset }) {
+export default function AuditResults({ audit, onGenerateLetter, onReset, onBackToClients }) {
   const [existingLetters, setExistingLetters] = React.useState(new Set());
 
   React.useEffect(() => {
@@ -190,11 +190,13 @@ export default function AuditResults({ audit, onGenerateLetter, onReset }) {
             {audit.accountsTargeted} accounts targeted · {audit.totalViolations} violations identified · Phase 1 letter strategy ready
           </div>
         </div>
-        <button
-          onClick={onReset}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
-          ← Back to Clients
-        </button>
+        {onBackToClients && (
+          <button
+            onClick={onBackToClients}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
+            ← Back to Clients
+          </button>
+        )}
         <button
           onClick={function() { generateAuditPDF(audit); }}
           className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
