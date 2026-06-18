@@ -5,7 +5,6 @@ import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
 import LobMailer from './LobMailer';
-import LetterViewer from './LetterViewer';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_DAYS = 1;
@@ -248,8 +247,6 @@ function parseFurnisherAddress(furnisher) {
   return null;
 }
 export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter }) {
-  const [modalAudit, setModalAudit] = React.useState(null);
-  const [modalActiveLetter, setModalActiveLetter] = React.useState(null);
   const [clients, setClients] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -539,7 +536,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                           {isAdmin && a.auditorName && <span className="ml-2 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-navy text-gold">{a.auditorName}</span>}
                           <span className="text-ink-faint text-[11px] ml-2">{fmtTime(a.savedAt)}</span>
                         </div>
-                        <button onClick={() => setModalAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
+                        <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
                       </div>
                     ))}
                   </div>
