@@ -5,6 +5,7 @@ import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
 import LobMailer from './LobMailer';
+import LetterViewer from './LetterViewer';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_DAYS = 1;
@@ -247,6 +248,8 @@ function parseFurnisherAddress(furnisher) {
   return null;
 }
 export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter }) {
+  const [modalAudit, setModalAudit] = React.useState(null);
+  const [modalActiveLetter, setModalActiveLetter] = React.useState(null);
   const [clients, setClients] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -536,7 +539,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                           {isAdmin && a.auditorName && <span className="ml-2 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-navy text-gold">{a.auditorName}</span>}
                           <span className="text-ink-faint text-[11px] ml-2">{fmtTime(a.savedAt)}</span>
                         </div>
-                        <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
+                        <button onClick={() => setModalAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
                       </div>
                     ))}
                   </div>
@@ -708,6 +711,34 @@ function CreateClientModal({ onClose, onCreated }) {
           )}
         </div>
       </div>
+    </div>
+      {modalAudit && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ background: '#1B2A4A', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            <span style={{ color: '#C9A84C', fontWeight: 700, fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Audit — {modalAudit.client && modalAudit.client.name}
+            </span>
+            <button onClick={() => setModalAudit(null)}
+              style={{ color: 'rgba(255,255,255,0.6)', background: 'none', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 4, padding: '4px 12px', fontSize: 11, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              ✕ Close
+            </button>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', background: '#F8F9FA' }}>
+            <AuditResults
+              audit={modalAudit}
+              onGenerateLetter={(account) => setModalActiveLetter(account)}
+              onReset={() => setModalAudit(null)}
+            />
+            {modalActiveLetter && (
+              <LetterViewer
+                account={modalActiveLetter}
+                client={modalAudit.client}
+                onClose={() => setModalActiveLetter(null)}
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
