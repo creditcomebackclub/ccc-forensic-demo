@@ -11,6 +11,7 @@ import TeamPage from './components/TeamPage';
 import DashboardPage from './components/DashboardPage';
 import ClientSetupFlow from './components/ClientSetupFlow';
 import ClientPortal from './components/ClientPortal';
+import AffiliatePortal from './components/AffiliatePortal';
 import SettingsModal from './components/SettingsModal';
 import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
@@ -33,6 +34,7 @@ export default function App() {
   const [auditClientName, setAuditClientName] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [isClient, setIsClient] = useState(false);
+  const [isAffiliate, setIsAffiliate] = useState(false);
   const [clientOnboarded, setClientOnboarded] = useState(false);
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
 
@@ -109,6 +111,20 @@ export default function App() {
         return;
       }
 
+      // Check affiliates table
+      const _ar = await fetch(_url + '/rest/v1/affiliates?email=eq.' + encodeURIComponent(email) + '&limit=1', {
+        headers: { apikey: _key, Authorization: 'Bearer ' + _tok }
+      });
+      const _ard = await _ar.json();
+      const aff = Array.isArray(_ard) && _ard.length > 0 ? _ard[0] : null;
+      if (aff) {
+        setIsAffiliate(true);
+        setIsClient(false);
+        setProfile(prof || { id: session.user.id, email, role: 'affiliate' });
+        setProfileLoading(false);
+        return;
+      }
+
       const _cr = await fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email) + '&limit=1', {
         headers: { apikey: _key, Authorization: 'Bearer ' + _tok }
       });
@@ -161,6 +177,11 @@ export default function App() {
         <div className="text-[13px] text-ink-muted">Loading…</div>
       </div>
     );
+  }
+
+  // Affiliate portal routing
+  if (isAffiliate) {
+    return <AffiliatePortal session={session} onSignOut={async () => { try { await supabase.auth.signOut(); } catch(e) {} setIsAffiliate(false); window.location.href = '/'; }} />;
   }
 
   // Client portal routing
