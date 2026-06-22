@@ -323,5 +323,25 @@ exports.handler = async (event) => {
     }
   }
 
+  if (action === 'affiliate_welcome') {
+    const { affiliateName, affiliateEmail, companyName, commissionRate } = payload;
+    const sgKey = process.env.SENDGRID_API_KEY;
+    if (!sgKey || !affiliateEmail) return { statusCode: 400, body: JSON.stringify({ error: 'Missing fields' }) };
+    const subject = 'Welcome to the Credit Comeback Club Partner Program';
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;"><div style="background:#0C0C0C;padding:24px 32px;border-radius:4px 4px 0 0;"><h1 style="color:#22C55E;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:rgba(255,255,255,0.5);margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Partner Program</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;"><p>Hi ${affiliateName},</p><p>Welcome to the Credit Comeback Club partner program${companyName ? ' on behalf of ' + companyName : ''}. We're excited to work with you.</p><h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">How it works:</h3><ol style="padding-left:18px;line-height:1.8;font-size:13px;color:#444;"><li>Log in to your partner portal to submit client referrals</li><li>We handle the full credit repair process — audit, disputes, certified mail, follow-up</li><li>You earn ${Math.round((commissionRate || 0.20) * 100)}% of the initial consultation fee for every client who moves forward</li><li>Track your referrals and commission status in real time from your portal</li></ol><p style="font-size:13px;color:#444;">Your portal access link was sent separately via magic link. Use it to log in — no password needed.</p><p style="font-size:13px;color:#444;">Questions? Reply to this email or call Chris directly at 970-644-0063.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com | 970-644-0063</p></div></body></html>`;
+    await sendViaSendGrid(sgKey, affiliateEmail, subject, html);
+    return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+  }
+
+  if (action === 'affiliate_new_referral') {
+    const { affiliateName, companyName, clientName, clientEmail, clientPhone, clientNotes } = payload;
+    const sgKey = process.env.SENDGRID_API_KEY;
+    if (!sgKey) return { statusCode: 400, body: JSON.stringify({ error: 'Missing SendGrid key' }) };
+    const subject = 'New Referral from ' + (companyName || affiliateName) + ' — ' + clientName;
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;"><div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">New Partner Referral</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">${companyName || affiliateName} → Credit Comeback Club</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;"><p><strong>${affiliateName}${companyName ? ' (' + companyName + ')' : ''}</strong> just submitted a new client referral:</p><table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;"><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;width:140px;">Name</td><td style="padding:10px 14px;">${clientName}</td></tr><tr><td style="padding:10px 14px;font-weight:600;">Email</td><td style="padding:10px 14px;">${clientEmail}</td></tr><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Phone</td><td style="padding:10px 14px;">${clientPhone || '—'}</td></tr><tr><td style="padding:10px 14px;font-weight:600;">Notes</td><td style="padding:10px 14px;">${clientNotes || '—'}</td></tr></table><p style="font-size:13px;color:#444;">Log in to your admin dashboard to run their audit and kick off onboarding.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
+    await sendViaSendGrid(sgKey, 'creditcomebackclub@gmail.com', subject, html);
+    return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+  }
+
   return { statusCode: 400, body: JSON.stringify({ error: 'Unknown action: ' + action }) };
 };

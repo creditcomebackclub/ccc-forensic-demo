@@ -75,6 +75,20 @@ export default function AffiliatePortal({ session, onSignOut }) {
         commission_paid: false,
       });
       if (insertError) throw insertError;
+      // Notify Chris of new referral
+      await fetch('/.netlify/functions/send-lpoa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'affiliate_new_referral',
+          affiliateName: affiliate.name,
+          companyName: affiliate.company,
+          clientName: referForm.name.trim(),
+          clientEmail: referForm.email.trim(),
+          clientPhone: referForm.phone.trim(),
+          clientNotes: referForm.notes.trim(),
+        }),
+      });
       setReferSuccess(true);
       setReferForm({ name: '', email: '', phone: '', notes: '' });
       setTimeout(() => { setReferSuccess(false); setShowReferForm(false); loadData(); }, 2500);

@@ -68,6 +68,19 @@ function AffiliatesPage() {
         data: { role: 'affiliate' }
       }});
 
+      // Send branded welcome email
+      await fetch('/.netlify/functions/send-lpoa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'affiliate_welcome',
+          affiliateName: form.name.trim(),
+          affiliateEmail: form.email.trim().toLowerCase(),
+          companyName: form.company.trim(),
+          commissionRate: parseFloat(form.commission_rate) || 0.20,
+        }),
+      });
+
       setShowCreate(false);
       setForm({ name: '', email: '', company: '', brand_name: '', brand_color: '#22C55E', brand_logo_url: '', commission_rate: '0.20' });
       loadData();
