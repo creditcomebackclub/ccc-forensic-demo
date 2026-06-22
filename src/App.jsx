@@ -311,14 +311,7 @@ export default function App() {
       const _prd = await _pr.json();
       const prof = Array.isArray(_prd) && _prd.length > 0 ? _prd[0] : null;
 
-      if (prof && (prof.role === 'admin' || prof.role === 'auditor')) {
-        setProfile(prof);
-        setIsClient(false);
-        setProfileLoading(false);
-        return;
-      }
-
-      // Check affiliates table
+      // Check affiliates table FIRST — before profiles, so affiliates aren't caught by auditor auto-create
       const _ar = await fetch(_url + '/rest/v1/affiliates?email=eq.' + encodeURIComponent(email) + '&limit=1', {
         headers: { apikey: _key, Authorization: 'Bearer ' + _tok }
       });
@@ -336,6 +329,13 @@ export default function App() {
         setIsAffiliate(true);
         setIsClient(false);
         setProfile(prof || { id: session.user.id, email, role: 'affiliate' });
+        setProfileLoading(false);
+        return;
+      }
+
+      if (prof && (prof.role === 'admin' || prof.role === 'auditor')) {
+        setProfile(prof);
+        setIsClient(false);
         setProfileLoading(false);
         return;
       }
