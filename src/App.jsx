@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import AuditProgress from './components/AuditProgress';
 import AuditResults from './components/AuditResults';
@@ -18,7 +18,214 @@ import { getProfile } from './utils/storage';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit, fileToBase64 } from './utils/api';
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
-const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', METHODOLOGY: 'methodology', TEAM: 'team' };
+const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
+
+function AffiliatesPage() {
+  const [affiliates, setAffiliates] = React.useState([]);
+  const [clients, setClients] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [showCreate, setShowCreate] = React.useState(false);
+  const [form, setForm] = React.useState({ name: '', email: '', company: '', brand_name: '', brand_color: '#22C55E', brand_logo_url: '', commission_rate: '0.20' });
+  const [creating, setCreating] = React.useState(false);
+  const [error, setError] = React.useState(null);
+
+  React.useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [affRes, clientRes] = await Promise.all([
+      supabase.from('affiliates').select('*').order('created_at', { ascending: false }),
+      supabase.from('clients').select('name, referred_by, referral_fee, commission_paid, commission_paid_at').not('referred_by', 'is', null),
+    ]);
+    setAffiliates(affRes.data || []);
+    setClients(clientRes.data || []);
+    setLoading(false);
+  };
+
+  const handleCreate = async () => {
+    if (!form.name.trim() || !form.email.trim()) { setError('Name and email required.'); return; }
+    setCreating(true);
+    setError(null);
+    try {
+      // Create Supabase auth user with magic link
+      const { error: inviteErr } = await supabase.auth.admin ? 
+        { error: null } : { error: null }; // admin invite handled separately
+      
+      // Insert affiliate record (user_id wired on first login via email match)
+      const { error: insertErr } = await supabase.from('affiliates').insert({
+        name: form.name.trim(),
+        email: form.email.trim().toLowerCase(),
+        company: form.company.trim() || null,
+        brand_name: form.brand_name.trim() || form.company.trim() || form.name.trim(),
+        brand_color: form.brand_color || '#22C55E',
+        brand_logo_url: form.brand_logo_url.trim() || null,
+        commission_rate: parseFloat(form.commission_rate) || 0.20,
+      });
+      if (insertErr) throw insertErr;
+
+      // Send magic link
+      await supabase.auth.signInWithOtp({ email: form.email.trim().toLowerCase(), options: {
+        emailRedirectTo: window.location.origin,
+        data: { role: 'affiliate' }
+      }});
+
+      setShowCreate(false);
+      setForm({ name: '', email: '', company: '', brand_name: '', brand_color: '#22C55E', brand_logo_url: '', commission_rate: '0.20' });
+      loadData();
+      alert('Affiliate created and magic link sent to ' + form.email);
+    } catch(e) {
+      setError(e.message || 'Could not create affiliate');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const markCommissionPaid = async (clientName) => {
+    if (!window.confirm('Mark commission as paid for ' + clientName + '?')) return;
+    await supabase.from('clients').update({ commission_paid: true, commission_paid_at: new Date().toISOString() }).eq('name', clientName);
+    loadData();
+  };
+
+  const setReferralFee = async (clientName, fee) => {
+    const val = parseFloat(fee);
+    if (isNaN(val)) return;
+    await supabase.from('clients').update({ referral_fee: val }).eq('name', clientName);
+    loadData();
+  };
+
+  if (loading) return <div className="p-8 text-ink-muted text-[13px]">Loading affiliates…</div>;
+
+  return (
+    <div className="max-w-4xl mx-auto" style={{ padding: '24px 32px' }}>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="ccc-display text-[22px] text-ink font-medium">Affiliates</h1>
+          <p className="text-[12px] text-ink-muted mt-1">{affiliates.length} affiliate partner{affiliates.length !== 1 ? 's' : ''}</p>
+        </div>
+        <button onClick={() => setShowCreate(true)}
+          className="flex items-center gap-2 px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm"
+          style={{ background: '#1B2A4A', color: '#C9A84C' }}>
+          + New Affiliate
+        </button>
+      </div>
+
+      {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-[12px] text-red-700">{error}</div>}
+
+      {affiliates.length === 0 ? (
+        <div className="border border-border rounded p-12 text-center">
+          <Handshake size={28} className="text-ink-faint mx-auto mb-3" strokeWidth={1.5} />
+          <p className="text-[13px] text-ink-muted">No affiliates yet. Create one to get started.</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {affiliates.map(aff => {
+            const affClients = clients.filter(c => c.referred_by === aff.id);
+            const totalComm = affClients.reduce((s, c) => s + (c.referral_fee ? c.referral_fee * aff.commission_rate : 0), 0);
+            const paidComm = affClients.filter(c => c.commission_paid).reduce((s, c) => s + (c.referral_fee ? c.referral_fee * aff.commission_rate : 0), 0);
+            return (
+              <div key={aff.id} className="border border-border rounded bg-white">
+                <div className="p-4 border-b border-border flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    {aff.brand_logo_url && <img src={aff.brand_logo_url} alt={aff.brand_name} style={{ height: 28, objectFit: 'contain' }} />}
+                    <div>
+                      <div className="text-[14px] font-medium text-ink">{aff.name}</div>
+                      <div className="text-[11px] text-ink-muted">{aff.company} · {aff.email} · {Math.round(aff.commission_rate * 100)}% commission</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-6 text-right">
+                    <div>
+                      <div className="text-[18px] font-bold text-ink">{affClients.length}</div>
+                      <div className="text-[10px] uppercase tracking-wider text-ink-faint">Clients</div>
+                    </div>
+                    <div>
+                      <div className="text-[18px] font-bold" style={{ color: '#15803D' }}>${paidComm.toFixed(2)}</div>
+                      <div className="text-[10px] uppercase tracking-wider text-ink-faint">Paid</div>
+                    </div>
+                    <div>
+                      <div className="text-[18px] font-bold" style={{ color: '#D97706' }}>${(totalComm - paidComm).toFixed(2)}</div>
+                      <div className="text-[10px] uppercase tracking-wider text-ink-faint">Pending</div>
+                    </div>
+                  </div>
+                </div>
+                {affClients.length > 0 && (
+                  <div>
+                    {affClients.map(c => (
+                      <div key={c.name} className="px-4 py-3 border-b border-border last:border-b-0 flex items-center justify-between gap-3">
+                        <div className="text-[12px] text-ink font-medium">{c.name}</div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-ink-muted">Fee: $</span>
+                            <input
+                              type="number"
+                              defaultValue={c.referral_fee || ''}
+                              placeholder="0.00"
+                              onBlur={e => setReferralFee(c.name, e.target.value)}
+                              className="w-20 text-[12px] border border-border rounded px-2 py-1 text-ink"
+                            />
+                          </div>
+                          <div className="text-[12px] text-ink-muted">
+                            Comm: <span className="font-medium text-ink">${c.referral_fee ? (c.referral_fee * aff.commission_rate).toFixed(2) : '—'}</span>
+                          </div>
+                          {c.commission_paid ? (
+                            <span className="flex items-center gap-1 text-[11px] text-green-700 font-medium">
+                              <CheckCircle size={12} strokeWidth={2} /> Paid {c.commission_paid_at ? new Date(c.commission_paid_at).toLocaleDateString() : ''}
+                            </span>
+                          ) : (
+                            <button onClick={() => markCommissionPaid(c.name)}
+                              className="text-[11px] uppercase tracking-wider px-2 py-1 rounded border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
+                              Mark Paid
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showCreate && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-6" onClick={() => setShowCreate(false)}>
+          <div className="bg-white border border-border rounded w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <h2 className="text-[15px] font-medium text-ink mb-5">New Affiliate Partner</h2>
+            {[
+              { key: 'name', label: 'Contact Name', required: true },
+              { key: 'email', label: 'Email Address', required: true },
+              { key: 'company', label: 'Company Name' },
+              { key: 'brand_name', label: 'Portal Brand Name' },
+              { key: 'brand_logo_url', label: 'Logo URL' },
+              { key: 'brand_color', label: 'Brand Color (hex)' },
+              { key: 'commission_rate', label: 'Commission Rate (e.g. 0.20 = 20%)' },
+            ].map(({ key, label, required }) => (
+              <div key={key} className="mb-3">
+                <label className="block text-[11px] uppercase tracking-wider text-ink-muted mb-1">{label}{required && <span className="text-red-500 ml-1">*</span>}</label>
+                <input
+                  type="text"
+                  value={form[key]}
+                  onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))}
+                  className="w-full border border-border rounded px-3 py-2 text-[13px] text-ink"
+                />
+              </div>
+            ))}
+            {error && <div className="mb-3 text-[12px] text-red-600">{error}</div>}
+            <div className="flex gap-2 mt-5">
+              <button onClick={handleCreate} disabled={creating}
+                className="flex-1 py-2.5 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
+                style={{ background: creating ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
+                {creating ? 'Creating…' : 'Create & Send Magic Link'}
+              </button>
+              <button onClick={() => setShowCreate(false)} className="px-4 py-2.5 text-[12px] uppercase tracking-wider border border-border rounded-sm text-ink-muted hover:text-ink">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function App() {
   const [session, setSession] = useState(undefined);
@@ -118,6 +325,14 @@ export default function App() {
       const _ard = await _ar.json();
       const aff = Array.isArray(_ard) && _ard.length > 0 ? _ard[0] : null;
       if (aff) {
+        // Wire user_id on first login if not set
+        if (!aff.user_id) {
+          await fetch(_url + '/rest/v1/affiliates?id=eq.' + aff.id, {
+            method: 'PATCH',
+            headers: { apikey: _key, Authorization: 'Bearer ' + _key, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+            body: JSON.stringify({ user_id: session.user.id })
+          });
+        }
         setIsAffiliate(true);
         setIsClient(false);
         setProfile(prof || { id: session.user.id, email, role: 'affiliate' });
@@ -265,6 +480,7 @@ export default function App() {
           )}
           {view === VIEW.METHODOLOGY && <MethodologyPage />}
           {view === VIEW.TEAM && isAdmin && <TeamPage currentUserId={user.id} />}
+          {view === VIEW.AFFILIATES && isAdmin && <AffiliatesPage />}
           {view === VIEW.AUDIT && (
             <>
               {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
@@ -307,6 +523,9 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
         <NavItem icon={BookOpen} label="Methodology" active={view === 'methodology'} onClick={() => onNavigate('methodology')} />
         {isAdmin && (
           <NavItem icon={UserCog} label="Team" active={view === 'team'} onClick={() => onNavigate('team')} />
+        )}
+        {isAdmin && (
+          <NavItem icon={Handshake} label="Affiliates" active={view === 'affiliates'} onClick={() => onNavigate('affiliates')} />
         )}
       </nav>
 
