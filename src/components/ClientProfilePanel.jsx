@@ -297,19 +297,13 @@ function OnboardingButton({ client, onChanged }) {
   const [sending, setSending] = React.useState(false);
   const [sent, setSent] = React.useState(false);
   const [err, setErr] = React.useState(null);
-  const { supabase } = require('../utils/supabase') || {};
-
   const handleSend = async () => {
     if (!client.email) { setErr('Add client email first.'); return; }
     setSending(true);
     setErr(null);
     try {
-      const { createClient } = await import('@supabase/supabase-js');
-      const sb = createClient(
-        import.meta.env.VITE_SUPABASE_URL,
-        import.meta.env.VITE_SUPABASE_ANON_KEY
-      );
-      const { error } = await sb.auth.signInWithOtp({
+      const { supabase } = await import('../utils/supabase.js');
+      const { error } = await supabase.auth.signInWithOtp({
         email: client.email,
         options: { emailRedirectTo: window.location.origin }
       });
