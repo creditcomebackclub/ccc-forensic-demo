@@ -285,6 +285,79 @@ export default function ClientProfilePanel({ client, onChanged }) {
           onSave={(v) => save({ notes: v })} />
       </Section>
 
+      <Section title="Portal Access">
+        <OnboardingButton client={client} onChanged={onChanged} />
+      </Section>
+
+    </div>
+  );
+}
+
+function OnboardingButton({ client, onChanged }) {
+  const [sending, setSending] = React.useState(false);
+  const [sent, setSent] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+  const { supabase } = require('../utils/supabase') || {};
+
+  const handleSend = async () => {
+    if (!client.email) { setErr('Add client email first.'); return; }
+    setSending(true);
+    setErr(null);
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      const sb = createClient(
+        import.meta.env.VITE_SUPABASE_URL,
+        import.meta.env.VITE_SUPABASE_ANON_KEY
+      );
+      const { error } = await sb.auth.signInWithOtp({
+        email: client.email,
+        options: { emailRedirectTo: window.location.origin }
+      });
+      if (error) throw error;
+
+      // Send branded welcome email
+      await fetch('/.netlify/functions/send-lpoa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'send_onboarding_welcome',
+          clientName: client.name,
+          clientEmail: client.email,
+          magicLink: window.location.origin,
+        }),
+      });
+
+      setSent(true);
+      setTimeout(() => setSent(false), 4000);
+    } catch (e) {
+      setErr(e.message || 'Could not send magic link');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div>
+      {client.onboardingComplete ? (
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] px-2 py-1 rounded-sm bg-green-50 text-green-700 border border-green-200">✓ Portal Active</span>
+          <button onClick={handleSend} disabled={sending}
+            className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-navy">
+            Resend Link
+          </button>
+        </div>
+      ) : (
+        <div>
+          <button onClick={handleSend} disabled={sending || !client.email}
+            className="flex items-center gap-2 px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
+            style={{ background: sending || !client.email ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C', cursor: !client.email ? 'not-allowed' : 'pointer' }}>
+            {sending ? 'Sending…' : sent ? '✓ Magic Link Sent!' : 'Start Onboarding'}
+          </button>
+          {!client.email && <div className="text-[11px] text-amber-600 mt-1">Add client email first.</div>}
+          {err && <div className="text-[11px] text-red-600 mt-1">{err}</div>}
+          {sent && <div className="text-[11px] text-green-600 mt-1">Magic link sent to {client.email}</div>}
+        </div>
+      )}
     </div>
   );
 }
