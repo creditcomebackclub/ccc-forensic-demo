@@ -126,7 +126,7 @@ export default function ClientPortal({ session, onSignOut }) {
     setUploadingLetter(letter.id);
     try {
       const ext = file.name.split('.').pop() || 'pdf';
-      const path = profile.full_name.replace(/\s+/g, '_') + '/' + letter.id + '/response_' + Date.now() + '.' + ext;
+      const path = session.user.id + '/' + letter.id + '/response_' + Date.now() + '.' + ext;
       const { error: uploadErr } = await supabase.storage.from('responses').upload(path, file, { upsert: true });
       if (uploadErr) throw uploadErr;
 
