@@ -199,7 +199,7 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
 
     // Inject signature if available
     const sigBlock = signatureData
-      ? `<div style="margin-top:32px;"><img src="${signatureData}" style="max-height:60px;max-width:220px;" /><br/><span style="font-size:11px;color:#333;">Thomas Andrew Kilpatrick — Consumer, All Rights Reserved</span></div>`
+      ? `<div style="margin-top:32px;"><img src="${signatureData}" style="max-height:60px;max-width:220px;" /><br/><span style="font-size:11px;color:#333;">${clientName} — Consumer, All Rights Reserved</span></div>`
       : '<div style="margin-top:32px;border-top:1px solid #000;width:250px;padding-top:4px;font-size:11px;">Consumer — All Rights Reserved</div>';
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>${letterText.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>${sigBlock}</body></html>`;
