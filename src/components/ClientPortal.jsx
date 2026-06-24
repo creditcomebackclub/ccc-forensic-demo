@@ -98,6 +98,8 @@ export default function ClientPortal({ session, onSignOut }) {
   const [loading, setLoading] = useState(true);
   const [auditHistory, setAuditHistory] = useState([]);
   const [activeTab, setActiveTab] = useState('overview');
+  const [uploadingLetter, setUploadingLetter] = useState(null);
+  const [uploadSuccess, setUploadSuccess] = useState(null);
 
   useEffect(() => { loadData(); }, [session]);
 
@@ -117,6 +119,38 @@ export default function ClientPortal({ session, onSignOut }) {
       }
     } catch (e) { console.error('Portal load error:', e); }
     finally { setLoading(false); }
+  };
+
+  const handleUploadResponse = async (letter, file) => {
+    if (!file) return;
+    setUploadingLetter(letter.id);
+    try {
+      const ext = file.name.split('.').pop() || 'pdf';
+      const path = profile.full_name.replace(/\s+/g, '_') + '/' + letter.id + '/response_' + Date.now() + '.' + ext;
+      const { error: uploadErr } = await supabase.storage.from('responses').upload(path, file, { upsert: true });
+      if (uploadErr) throw uploadErr;
+
+      // Notify Chris
+      await fetch('/.netlify/functions/send-lpoa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'client_response_uploaded',
+          clientName: profile.full_name,
+          furnisher: letter.furnisher,
+          phase: letter.phase,
+          storagePath: path,
+        }),
+      });
+
+      setUploadSuccess(letter.id);
+      setTimeout(() => setUploadSuccess(null), 4000);
+    } catch (e) {
+      console.error('Upload error:', e);
+      alert('Upload failed: ' + (e.message || e));
+    } finally {
+      setUploadingLetter(null);
+    }
   };
 
   if (loading) return (
@@ -319,6 +353,25 @@ export default function ClientPortal({ session, onSignOut }) {
                         {l.tracking_number && (
                           <a href={'https://tools.usps.com/go/TrackConfirmAction?tLabels=' + l.tracking_number} target="_blank" rel="noopener noreferrer"
                             style={{ marginLeft: 8, color: '#1B2A4A', fontWeight: 500 }}>Track →</a>
+                        )}
+                      </div>
+                    )}
+                    {l.tracking_status === 'Delivered' && !l.response_outcome && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F3F4F6' }}>
+                        {uploadSuccess === l.id ? (
+                          <div style={{ fontSize: 12, color: '#15803D', fontWeight: 600 }}>✓ Response uploaded — Credit Comeback Club has been notified.</div>
+                        ) : (
+                          <div>
+                            <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 8 }}>
+                              Did you receive a response from {l.furnisher} in the mail? Upload it here and we'll take it from there.
+                            </p>
+                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '7px 14px', background: '#1B2A4A', color: '#C9A84C', borderRadius: 4, fontWeight: 600, cursor: uploadingLetter === l.id ? 'not-allowed' : 'pointer', opacity: uploadingLetter === l.id ? 0.6 : 1 }}>
+                              {uploadingLetter === l.id ? 'Uploading…' : '📎 Upload Response'}
+                              <input type="file" accept=".pdf,image/*" style={{ display: 'none' }}
+                                onChange={e => { if (e.target.files[0]) handleUploadResponse(l, e.target.files[0]); }}
+                                disabled={uploadingLetter === l.id} />
+                            </label>
+                          </div>
                         )}
                       </div>
                     )}

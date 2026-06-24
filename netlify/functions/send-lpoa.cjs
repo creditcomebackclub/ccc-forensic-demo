@@ -343,5 +343,32 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ sent: true }) };
   }
 
+  if (action === 'client_response_uploaded') {
+    const { clientName, furnisher, phase, storagePath } = payload;
+    const sgKey = process.env.SENDGRID_API_KEY;
+    if (!sgKey) return { statusCode: 400, body: JSON.stringify({ error: 'Missing SendGrid key' }) };
+    const subject = 'Client Uploaded Response — ' + clientName + ' / ' + furnisher;
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;">
+      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
+        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Client Response Uploaded</h1>
+        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Action Required</p>
+      </div>
+      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
+        <p><strong>${clientName}</strong> just uploaded a furnisher response document from their client portal.</p>
+        <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
+          <tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;width:120px;">Client</td><td style="padding:10px 14px;">${clientName}</td></tr>
+          <tr><td style="padding:10px 14px;font-weight:600;">Furnisher</td><td style="padding:10px 14px;">${furnisher}</td></tr>
+          <tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Phase</td><td style="padding:10px 14px;">${phase || 'Phase 1'}</td></tr>
+          <tr><td style="padding:10px 14px;font-weight:600;">File</td><td style="padding:10px 14px;font-size:11px;color:#6B7280;">${storagePath}</td></tr>
+        </table>
+        <p style="font-size:13px;color:#444;">Log in to your admin dashboard, download the response from Supabase Storage (responses bucket), and run Phase 2 analysis in the Response Analyzer.</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
+      </div>
+    </body></html>`;
+    await sendViaSendGrid(sgKey, 'creditcomebackclub@gmail.com', subject, html);
+    return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+  }
+
   return { statusCode: 400, body: JSON.stringify({ error: 'Unknown action: ' + action }) };
 };
