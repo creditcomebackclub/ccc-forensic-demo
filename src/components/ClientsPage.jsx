@@ -575,7 +575,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
                   {/* Documents tab */}
                   {(activeTab[c.name] || 'Letters') === 'Documents' && (
-                    <DocumentManager clientName={c.name} onChanged={load} />
+                    <DocumentManager clientName={c.name} letters={c.letters || []} onChanged={load} setAnalyzingLetter={setAnalyzingLetter} />
                   )}
 
                   <div className="pt-2 border-t border-border">

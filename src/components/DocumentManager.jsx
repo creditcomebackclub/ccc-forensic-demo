@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Upload, FileText, Trash2, Eye, CheckCircle, AlertCircle } from 'lucide-react';
 import { uploadDocument, getDocuments, getDocumentUrl, deleteDocument } from '../utils/documents';
+import { supabase } from '../utils/supabase';
 
 const DOC_TYPES = [
   { key: 'id', label: 'Government ID', desc: "Driver's license or passport" },
@@ -117,7 +118,120 @@ function DocSlot({ clientName, docType, label, desc, onChanged }) {
   );
 }
 
-export default function DocumentManager({ clientName, onChanged }) {
+function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
+  const [responses, setResponses] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => { loadResponses(); }, [clientName]);
+
+  const loadResponses = async () => {
+    try {
+      // Get the user_id for this client from client_profiles
+      const { data: cp } = await supabase
+        .from('client_profiles')
+        .select('user_id')
+        .eq('full_name', clientName)
+        .limit(1);
+
+      if (!cp || cp.length === 0 || !cp[0].user_id) {
+        setLoading(false);
+        return;
+      }
+
+      const userId = cp[0].user_id;
+      const { data: files } = await supabase.storage
+        .from('responses')
+        .list(userId, { limit: 50, sortBy: { column: 'created_at', order: 'desc' } });
+
+      if (!files || files.length === 0) { setLoading(false); return; }
+
+      // For each folder (letter ID), list files inside
+      const allResponses = [];
+      for (const folder of files) {
+        const { data: folderFiles } = await supabase.storage
+          .from('responses')
+          .list(userId + '/' + folder.name, { limit: 10 });
+        if (folderFiles && folderFiles.length > 0) {
+          // Match folder name (letter ID) to a letter to get furnisher
+          const matchedLetter = letters.find(l => l.id === folder.name);
+          folderFiles.forEach(f => {
+            allResponses.push({
+              path: userId + '/' + folder.name + '/' + f.name,
+              letterId: folder.name,
+              furnisher: matchedLetter ? matchedLetter.furnisher : folder.name,
+              phase: matchedLetter ? matchedLetter.phase : 'Phase 1',
+              fileName: f.name,
+              createdAt: f.created_at,
+              letter: matchedLetter || null,
+            });
+          });
+        }
+      }
+      setResponses(allResponses);
+    } catch(e) { console.error('Could not load responses:', e); }
+    finally { setLoading(false); }
+  };
+
+  const handleDownload = async (path) => {
+    try {
+      const { data } = await supabase.storage.from('responses').createSignedUrl(path, 3600);
+      if (data?.signedUrl) window.open(data.signedUrl, '_blank');
+    } catch(e) { alert('Could not open file'); }
+  };
+
+  const handleAnalyze = async (resp) => {
+    if (!resp.letter) { alert('Could not find matching letter for this response.'); return; }
+    try {
+      const { data } = await supabase.storage.from('responses').createSignedUrl(resp.path, 3600);
+      if (!data?.signedUrl) throw new Error('Could not get file URL');
+      // Fetch the file and pass to ResponseAnalyzer
+      const fileRes = await fetch(data.signedUrl);
+      const blob = await fileRes.blob();
+      const file = new File([blob], resp.fileName, { type: blob.type });
+      setAnalyzingLetter({ ...resp.letter, _preloadedFile: file });
+    } catch(e) { alert('Could not load response file: ' + e.message); }
+  };
+
+  if (loading) return <div className="text-[11px] text-ink-muted py-2">Loading responses…</div>;
+  if (responses.length === 0) return (
+    <div className="text-[11px] text-ink-muted py-2">No responses uploaded by client yet.</div>
+  );
+
+  return (
+    <div className="space-y-2">
+      {responses.map((resp, i) => (
+        <div key={i} className="border border-border rounded-sm p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <FileText size={12} strokeWidth={1.75} className="text-navy shrink-0" />
+                <span className="text-[12px] text-ink font-medium truncate">{resp.furnisher}</span>
+              </div>
+              <div className="text-[10px] text-ink-muted ml-4">
+                {resp.phase} · {resp.createdAt ? new Date(resp.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown date'}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => handleDownload(resp.path)}
+                className="text-[10px] uppercase tracking-wider text-navy hover:text-gold flex items-center gap-1">
+                <Eye size={11} strokeWidth={1.75} /> View
+              </button>
+              {resp.letter && (
+                <button onClick={() => handleAnalyze(resp)}
+                  className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm flex items-center gap-1"
+                  style={{ background: '#1B2A4A', color: '#C9A84C' }}>
+                  ⚡ Analyze
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function DocumentManager({ clientName, letters, onChanged, setAnalyzingLetter }) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">
@@ -138,6 +252,10 @@ export default function DocumentManager({ clientName, onChanged }) {
       <div className="text-[10px] text-ink-faint mt-2 leading-relaxed">
         Documents stored securely and attached as enclosures when mailing via Lob.
       </div>
+      <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mt-4 mb-2">
+        Client-Uploaded Responses
+      </div>
+      <ResponsesSection clientName={clientName} letters={letters || []} setAnalyzingLetter={setAnalyzingLetter} />
     </div>
   );
 }
