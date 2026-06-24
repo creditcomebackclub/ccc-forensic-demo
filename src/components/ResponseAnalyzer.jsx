@@ -242,8 +242,15 @@ const OUTCOME_CONFIG = {
 
 export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
   const isNonResponse = letter.responseOutcome === 'no_response';
-  const [step, setStep] = useState(isNonResponse ? 'nonresponse' : 'upload');
-  const [file, setFile] = useState(null);
+  const [step, setStep] = useState(isNonResponse ? 'nonresponse' : (letter._preloadedFile ? 'upload' : 'upload'));
+  const [file, setFile] = useState(letter._preloadedFile || null);
+
+  // Auto-analyze if a preloaded file was passed in
+  React.useEffect(() => {
+    if (letter._preloadedFile && !analyzing && !analysis) {
+      handleAnalyze();
+    }
+  }, []);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [saving, setSaving] = useState(false);
