@@ -157,12 +157,53 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
 
   const today = new Date().toISOString().slice(0, 10);
   const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
-  const bureaus = ['equifax', 'experian', 'transunion'];
 
-  for (const bureau of bureaus) {
+  // Look up which bureaus this account actually reports on
+  let activeBureaus = ['equifax', 'experian', 'transunion']; // fallback to all three
+  try {
+    const { data: audits } = await supabase
+      .from('audits')
+      .select('audit')
+      .eq('client_name', clientName)
+      .order('saved_at', { ascending: false })
+      .limit(1);
+    if (audits && audits.length > 0) {
+      const accounts = audits[0].audit?.accounts || [];
+      const account = accounts.find(a => a.id === accountId || a.accountNumberMasked === accountId);
+      if (account && account.bureaus && account.bureaus.length > 0) {
+        // Map bureau codes to full names
+        const bureauMap = { 'EQ': 'equifax', 'EXP': 'experian', 'TU': 'transunion' };
+        activeBureaus = account.bureaus.map(b => bureauMap[b]).filter(Boolean);
+      }
+    }
+  } catch(e) { console.warn('Could not look up account bureaus, defaulting to all three:', e); }
+
+  // Look up client signature
+  let signatureData = null;
+  try {
+    const { data: cp } = await supabase.from('client_profiles').select('signature_data').eq('full_name', clientName).limit(1);
+    if (cp && cp.length > 0 && cp[0].signature_data) {
+      signatureData = cp[0].signature_data;
+    }
+    if (!signatureData) {
+      const { data: cm } = await supabase.from('clients').select('lpoa_signature_data').eq('name', clientName).limit(1);
+      if (cm && cm.length > 0 && cm[0].lpoa_signature_data?.signatureUrl) {
+        signatureData = cm[0].lpoa_signature_data.signatureUrl;
+      }
+    }
+  } catch(e) { console.warn('Could not look up signature:', e); }
+
+  for (const bureau of activeBureaus) {
     const letterText = analysis.letters[bureau];
     if (!letterText) continue;
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>${letterText.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></body></html>`;
+
+    // Inject signature if available
+    const sigBlock = signatureData
+      ? `<div style="margin-top:32px;"><img src="${signatureData}" style="max-height:60px;max-width:220px;" /><br/><span style="font-size:11px;color:#333;">Thomas Andrew Kilpatrick — Consumer, All Rights Reserved</span></div>`
+      : '<div style="margin-top:32px;border-top:1px solid #000;width:250px;padding-top:4px;font-size:11px;">Consumer — All Rights Reserved</div>';
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>${letterText.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>${sigBlock}</body></html>`;
+
     const id = slug(clientName) + '__' + slug(furnisher) + '__phase3-' + bureau + '__' + today;
     const { error } = await supabase.from('letters').upsert({
       id,
