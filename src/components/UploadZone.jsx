@@ -29,7 +29,7 @@ function DropZone({ label, file, onFile, onClear }) {
           <Upload size={20} className="text-ink-faint mb-2" strokeWidth={1.5} />
           <div className="text-[12px] text-ink font-medium mb-0.5">{label}</div>
           <div className="text-[10px] text-ink-muted">Drop PDF or click to browse</div>
-          <input type="file" accept=".pdf" className="hidden" onChange={(e) => { if (e.target.files[0]) onFile(e.target.files[0]); }} />
+          <input type="file" accept=".pdf,.html,.htm,.txt" className="hidden" onChange={(e) => { if (e.target.files[0]) onFile(e.target.files[0]); }} />
         </label>
       )}
     </div>

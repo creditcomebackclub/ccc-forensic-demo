@@ -451,7 +451,7 @@ export default function App() {
         const file = payload.file || payload;
         setFileName(file.name || 'report.pdf');
         const base64 = await fileToBase64(file);
-        res = await runAudit(base64);
+        res = await runAudit(base64, file.type);
       } else if (payload.mode === 'individual') {
         setFileName('3-Bureau Individual Audit');
         const [eq, exp, tu] = await Promise.all([
@@ -463,7 +463,7 @@ export default function App() {
       } else if (payload.mode === 'single') {
         setFileName(payload.bureau + ' Single Bureau Audit');
         const base64 = await fileToBase64(payload.file);
-        res = await runSingleBureauAudit(base64, payload.bureau);
+        res = await runSingleBureauAudit(base64, payload.bureau, payload.file?.type);
       }
       setAuditResult(res.audit);
       setState(STATE.RESULTS);
