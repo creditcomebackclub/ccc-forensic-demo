@@ -16,12 +16,15 @@ function extractJSON(text) {
   const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch) text = fenceMatch[1];
   const objMatch = text.match(/\{[\s\S]*\}/);
-  if (objMatch) { try { return JSON.parse(objMatch[0]); } catch (e) {} }
+  if (objMatch) { try { return JSON.parse(objMatch[0]); } catch (e) {
+    console.error('JSON parse failed, first 500 chars:', objMatch[0].slice(0, 500));
+  } }
   try { return JSON.parse(text.trim()); } catch (e) {}
+  console.error('Full response (first 1000 chars):', text.slice(0, 1000));
   throw new Error('Could not parse JSON from response');
 }
 
-async function claudeCall(apiKey, userContent, maxTokens = 8192) {
+async function claudeCall(apiKey, userContent, maxTokens = 16000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120000);
   try {
