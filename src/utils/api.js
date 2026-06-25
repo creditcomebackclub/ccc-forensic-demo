@@ -98,7 +98,7 @@ export async function runAudit(pdfBase64, fileType) {
   const apiKey = getApiKey();
   const t = today();
   const rawText = await claudeCall(apiKey, pdfContent(pdfBase64,
-    `AUDIT_JSON_MODE\n\nToday is ${t}. Perform a full forensic Metro 2 and FCRA audit of the attached three-bureau credit report. Return the complete JSON object per the schema in your instructions. Identify every violation. Classify accounts A, B, or C. Rank into Batch 1 top 5 and Batch 2 remaining. Output JSON only. No prose. No code fences.`,
+    `AUDIT_JSON_MODE\n\nToday is ${t}. Perform a full forensic Metro 2 and FCRA audit of the attached three-bureau credit report. Return the complete JSON object per the schema in your instructions. Identify every violation. Classify accounts A, B, or C. Rank into Batch 1 top 5 and Batch 2 remaining. Output JSON only. No prose. No code fences.\n\nIMPORTANT — MyFICO TEXT FORMAT PARSING RULES: If this report is in MyFICO plain text format, account data is presented in three columns (Equifax, TransUnion, Experian) separated by spaces. Dashes (–) mean the bureau does not report that field. For Balance fields formatted as "Balance – – $1,234" extract $1,234 as the balance. For fields showing three values like "Balance $1,200 $1,200 $1,234" extract the highest or most recent non-zero value. Never report $0 balance unless ALL three columns explicitly show $0. Account names are often split across multiple lines — reconstruct the full furnisher name from context.`,
     fileType
   ));
   const json = extractJSON(rawText);
