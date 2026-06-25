@@ -52,7 +52,16 @@ async function claudeCall(apiKey, userContent, maxTokens = 8192) {
   }
 }
 
-function pdfContent(base64, label) {
+function pdfContent(base64, label, mediaType) {
+  if (mediaType && (mediaType.includes('html') || mediaType.includes('text'))) {
+    try {
+      const decoded = atob(base64);
+      return [
+        { type: 'text', text: 'CREDIT REPORT CONTENT (HTML/TEXT FORMAT):\n\n' + decoded.slice(0, 200000) },
+        { type: 'text', text: label },
+      ];
+    } catch(e) { /* fallback to pdf below */ }
+  }
   return [
     { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
     { type: 'text', text: label },
@@ -86,7 +95,8 @@ export async function runAudit(pdfBase64) {
   const apiKey = getApiKey();
   const t = today();
   const rawText = await claudeCall(apiKey, pdfContent(pdfBase64,
-    `AUDIT_JSON_MODE\n\nToday is ${t}. Perform a full forensic Metro 2 and FCRA audit of the attached three-bureau credit report. Return the complete JSON object per the schema in your instructions. Identify every violation. Classify accounts A, B, or C. Rank into Batch 1 top 5 and Batch 2 remaining. Output JSON only. No prose. No code fences.`
+    `AUDIT_JSON_MODE\n\nToday is ${t}. Perform a full forensic Metro 2 and FCRA audit of the attached three-bureau credit report. Return the complete JSON object per the schema in your instructions. Identify every violation. Classify accounts A, B, or C. Rank into Batch 1 top 5 and Batch 2 remaining. Output JSON only. No prose. No code fences.`,
+    fileType
   ));
   const json = extractJSON(rawText);
   if (json && json.client) await saveAudit(json);
@@ -143,7 +153,8 @@ export async function runSingleBureauAudit(pdfBase64, bureau) {
   const apiKey = getApiKey();
   const t = today();
   const rawText = await claudeCall(apiKey, pdfContent(pdfBase64,
-    `AUDIT_JSON_MODE\n\nToday is ${t}. Bureau: ${bureau} only. Perform a forensic Metro 2 and FCRA audit. No cross-bureau comparisons possible. Return complete JSON per standard schema. JSON only.`
+    `AUDIT_JSON_MODE\n\nToday is ${t}. Bureau: ${bureau} only. Perform a forensic Metro 2 and FCRA audit. No cross-bureau comparisons possible. Return complete JSON per standard schema. JSON only.`,
+    fileType
   ));
   const json = extractJSON(rawText);
   if (json && json.client) await saveAudit(json);
