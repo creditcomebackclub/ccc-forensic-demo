@@ -91,7 +91,7 @@ function trimBureau(data) {
   };
 }
 
-export async function runAudit(pdfBase64) {
+export async function runAudit(pdfBase64, fileType) {
   const apiKey = getApiKey();
   const t = today();
   const rawText = await claudeCall(apiKey, pdfContent(pdfBase64,
@@ -149,7 +149,7 @@ export async function runTripleBureauAudit(eqBase64, expBase64, tuBase64, onProg
   return { audit: merged, bureauData: { equifax: eqData, experian: expData, transunion: tuData } };
 }
 
-export async function runSingleBureauAudit(pdfBase64, bureau) {
+export async function runSingleBureauAudit(pdfBase64, bureau, fileType) {
   const apiKey = getApiKey();
   const t = today();
   const rawText = await claudeCall(apiKey, pdfContent(pdfBase64,
