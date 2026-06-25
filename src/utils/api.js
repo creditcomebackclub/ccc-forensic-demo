@@ -24,9 +24,9 @@ function extractJSON(text) {
   throw new Error('Could not parse JSON from response');
 }
 
-async function claudeCall(apiKey, userContent, maxTokens = 16000) {
+async function claudeCall(apiKey, userContent, maxTokens = 20000) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120000);
+  const timeout = setTimeout(() => controller.abort(), 300000);
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
