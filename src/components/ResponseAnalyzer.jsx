@@ -198,17 +198,19 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
     const letterText = analysis.letters[bureau];
     if (!letterText) continue;
 
-    // Inject signature — split on ___ line and insert image
+    // Inject signature — split letterText on ___ BEFORE escaping so HTML chars don't break the regex
     const sigHtml = signatureData
-      ? '<img src="' + signatureData + '" style="max-height:60px;max-width:220px;display:block;margin-bottom:4px;" />'
+      ? '<img src="' + signatureData + '" style="max-height:60px;max-width:220px;display:block;" />'
       : '';
-    const escapedText = letterText.replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const sigParts = escapedText.split(/_{3,}[^\n]*\n/);
+    const sigParts = letterText.split(/_{3,}[^\n]*\n/);
     let bodyHtml;
-    if (sigParts.length > 1) {
-      bodyHtml = sigParts[0] + '</pre>' + sigHtml + '<pre>' + sigParts.slice(1).join('\n');
+    if (sigParts.length > 1 && sigHtml) {
+      const before = sigParts[0].replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const after = sigParts.slice(1).join('\n').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      bodyHtml = before + '</pre>' + sigHtml + '<pre>' + after;
     } else {
-      bodyHtml = escapedText + (sigHtml ? '</pre>' + sigHtml + '<pre>' : '');
+      bodyHtml = letterText.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      if (sigHtml) bodyHtml += '</pre>' + sigHtml + '<pre>';
     }
     const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>' + bodyHtml + '</pre></body></html>';
 
