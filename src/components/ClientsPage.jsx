@@ -205,6 +205,20 @@ function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze, onLobMail }
 }
 
 
+function parseBureauAddress(phase) {
+  const bureauMap = {
+    'equifax': { name: 'Equifax Information Services LLC', line1: 'P.O. Box 740256', city: 'Atlanta', state: 'GA', zip: '30374-0256' },
+    'experian': { name: 'Experian Information Solutions Inc.', line1: 'P.O. Box 4500', city: 'Allen', state: 'TX', zip: '75013' },
+    'transunion': { name: 'TransUnion LLC', line1: 'P.O. Box 2000', city: 'Chester', state: 'PA', zip: '19016' },
+  };
+  if (!phase) return null;
+  const lower = phase.toLowerCase();
+  for (const [key, addr] of Object.entries(bureauMap)) {
+    if (lower.includes(key)) return addr;
+  }
+  return null;
+}
+
 function parseFurnisherAddress(furnisher) {
   const map = {
     'capital one bank': { name: 'Capital One', line1: 'P.O. Box 30279', city: 'Salt Lake City', state: 'UT', zip: '84130-0279' },
@@ -603,7 +617,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       {lobMailerLetter && (
         <LobMailer
           letter={lobMailerLetter}
-          furnisherAddress={lobMailerLetter ? parseFurnisherAddress(lobMailerLetter.furnisher) : null}
+          furnisherAddress={lobMailerLetter ? (lobMailerLetter.phase && lobMailerLetter.phase.startsWith('Phase 3') ? parseBureauAddress(lobMailerLetter.phase) : parseFurnisherAddress(lobMailerLetter.furnisher)) : null}
           onClose={() => setLobMailerLetter(null)}
           onSent={async (data) => {
             await updateLetter(lobMailerLetter.id, {
