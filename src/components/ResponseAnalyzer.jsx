@@ -290,16 +290,22 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
 
       // Save response file to storage so Lob can attach it as Exhibit B
       try {
-        const { data: { user: respUser } } = await supabase.auth.getUser();
         const { data: cp } = await supabase.from('client_profiles').select('user_id').eq('full_name', letter.clientName).limit(1);
         const clientUserId = cp && cp.length > 0 ? cp[0].user_id : null;
+        console.log('Saving response — clientUserId:', clientUserId, 'letterId:', letter.id);
         if (clientUserId && letter.id) {
           const ext = file.name.split('.').pop() || 'pdf';
           const path = clientUserId + '/' + letter.id + '/response_' + Date.now() + '.' + ext;
-          await supabase.storage.from('responses').upload(path, file, { upsert: true });
-          console.log('Response saved to storage:', path);
+          const { error: storageErr } = await supabase.storage.from('responses').upload(path, file, { upsert: true });
+          if (storageErr) {
+            console.error('Response storage upload failed:', storageErr);
+          } else {
+            console.log('Response saved to storage:', path);
+          }
+        } else {
+          console.warn('Missing clientUserId or letter.id — cannot save response');
         }
-      } catch(e) { console.warn('Could not save response to storage:', e); }
+      } catch(e) { console.error('Could not save response to storage:', e); }
 
       const result = await analyzeResponse({
         phase1Html: letter.html,
