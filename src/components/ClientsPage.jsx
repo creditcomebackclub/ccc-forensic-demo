@@ -237,6 +237,8 @@ function parseFurnisherAddress(furnisher) {
     'sequoia': { name: 'Sequoia Concepts Inc.', line1: 'P.O. Box 4386', city: 'Portland', state: 'OR', zip: '97208' },
     'continental finance': { name: 'Continental Finance Company LLC', line1: 'P.O. Box 3220', city: 'Buffalo', state: 'NY', zip: '14240-3220' },
     'aldous': { name: 'Aldous & Associates PLLC', line1: 'P.O. Box 171374', city: 'Holladay', state: 'UT', zip: '84117' },
+    'prestige financial': { name: 'Prestige Financial Services Inc.', line1: 'P.O. Box 26707', city: 'Salt Lake City', state: 'UT', zip: '84126' },
+    'prestige': { name: 'Prestige Financial Services Inc.', line1: 'P.O. Box 26707', city: 'Salt Lake City', state: 'UT', zip: '84126' },
     'align balance': { name: 'Align Balance LLC', line1: '175 W. Jackson Blvd, Suite 600', city: 'Chicago', state: 'IL', zip: '60604' },
     'alignbalance': { name: 'Align Balance LLC', line1: '175 W. Jackson Blvd, Suite 600', city: 'Chicago', state: 'IL', zip: '60604' },
   };
