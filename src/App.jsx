@@ -362,7 +362,10 @@ export default function App() {
       if (cp) {
         setIsClient(true);
         setClientOnboarded(cp.onboarding_complete === true);
-        setNeedsPasswordSetup(!session.user.user_metadata?.password_set);
+        // Only require password setup if they haven't completed onboarding
+        // and haven't set a password yet — avoids loop for existing clients
+        const alreadySetup = cp && cp.onboarding_complete && session.user.user_metadata?.password_set;
+        setNeedsPasswordSetup(!alreadySetup && !session.user.user_metadata?.password_set);
         if (!cp.user_id) {
           await supabase.from('client_profiles').update({ user_id: session.user.id }).eq('email', email);
         }
