@@ -198,12 +198,19 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
     const letterText = analysis.letters[bureau];
     if (!letterText) continue;
 
-    // Inject signature if available
-    const sigBlock = signatureData
-      ? `<div style="margin-top:32px;"><img src="${signatureData}" style="max-height:60px;max-width:220px;" /><br/><span style="font-size:11px;color:#333;">${clientName} — Consumer, All Rights Reserved</span></div>`
-      : '<div style="margin-top:32px;border-top:1px solid #000;width:250px;padding-top:4px;font-size:11px;">Consumer — All Rights Reserved</div>';
-
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>${letterText.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>${sigBlock}</body></html>`;
+    // Inject signature — split on ___ line and insert image
+    const sigHtml = signatureData
+      ? '<img src="' + signatureData + '" style="max-height:60px;max-width:220px;display:block;margin-bottom:4px;" />'
+      : '';
+    const escapedText = letterText.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const sigParts = escapedText.split(/_{3,}[^\n]*\n/);
+    let bodyHtml;
+    if (sigParts.length > 1) {
+      bodyHtml = sigParts[0] + '</pre>' + sigHtml + '<pre>' + sigParts.slice(1).join('\n');
+    } else {
+      bodyHtml = escapedText + (sigHtml ? '</pre>' + sigHtml + '<pre>' : '');
+    }
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>' + bodyHtml + '</pre></body></html>';
 
     const id = slug(clientName) + '__' + slug(furnisher) + '__phase3-' + bureau + '__' + today;
     const { error } = await supabase.from('letters').upsert({
