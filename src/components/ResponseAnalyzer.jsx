@@ -170,10 +170,11 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
     if (audits && audits.length > 0) {
       const accounts = audits[0].audit?.accounts || [];
       const account = accounts.find(a => a.id === accountId || a.accountNumberMasked === accountId);
+      console.log('Bureau lookup — accountId:', accountId, 'accounts:', accounts.map(a => a.id), 'matched:', account?.id, 'bureaus:', account?.bureaus);
       if (account && account.bureaus && account.bureaus.length > 0) {
-        // Map bureau codes to full names
         const bureauMap = { 'EQ': 'equifax', 'EXP': 'experian', 'TU': 'transunion' };
         activeBureaus = account.bureaus.map(b => bureauMap[b]).filter(Boolean);
+        console.log('Active bureaus set to:', activeBureaus);
       }
     }
   } catch(e) { console.warn('Could not look up account bureaus, defaulting to all three:', e); }
