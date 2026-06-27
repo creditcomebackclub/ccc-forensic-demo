@@ -179,9 +179,49 @@ export async function generateLetterSummary(account) {
 export async function generateLetter(account, client) {
   const apiKey = getApiKey();
   const t = today();
+  const isTypeC = account && account.type === 'C';
+
+  if (isTypeC) {
+    // Type C — generate TWO letters simultaneously: FDCPA validation + furnisher dispute
+    const baseData = JSON.stringify({ account, client, clientSignature: client.signatureData || null }, null, 2);
+    const baseInstructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nData:\n${baseData}\n\nIf clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or any tracking/article number field or placeholder — state only "Sent via Certified Mail" with no number. Output complete HTML only. No prose. No fences.`;
+
+    const [fdcpaRaw, disputeRaw] = await Promise.all([
+      claudeCall(apiKey, [{
+        type: 'text',
+        text: baseInstructions + '\n\nGenerate ONLY the FDCPA §1692g(b) Debt Validation Demand letter. This letter demands the collector prove: (1) the amount owed, (2) the name of the original creditor, (3) proof they have the legal right to collect this debt. Cite §1692g(b) — all collection activity must cease until validation is provided. Do NOT include §1681s-2(a) furnisher dispute language in this letter. This is a standalone debt validation demand.',
+      }], 16000),
+      claudeCall(apiKey, [{
+        type: 'text',
+        text: baseInstructions + '\n\nGenerate ONLY the FCRA §1681s-2(a) Furnisher Dispute letter. This letter disputes the specific Metro 2 violations in the account data. Follow the 16-step structure. Include §1692g(b) cessation notice as a secondary demand but lead with the Metro 2 violations and FCRA demands. Do NOT make this primarily a debt validation letter.',
+      }], 16000),
+    ]);
+
+    const extractHtml = (raw) => {
+      const m = raw.match(/<!DOCTYPE[\s\S]*<\/html>/i) || raw.match(/<html[\s\S]*<\/html>/i);
+      return m ? m[0] : raw;
+    };
+
+    const fdcpaHtml = extractHtml(fdcpaRaw);
+    const disputeHtml = extractHtml(disputeRaw);
+
+    if (!fdcpaHtml || fdcpaHtml.trim().length < 100) throw new Error('FDCPA letter generation failed — please try again');
+    if (!disputeHtml || disputeHtml.trim().length < 100) throw new Error('Furnisher dispute letter generation failed — please try again');
+
+    let summary = null;
+    try { summary = await generateLetterSummary(account); } catch(e) {}
+
+    // Save both letters with distinct phases and IDs
+    await saveLetter(account, client, fdcpaHtml, summary, 'Phase 1 — FDCPA §1692g(b) Validation');
+    await saveLetter(account, client, disputeHtml, summary, 'Phase 1 — Furnisher Dispute §1681s-2(a)', '__dispute');
+
+    return { html: disputeHtml, summary };
+  }
+
+  // Type A/B — single letter
   const rawText = await claudeCall(apiKey, [{
     type: 'text',
-    text: `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nGenerate the Phase 1 dispute letter HTML for this account.\n\nData:\n${JSON.stringify({ account, client, clientSignature: client.signatureData || null }, null, 2)}\n\nFollow the 16-step structure. For Type C include section 1692g(b) demands. If clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or any tracking/article number field or placeholder anywhere in the letter \u2014 this value is assigned later during mailing and is not known at generation time. If referencing the mailing method, state only "Sent via Certified Mail" with no number. Output complete HTML only. No prose. No fences.`,
+    text: `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nGenerate the Phase 1 dispute letter HTML for this account.\n\nData:\n${JSON.stringify({ account, client, clientSignature: client.signatureData || null }, null, 2)}\n\nFollow the 16-step structure. If clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or any tracking/article number field or placeholder — state only "Sent via Certified Mail" with no number. Output complete HTML only. No prose. No fences.`,
   }], 16000);
 
   const htmlMatch = rawText.match(/<!DOCTYPE[\s\S]*<\/html>/i) || rawText.match(/<html[\s\S]*<\/html>/i);
@@ -189,14 +229,9 @@ export async function generateLetter(account, client) {
   if (!html || html.trim().length < 100) throw new Error('Letter generation returned empty content — please try again');
 
   let summary = null;
-  try {
-    summary = await generateLetterSummary(account);
-  } catch (e) {
-    console.warn('Could not generate letter summary:', e);
-  }
+  try { summary = await generateLetterSummary(account); } catch(e) { console.warn('Could not generate letter summary:', e); }
 
   await saveLetter(account, client, html, summary);
-
   return { html, summary };
 }
 

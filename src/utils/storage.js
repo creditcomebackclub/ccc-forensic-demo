@@ -125,14 +125,14 @@ export async function saveAudit(audit) {
   return id;
 }
 
-export async function saveLetter(account, client, html, summary) {
+export async function saveLetter(account, client, html, summary, phase, idSuffix) {
   const userId = await getUserId();
   const clientName = (client && client.name) || 'Unknown Client';
   const furnisher = (account && account.furnisher) || 'Unknown Furnisher';
   const accountId = (account && (account.id || account.accountNumberMasked)) || '';
   const date = todayISO();
   const acctSuffix = accountId ? '__' + slug(String(accountId)) : '';
-  const id = slug(clientName) + '__' + slug(furnisher) + acctSuffix + '__' + date;
+  const id = slug(clientName) + '__' + slug(furnisher) + acctSuffix + '__' + date + (idSuffix || '');
 
   const { error } = await supabase.from('letters').upsert({
     id,
@@ -141,7 +141,7 @@ export async function saveLetter(account, client, html, summary) {
     client_name: clientName,
     furnisher,
     account_id: accountId,
-    phase: 'Phase 1',
+    phase: phase || 'Phase 1',
     type: (account && account.type) || null,
     saved_at: new Date().toISOString(),
     date,
