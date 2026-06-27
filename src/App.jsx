@@ -272,6 +272,11 @@ export default function App() {
     initAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (_event === 'PASSWORD_RECOVERY') {
+        // Force password reset UI
+        setNeedsPasswordSetup(true);
+        return;
+      }
       setSession(session);
       if (!session) {
         setProfile(null);
