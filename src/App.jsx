@@ -374,8 +374,11 @@ export default function App() {
         setClientOnboarded(cp.onboarding_complete === true);
         // Only require password setup if they haven't completed onboarding
         // and haven't set a password yet — avoids loop for existing clients
-        const alreadySetup = cp && cp.onboarding_complete && session.user.user_metadata?.password_set;
-        setNeedsPasswordSetup(!alreadySetup && !session.user.user_metadata?.password_set);
+        const passwordSet = session.user.user_metadata?.password_set;
+        const fromRecovery = _event === 'PASSWORD_RECOVERY';
+        // Require password setup only if: explicitly recovering password, OR first-ever login (no password set and onboarding not complete)
+        const needsSetup = fromRecovery || (!passwordSet && !cp.onboarding_complete);
+        setNeedsPasswordSetup(needsSetup);
         if (!cp.user_id) {
           await supabase.from('client_profiles').update({ user_id: session.user.id }).eq('email', email);
         }
