@@ -270,6 +270,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [togglingVip, setTogglingVip] = useState(null);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
   const [activeFilter, setActiveFilter] = useState(initialFilter || null);
+  const [search, setSearch] = useState('');
   const [editingEmail, setEditingEmail] = useState(null);
   const [activeTab, setActiveTab] = useState({});
   const [emailVal, setEmailVal] = useState('');
@@ -376,8 +377,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       </div>
     );
   }
-
-  const [search, setSearch] = React.useState('');
 
   const sortedClients = [...clients].sort((a, b) => {
     if (a.isVip && !b.isVip) return -1;
