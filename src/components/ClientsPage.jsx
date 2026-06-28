@@ -271,6 +271,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
   const [activeFilter, setActiveFilter] = useState(initialFilter || null);
   const [search, setSearch] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   const [editingEmail, setEditingEmail] = useState(null);
   const [activeTab, setActiveTab] = useState({});
   const [emailVal, setEmailVal] = useState('');
@@ -427,8 +428,9 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               <UserPlus size={12} strokeWidth={2} /> New Client
             </button>
           )}
-          <button onClick={load} className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
-            <RefreshCw size={13} strokeWidth={1.75} /> Refresh
+          <button onClick={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+            className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
+            <RefreshCw size={13} strokeWidth={1.75} className={refreshing ? 'animate-spin' : ''} /> Refresh
           </button>
         </div>
       </div>
