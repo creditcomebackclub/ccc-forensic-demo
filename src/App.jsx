@@ -272,8 +272,8 @@ export default function App() {
     initAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (_event === 'PASSWORD_RECOVERY' || (_event === 'SIGNED_IN' && session?.user?.app_metadata?.provider === 'email' && !session?.user?.user_metadata?.password_set)) {
-        // Force password setup for recovery links and first-time magic link logins
+      if (_event === 'PASSWORD_RECOVERY') {
+        // Force password setup screen for explicit password recovery only
         if (session) {
           setSession(session);
           setNeedsPasswordSetup(true);
