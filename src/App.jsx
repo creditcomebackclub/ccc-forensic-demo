@@ -638,6 +638,12 @@ function TopBar({ view, state, isAdmin }) {
       <p className="text-[12px] mt-0.5 text-ink-muted">Manage users and roles</p>
     </header>
   );
+  if (view === 'affiliates') return (
+    <header className="px-8 py-5 border-b border-border bg-white">
+      <h1 className="ccc-display text-2xl text-ink font-medium">Affiliate Partners</h1>
+      <p className="text-[12px] mt-0.5 text-ink-muted">Manage referral partners, commissions, and branded portals</p>
+    </header>
+  );
   const titles = {
     idle: { title: 'New Forensic Audit', subtitle: 'Upload report → run Setup & Spike Phase 1 pipeline' },
     processing: { title: 'Analyzing Report', subtitle: 'Claude is performing forensic analysis' },
