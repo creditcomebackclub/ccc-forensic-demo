@@ -99,6 +99,9 @@ export default function ClientPortal({ session, onSignOut }) {
   const [auditHistory, setAuditHistory] = useState([]);
   const [activeTab, setActiveTab] = useState('overview');
   const [uploadingLetter, setUploadingLetter] = useState(null);
+  const [monitoringForm, setMonitoringForm] = useState({ service: '', email: '', password: '' });
+  const [monitoringStep, setMonitoringStep] = useState('view'); // view | edit
+  const [monitoringSaving, setMonitoringSaving] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(null);
 
   useEffect(() => { loadData(); }, [session]);
@@ -298,19 +301,76 @@ export default function ClientPortal({ session, onSignOut }) {
                   : <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: '#FFFBEB', color: '#D97706', border: '1px solid #FDE68A' }}>Action Required</span>
                 }
               </div>
-              {clientMeta && clientMeta.monitoring_enrolled ? (
-                <a href={(clientMeta && clientMeta.monitoring_portal_url) || 'https://www.privacyguard.com'} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-[12px] font-medium" style={{ color: '#1B2A4A' }}>
-                  <ExternalLink size={12} strokeWidth={2} />
-                  Access {(clientMeta && clientMeta.monitoring_service) || 'Privacy Guard'} →
-                </a>
+              {monitoringStep === 'edit' ? (
+                <div>
+                  {[
+                    { key: 'service', label: 'Service', placeholder: 'e.g. PrivacyGuard, MyScoreIQ' },
+                    { key: 'email', label: 'Login Email', placeholder: 'your@email.com' },
+                    { key: 'password', label: 'Password', placeholder: '••••••••', type: 'password' },
+                  ].map(({ key, label, placeholder, type }) => (
+                    <div key={key} style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9CA3AF', marginBottom: 4 }}>{label}</div>
+                      <input type={type || 'text'} placeholder={placeholder}
+                        value={monitoringForm[key]}
+                        onChange={e => setMonitoringForm(p => ({ ...p, [key]: e.target.value }))}
+                        style={{ width: '100%', border: '1px solid #E5E7EB', borderRadius: 4, padding: '7px 10px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    <button disabled={monitoringSaving} onClick={async () => {
+                      setMonitoringSaving(true);
+                      const serviceUrls = {
+                        'privacyguard': 'https://www.privacyguard.com',
+                        'myscoreiq': 'https://www.myscoreiq.com',
+                        'smart credit': 'https://www.smartcredit.com',
+                        'experian': 'https://www.experian.com',
+                        'identityiq': 'https://www.identityiq.com',
+                      };
+                      const svcKey = (monitoringForm.service || '').toLowerCase();
+                      const portalUrl = Object.entries(serviceUrls).find(([k]) => svcKey.includes(k))?.[1] || 'https://www.privacyguard.com';
+                      await supabase.from('clients').update({
+                        monitoring_service: monitoringForm.service,
+                        monitoring_email: monitoringForm.email,
+                        monitoring_password: monitoringForm.password,
+                        monitoring_enrolled: true,
+                        monitoring_portal_url: portalUrl,
+                      }).eq('name', profile.full_name);
+                      setMonitoringStep('view');
+                      setMonitoringSaving(false);
+                      loadData();
+                    }} style={{ fontSize: 12, padding: '7px 16px', background: '#1B2A4A', color: '#C9A84C', border: 'none', borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}>
+                      {monitoringSaving ? 'Saving…' : 'Save Credentials'}
+                    </button>
+                    <button onClick={() => setMonitoringStep('view')} style={{ fontSize: 12, padding: '7px 12px', background: 'none', border: '1px solid #E5E7EB', borderRadius: 4, cursor: 'pointer', color: '#6B7280' }}>Cancel</button>
+                  </div>
+                </div>
+              ) : clientMeta && clientMeta.monitoring_enrolled ? (
+                <div>
+                  <a href={(clientMeta && clientMeta.monitoring_portal_url) || 'https://www.privacyguard.com'} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-[12px] font-medium" style={{ color: '#1B2A4A' }}>
+                    <ExternalLink size={12} strokeWidth={2} />
+                    Access {(clientMeta && clientMeta.monitoring_service) || 'Privacy Guard'} →
+                  </a>
+                  <button onClick={() => { setMonitoringForm({ service: clientMeta.monitoring_service || '', email: clientMeta.monitoring_email || '', password: '' }); setMonitoringStep('edit'); }}
+                    style={{ marginTop: 8, fontSize: 11, color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                    Update credentials
+                  </button>
+                </div>
               ) : (
                 <div>
-                  <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 10 }}>Credit monitoring is required to track your progress and score changes. Please sign up to continue.</p>
-                  <a href="https://www.privacyguard.com" target="_blank" rel="noopener noreferrer"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '7px 16px', background: '#1B2A4A', color: '#C9A84C', borderRadius: 4, fontWeight: 600, textDecoration: 'none' }}>
-                    Set Up Privacy Guard →
-                  </a>
+                  <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 10 }}>Credit monitoring lets us track your score progress. Enter your credentials below or sign up for a service.</p>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                    {[['PrivacyGuard', 'https://www.privacyguard.com'], ['MyScoreIQ', 'https://www.myscoreiq.com'], ['Smart Credit', 'https://www.smartcredit.com'], ['IdentityIQ', 'https://www.identityiq.com']].map(([name, url]) => (
+                      <a key={name} href={url} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 11, padding: '4px 10px', border: '1px solid #E5E7EB', borderRadius: 4, color: '#1B2A4A', textDecoration: 'none', fontWeight: 500 }}>
+                        {name} →
+                      </a>
+                    ))}
+                  </div>
+                  <button onClick={() => setMonitoringStep('edit')}
+                    style={{ fontSize: 12, padding: '7px 16px', background: '#1B2A4A', color: '#C9A84C', border: 'none', borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}>
+                    Enter My Credentials
+                  </button>
                 </div>
               )}
             </div>
