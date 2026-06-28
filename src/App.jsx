@@ -272,9 +272,14 @@ export default function App() {
     initAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (_event === 'PASSWORD_RECOVERY') {
-        // Force password reset UI
-        setNeedsPasswordSetup(true);
+      if (_event === 'PASSWORD_RECOVERY' || (_event === 'SIGNED_IN' && session?.user?.app_metadata?.provider === 'email' && !session?.user?.user_metadata?.password_set)) {
+        // Force password setup for recovery links and first-time magic link logins
+        if (session) {
+          setSession(session);
+          setNeedsPasswordSetup(true);
+          setIsClient(true);
+          setProfileLoading(false);
+        }
         return;
       }
       setSession(session);
@@ -379,8 +384,19 @@ export default function App() {
         return;
       }
 
-      // No profile found — create one
+      // No profile found — only create auditor profile if NOT a client or affiliate
       if (!prof) {
+        // Check client_profiles one more time before creating auditor row
+        const { data: cpCheck } = await supabase.from('client_profiles').select('email').eq('email', email).limit(1);
+        if (cpCheck && cpCheck.length > 0) {
+          // They're a client — don't create auditor profile, let them through as client
+          setIsClient(true);
+          setClientOnboarded(false);
+          setNeedsPasswordSetup(!session.user.user_metadata?.password_set);
+          setProfile({ id: session.user.id, email, role: 'client' });
+          setProfileLoading(false);
+          return;
+        }
         const fullName = session.user.user_metadata?.full_name || email;
         await supabase.from('profiles').insert({ id: session.user.id, full_name: fullName, role: 'auditor' });
         setProfile({ id: session.user.id, full_name: fullName, role: 'auditor' });
