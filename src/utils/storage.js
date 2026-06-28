@@ -236,13 +236,7 @@ function buildClientMap(audits, letters, profiles) {
 
   for (const a of audits) {
     const c = ensure(a.clientName);
-    // Prefer manually edited address (clients.address) over audit-extracted (client_address)
-    const meta2 = metaMap2.get(c.name);
-    if (meta2) {
-      c.address = meta2.address || meta2.client_address || c.address || a.clientAddress;
-    } else {
-      c.address = c.address || a.clientAddress;
-    }
+    c.address = c.address || a.clientAddress;
     const profile = profileMap.get(a.createdBy);
     c.audits.push({ ...a, auditorName: profile ? (profile.full_name || profile.email) : null });
     if (a.savedAt > c.lastActivity) c.lastActivity = a.savedAt;
@@ -285,7 +279,7 @@ export async function adminListClients() {
     supabase.from('audits').select('*').order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').order('saved_at', { ascending: false }),
     supabase.from('profiles').select('*'),
-    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,ssn_last4,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,monitoring_password,address,client_address'),
+    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,ssn_last4,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,monitoring_password,address'),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
