@@ -418,6 +418,68 @@ function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, e
   );
 }
 
+function FurnisherAddressInput({ account, onSaved }) {
+  const [addr, setAddr] = React.useState(account.furnisherAddress || { name: account.furnisher, line1: '', city: '', state: '', zip: '' });
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+
+  const handleSave = async () => {
+    if (!addr.line1 || !addr.city || !addr.state || !addr.zip) return;
+    setSaving(true);
+    try {
+      // Save to audit jsonb
+      const { supabase } = await import('../utils/supabase.js');
+      const { data: audits } = await supabase.from('audits').select('id, audit').eq('client_name', account._clientName || '').order('saved_at', { ascending: false }).limit(1);
+      if (audits && audits.length > 0) {
+        const auditData = audits[0].audit;
+        const accounts = auditData.accounts || [];
+        const idx = accounts.findIndex(a => a.id === account.id);
+        if (idx >= 0) {
+          accounts[idx].furnisherAddress = addr;
+          accounts[idx].addressStatus = 'YES';
+          await supabase.from('audits').update({ audit: auditData }).eq('id', audits[0].id);
+        }
+      }
+      onSaved(addr);
+      setSaved(true);
+    } catch(e) { console.error('Could not save address:', e); }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ border: '1px solid #FDE68A', borderRadius: 8, padding: 16, background: '#FFFBEB' }}>
+      <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#D97706', fontWeight: 600, marginBottom: 10 }}>
+        {account.addressStatus === 'PENDING' ? '⚠ Furnisher Address Required' : '✓ Confirm Furnisher Address'}
+      </div>
+      {saved ? (
+        <div style={{ fontSize: 12, color: '#15803D', fontWeight: 600 }}>✓ Address saved</div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          {[
+            { key: 'name', label: 'Name', full: true },
+            { key: 'line1', label: 'Street / PO Box', full: true },
+            { key: 'city', label: 'City' },
+            { key: 'state', label: 'State' },
+            { key: 'zip', label: 'ZIP' },
+          ].map(({ key, label, full }) => (
+            <div key={key} style={{ gridColumn: full ? 'span 2' : 'span 1' }}>
+              <div style={{ fontSize: 10, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>{label}</div>
+              <input type="text" value={addr[key] || ''} onChange={e => setAddr(p => ({ ...p, [key]: e.target.value }))}
+                style={{ width: '100%', border: '1px solid #E5E7EB', borderRadius: 4, padding: '6px 8px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+          ))}
+          <div style={{ gridColumn: 'span 2', marginTop: 4 }}>
+            <button onClick={handleSave} disabled={saving}
+              style={{ fontSize: 11, padding: '6px 16px', background: '#1B2A4A', color: '#C9A84C', border: 'none', borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}>
+              {saving ? 'Saving…' : 'Save Address'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = new Set() }) {
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6" onClick={onClose}>
@@ -492,6 +554,10 @@ function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = n
             <div className="text-[10px] uppercase tracking-wider text-gold mb-1">Dispute Strategy — Technical</div>
             <div>{account.strategy}</div>
           </div>
+
+          {(account.addressStatus === 'PENDING' || account.addressStatus === 'CONFIRM') && (
+            <FurnisherAddressInput account={account} onSaved={(addr) => { account.furnisherAddress = addr; account.addressStatus = 'YES'; }} />
+          )}
 
           <button
             onClick={() => {
