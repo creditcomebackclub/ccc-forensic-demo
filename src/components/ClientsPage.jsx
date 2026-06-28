@@ -377,15 +377,20 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     );
   }
 
+  const [search, setSearch] = React.useState('');
+
   const sortedClients = [...clients].sort((a, b) => {
     if (a.isVip && !b.isVip) return -1;
     if (!a.isVip && b.isVip) return 1;
     return (b.lastActivity || '').localeCompare(a.lastActivity || '');
   });
 
-  const filteredClients = activeFilter
+  const baseFiltered = activeFilter
     ? sortedClients.filter((c) => clientMatchesFilter(c, activeFilter))
     : sortedClients;
+  const filteredClients = search.trim()
+    ? baseFiltered.filter((c) => c.name.toLowerCase().includes(search.trim().toLowerCase()))
+    : baseFiltered;
 
   const totalAudits = clients.reduce((n, c) => n + c.audits.length, 0);
   const totalLetters = clients.reduce((n, c) => n + c.letters.length, 0);
@@ -408,6 +413,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search clients…"
+            className="border border-border rounded-sm px-3 py-1.5 text-[12px] text-ink focus:outline-none focus:border-navy"
+            style={{ width: 180 }}
+          />
           {isAdmin && (
             <button onClick={() => setShowCreateClient(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm transition-colors"
