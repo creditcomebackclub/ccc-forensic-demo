@@ -73,7 +73,7 @@ export async function saveAudit(audit) {
   try {
     const userId = await getUserId();
     const clientName = audit.client && audit.client.name;
-    const scores = audit.client && audit.client.scores;
+    const scores = audit.scores || (audit.client && audit.client.scores);
     if (clientName && scores) {
       const { data: existing } = await supabase.from('clients')
         .select('score_eq_start,score_exp_start,score_tu_start')
