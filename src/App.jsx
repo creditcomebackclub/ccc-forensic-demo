@@ -291,7 +291,7 @@ export default function App() {
       }
       // Only reload user on actual auth events, not token refreshes
       if (_event === 'SIGNED_IN' || _event === 'USER_UPDATED') {
-        await loadUser(session);
+        await loadUser(session, _event);
       }
     });
     // On tab focus — if profile is missing, hard reload to restore state
@@ -312,7 +312,7 @@ export default function App() {
     };
   }, []);
 
-  const loadUser = async (session) => {
+  const loadUser = async (session, _event) => {
     setProfileLoading(true);
     // Safety timeout — never stay loading forever
     const safetyTimer = setTimeout(() => {
