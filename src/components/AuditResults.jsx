@@ -282,7 +282,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
         title="Round 1 — Batch 1"
         subtitle="Top accounts by balance × violation strength · Send now"
         accounts={batch1}
-        onSelect={setSelectedAccount}
+        onSelect={(a) => setSelectedAccount({ ...a, _clientName: audit.client?.name })}
         onGenerateLetter={onGenerateLetter} existingLetters={existingLetters}
         emphasis
       />
@@ -293,7 +293,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           title="Round 1 — Batch 2"
           subtitle="Staggered for postage cost control · Send next"
           accounts={batch2}
-          onSelect={setSelectedAccount}
+          onSelect={(a) => setSelectedAccount({ ...a, _clientName: audit.client?.name })}
           onGenerateLetter={onGenerateLetter} existingLetters={existingLetters}
         />
       )}
