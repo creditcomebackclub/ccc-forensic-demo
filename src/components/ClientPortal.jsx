@@ -99,7 +99,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const [auditHistory, setAuditHistory] = useState([]);
   const [activeTab, setActiveTab] = useState('overview');
   const [uploadingLetter, setUploadingLetter] = useState(null);
-  const [monitoringForm, setMonitoringForm] = useState({ service: '', email: '', password: '' });
+  const [monitoringForm, setMonitoringForm] = useState({ service: '', email: '', password: '', ssnLast4: '' });
   const [monitoringStep, setMonitoringStep] = useState('view'); // view | edit
   const [monitoringSaving, setMonitoringSaving] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(null);
@@ -307,6 +307,7 @@ export default function ClientPortal({ session, onSignOut }) {
                     { key: 'service', label: 'Service', placeholder: 'e.g. PrivacyGuard, MyScoreIQ' },
                     { key: 'email', label: 'Login Email', placeholder: 'your@email.com' },
                     { key: 'password', label: 'Password', placeholder: '••••••••', type: 'password' },
+                    { key: 'ssnLast4', label: 'SSN Last 4 Digits', placeholder: '1234' },
                   ].map(({ key, label, placeholder, type }) => (
                     <div key={key} style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9CA3AF', marginBottom: 4 }}>{label}</div>
@@ -334,6 +335,7 @@ export default function ClientPortal({ session, onSignOut }) {
                         monitoring_password: monitoringForm.password,
                         monitoring_enrolled: true,
                         monitoring_portal_url: portalUrl,
+                        ...(monitoringForm.ssnLast4 ? { ssn_last4: monitoringForm.ssnLast4 } : {}),
                       }).eq('name', profile.full_name);
                       setMonitoringStep('view');
                       setMonitoringSaving(false);
@@ -351,7 +353,7 @@ export default function ClientPortal({ session, onSignOut }) {
                     <ExternalLink size={12} strokeWidth={2} />
                     Access {(clientMeta && clientMeta.monitoring_service) || 'Privacy Guard'} →
                   </a>
-                  <button onClick={() => { setMonitoringForm({ service: clientMeta.monitoring_service || '', email: clientMeta.monitoring_email || '', password: '' }); setMonitoringStep('edit'); }}
+                  <button onClick={() => { setMonitoringForm({ service: clientMeta.monitoring_service || '', email: clientMeta.monitoring_email || '', password: '', ssnLast4: '' }); setMonitoringStep('edit'); }}
                     style={{ marginTop: 8, fontSize: 11, color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
                     Update credentials
                   </button>
