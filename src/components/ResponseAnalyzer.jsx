@@ -31,7 +31,7 @@ PHASE 3 LETTER REQUIREMENTS:
 - Tone: forensic and legal. Demands not requests. No emotional language.
 - Signature block: Consumer — All Rights Reserved
 - Each letter addressed to the correct bureau
-- Enclosures line must read EXACTLY: "Enclosures: Exhibit A: Direct Furnisher Dispute Letter; Exhibit B: Furnisher Response; Limited Power of Attorney" — no Exhibit C, no credit report excerpts, no ID or address proof
+- CRITICAL: The enclosures line must list ONLY these three items and nothing else: "Enclosures: Exhibit A: Direct Furnisher Dispute Letter to [Furnisher] (dated [date]); Exhibit B: [Furnisher] Response (dated [date]); Limited Power of Attorney" — DO NOT add Exhibit C or any credit report excerpts under any circumstances. There are only two exhibits.
 
 RESPOND IN THIS EXACT JSON FORMAT:
 {
