@@ -201,7 +201,7 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '<div class="sig-block">'
         + '<div class="sig-row">'
         + '<div class="sig-col"><div class="sig-line">' + (sigUrl ? '<img src="' + sigUrl + '" style="max-height:56px;max-width:220px;" />' : '') + '</div><div class="sig-label">Principal Signature — ' + clientFullName + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
-        + '<div class="sig-col"><div class="sig-line" style="padding-bottom:4px;"><span style="font-size:13px;font-weight:bold;">Christopher Holland</span></div><div class="sig-label">Attorney-in-Fact — Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
+        + '<div class="sig-col"><div class="sig-line"><img src="https://mlsbdmewxocgweotcdud.supabase.co/storage/v1/object/public/client-docs/standalone/Christopher%20Holland/chris_signature.png" style="max-height:56px;max-width:220px;" /></div><div class="sig-label">Christopher Holland — Attorney-in-Fact, Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
         + '</div></div>'
         + '<div class="footer">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063 | creditcomebackclub.com | Executed under ESIGN Act 15 U.S.C. §7001</div>'
         + '</body></html>';
