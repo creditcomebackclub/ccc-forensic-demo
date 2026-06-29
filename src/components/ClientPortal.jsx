@@ -123,7 +123,7 @@ export default function ClientPortal({ session, onSignOut }) {
         setAuditHistory(auditsRes.data || []);
       }
       // Load client documents from documents table
-      const { data: docRows } = await supabase.from('documents').select('doc_type,file_name').eq('client_name', profile.full_name);
+      const { data: docRows } = await supabase.from('documents').select('doc_type,file_name').eq('client_name', cp.full_name);
       if (docRows) {
         setClientDocs({
           id: docRows.find(d => d.doc_type === 'id') || null,
