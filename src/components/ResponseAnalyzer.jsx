@@ -288,22 +288,37 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
         reader.readAsDataURL(file);
       });
 
-      // Save response file to storage so Lob can attach it as Exhibit B
+      // Save response file to storage — convert PDF to images for Lob embedding
       try {
         const { data: cp } = await supabase.from('client_profiles').select('user_id').eq('full_name', letter.clientName).limit(1);
         const clientUserId = cp && cp.length > 0 ? cp[0].user_id : null;
-        console.log('Saving response — clientUserId:', clientUserId, 'letterId:', letter.id);
         if (clientUserId && letter.id) {
-          const ext = file.name.split('.').pop() || 'pdf';
-          const path = clientUserId + '/' + letter.id + '/response_' + Date.now() + '.' + ext;
-          const { error: storageErr } = await supabase.storage.from('responses').upload(path, file, { upsert: true });
-          if (storageErr) {
-            console.error('Response storage upload failed:', storageErr);
+          const ts = Date.now();
+          if (file.type === 'application/pdf') {
+            // Convert PDF pages to JPEG images using pdf.js
+            const pdfjsLib = await import('pdfjs-dist');
+            pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+            const arrayBuffer = await file.arrayBuffer();
+            const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+              const page = await pdfDoc.getPage(pageNum);
+              const viewport = page.getViewport({ scale: 2.0 });
+              const canvas = document.createElement('canvas');
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              const ctx = canvas.getContext('2d');
+              await page.render({ canvasContext: ctx, viewport }).promise;
+              const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92));
+              const path = clientUserId + '/' + letter.id + '/response_' + ts + '_page' + pageNum + '.jpg';
+              await supabase.storage.from('responses').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+              console.log('Saved PDF page', pageNum, 'as image:', path);
+            }
           } else {
-            console.log('Response saved to storage:', path);
+            // Image file — save directly
+            const path = clientUserId + '/' + letter.id + '/response_' + ts + '.' + (file.name.split('.').pop() || 'jpg');
+            await supabase.storage.from('responses').upload(path, file, { upsert: true });
+            console.log('Response image saved:', path);
           }
-        } else {
-          console.warn('Missing clientUserId or letter.id — cannot save response');
         }
       } catch(e) { console.error('Could not save response to storage:', e); }
 
