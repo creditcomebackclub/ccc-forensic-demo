@@ -255,6 +255,8 @@ function parseFurnisherAddress(furnisher) {
     'prestige': { name: 'Prestige Financial Services Inc.', line1: 'P.O. Box 26707', city: 'Salt Lake City', state: 'UT', zip: '84126' },
     'aldous': { name: 'Aldous & Associates PLLC', line1: 'P.O. Box 171374', city: 'Holladay', state: 'UT', zip: '84117' },
     'aldous & associates': { name: 'Aldous & Associates PLLC', line1: 'P.O. Box 171374', city: 'Holladay', state: 'UT', zip: '84117' },
+    'bonneville': { name: 'Bonneville Collections', line1: 'P.O. Box 150621', city: 'Ogden', state: 'UT', zip: '84415' },
+    'bonneville collections': { name: 'Bonneville Collections', line1: 'P.O. Box 150621', city: 'Ogden', state: 'UT', zip: '84415' },
     'align balance': { name: 'Align Balance LLC', line1: '175 W. Jackson Blvd, Suite 600', city: 'Chicago', state: 'IL', zip: '60604' },
     'alignbalance': { name: 'Align Balance LLC', line1: '175 W. Jackson Blvd, Suite 600', city: 'Chicago', state: 'IL', zip: '60604' },
   };
