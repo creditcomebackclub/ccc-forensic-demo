@@ -258,7 +258,7 @@ export default function ClientPortal({ session, onSignOut }) {
                 { key: 'lpoa', label: 'Authorization Signed (LPOA)', done: clientMeta && clientMeta.lpoa_signed, action: null },
                 { key: 'id', label: 'Government-Issued Photo ID', done: !!clientDocs.id, docType: 'government_id' },
                 { key: 'address', label: 'Proof of Current Address', done: !!clientDocs.address, docType: 'proof_of_address' },
-                { key: 'monitoring', label: 'Credit Monitoring (Recommended)', done: clientMeta && clientMeta.monitoring_enrolled, docType: null },
+                { key: 'monitoring', label: 'Credit Monitoring (Recommended)', done: (clientMeta && clientMeta.monitoring_enrolled) || (clientMeta && clientMeta.monitoring_not_required), docType: null },
               ];
               const allDone = checks.every(c => c.done);
               if (allDone) return null;
