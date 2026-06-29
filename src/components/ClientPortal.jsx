@@ -122,12 +122,13 @@ export default function ClientPortal({ session, onSignOut }) {
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
       }
-      // Load client documents
-      const { data: docFiles } = await supabase.storage.from('client-docs').list(profile.full_name.replace(/\s+/g, '_'));
-      if (docFiles) {
-        const idFile = docFiles.find(f => f.name.includes('government_id') || f.name.includes('_id_'));
-        const addrFile = docFiles.find(f => f.name.includes('proof_of_address') || f.name.includes('_address_'));
-        setClientDocs({ id: idFile || null, address: addrFile || null });
+      // Load client documents from documents table
+      const { data: docRows } = await supabase.from('documents').select('doc_type,file_name').eq('client_name', profile.full_name);
+      if (docRows) {
+        setClientDocs({
+          id: docRows.find(d => d.doc_type === 'id') || null,
+          address: docRows.find(d => d.doc_type === 'address') || null,
+        });
       }
     } catch (e) { console.error('Portal load error:', e); }
     finally { setLoading(false); }
@@ -256,7 +257,7 @@ export default function ClientPortal({ session, onSignOut }) {
                 { key: 'lpoa', label: 'Authorization Signed (LPOA)', done: clientMeta && clientMeta.lpoa_signed, action: null },
                 { key: 'id', label: 'Government-Issued Photo ID', done: !!clientDocs.id, docType: 'government_id' },
                 { key: 'address', label: 'Proof of Current Address', done: !!clientDocs.address, docType: 'proof_of_address' },
-                { key: 'monitoring', label: 'Credit Monitoring Enrolled', done: clientMeta && clientMeta.monitoring_enrolled, action: 'monitoring' },
+                { key: 'monitoring', label: 'Credit Monitoring (Recommended)', done: clientMeta && clientMeta.monitoring_enrolled, docType: null },
               ];
               const allDone = checks.every(c => c.done);
               if (allDone) return null;
