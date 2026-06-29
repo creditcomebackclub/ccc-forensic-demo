@@ -196,8 +196,10 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
   } catch(e) { console.warn('Could not look up signature:', e); }
 
   for (const bureau of activeBureaus) {
-    const letterText = analysis.letters[bureau];
+    let letterText = analysis.letters[bureau];
     if (!letterText) continue;
+    // Strip any Exhibit C references — only A and B are physically attached
+    letterText = letterText.replace(/\n?Exhibit C[^\n]*/gi, '').replace(/;?\s*Exhibit C[^;\n]*/gi, '');
 
     // Inject signature — split letterText on ___ BEFORE escaping so HTML chars don't break the regex
     const sigHtml = signatureData
