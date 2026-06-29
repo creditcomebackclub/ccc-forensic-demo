@@ -31,6 +31,7 @@ PHASE 3 LETTER REQUIREMENTS:
 - Tone: forensic and legal. Demands not requests. No emotional language.
 - Signature block: Consumer — All Rights Reserved
 - Each letter addressed to the correct bureau
+- Enclosures line must read EXACTLY: "Enclosures: Exhibit A: Direct Furnisher Dispute Letter; Exhibit B: Furnisher Response" — no Exhibit C, no credit report excerpts
 
 RESPOND IN THIS EXACT JSON FORMAT:
 {
