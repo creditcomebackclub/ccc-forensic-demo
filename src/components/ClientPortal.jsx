@@ -142,6 +142,14 @@ export default function ClientPortal({ session, onSignOut }) {
       const folder = profile.full_name.replace(/\s+/g, '_');
       const path = folder + '/' + docType + '_' + Date.now() + '.' + ext;
       await supabase.storage.from('client-docs').upload(path, file, { upsert: true });
+      // Also write to documents table so admin side can see it
+      await supabase.from('documents').upsert({
+        client_name: profile.full_name,
+        doc_type: docType === 'government_id' ? 'id' : 'address',
+        file_name: file.name,
+        storage_path: path,
+        uploaded_at: new Date().toISOString(),
+      }, { onConflict: 'client_name,doc_type' });
       setClientDocs(prev => ({ ...prev, [docType === 'government_id' ? 'id' : 'address']: { name: path } }));
     } catch(e) { console.error('Doc upload error:', e); }
     setUploadingDoc(null);
