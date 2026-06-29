@@ -259,6 +259,7 @@ DEBT COLLECTORS (TYPE C):
 - Credit Corp Solutions: Credit Corp Solutions Inc., P.O. Box 57510, Murray, UT 84157
 - Sequoia Concepts: Sequoia Concepts Inc., P.O. Box 4386, Portland, OR 97208
 - Prestige Financial Services: Prestige Financial Services Inc., P.O. Box 26707, Salt Lake City, UT 84126
+- Aldous & Associates: Aldous & Associates PLLC, P.O. Box 171374, Holladay, UT 84117
 - Aldous / Aldous & Associates / Aldous and Associates: Aldous & Associates PLLC, P.O. Box 171374, Holladay, UT 84117
 - Align Balance / Align Balance LLC: Align Balance LLC, 175 W. Jackson Blvd Suite 600, Chicago, IL 60604
 
