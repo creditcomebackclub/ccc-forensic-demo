@@ -138,24 +138,24 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
               .limit(1);
             if (phase1LetterRow && phase1LetterRow.length > 0) {
               const { data: responseFiles } = await supabase.storage.from('responses')
-                .list(clientUserId + '/' + phase1LetterRow[0].id, { limit: 1 });
+                .list(clientUserId + '/' + phase1LetterRow[0].id, { limit: 20, sortBy: { column: 'name', order: 'asc' } });
               if (responseFiles && responseFiles.length > 0) {
-                const respPath = clientUserId + '/' + phase1LetterRow[0].id + '/' + responseFiles[0].name;
-                const { data: respUrl } = await supabase.storage.from('responses').createSignedUrl(respPath, 3600);
-                if (respUrl?.signedUrl) {
-                  const isImg = /\.(jpg|jpeg|png)$/i.test(responseFiles[0].name);
-                  if (isImg) {
-                    const respRes = await fetch(respUrl.signedUrl);
-                    const respBlob = await respRes.blob();
-                    const respB64 = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(respBlob); });
-                    enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;filter:grayscale(100%);">'
-                      + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">EXHIBIT B — Furnisher Response (' + letter.furnisher + ')</div>'
-                      + '<img src="data:image/jpeg;base64,' + respB64 + '" style="max-width:100%;filter:grayscale(100%);" /></div>';
-                  } else {
-                    enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
-                      + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">EXHIBIT B — Furnisher Response (' + letter.furnisher + ')</div>'
-                      + '<p style="font-size:12px;color:#444;">Furnisher response document attached (see enclosed PDF).</p></div>';
+                const imgFiles = responseFiles.filter(f => /\.(jpg|jpeg|png)$/i.test(f.name));
+                if (imgFiles.length > 0) {
+                  let exhibitHtml = '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
+                    + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">EXHIBIT B — Furnisher Response (' + letter.furnisher + ')</div>';
+                  for (const imgFile of imgFiles) {
+                    const respPath = clientUserId + '/' + phase1LetterRow[0].id + '/' + imgFile.name;
+                    const { data: respUrl } = await supabase.storage.from('responses').createSignedUrl(respPath, 3600);
+                    if (respUrl?.signedUrl) {
+                      const respRes = await fetch(respUrl.signedUrl);
+                      const respBlob = await respRes.blob();
+                      const respB64 = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(respBlob); });
+                      exhibitHtml += '<img src="data:image/jpeg;base64,' + respB64 + '" style="max-width:100%;display:block;margin-bottom:8px;" />';
+                    }
                   }
+                  exhibitHtml += '</div>';
+                  enclosurePages += exhibitHtml;
                 }
               }
             }
