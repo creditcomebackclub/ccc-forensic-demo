@@ -99,6 +99,8 @@ export default function ClientPortal({ session, onSignOut }) {
   const [auditHistory, setAuditHistory] = useState([]);
   const [activeTab, setActiveTab] = useState('overview');
   const [uploadingLetter, setUploadingLetter] = useState(null);
+  const [clientDocs, setClientDocs] = useState({ id: null, address: null });
+  const [uploadingDoc, setUploadingDoc] = useState(null);
   const [monitoringForm, setMonitoringForm] = useState({ service: '', email: '', password: '', ssnLast4: '' });
   const [monitoringStep, setMonitoringStep] = useState('view'); // view | edit
   const [monitoringSaving, setMonitoringSaving] = useState(false);
@@ -120,8 +122,27 @@ export default function ClientPortal({ session, onSignOut }) {
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
       }
+      // Load client documents
+      const { data: docFiles } = await supabase.storage.from('client-docs').list(profile.full_name.replace(/\s+/g, '_'));
+      if (docFiles) {
+        const idFile = docFiles.find(f => f.name.includes('government_id') || f.name.includes('_id_'));
+        const addrFile = docFiles.find(f => f.name.includes('proof_of_address') || f.name.includes('_address_'));
+        setClientDocs({ id: idFile || null, address: addrFile || null });
+      }
     } catch (e) { console.error('Portal load error:', e); }
     finally { setLoading(false); }
+  };
+
+  const handleUploadDoc = async (docType, file) => {
+    setUploadingDoc(docType);
+    try {
+      const ext = file.name.split('.').pop();
+      const folder = profile.full_name.replace(/\s+/g, '_');
+      const path = folder + '/' + docType + '_' + Date.now() + '.' + ext;
+      await supabase.storage.from('client-docs').upload(path, file, { upsert: true });
+      setClientDocs(prev => ({ ...prev, [docType === 'government_id' ? 'id' : 'address']: { name: path } }));
+    } catch(e) { console.error('Doc upload error:', e); }
+    setUploadingDoc(null);
   };
 
   const handleUploadResponse = async (letter, file) => {
@@ -229,6 +250,45 @@ export default function ClientPortal({ session, onSignOut }) {
 
         {activeTab === 'overview' && (
           <>
+            {/* Campaign Setup Checklist */}
+            {(() => {
+              const checks = [
+                { key: 'lpoa', label: 'Authorization Signed (LPOA)', done: clientMeta && clientMeta.lpoa_signed, action: null },
+                { key: 'id', label: 'Government-Issued Photo ID', done: !!clientDocs.id, docType: 'government_id' },
+                { key: 'address', label: 'Proof of Current Address', done: !!clientDocs.address, docType: 'proof_of_address' },
+                { key: 'monitoring', label: 'Credit Monitoring Enrolled', done: clientMeta && clientMeta.monitoring_enrolled, action: 'monitoring' },
+              ];
+              const allDone = checks.every(c => c.done);
+              if (allDone) return null;
+              return (
+                <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: 16, marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#92400E', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>⚡ Action Required — Complete Your Setup</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {checks.map(({ key, label, done, docType }) => (
+                      <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 14 }}>{done ? '✅' : '⭕'}</span>
+                          <span style={{ fontSize: 12, color: done ? '#6B7280' : '#1B2A4A', fontWeight: done ? 400 : 600, textDecoration: done ? 'line-through' : 'none' }}>{label}</span>
+                        </div>
+                        {!done && docType && (
+                          <label style={{ fontSize: 11, padding: '4px 12px', background: '#1B2A4A', color: '#C9A84C', borderRadius: 4, fontWeight: 600, cursor: uploadingDoc === docType ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                            {uploadingDoc === docType ? 'Uploading…' : 'Upload →'}
+                            <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }}
+                              onChange={e => { if (e.target.files[0]) handleUploadDoc(docType, e.target.files[0]); }} />
+                          </label>
+                        )}
+                        {!done && !docType && key === 'monitoring' && (
+                          <button onClick={() => setMonitoringStep('edit')} style={{ fontSize: 11, padding: '4px 12px', background: '#1B2A4A', color: '#C9A84C', border: 'none', borderRadius: 4, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                            Set Up →
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             <div>
               <h1 style={{ fontSize: 22, fontWeight: 700, color: '#1B2A4A' }}>Welcome back, {firstName}.</h1>
               <p style={{ fontSize: 13, color: '#6B7280', marginTop: 4 }}>Here's your credit restoration campaign at a glance.</p>
