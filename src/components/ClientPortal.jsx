@@ -139,8 +139,7 @@ export default function ClientPortal({ session, onSignOut }) {
     setUploadingDoc(docType);
     try {
       const ext = file.name.split('.').pop();
-      const folder = profile.full_name.replace(/\s+/g, '_');
-      const path = folder + '/' + docType + '_' + Date.now() + '.' + ext;
+      const path = session.user.id + '/' + docType + '_' + Date.now() + '.' + ext;
       await supabase.storage.from('client-docs').upload(path, file, { upsert: true });
       // Also write to documents table so admin side can see it
       await supabase.from('documents').upsert({
