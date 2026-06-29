@@ -27,7 +27,7 @@ export default function LetterViewer({ account, client, onClose }) {
         if (!enrichedClient.signatureData) {
           const { data: c } = await supabase
             .from('clients')
-            .select('lpoa_signature_data,name,address,client_address')
+            .select('lpoa_signature_data,name,address')
             .eq('name', client.name)
             .limit(1);
           if (c && c.length > 0 && c[0].lpoa_signature_data && c[0].lpoa_signature_data.signatureUrl) {
@@ -35,7 +35,7 @@ export default function LetterViewer({ account, client, onClose }) {
           }
           // Use manually edited address if available
           if (c && c.length > 0) {
-            enrichedClient.address = c[0].address || c[0].client_address || enrichedClient.address;
+            enrichedClient.address = c[0].address || enrichedClient.address;
           }
         }
       } catch(e) { console.warn('Could not fetch signature:', e); }
