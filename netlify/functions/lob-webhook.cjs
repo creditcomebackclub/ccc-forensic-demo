@@ -1,4 +1,15 @@
 const https = require('https');
+const crypto = require('crypto');
+
+function verifyLobSignature(body, signature, secret) {
+  if (!signature || !secret) return true; // skip if not configured
+  try {
+    const computed = crypto.createHmac('sha256', secret).update(body).digest('hex');
+    return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(signature));
+  } catch (e) {
+    return false;
+  }
+}
 
 function supabaseRequest(path, method, body, url, key) {
   return new Promise((resolve, reject) => {
@@ -67,6 +78,14 @@ exports.handler = async (event) => {
 
   if (!supabaseUrl || !supabaseKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Supabase not configured' }) };
+  }
+
+  // Verify Lob signature
+  const lobSecret = process.env.LOB_WEBHOOK_SECRET || 'f32284fd726a780426f85a51af2e3e4c7f87e99d';
+  const signature = event.headers['lob-signature'] || event.headers['x-lob-signature'];
+  if (signature && !verifyLobSignature(event.body, signature, lobSecret)) {
+    console.error('Invalid Lob signature');
+    return { statusCode: 401, body: JSON.stringify({ error: 'Invalid signature' }) };
   }
 
   let payload;
