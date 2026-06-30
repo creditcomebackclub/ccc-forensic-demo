@@ -279,7 +279,7 @@ export async function adminListClients() {
     supabase.from('audits').select('*').order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').order('saved_at', { ascending: false }),
     supabase.from('profiles').select('*'),
-    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,ssn_last4,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,monitoring_password,address,monitoring_not_required'),
+    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,ssn_last4,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,monitoring_password,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at'),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
@@ -326,8 +326,40 @@ export async function adminListClients() {
       c.scoreTuStart = meta.score_tu_start || null;
       c.monitoringPassword = meta.monitoring_password || null;
       c.monitoringNotRequired = meta.monitoring_not_required || false;
+      c.status = meta.status || 'active';
+      c.leadSource = meta.lead_source || null;
+      c.leadPhone = meta.lead_phone || null;
+      c.leadNotes = meta.lead_notes || null;
+      c.leadCreatedAt = meta.lead_created_at || null;
+    } else {
+      c.status = 'active';
     }
   });
+
+  // Leads (and any client rows) that have no audits/letters yet won't exist in `out` —
+  // buildClientMap only creates entries from audit/letter rows. Add them here.
+  const existingNames = new Set(out.map((c) => c.name));
+  for (const row of (metaRes.data || [])) {
+    if (existingNames.has(row.name)) continue;
+    out.push({
+      name: row.name,
+      address: row.address || null,
+      audits: [],
+      letters: [],
+      lastActivity: row.lead_created_at || '',
+      isVip: !!row.is_vip,
+      email: row.email || null,
+      phone: row.phone || null,
+      status: row.status || 'active',
+      leadSource: row.lead_source || null,
+      leadPhone: row.lead_phone || null,
+      leadNotes: row.lead_notes || null,
+      leadCreatedAt: row.lead_created_at || null,
+      referralSource: row.referral_source || null,
+      notes: row.notes || null,
+      tags: row.tags || [],
+    });
+  }
   return out;
 }
 
@@ -340,4 +372,40 @@ export async function deleteClient(clientName) {
   ]);
   if (a.error) throw a.error;
   if (b.error) throw b.error;
+}
+
+export async function createLead({ name, email, phone, source, notes }) {
+  const userId = await getUserId();
+  const { error } = await supabase.from('clients').insert({
+    user_id: userId,
+    name: name.trim(),
+    email: email ? email.trim().toLowerCase() : null,
+    lead_phone: phone ? phone.trim() : null,
+    lead_source: source || null,
+    lead_notes: notes || null,
+    status: 'lead',
+    lead_created_at: new Date().toISOString(),
+  });
+  if (error) throw error;
+}
+
+export async function convertLeadToClient(clientName) {
+  const userId = await getUserId();
+  const { error } = await supabase
+    .from('clients')
+    .update({ status: 'active', enrollment_date: new Date().toISOString().slice(0, 10) })
+    .eq('user_id', userId)
+    .eq('name', clientName);
+  if (error) throw error;
+}
+
+export async function deleteLead(clientName) {
+  const userId = await getUserId();
+  const { error } = await supabase
+    .from('clients')
+    .delete()
+    .eq('user_id', userId)
+    .eq('name', clientName)
+    .eq('status', 'lead');
+  if (error) throw error;
 }

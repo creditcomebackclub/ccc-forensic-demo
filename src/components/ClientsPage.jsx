@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Users, FileText, Mail, UserPlus, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X, Send } from 'lucide-react';
-import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail } from '../utils/storage';
+import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
@@ -302,6 +302,9 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [emailVal, setEmailVal] = useState('');
   const [sendingLpoa, setSendingLpoa] = useState(null);
   const [showCreateClient, setShowCreateClient] = useState(false);
+  const [viewTab, setViewTab] = useState('clients'); // 'clients' | 'leads'
+  const [showAddLead, setShowAddLead] = useState(false);
+  const [convertingLead, setConvertingLead] = useState(null);
   const clientRefs = useRef({});
 
   const load = async () => {
@@ -385,6 +388,13 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     />
   ) : null;
 
+  const leadModal = showAddLead ? (
+    <AddLeadModal
+      onClose={() => setShowAddLead(false)}
+      onCreated={() => { setShowAddLead(false); load(); }}
+    />
+  ) : null;
+
   if (clients === null) {
     return (
       <div className="max-w-3xl mx-auto text-center py-20 text-ink-muted">
@@ -404,7 +414,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     );
   }
 
-  const sortedClients = [...clients].sort((a, b) => {
+  const leadClients = clients.filter((c) => c.status === 'lead');
+  const activeClients = clients.filter((c) => c.status !== 'lead');
+  const tabClients = viewTab === 'leads' ? leadClients : activeClients;
+
+  const sortedClients = [...tabClients].sort((a, b) => {
+    if (viewTab === 'leads') {
+      return (b.leadCreatedAt || '').localeCompare(a.leadCreatedAt || '');
+    }
     if (a.isVip && !b.isVip) return -1;
     if (!a.isVip && b.isVip) return 1;
     return (b.lastActivity || '').localeCompare(a.lastActivity || '');
@@ -424,6 +441,27 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   return (
     <div className="max-w-4xl mx-auto">
+      <div className="flex items-center gap-2 mb-4">
+        <button
+          onClick={() => { setViewTab('clients'); setActiveFilter(null); }}
+          className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors font-medium"
+          style={viewTab === 'clients'
+            ? { backgroundColor: '#1B2A4A', color: '#C9A84C' }
+            : { backgroundColor: '#F3F4F6', color: '#6B7280' }}
+        >
+          Clients <span className="opacity-70">({activeClients.length})</span>
+        </button>
+        <button
+          onClick={() => { setViewTab('leads'); setActiveFilter(null); }}
+          className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors font-medium"
+          style={viewTab === 'leads'
+            ? { backgroundColor: '#1B2A4A', color: '#C9A84C' }
+            : { backgroundColor: '#F3F4F6', color: '#6B7280' }}
+        >
+          Leads <span className="opacity-70">({leadClients.length})</span>
+        </button>
+      </div>
+
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3 flex-wrap">
           {isAdmin && (
@@ -431,26 +469,39 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               <Shield size={11} strokeWidth={2} /> Admin View
             </span>
           )}
-          <p className="text-[12px] text-ink-muted">
-            {clients.length} client{clients.length === 1 ? '' : 's'} · {totalAudits} audit{totalAudits === 1 ? '' : 's'} · {totalLetters} letter{totalLetters === 1 ? '' : 's'}
-            {totalRipe > 0 && <span className="text-red-600 font-medium"> · {totalRipe} ready to escalate</span>}
-            {needsResponse > 0 && <span className="text-amber-600 font-medium"> · {needsResponse} need Phase 3</span>}
-          </p>
+          {viewTab === 'clients' ? (
+            <p className="text-[12px] text-ink-muted">
+              {activeClients.length} client{activeClients.length === 1 ? '' : 's'} · {totalAudits} audit{totalAudits === 1 ? '' : 's'} · {totalLetters} letter{totalLetters === 1 ? '' : 's'}
+              {totalRipe > 0 && <span className="text-red-600 font-medium"> · {totalRipe} ready to escalate</span>}
+              {needsResponse > 0 && <span className="text-amber-600 font-medium"> · {needsResponse} need Phase 3</span>}
+            </p>
+          ) : (
+            <p className="text-[12px] text-ink-muted">
+              {leadClients.length} lead{leadClients.length === 1 ? '' : 's'} in pipeline
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search clients…"
+            placeholder={viewTab === 'leads' ? 'Search leads…' : 'Search clients…'}
             className="border border-border rounded-sm px-3 py-1.5 text-[12px] text-ink focus:outline-none focus:border-navy"
             style={{ width: 180 }}
           />
-          {isAdmin && (
+          {isAdmin && viewTab === 'clients' && (
             <button onClick={() => setShowCreateClient(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm transition-colors"
               style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}>
               <UserPlus size={12} strokeWidth={2} /> New Client
+            </button>
+          )}
+          {isAdmin && viewTab === 'leads' && (
+            <button onClick={() => setShowAddLead(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm transition-colors"
+              style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}>
+              <UserPlus size={12} strokeWidth={2} /> Add Lead
             </button>
           )}
           <button onClick={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
@@ -680,6 +731,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         />
       )}
       {createModal}
+      {leadModal}
     </div>
   );
 }
@@ -763,6 +815,85 @@ function CreateClientModal({ onClose, onCreated }) {
               </button>
             </>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+function AddLeadModal({ onClose, onCreated }) {
+  const [name, setName] = React.useState('');
+  const [email, setEmail] = React.useState('');
+  const [phone, setPhone] = React.useState('');
+  const [source, setSource] = React.useState('');
+  const [notes, setNotes] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+
+  const handleCreate = async () => {
+    if (!name.trim()) { setError('Name is required.'); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      await createLead({ name, email, phone, source, notes });
+      onCreated();
+    } catch (e) {
+      setError(e.message || 'Could not create lead');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={onClose}>
+      <div className="bg-white border border-border rounded w-full max-w-sm" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-border flex items-center justify-between">
+          <h2 className="text-[14px] font-medium text-ink">Add Lead</h2>
+          <button onClick={onClose} className="text-ink-faint hover:text-ink">✕</button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Full Name</label>
+            <input type="text" value={name} onChange={e => setName(e.target.value)}
+              placeholder="Lead full name"
+              className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy" />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+              placeholder="lead@email.com"
+              className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy" />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Phone</label>
+            <input type="text" value={phone} onChange={e => setPhone(e.target.value)}
+              placeholder="(555) 555-5555"
+              className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy" />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Source</label>
+            <select value={source} onChange={e => setSource(e.target.value)}
+              className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy bg-white">
+              <option value="">Select source…</option>
+              <option value="Razu Referral">Razu Referral</option>
+              <option value="Facebook">Facebook</option>
+              <option value="Website">Website</option>
+              <option value="Word of Mouth">Word of Mouth</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Notes</label>
+            <textarea value={notes} onChange={e => setNotes(e.target.value)}
+              placeholder="Optional notes about this lead"
+              rows={2}
+              className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy resize-none" />
+          </div>
+          {error && <div className="bg-red-50 border border-red-200 rounded-sm p-2 text-[12px] text-red-700">{error}</div>}
+          <button onClick={handleCreate} disabled={loading}
+            className="w-full py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors disabled:opacity-50"
+            style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}>
+            {loading ? 'Adding…' : 'Add Lead'}
+          </button>
         </div>
       </div>
     </div>
