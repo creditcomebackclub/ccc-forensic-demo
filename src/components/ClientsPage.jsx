@@ -50,6 +50,27 @@ function letterStatus(l) {
   return { code: 'window_closed', label: 'Window elapsed · ready to escalate', tone: 'red' };
 }
 
+function importDueInfo(c) {
+  const phase1Letters = c.letters.filter((l) => l.mailedDate && !l.phase?.startsWith('Phase 3'));
+  if (phase1Letters.length === 0) return null;
+
+  let latestClockStart = null;
+  for (const l of phase1Letters) {
+    const clockStart = l.deliveredAt ? l.deliveredAt.slice(0, 10) : l.mailedDate;
+    if (!latestClockStart || clockStart > latestClockStart) latestClockStart = clockStart;
+  }
+  if (!latestClockStart) return null;
+
+  const elapsed = daysBetween(latestClockStart, todayISO());
+  const remaining = WINDOW_DAYS - elapsed;
+
+  const allAccounted = phase1Letters.every((l) => l.responseOutcome === 'received' || l.responseOutcome === 'no_response');
+  if (allAccounted) return null;
+
+  if (remaining > 0) return { code: 'pending', label: 'Import in ' + remaining + 'd', tone: 'neutral' };
+  return { code: 'due', label: 'Import due', tone: 'red' };
+}
+
 function clientMatchesFilter(c, filter) {
   if (!filter) return true;
   const openLetters = c.letters.filter((l) => !l.phase?.startsWith('Phase 3'));
