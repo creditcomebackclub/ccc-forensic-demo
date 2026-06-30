@@ -458,6 +458,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
           const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
           const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3')).length;
+          const importDue = importDueInfo(c);
           const auditors = isAdmin ? [...new Set([
             ...c.audits.map((a) => a.auditorName),
             ...c.letters.map((l) => l.auditorName),
@@ -512,6 +513,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   {needsPhase3 > 0 && <StatusBadge label={needsPhase3 + ' need Phase 3'} tone="amber" />}
                   {ripe > 0 && <StatusBadge label={ripe + ' to escalate'} tone="red" />}
                   {awaiting > 0 && <StatusBadge label={awaiting + ' awaiting'} tone="amber" />}
+                  {importDue && <StatusBadge label={importDue.label} tone={importDue.tone} />}
                   <span className="flex items-center gap-1"><FileText size={13} strokeWidth={1.75} />{c.audits.length}</span>
                   <span className="flex items-center gap-1"><Mail size={13} strokeWidth={1.75} />{c.letters.length}</span>
                   {c.lpoaSigned ? (
