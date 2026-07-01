@@ -508,6 +508,38 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       <div className="space-y-3">
         {filteredClients.map((c) => {
           const isOpen = !!expanded[c.name];
+
+          if (c.status === 'lead') {
+            return (
+              <LeadCard
+                key={c.name}
+                c={c}
+                isAdmin={isAdmin}
+                onConvert={async () => {
+                  setConvertingLead(c.name);
+                  try {
+                    await convertLeadToClient(c.name);
+                    await load();
+                  } catch (e) {
+                    alert('Could not convert lead: ' + e.message);
+                  } finally {
+                    setConvertingLead(null);
+                  }
+                }}
+                converting={convertingLead === c.name}
+                onDelete={async () => {
+                  if (!window.confirm('Delete lead ' + c.name + '? This cannot be undone.')) return;
+                  try {
+                    await deleteLead(c.name);
+                    await load();
+                  } catch (e) {
+                    alert('Could not delete lead: ' + e.message);
+                  }
+                }}
+              />
+            );
+          }
+
           const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
           const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
           const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3')).length;
@@ -876,6 +908,53 @@ function AddLeadModal({ onClose, onCreated }) {
             {loading ? 'Adding…' : 'Add Lead'}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function LeadCard({ c, isAdmin, onConvert, converting, onDelete }) {
+  const created = c.leadCreatedAt ? new Date(c.leadCreatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+
+  return (
+    <div className="bg-white rounded overflow-hidden border border-border">
+      <div className="flex items-center gap-3 px-5 py-4">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="ccc-display text-[15px] text-ink font-medium">{c.name}</div>
+            {c.leadSource && (
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium bg-gray-100 text-gray-600">
+                {c.leadSource}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3 flex-wrap mt-1 text-[11px] text-ink-muted">
+            {c.email && <span>{c.email}</span>}
+            {c.leadPhone && <span>{c.leadPhone}</span>}
+            {created && <span>Added {created}</span>}
+          </div>
+          {c.leadNotes && (
+            <p className="text-[12px] text-ink-muted mt-1.5">{c.leadNotes}</p>
+          )}
+        </div>
+        {isAdmin && (
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={onConvert}
+              disabled={converting}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm transition-colors disabled:opacity-50"
+              style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}
+            >
+              <UserPlus size={12} strokeWidth={2} /> {converting ? 'Converting…' : 'Convert to Client'}
+            </button>
+            <button
+              onClick={onDelete}
+              className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-red-600 px-2 py-1.5"
+            >
+              <Trash2 size={13} strokeWidth={1.75} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
