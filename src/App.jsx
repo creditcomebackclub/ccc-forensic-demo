@@ -630,6 +630,12 @@ function TopBar({ view, state, isAdmin }) {
       <p className="text-[12px] mt-0.5 text-ink-muted">{isAdmin ? 'All clients across all auditors' : 'Your saved audits and letters'}</p>
     </header>
   );
+  if (view === 'leads') return (
+    <header className="px-8 py-5 border-b border-border bg-white">
+      <h1 className="ccc-display text-2xl text-ink font-medium">Leads</h1>
+      <p className="text-[12px] mt-0.5 text-ink-muted">Prospects in the pipeline — not yet signed or paid</p>
+    </header>
+  );
   if (view === 'methodology') return (
     <header className="px-8 py-5 border-b border-border bg-white">
       <h1 className="ccc-display text-2xl text-ink font-medium">Methodology</h1>
