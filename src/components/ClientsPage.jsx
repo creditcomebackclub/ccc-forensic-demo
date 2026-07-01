@@ -543,7 +543,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
           const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
           const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
-          const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3')).length;
+          const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher)).length;
           const importDue = importDueInfo(c);
           const auditors = isAdmin ? [...new Set([
             ...c.audits.map((a) => a.auditorName),

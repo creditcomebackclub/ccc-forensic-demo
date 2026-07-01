@@ -108,7 +108,7 @@ function computeDashboard(clients) {
         priorityQueue.push({ ...item, urgency: 1, label: 'Generate Phase 3' });
       }
 
-      if (st.code === 'received') {
+      if (st.code === 'received' && !hasPhase3) {
         const deadline = c.isVip ? VIP_RESPONSE_HOURS : STD_RESPONSE_DAYS * 24;
         const hoursLeft = deadline - hoursSince(l.responseDate || l.savedAt);
         if (hoursLeft < deadline) {
