@@ -106,13 +106,14 @@ function AuditorTag({ name }) {
   return <span className="inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-navy text-gold">{name}</span>;
 }
 
-function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze, onLobMail }) {
+function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
   const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
 
   const urgency = (() => {
+    if (hasPhase3) return null;
     if (l.responseOutcome !== 'received' || !l.responseDate) return null;
     const deadline = isVip ? VIP_RESPONSE_DAYS : STD_RESPONSE_DAYS;
     const hoursLeft = (deadline * 24) - hoursBetween(l.responseDate, new Date().toISOString());
@@ -684,7 +685,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                         <p className="text-[12px] text-ink-muted py-4 text-center">No letters yet — run an audit to generate Phase 1 letters.</p>
                       ) : (
                         c.letters.map((l) => (
-                          <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter} />
+                          <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher)} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter} />
                         ))
                       )}
                     </div>
