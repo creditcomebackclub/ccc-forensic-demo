@@ -287,7 +287,7 @@ function parseFurnisherAddress(furnisher) {
   }
   return null;
 }
-export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter }) {
+export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, forceTab }) {
   const [clients, setClients] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -302,7 +302,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [emailVal, setEmailVal] = useState('');
   const [sendingLpoa, setSendingLpoa] = useState(null);
   const [showCreateClient, setShowCreateClient] = useState(false);
-  const [viewTab, setViewTab] = useState('clients'); // 'clients' | 'leads'
+  const [viewTab, setViewTab] = useState(forceTab || 'clients'); // 'clients' | 'leads'
   const [showAddLead, setShowAddLead] = useState(false);
   const [convertingLead, setConvertingLead] = useState(null);
   const clientRefs = useRef({});
@@ -318,6 +318,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   };
 
   useEffect(() => { load(); }, [isAdmin]);
+
+  useEffect(() => { if (forceTab) setViewTab(forceTab); }, [forceTab]);
 
   useEffect(() => {
     if (!jumpTo || !clients) return;
@@ -441,27 +443,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   return (
     <div className="max-w-4xl mx-auto">
-      <div className="flex items-center gap-2 mb-4">
-        <button
-          onClick={() => { setViewTab('clients'); setActiveFilter(null); }}
-          className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors font-medium"
-          style={viewTab === 'clients'
-            ? { backgroundColor: '#1B2A4A', color: '#C9A84C' }
-            : { backgroundColor: '#F3F4F6', color: '#6B7280' }}
-        >
-          Clients <span className="opacity-70">({activeClients.length})</span>
-        </button>
-        <button
-          onClick={() => { setViewTab('leads'); setActiveFilter(null); }}
-          className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors font-medium"
-          style={viewTab === 'leads'
-            ? { backgroundColor: '#1B2A4A', color: '#C9A84C' }
-            : { backgroundColor: '#F3F4F6', color: '#6B7280' }}
-        >
-          Leads <span className="opacity-70">({leadClients.length})</span>
-        </button>
-      </div>
-
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3 flex-wrap">
           {isAdmin && (

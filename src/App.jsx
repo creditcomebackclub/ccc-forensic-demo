@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign, UserPlus } from 'lucide-react';
 import UploadZone from './components/UploadZone';
 import AuditProgress from './components/AuditProgress';
 import AuditResults from './components/AuditResults';
@@ -18,7 +18,7 @@ import { getProfile } from './utils/storage';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit, fileToBase64 } from './utils/api';
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
-const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
+const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
 
 function AffiliatesPage() {
   const [affiliates, setAffiliates] = React.useState([]);
@@ -516,7 +516,10 @@ export default function App() {
             <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} onAuditStart={handleAuditStart} />
           )}
           {view === VIEW.CLIENTS && (
-            <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} />
+            <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" />
+          )}
+          {view === VIEW.LEADS && (
+            <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={null} filter={null} forceTab="leads" />
           )}
           {view === VIEW.METHODOLOGY && <MethodologyPage />}
           {view === VIEW.TEAM && isAdmin && <TeamPage currentUserId={user.id} />}
@@ -560,6 +563,7 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
         <NavItem icon={Home} label="Dashboard" active={view === 'dashboard'} onClick={() => onNavigate('dashboard')} />
         <NavItem icon={LayoutDashboard} label="New Audit" active={view === 'audit'} onClick={() => onNavigate('audit')} />
         <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients')} />
+        <NavItem icon={UserPlus} label="Leads" active={view === 'leads'} onClick={() => onNavigate('leads')} />
         <NavItem icon={BookOpen} label="Methodology" active={view === 'methodology'} onClick={() => onNavigate('methodology')} />
         {isAdmin && (
           <NavItem icon={UserCog} label="Team" active={view === 'team'} onClick={() => onNavigate('team')} />
