@@ -515,6 +515,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 key={c.name}
                 c={c}
                 isAdmin={isAdmin}
+                onOpenAudit={onOpenAudit}
                 onConvert={async () => {
                   setConvertingLead(c.name);
                   try {
@@ -913,18 +914,30 @@ function AddLeadModal({ onClose, onCreated }) {
   );
 }
 
-function LeadCard({ c, isAdmin, onConvert, converting, onDelete }) {
+function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit }) {
+  const [isOpen, setIsOpen] = React.useState(false);
   const created = c.leadCreatedAt ? new Date(c.leadCreatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+  const hasAudits = (c.audits || []).length > 0;
 
   return (
     <div className="bg-white rounded overflow-hidden border border-border">
       <div className="flex items-center gap-3 px-5 py-4">
+        {hasAudits && (
+          <button onClick={() => setIsOpen(!isOpen)} className="shrink-0">
+            {isOpen ? <ChevronDown size={16} strokeWidth={1.75} className="text-ink-muted" /> : <ChevronRight size={16} strokeWidth={1.75} className="text-ink-muted" />}
+          </button>
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="ccc-display text-[15px] text-ink font-medium">{c.name}</div>
             {c.leadSource && (
               <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium bg-gray-100 text-gray-600">
                 {c.leadSource}
+              </span>
+            )}
+            {hasAudits && (
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium bg-blue-50 text-blue-700">
+                {c.audits.length} audit{c.audits.length === 1 ? '' : 's'}
               </span>
             )}
           </div>
@@ -956,6 +969,22 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete }) {
           </div>
         )}
       </div>
+
+      {isOpen && hasAudits && (
+        <div className="border-t border-border px-5 py-4">
+          <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Audits</div>
+          {c.audits.map((a) => (
+            <div key={a.id} className="flex items-center justify-between py-1.5 flex-wrap gap-2">
+              <div className="text-[12px] text-ink">
+                Report {a.reportDate}
+                <span className="text-ink-muted"> · {(a.audit && a.audit.accountsTargeted) || 0} accounts · {(a.audit && a.audit.totalViolations) || 0} violations</span>
+                {isAdmin && a.auditorName && <span className="ml-2 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-navy text-gold">{a.auditorName}</span>}
+              </div>
+              <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
