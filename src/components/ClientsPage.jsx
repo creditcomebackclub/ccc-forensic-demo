@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Users, FileText, Mail, UserPlus, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X, Send } from 'lucide-react';
-import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead } from '../utils/storage';
+import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
@@ -296,6 +296,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [togglingVip, setTogglingVip] = useState(null);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
   const [accountTimeline, setAccountTimeline] = useState(null); // { accountId, furnisher, letters, accountData }
+  const [diffLoading, setDiffLoading] = useState(null);
+  const [diffResult, setDiffResult] = useState(null);
   const [activeFilter, setActiveFilter] = useState(initialFilter || null);
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -650,7 +652,28 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               {isOpen && (
                 <div className="border-t border-border px-5 py-4 space-y-4">
                   <div>
-                    <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Audits</div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Audits</div>
+                      {c.audits.length >= 2 && (
+                        <button
+                          onClick={async () => {
+                            setDiffLoading(c.name);
+                            try {
+                              const result = await runProgressDiff(c.name);
+                              setDiffResult({ clientName: c.name, ...result });
+                            } catch (e) {
+                              alert('Could not run comparison: ' + e.message);
+                            } finally {
+                              setDiffLoading(null);
+                            }
+                          }}
+                          disabled={diffLoading === c.name}
+                          className="text-[10px] uppercase tracking-wider text-navy hover:text-gold disabled:opacity-50"
+                        >
+                          {diffLoading === c.name ? 'Comparing…' : 'Compare Latest Reports'}
+                        </button>
+                      )}
+                    </div>
                     {c.audits.length === 0 && <div className="text-[12px] text-ink-muted">None</div>}
                     {c.audits.map((a) => (
                       <div key={a.id} className="flex items-center justify-between py-1.5 flex-wrap gap-2">
@@ -756,6 +779,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       {createModal}
       {leadModal}
       <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />
+      <DiffResultModal result={diffResult} onClose={() => setDiffResult(null)} />
     </div>
   );
 }
