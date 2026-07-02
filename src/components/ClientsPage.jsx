@@ -106,7 +106,7 @@ function AuditorTag({ name }) {
   return <span className="inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-navy text-gold">{name}</span>;
 }
 
-function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail }) {
+function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail, onOpenAccount }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
@@ -146,7 +146,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     <div className="py-2 border-b border-border last:border-b-0">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="text-[12px] text-ink min-w-0">
-          <span className="font-medium">{l.furnisher}</span>
+          <button onClick={() => onOpenAccount(l)} className="font-medium hover:text-navy hover:underline underline-offset-2 decoration-dotted">{l.furnisher}</button>
           <span className="text-ink-muted"> · </span>
           <span className={isPhase3 ? 'font-medium' : 'text-ink-muted'} style={{ color: isPhase3 ? '#C9A84C' : undefined }}>{l.phase}</span>
           <span className="text-ink-muted"> · {fmtTime(l.savedAt)}</span>
@@ -295,6 +295,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [analyzingLetter, setAnalyzingLetter] = useState(null);
   const [togglingVip, setTogglingVip] = useState(null);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
+  const [accountTimeline, setAccountTimeline] = useState(null); // { accountId, furnisher, letters, accountData }
   const [activeFilter, setActiveFilter] = useState(initialFilter || null);
   const [search, setSearch] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -685,7 +686,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                         <p className="text-[12px] text-ink-muted py-4 text-center">No letters yet — run an audit to generate Phase 1 letters.</p>
                       ) : (
                         c.letters.map((l) => (
-                          <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher)} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter} />
+                          <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher)} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter} onOpenAccount={(letter) => {
+                            const clientLetters = c.letters.filter((pl) => pl.accountId === letter.accountId && pl.furnisher === letter.furnisher);
+                            const latestAudit = [...c.audits].sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''))[0];
+                            const accountData = latestAudit && latestAudit.audit && latestAudit.audit.accounts
+                              ? latestAudit.audit.accounts.find((a) => a.id === letter.accountId)
+                              : null;
+                            setAccountTimeline({ accountId: letter.accountId, furnisher: letter.furnisher, letters: clientLetters, accountData, clientName: c.name });
+                          }} />
                         ))
                       )}
                     </div>
@@ -747,6 +755,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       )}
       {createModal}
       {leadModal}
+      <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />
     </div>
   );
 }
@@ -986,6 +995,101 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit }) 
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function severityColor(sev) {
+  if (sev === 'high') return { bg: '#FEF2F2', border: '#FECACA', text: '#B91C1C' };
+  if (sev === 'med') return { bg: '#FFFBEB', border: '#FDE68A', text: '#B45309' };
+  return { bg: '#F0FDF4', border: '#BBF7D0', text: '#15803D' };
+}
+
+function AccountTimelineModal({ data, onClose }) {
+  if (!data) return null;
+  const { furnisher, accountData, letters, clientName } = data;
+  const sortedLetters = [...(letters || [])].sort((a, b) => (a.mailedDate || '').localeCompare(b.mailedDate || ''));
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={onClose}>
+      <div className="bg-white border border-border rounded w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-border sticky top-0 bg-white z-10">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="ccc-display text-[18px] text-ink font-medium">{furnisher}</h2>
+              <p className="text-[12px] text-ink-muted mt-0.5">{clientName}</p>
+            </div>
+            <button onClick={onClose} className="text-ink-faint hover:text-ink text-lg leading-none">✕</button>
+          </div>
+          {accountData && (
+            <div className="flex items-center gap-2 flex-wrap mt-3">
+              <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-navy text-gold font-medium">Type {accountData.type}</span>
+              <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-gray-100 text-gray-600">{accountData.status}</span>
+              {accountData.balance != null && (
+                <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-gray-100 text-gray-600">${Number(accountData.balance).toLocaleString()} balance</span>
+              )}
+              {accountData.accountNumberMasked && (
+                <span className="text-[10px] text-ink-faint">{accountData.accountNumberMasked}</span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="p-5 space-y-6">
+          {accountData && accountData.primaryViolation && (
+            <div className="bg-navy text-white rounded p-3">
+              <div className="text-[10px] uppercase tracking-wider text-gold font-medium mb-1">Primary Violation</div>
+              <p className="text-[13px]">{accountData.primaryViolation}</p>
+            </div>
+          )}
+
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Letter Timeline</div>
+            {sortedLetters.length === 0 && <div className="text-[12px] text-ink-muted">No letters found for this account.</div>}
+            <div className="space-y-2">
+              {sortedLetters.map((l) => {
+                const st = letterStatus(l);
+                const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
+                return (
+                  <div key={l.id} className="border border-border rounded-sm p-3">
+                    <div className="flex items-center justify-between flex-wrap gap-1">
+                      <span className={'text-[12px] font-medium'} style={{ color: isPhase3 ? '#C9A84C' : '#1B2A4A' }}>{l.phase}</span>
+                      <StatusBadge label={st.label} tone={st.tone} />
+                    </div>
+                    <div className="text-[11px] text-ink-muted mt-1 flex items-center gap-3 flex-wrap">
+                      {l.mailedDate && <span>Mailed {fmt(l.mailedDate)}</span>}
+                      {l.deliveredAt && <span>Delivered {fmt(l.deliveredAt.slice(0, 10))}</span>}
+                      {l.responseDate && <span>Response {fmt(l.responseDate)}</span>}
+                    </div>
+                    {l.summary && <p className="text-[12px] text-ink-muted mt-1.5">{l.summary}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {accountData && accountData.violations && accountData.violations.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Cited Violations ({accountData.violations.length})</div>
+              <div className="space-y-2">
+                {accountData.violations.map((v, i) => {
+                  const c = severityColor(v.severity);
+                  return (
+                    <div key={i} className="rounded-sm p-3 border" style={{ backgroundColor: c.bg, borderColor: c.border }}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[12px] font-medium text-ink">{v.field}</span>
+                        <span className="text-[10px] uppercase tracking-wider font-medium" style={{ color: c.text }}>{v.severity}</span>
+                      </div>
+                      <p className="text-[12px] text-ink-muted mt-1">{v.issue}</p>
+                      <p className="text-[11px] text-ink-faint mt-1 italic">{v.statute}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
