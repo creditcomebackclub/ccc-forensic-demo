@@ -389,6 +389,128 @@ export async function createLead({ name, email, phone, source, notes }) {
   if (error) throw error;
 }
 
+// ---- Report Diff Engine ----
+// Match key is furnisher + masked account number, NOT the account id (acct_1, acct_2...),
+// because those ids are just sequential labels Claude assigns fresh each audit run and
+// are not stable across separate reports. Furnisher + masked account number is the only
+// data that comes straight from the credit report itself and survives across audits.
+function accountMatchKey(acct) {
+  const furnisher = (acct.furnisher || '').trim().toUpperCase();
+  const num = (acct.accountNumberMasked || '').trim();
+  return furnisher + '|' + num;
+}
+
+function diffAuditAccounts(oldAudit, newAudit) {
+  const oldAccounts = (oldAudit && oldAudit.accounts) || [];
+  const newAccounts = (newAudit && newAudit.accounts) || [];
+
+  const oldMap = new Map(oldAccounts.map((a) => [accountMatchKey(a), a]));
+  const newMap = new Map(newAccounts.map((a) => [accountMatchKey(a), a]));
+
+  const deleted = [];
+  const newlyFound = [];
+  const changed = [];
+  const unchanged = [];
+
+  for (const [key, oldAcct] of oldMap) {
+    if (!newMap.has(key)) {
+      deleted.push({
+        furnisher: oldAcct.furnisher,
+        accountNumberMasked: oldAcct.accountNumberMasked,
+        oldBalance: oldAcct.balance,
+        oldStatus: oldAcct.status,
+        primaryViolation: oldAcct.primaryViolation,
+      });
+    }
+  }
+
+  for (const [key, newAcct] of newMap) {
+    const oldAcct = oldMap.get(key);
+    if (!oldAcct) {
+      newlyFound.push({
+        furnisher: newAcct.furnisher,
+        accountNumberMasked: newAcct.accountNumberMasked,
+        balance: newAcct.balance,
+        status: newAcct.status,
+        primaryViolation: newAcct.primaryViolation,
+      });
+      continue;
+    }
+
+    const oldViolationCount = (oldAcct.violations || []).length;
+    const newViolationCount = (newAcct.violations || []).length;
+    const statusChanged = oldAcct.status !== newAcct.status;
+    const balanceChanged = oldAcct.balance !== newAcct.balance;
+    const violationsChanged = oldViolationCount !== newViolationCount;
+
+    if (statusChanged || balanceChanged || violationsChanged) {
+      changed.push({
+        furnisher: newAcct.furnisher,
+        accountNumberMasked: newAcct.accountNumberMasked,
+        oldStatus: oldAcct.status,
+        newStatus: newAcct.status,
+        oldBalance: oldAcct.balance,
+        newBalance: newAcct.balance,
+        oldViolationCount,
+        newViolationCount,
+      });
+    } else {
+      unchanged.push({
+        furnisher: newAcct.furnisher,
+        accountNumberMasked: newAcct.accountNumberMasked,
+      });
+    }
+  }
+
+  return { deleted, new: newlyFound, changed, unchanged };
+}
+
+export async function runProgressDiff(clientName) {
+  const userId = await getUserId();
+  const { data: audits, error } = await supabase
+    .from('audits')
+    .select('id,report_date,audit')
+    .eq('user_id', userId)
+    .eq('client_name', clientName)
+    .order('report_date', { ascending: false })
+    .limit(2);
+
+  if (error) throw error;
+  if (!audits || audits.length < 2) {
+    throw new Error('Need at least two audits for this client to run a comparison.');
+  }
+
+  const [newer, older] = audits; // already ordered desc
+  const diff = diffAuditAccounts(older.audit, newer.audit);
+
+  const id = slug(clientName) + '__diff__' + older.report_date + '__' + newer.report_date;
+  const { error: saveErr } = await supabase.from('progress_updates').upsert({
+    id,
+    user_id: userId,
+    client_name: clientName,
+    from_audit_id: older.id,
+    to_audit_id: newer.id,
+    from_report_date: older.report_date,
+    to_report_date: newer.report_date,
+    diff,
+  });
+  if (saveErr) throw saveErr;
+
+  return { id, fromReportDate: older.report_date, toReportDate: newer.report_date, diff };
+}
+
+export async function getProgressUpdates(clientName) {
+  const userId = await getUserId();
+  const { data, error } = await supabase
+    .from('progress_updates')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('client_name', clientName)
+    .order('to_report_date', { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
 export async function convertLeadToClient(clientName) {
   const userId = await getUserId();
   const { error } = await supabase
