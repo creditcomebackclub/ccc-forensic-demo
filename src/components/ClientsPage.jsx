@@ -1117,3 +1117,84 @@ function AccountTimelineModal({ data, onClose }) {
     </div>
   );
 }
+
+
+function DiffResultModal({ result, onClose }) {
+  if (!result) return null;
+  const { clientName, fromReportDate, toReportDate, diff } = result;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={onClose}>
+      <div className="bg-white border border-border rounded w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-border sticky top-0 bg-white z-10">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="ccc-display text-[18px] text-ink font-medium">Report Comparison</h2>
+              <p className="text-[12px] text-ink-muted mt-0.5">{clientName} · {fromReportDate} → {toReportDate}</p>
+            </div>
+            <button onClick={onClose} className="text-ink-faint hover:text-ink text-lg leading-none">✕</button>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-5">
+          {diff.deleted.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-green-700 font-medium mb-2">Deleted ({diff.deleted.length})</div>
+              <div className="space-y-2">
+                {diff.deleted.map((a, i) => (
+                  <div key={i} className="bg-green-50 border border-green-200 rounded-sm p-3">
+                    <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
+                    <div className="text-[11px] text-ink-muted mt-0.5">Was: {a.oldStatus} · ${'{'}Number(a.oldBalance || 0).toLocaleString(){'}'} past due</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {diff.changed.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-amber-700 font-medium mb-2">Changed ({diff.changed.length})</div>
+              <div className="space-y-2">
+                {diff.changed.map((a, i) => (
+                  <div key={i} className="bg-amber-50 border border-amber-200 rounded-sm p-3">
+                    <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
+                    <div className="text-[11px] text-ink-muted mt-0.5">
+                      {a.oldStatus !== a.newStatus && <span>Status: {a.oldStatus} → {a.newStatus} · </span>}
+                      {a.oldBalance !== a.newBalance && <span>Balance: ${'{'}Number(a.oldBalance || 0).toLocaleString(){'}'} → ${'{'}Number(a.newBalance || 0).toLocaleString(){'}'} · </span>}
+                      Violations: {a.oldViolationCount} → {a.newViolationCount}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {diff.new.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-blue-700 font-medium mb-2">New Accounts ({diff.new.length})</div>
+              <div className="space-y-2">
+                {diff.new.map((a, i) => (
+                  <div key={i} className="bg-blue-50 border border-blue-200 rounded-sm p-3">
+                    <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
+                    <div className="text-[11px] text-ink-muted mt-0.5">{a.status} · ${'{'}Number(a.balance || 0).toLocaleString(){'}'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {diff.unchanged.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Unchanged ({diff.unchanged.length})</div>
+              <p className="text-[12px] text-ink-muted">{diff.unchanged.map((a) => a.furnisher).join(', ')}</p>
+            </div>
+          )}
+
+          {diff.deleted.length === 0 && diff.changed.length === 0 && diff.new.length === 0 && (
+            <p className="text-[13px] text-ink-muted">No changes detected between these two reports.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
