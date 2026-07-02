@@ -181,9 +181,64 @@ exports.handler = async () => {
     await sendgridEmail(ADMIN_EMAIL, '30-Day Deadline Report — ' + adminDigestItems.length + ' letter(s) ready to escalate', html, sgKey);
   }
 
+  // ---- Lead drip sequence ----
+  // Schedule: day 0-1, day 3, day 7, day 10, day 14 (5 touches over two weeks)
+  let leadsProcessed = 0;
+  if (sgKey) {
+    const leadsRes = await supabaseRequest(
+      '/rest/v1/clients?select=name,email,lead_created_at,lead_drips_sent&status=eq.lead',
+      'GET', null, supabaseUrl, supabaseKey
+    );
+
+    const leads = Array.isArray(leadsRes.body) ? leadsRes.body : [];
+
+    const dripSchedule = [
+      { key: 'drip1', num: 1, minDay: 0, maxDay: 2 },
+      { key: 'drip2', num: 2, minDay: 3, maxDay: 5 },
+      { key: 'drip3', num: 3, minDay: 7, maxDay: 9 },
+      { key: 'drip4', num: 4, minDay: 10, maxDay: 12 },
+      { key: 'drip5', num: 5, minDay: 14, maxDay: 16 },
+    ];
+
+    for (const lead of leads) {
+      if (!lead.email || !lead.lead_created_at) continue;
+      const createdDate = lead.lead_created_at.slice(0, 10);
+      const daysSince = daysBetween(createdDate, today);
+      const sentDrips = lead.lead_drips_sent || [];
+      let newDrips = [...sentDrips];
+      let touched = false;
+
+      for (const d of dripSchedule) {
+        if (daysSince >= d.minDay && daysSince <= d.maxDay && !sentDrips.includes(d.key)) {
+          try {
+            const base = process.env.URL || process.env.DEPLOY_URL || '';
+            await fetch(base + '/.netlify/functions/send-lpoa', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'send_lead_drip', leadName: lead.name, leadEmail: lead.email, emailNumber: d.num }),
+            });
+            newDrips.push(d.key);
+            touched = true;
+            leadsProcessed++;
+          } catch (e) {
+            console.error('Lead drip send failed (non-fatal):', e.message);
+          }
+          break; // only one drip per lead per day
+        }
+      }
+
+      if (touched) {
+        await supabaseRequest(
+          '/rest/v1/clients?name=eq.' + encodeURIComponent(lead.name),
+          'PATCH', { lead_drips_sent: newDrips }, supabaseUrl, supabaseKey
+        );
+      }
+    }
+  }
+
   return {
     statusCode: 200,
-    body: JSON.stringify({ checked: letters.length, adminDigestSent: adminDigestItems.length > 0, adminDigestCount: adminDigestItems.length }),
+    body: JSON.stringify({ checked: letters.length, adminDigestSent: adminDigestItems.length > 0, adminDigestCount: adminDigestItems.length, leadsProcessed }),
   };
 };
 

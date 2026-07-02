@@ -237,6 +237,80 @@ exports.handler = async (event) => {
   }
 
   // Educational email series
+  if (action === 'send_lead_drip') {
+    const { leadName, leadEmail, emailNumber } = payload;
+    if (!leadEmail) return { statusCode: 400, body: JSON.stringify({ error: 'leadEmail required' }) };
+    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+
+    const firstName = leadName.split(' ')[0] || leadName;
+
+    const drips = {
+      1: {
+        subject: 'Thanks for reaching out to Credit Comeback Club',
+        headline: 'We received your request — here\'s what happens next.',
+        content: '<p>Hi ' + firstName + ', thank you for your interest in Credit Comeback Club. We specialize in forensic credit disputes built on federal law, not generic dispute templates.</p>'
+          + '<p>Most credit repair companies send the same boilerplate letters to the credit bureaus for every client. We do something different: we perform a line-by-line forensic audit of your credit report against the Metro 2 reporting standard that creditors are legally required to follow, then build a dispute strategy around the specific violations we find in your file.</p>'
+          + '<p><strong>What\'s next:</strong> If you haven\'t already, upload your 3-bureau credit report and we\'ll walk you through what we find — no cost, no obligation.</p>'
+          + '<p>Reply to this email or call 970-644-0063 with any questions.</p>',
+      },
+      2: {
+        subject: 'What Makes a Dispute Actually Work',
+        headline: 'Why most credit repair fails — and what we do differently.',
+        content: '<p>Here\'s something most people don\'t know: when you dispute an account through the credit bureaus, your dispute is processed by an automated system called e-OSCAR. No human reviews it. The creditor\'s computer confirms their own data matches what they submitted, and the dispute is marked "verified" — even if the underlying data is wrong.</p>'
+          + '<p>This is why the same dispute letter mailed to a bureau, over and over, rarely produces results.</p>'
+          + '<p><strong>Our approach is different.</strong> We dispute directly with the furnisher — the original creditor or collector — under 15 U.S.C. §1681s-2(b). This bypasses e-OSCAR entirely and triggers a legal obligation for the furnisher to conduct an actual investigation, not just an automated database check.</p>'
+          + '<p>The legal standard comes from a real federal case, <em>Johnson v. MBNA America Bank</em>, which held that automated verification does not satisfy a furnisher\'s investigation duty. That case is the foundation of every letter we send.</p>',
+      },
+      3: {
+        subject: 'A Real Example: How the Process Works',
+        headline: 'From audit to dispute to resolution.',
+        content: '<p>Here\'s what the process actually looks like once you start:</p>'
+          + '<p><strong>Step 1 — Forensic Audit.</strong> We analyze your 3-bureau report field by field, identifying specific Metro 2 violations — things like charge-off accounts still reporting active past-due balances (a logical impossibility), cross-bureau data conflicts, or missing dispute flags.</p>'
+          + '<p><strong>Step 2 — Direct Furnisher Dispute.</strong> We send certified letters directly to each creditor citing the exact violations and federal statutes involved. This establishes a legal record and starts a 30-day clock.</p>'
+          + '<p><strong>Step 3 — Escalation if needed.</strong> If a creditor fails to respond adequately within 30 days — which happens often — we escalate to the credit bureaus using their own inadequate response as evidence, citing Johnson v. MBNA.</p>'
+          + '<p>Every step is documented, tracked, and visible to you in a client portal built specifically for this process.</p>',
+      },
+      4: {
+        subject: 'Ready to Start Your Case?',
+        headline: 'Let\'s get your forensic audit built.',
+        content: '<p>' + firstName + ', if you\'re ready to move forward, here\'s what we need:</p>'
+          + '<ul><li>Your most recent 3-bureau credit report (Equifax, Experian, TransUnion)</li><li>A signed Limited Power of Attorney authorizing us to act on your behalf for credit dispute purposes only</li></ul>'
+          + '<p>Once we have both, we build your forensic audit, identify every actionable violation in your file, and begin Phase 1 direct-to-furnisher disputes — typically within days.</p>'
+          + '<p>Reply to this email or call 970-644-0063 and we\'ll get you started today.</p>',
+      },
+      5: {
+        subject: 'Still Thinking It Over?',
+        headline: 'No pressure — just here when you\'re ready.',
+        content: '<p>Hi ' + firstName + ', wanted to check in one more time. Credit disputes are time-sensitive in one specific way: the sooner accurate legal disputes are on record, the sooner the 30-day furnisher response clocks start running.</p>'
+          + '<p>There\'s no cost to get your forensic audit built and reviewed with you. If you have questions about the process, your specific accounts, or anything else — just reply to this email or call 970-644-0063.</p>'
+          + '<p>We\'re here whenever you\'re ready.</p>',
+      },
+    };
+
+    const drip = drips[emailNumber];
+    if (!drip) return { statusCode: 400, body: JSON.stringify({ error: 'Unknown emailNumber: ' + emailNumber }) };
+
+    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
+      + '<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F8F9FA;">'
+      + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:10px;">'
+      + '<div style="background:#C9A84C;border-radius:5px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;"><span style="color:#1B2A4A;font-weight:800;font-size:12px;">CC</span></div>'
+      + '<div><div style="color:#C9A84C;font-weight:700;font-size:14px;">Credit Comeback Club</div>'
+      + '<div style="color:rgba(255,255,255,0.5);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;">Forensic Credit Dispute Services</div></div></div>'
+      + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:28px;border-radius:0 0 8px 8px;">'
+      + '<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 20px;line-height:1.3;">' + drip.headline + '</h1>'
+      + '<div style="font-size:13px;color:#374151;line-height:1.7;">' + drip.content + '</div>'
+      + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;">'
+      + '<p style="font-size:11px;color:#9CA3AF;margin:8px 0 0;">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063 | creditcomebackclub.com | Veteran-Owned</p>'
+      + '</div></body></html>';
+
+    try {
+      await sendViaSendGrid(sgKey, leadEmail, drip.subject, html);
+      return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+    } catch (e) {
+      return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    }
+  }
+
   if (action === 'send_educational') {
     const { clientName, clientEmail, emailNumber } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
