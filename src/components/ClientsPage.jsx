@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Users, FileText, Mail, UserPlus, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X, Send } from 'lucide-react';
-import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff } from '../utils/storage';
+import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff, updateLeadInfo } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
@@ -948,10 +948,29 @@ function AddLeadModal({ onClose, onCreated }) {
   );
 }
 
-function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit }) {
+function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, onChanged }) {
   const [isOpen, setIsOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState(false);
+  const [emailVal, setEmailVal] = React.useState(c.email || '');
+  const [phoneVal, setPhoneVal] = React.useState(c.leadPhone || '');
+  const [sourceVal, setSourceVal] = React.useState(c.leadSource || '');
+  const [notesVal, setNotesVal] = React.useState(c.leadNotes || '');
+  const [saving, setSaving] = React.useState(false);
   const created = c.leadCreatedAt ? new Date(c.leadCreatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
   const hasAudits = (c.audits || []).length > 0;
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await updateLeadInfo(c.name, { email: emailVal.trim(), phone: phoneVal.trim(), source: sourceVal, notes: notesVal.trim() });
+      setEditing(false);
+      if (onChanged) await onChanged();
+    } catch (e) {
+      alert('Could not save: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="bg-white rounded overflow-hidden border border-border">
@@ -974,17 +993,53 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit }) 
                 {c.audits.length} audit{c.audits.length === 1 ? '' : 's'}
               </span>
             )}
+            {!c.email && (
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium bg-red-50 text-red-700">
+                No email — drip won't send
+              </span>
+            )}
           </div>
-          <div className="flex items-center gap-3 flex-wrap mt-1 text-[11px] text-ink-muted">
-            {c.email && <span>{c.email}</span>}
-            {c.leadPhone && <span>{c.leadPhone}</span>}
-            {created && <span>Added {created}</span>}
-          </div>
-          {c.leadNotes && (
-            <p className="text-[12px] text-ink-muted mt-1.5">{c.leadNotes}</p>
+
+          {editing ? (
+            <div className="mt-2 space-y-2 max-w-md">
+              <input type="email" value={emailVal} onChange={e => setEmailVal(e.target.value)} placeholder="Email"
+                className="w-full border border-border rounded-sm px-2 py-1.5 text-[12px] focus:outline-none focus:border-navy" />
+              <input type="text" value={phoneVal} onChange={e => setPhoneVal(e.target.value)} placeholder="Phone"
+                className="w-full border border-border rounded-sm px-2 py-1.5 text-[12px] focus:outline-none focus:border-navy" />
+              <select value={sourceVal} onChange={e => setSourceVal(e.target.value)}
+                className="w-full border border-border rounded-sm px-2 py-1.5 text-[12px] focus:outline-none focus:border-navy bg-white">
+                <option value="">Select source…</option>
+                <option value="Razu Referral">Razu Referral</option>
+                <option value="Facebook">Facebook</option>
+                <option value="Website">Website</option>
+                <option value="Word of Mouth">Word of Mouth</option>
+                <option value="Other">Other</option>
+              </select>
+              <textarea value={notesVal} onChange={e => setNotesVal(e.target.value)} placeholder="Notes" rows={2}
+                className="w-full border border-border rounded-sm px-2 py-1.5 text-[12px] focus:outline-none focus:border-navy resize-none" />
+              <div className="flex items-center gap-2">
+                <button onClick={handleSave} disabled={saving}
+                  className="text-[11px] uppercase tracking-wider text-white bg-navy px-3 py-1 rounded-sm disabled:opacity-50">
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={() => setEditing(false)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 flex-wrap mt-1 text-[11px] text-ink-muted">
+                {c.email && <span>{c.email}</span>}
+                {c.leadPhone && <span>{c.leadPhone}</span>}
+                {created && <span>Added {created}</span>}
+                <button onClick={() => setEditing(true)} className="text-navy hover:text-gold uppercase tracking-wider text-[10px]">Edit</button>
+              </div>
+              {c.leadNotes && (
+                <p className="text-[12px] text-ink-muted mt-1.5">{c.leadNotes}</p>
+              )}
+            </>
           )}
         </div>
-        {isAdmin && (
+        {isAdmin && !editing && (
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={onConvert}

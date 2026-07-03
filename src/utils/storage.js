@@ -48,6 +48,17 @@ export async function updateClientEmail(clientName, email) {
   if (error) throw error;
 }
 
+export async function updateLeadInfo(clientName, { email, phone, source, notes }) {
+  const userId = await getUserId();
+  const patch = { user_id: userId, name: clientName };
+  if (email !== undefined) patch.email = email || null;
+  if (phone !== undefined) patch.lead_phone = phone || null;
+  if (source !== undefined) patch.lead_source = source || null;
+  if (notes !== undefined) patch.lead_notes = notes || null;
+  const { error } = await supabase.from('clients').upsert(patch, { onConflict: 'user_id,name' });
+  if (error) throw error;
+}
+
 export async function toggleVip(clientName, isVip) {
   const userId = await getUserId();
   const { error } = await supabase.from('clients').upsert({
