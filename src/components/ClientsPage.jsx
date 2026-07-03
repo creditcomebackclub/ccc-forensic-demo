@@ -923,6 +923,8 @@ function AddLeadModal({ onClose, onCreated }) {
               className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy bg-white">
               <option value="">Select source…</option>
               <option value="Razu Referral">Razu Referral</option>
+              <option value="Swiftedly">Swiftedly</option>
+              <option value="Fundhub">Fundhub</option>
               <option value="Facebook">Facebook</option>
               <option value="Website">Website</option>
               <option value="Word of Mouth">Word of Mouth</option>
@@ -1010,6 +1012,8 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
                 className="w-full border border-border rounded-sm px-2 py-1.5 text-[12px] focus:outline-none focus:border-navy bg-white">
                 <option value="">Select source…</option>
                 <option value="Razu Referral">Razu Referral</option>
+                <option value="Swiftedly">Swiftedly</option>
+                <option value="Fundhub">Fundhub</option>
                 <option value="Facebook">Facebook</option>
                 <option value="Website">Website</option>
                 <option value="Word of Mouth">Word of Mouth</option>
