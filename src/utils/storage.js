@@ -224,6 +224,7 @@ function normalizeLetter(l) {
     date: l.date,
     html: l.html,
     summary: l.summary,
+    coveredFurnishers: l.covered_furnishers || [],
     mailedDate: l.mailed_date,
     responseOutcome: l.response_outcome,
     notificationsSent: l.notifications_sent || [],

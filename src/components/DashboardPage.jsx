@@ -84,7 +84,7 @@ function computeDashboard(clients) {
 
       if (l.phase?.startsWith('Phase 3')) { phase3++; continue; }
       const st = letterStatus(l);
-      const hasPhase3 = c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher);
+      const hasPhase3 = c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
 
       if (!l.mailedDate) {
         mailingQueue.push({ letterId: l.id, client: c.name, furnisher: l.furnisher, isVip: c.isVip, savedAt: l.savedAt, letter: l });
