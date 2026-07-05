@@ -176,6 +176,8 @@ export async function updateLetter(id, patch) {
   if ('trackingNumber' in patch) mapped.tracking_number = patch.trackingNumber;
   if ('trackingStatus' in patch) mapped.tracking_status = patch.trackingStatus;
   if ('deliveredAt' in patch) mapped.delivered_at = patch.deliveredAt;
+  if ('html' in patch) mapped.html = patch.html;
+  if ('summary' in patch) mapped.summary = patch.summary;
 
   const { data, error } = await supabase
     .from('letters')
