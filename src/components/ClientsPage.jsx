@@ -106,7 +106,7 @@ function AuditorTag({ name }) {
   return <span className="inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-navy text-gold">{name}</span>;
 }
 
-function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail, onOpenAccount }) {
+function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail, onOpenAccount, onEdit }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
@@ -168,6 +168,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
           {urgency && <StatusBadge label={urgency.label} tone={urgency.tone} />}
           <StatusBadge label={status.label} tone={status.tone} />
           <button onClick={() => onView(l)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">View</button>
+          {onEdit && <button onClick={() => onEdit(l)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Edit</button>}
           <button onClick={handleDelete} className="text-[11px] uppercase tracking-wider text-ink-faint hover:text-red-600" title="Delete letter">Delete</button>
           {!isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response') && (
             <button onClick={() => onAnalyze(l)}
@@ -296,6 +297,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [togglingVip, setTogglingVip] = useState(null);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
   const [accountTimeline, setAccountTimeline] = useState(null); // { accountId, furnisher, letters, accountData }
+  const [editingLetterHtml, setEditingLetterHtml] = useState(null);
   const [diffLoading, setDiffLoading] = useState(null);
   const [diffResult, setDiffResult] = useState(null);
   const [activeFilter, setActiveFilter] = useState(initialFilter || null);
@@ -709,7 +711,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                         <p className="text-[12px] text-ink-muted py-4 text-center">No letters yet — run an audit to generate Phase 1 letters.</p>
                       ) : (
                         c.letters.map((l) => (
-                          <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter} onOpenAccount={(letter) => {
+                          <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter} onEdit={(letter) => setEditingLetterHtml(letter)}
+                          onOpenAccount={(letter) => {
                             const clientLetters = c.letters.filter((pl) => pl.accountId === letter.accountId && pl.furnisher === letter.furnisher);
                             const latestAudit = [...c.audits].sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''))[0];
                             const accountData = latestAudit && latestAudit.audit && latestAudit.audit.accounts
@@ -779,6 +782,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       {createModal}
       {leadModal}
       <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />
+      <LetterEditModal letter={editingLetterHtml} onClose={() => setEditingLetterHtml(null)} onSaved={load} />
       <DiffResultModal result={diffResult} onClose={() => setDiffResult(null)} />
     </div>
   );
@@ -1252,6 +1256,60 @@ function DiffResultModal({ result, onClose }) {
           {diff.deleted.length === 0 && diff.changed.length === 0 && diff.new.length === 0 && (
             <p className="text-[13px] text-ink-muted">No changes detected between these two reports.</p>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LetterEditModal({ letter, onClose, onSaved }) {
+  const [html, setHtml] = React.useState('');
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (letter) setHtml(letter.html || '');
+  }, [letter]);
+
+  if (!letter) return null;
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await updateLetter(letter.id, { html });
+      if (onSaved) await onSaved();
+      onClose();
+    } catch (e) {
+      alert('Could not save: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={onClose}>
+      <div className="bg-white border border-border rounded w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
+          <div>
+            <h2 className="text-[14px] font-medium text-ink">Edit Letter</h2>
+            <p className="text-[12px] text-ink-muted mt-0.5">{letter.furnisher} — {letter.phase}</p>
+          </div>
+          <button onClick={onClose} className="text-ink-faint hover:text-ink">✕</button>
+        </div>
+        <div className="p-4 flex-1 overflow-y-auto">
+          <p className="text-[11px] text-ink-faint mb-2">Raw HTML. Edit dates, figures, or wording directly, then Save.</p>
+          <textarea
+            value={html}
+            onChange={e => setHtml(e.target.value)}
+            className="w-full h-96 border border-border rounded-sm p-3 text-[12px] font-mono focus:outline-none focus:border-navy resize-none"
+            spellCheck={false}
+          />
+        </div>
+        <div className="p-4 border-t border-border flex items-center justify-end gap-2 shrink-0">
+          <button onClick={onClose} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink px-3 py-2">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="text-[11px] uppercase tracking-wider text-white bg-navy px-4 py-2 rounded-sm disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save'}
+          </button>
         </div>
       </div>
     </div>
