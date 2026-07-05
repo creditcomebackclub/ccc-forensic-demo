@@ -2,6 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
 import { LogOut, FileText, Mail, CheckCircle, Clock, AlertCircle, Shield, TrendingUp, ExternalLink, ChevronRight, Star, Calendar } from 'lucide-react';
 
+const RESPONSE_WINDOW_DAYS = 30;
+function todayISO() { return new Date().toISOString().slice(0, 10); }
+function daysBetween(aIso, bIso) {
+  const a = new Date(aIso + 'T00:00:00');
+  const b = new Date(bIso + 'T00:00:00');
+  return Math.round((b - a) / 86400000);
+}
+function responseCountdown(l) {
+  if (l.response_outcome === 'deleted' || l.response_outcome === 'received') return null;
+  const clockStart = l.delivered_at ? l.delivered_at.slice(0, 10) : l.mailed_date;
+  if (!clockStart) return null;
+  const elapsed = daysBetween(clockStart, todayISO());
+  const remaining = RESPONSE_WINDOW_DAYS - elapsed;
+  if (remaining > 0) return { label: 'Day ' + elapsed + ' of 30 — ' + remaining + ' day' + (remaining === 1 ? '' : 's') + ' remaining', tone: remaining <= 7 ? '#D97706' : '#6B7280', bg: remaining <= 7 ? '#FFFBEB' : '#F9FAFB' };
+  return { label: 'Response window closed — ready for escalation', tone: '#B91C1C', bg: '#FEF2F2' };
+}
+
 function ScoreMeter({ label, start, current }) {
   const score = current || start || null;
   const diff = (start && current && current !== start) ? current - start : null;
@@ -478,6 +495,16 @@ export default function ClientPortal({ session, onSignOut }) {
                         {l.summary}
                       </div>
                     )}
+                    {(() => {
+                      const cd = responseCountdown(l);
+                      if (!cd) return null;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: cd.tone, background: cd.bg, borderRadius: 4, padding: '6px 10px', marginTop: 10 }}>
+                          <Calendar size={12} strokeWidth={2} />
+                          {cd.label}
+                        </div>
+                      );
+                    })()}
                     {l.mailed_date && (
                       <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 8 }}>
                         Mailed {new Date(l.mailed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
