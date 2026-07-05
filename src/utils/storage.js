@@ -97,12 +97,14 @@ export async function saveAudit(audit) {
         const exp = scores.experian || scores.exp || null;
         const tu = scores.transunion || scores.tu || null;
         if (eq || exp || tu) {
+          const isNewRow = !existing || existing.length === 0;
           await supabase.from('clients').upsert({
             user_id: userId,
             name: clientName,
             score_eq_start: eq ? parseInt(eq) : null,
             score_exp_start: exp ? parseInt(exp) : null,
             score_tu_start: tu ? parseInt(tu) : null,
+            ...(isNewRow ? { status: 'lead' } : {}),
           }, { onConflict: 'user_id,name' });
         }
       }
@@ -346,7 +348,7 @@ export async function adminListClients() {
       c.leadNotes = meta.lead_notes || null;
       c.leadCreatedAt = meta.lead_created_at || null;
     } else {
-      c.status = 'active';
+      c.status = 'lead';
     }
   });
 
