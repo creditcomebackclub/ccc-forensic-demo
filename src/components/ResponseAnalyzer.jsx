@@ -230,6 +230,7 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
       saved_at: new Date().toISOString(),
       date: today,
       html,
+      summary: analysis.summary || null,
       mailed_date: null,
       response_outcome: null,
       response_date: null,
