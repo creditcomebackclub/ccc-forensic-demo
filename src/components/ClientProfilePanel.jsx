@@ -303,6 +303,17 @@ function OnboardingButton({ client, onChanged }) {
     setErr(null);
     try {
       const { supabase } = await import('../utils/supabase.js');
+
+      // Ensure client_profiles row exists BEFORE sending the magic link.
+      // Without this, first login fails the client check in App.jsx's loadUser()
+      // and the person gets routed to the internal admin shell instead of the client portal.
+      const { error: cpError } = await supabase.from('client_profiles').upsert({
+        full_name: client.name,
+        email: client.email,
+        onboarding_complete: false,
+      }, { onConflict: 'email' });
+      if (cpError) throw cpError;
+
       const { error } = await supabase.auth.signInWithOtp({
         email: client.email,
         options: { emailRedirectTo: window.location.origin }
