@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
+import { generatePersonalInfoCleanupLetter, generateInquiryRemovalLetter } from '../utils/api';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
   FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale,
@@ -164,6 +165,48 @@ function generateAuditPDF(audit) {
 
 export default function AuditResults({ audit, onGenerateLetter, onReset, onBackToClients }) {
   const [existingLetters, setExistingLetters] = React.useState(new Set());
+  const [piCleanupStatus, setPiCleanupStatus] = React.useState(null); // null | 'running' | 'done' | error string
+  const [inquiryRemovalStatus, setInquiryRemovalStatus] = React.useState(null);
+
+  const BUREAUS = ['Equifax', 'Experian', 'TransUnion'];
+
+  const runPersonalInfoCleanup = async () => {
+    setPiCleanupStatus('running');
+    try {
+      const personalInfo = audit.personalInfo || {};
+      const hasAnything = (personalInfo.formerAddresses || []).length > 0
+        || (personalInfo.nameVariants || []).length > 0
+        || (personalInfo.formerEmployers || []).length > 0;
+      if (!hasAnything) throw new Error('No stale personal information found on this audit.');
+      for (const bureau of BUREAUS) {
+        await generatePersonalInfoCleanupLetter({ ...audit.client, personalInfo, bureau });
+      }
+      setPiCleanupStatus('done');
+    } catch (e) {
+      setPiCleanupStatus(e.message || 'Failed');
+    }
+  };
+
+  const runInquiryRemoval = async () => {
+    setInquiryRemovalStatus('running');
+    try {
+      const allInquiries = audit.inquiries || [];
+      let anySent = false;
+      for (const bureau of BUREAUS) {
+        const bureauCode = bureau === 'Equifax' ? 'EQ' : bureau === 'Experian' ? 'EXP' : 'TU';
+        const eligible = allInquiries.filter((i) =>
+          (i.bureaus || []).includes(bureauCode) && i.category !== 'linked_to_open_account'
+        );
+        if (eligible.length === 0) continue;
+        await generateInquiryRemovalLetter({ ...audit.client, bureau }, eligible);
+        anySent = true;
+      }
+      if (!anySent) throw new Error('No eligible inquiries found — all are linked to open accounts or none exist.');
+      setInquiryRemovalStatus('done');
+    } catch (e) {
+      setInquiryRemovalStatus(e.message || 'Failed');
+    }
+  };
 
   React.useEffect(() => {
     const clientName = audit && audit.client && audit.client.name;
@@ -206,6 +249,18 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           onClick={function() { emailAuditToClient(audit); }}
           className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
           <Mail size={13} strokeWidth={1.75} /> Email Client
+        </button>
+        <button
+          onClick={runPersonalInfoCleanup}
+          disabled={piCleanupStatus === 'running'}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors disabled:opacity-50">
+          {piCleanupStatus === 'running' ? 'Generating…' : piCleanupStatus === 'done' ? '✓ Personal Info Cleanup Sent' : 'Personal Info Cleanup'}
+        </button>
+        <button
+          onClick={runInquiryRemoval}
+          disabled={inquiryRemovalStatus === 'running'}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors disabled:opacity-50">
+          {inquiryRemovalStatus === 'running' ? 'Generating…' : inquiryRemovalStatus === 'done' ? '✓ Inquiry Removal Sent' : 'Inquiry Removal'}
         </button>
         <button
           onClick={onReset}
