@@ -111,7 +111,7 @@ export async function runTripleBureauAudit(eqBase64, expBase64, tuBase64, onProg
   const t = today();
 
   const bureauPrompt = (bureau) =>
-    `BUREAU_AUDIT_JSON_MODE\n\nToday is ${t}. Bureau: ${bureau}.\n\nParse this single-bureau credit report. Extract client info, score, and every account with: furnisher, account number (masked), type, status, balance, pastDue, lastPaymentDate, dofd, paymentHistory, remarks, Metro 2 violations (field, currentValue, expectedValue, reason), accountClassification (A/B/C).\n\nOutput JSON only:\n{"bureau":"${bureau}","client":{"name":"","address":"","score":0},"accounts":[{"furnisher":"","accountNumber":"","type":"","status":"","balance":0,"pastDue":0,"lastPaymentDate":"","dofd":"","paymentHistory":"","accountClassification":"A","violations":[{"field":"","currentValue":"","expectedValue":"","reason":""}]}]}`;
+    `BUREAU_AUDIT_JSON_MODE\n\nToday is ${t}. Bureau: ${bureau}.\n\nParse this single-bureau credit report. Extract client info, score, every account, every hard inquiry, and every personal information variant (former addresses, name variants, former employers) shown in the report.\n\nFor accounts, extract: furnisher, account number (masked), type, status, balance, pastDue, lastPaymentDate, dofd, paymentHistory, remarks, Metro 2 violations (field, currentValue, expectedValue, reason), accountClassification (A/B/C).\n\nFor inquiries, extract every hard inquiry listed: furnisher name, date of inquiry, and type if stated (e.g. 'Individual', 'Joint', 'Promotional'). Do not omit any inquiry regardless of age.\n\nFor personal information, extract every former/alternate address, every name variant, and every former employer listed in the report's personal information or 'also known as' section.\n\nOutput JSON only:\n{"bureau":"${bureau}","client":{"name":"","address":"","score":0},"accounts":[{"furnisher":"","accountNumber":"","type":"","status":"","balance":0,"pastDue":0,"lastPaymentDate":"","dofd":"","paymentHistory":"","accountClassification":"A","violations":[{"field":"","currentValue":"","expectedValue":"","reason":""}]}],"inquiries":[{"furnisher":"","date":"","type":""}],"personalInfo":{"formerAddresses":[""],"nameVariants":[""],"formerEmployers":[""]}}`;
 
   onProgress && onProgress('Analyzing Equifax report...', 10);
   const eqText = await claudeCall(apiKey, pdfContent(eqBase64, bureauPrompt('Equifax')));
@@ -242,4 +242,51 @@ export function fileToBase64(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+
+export async function generatePersonalInfoCleanupLetter(client) {
+  const apiKey = getApiKey();
+  const t = today();
+
+  const personalInfo = (client && client.personalInfo) || {};
+  const bureau = (client && client.bureau) || 'the consumer reporting agency';
+
+  const data = JSON.stringify({ client, personalInfo, bureau }, null, 2);
+
+  const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting a Personal Information Accuracy Dispute addressed directly to ${bureau}, NOT to any furnisher. This is a completely separate letter type from a Metro 2 tradeline dispute — it does not dispute any account, balance, or payment history. It disputes only the accuracy of identifying information in the consumer's file.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department, not a furnisher.\n2. Cite 15 U.S.C. §1681e(b) — the maximum possible accuracy standard.\n3. Explain that stale former addresses, name variants, and former employers listed in personalInfo increase mixed-file risk and do not reflect the consumer's current, accurate identity.\n4. List each specific former address, name variant, and former employer provided in the data, and demand each one be removed or updated to reflect only current, verified information.\n5. Do NOT dispute any account, balance, payment history, or inquiry in this letter. This letter concerns identity information only.\n6. Demand written confirmation of the correction within 30 days.\n7. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, no emotional appeals, statements and demands only.\n8. If clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n\nOutput complete HTML only. No prose. No fences.`;
+
+  const raw = await claudeCall(apiKey, [{ type: 'text', text: instructions }], 8000);
+  const m = raw.match(/<!DOCTYPE[\s\S]*<\/html>/i) || raw.match(/<html[\s\S]*<\/html>/i);
+  const html = m ? m[0] : raw;
+
+  if (!html || html.trim().length < 100) throw new Error('Personal information cleanup letter generation failed — please try again');
+
+  const syntheticAccount = { furnisher: bureau, id: 'personal-info-cleanup', type: null };
+  await saveLetter(syntheticAccount, client, html, null, 'Personal Info Cleanup');
+  return html;
+}
+
+export async function generateInquiryRemovalLetter(client, inquiries) {
+  const apiKey = getApiKey();
+  const t = today();
+
+  const bureau = (client && client.bureau) || 'the consumer reporting agency';
+  const eligibleInquiries = (inquiries || []).filter((i) => i.category !== 'linked_to_open_account');
+
+  if (eligibleInquiries.length === 0) throw new Error('No eligible inquiries to dispute — all provided inquiries are linked to open accounts');
+
+  const data = JSON.stringify({ client, inquiries: eligibleInquiries, bureau }, null, 2);
+
+  const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting an Inquiry Reinvestigation Demand addressed directly to ${bureau}, NOT to any furnisher. This letter disputes only the hard inquiries listed in the data below. It does not dispute any tradeline, account, balance, or payment history.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department.\n2. Cite 15 U.S.C. §1681i for the reinvestigation duty and 15 U.S.C. §1681b for the permissible purpose requirement every inquiry must satisfy.\n3. For each inquiry listed, state the furnisher name and date, and state that the consumer does not recognize or cannot verify a permissible purpose for this specific inquiry.\n4. Demand the bureau contact each listed subscriber to verify permissible purpose, and demand deletion of any inquiry the subscriber cannot verify within 30 days per 15 U.S.C. §1681i(a)(5)(A).\n5. Do NOT state or imply fraud or identity theft unless that is explicitly present in the provided data — the default framing is "cannot verify/does not recognize," not an accusation.\n6. Do NOT dispute any account, balance, or payment history in this letter.\n7. Demand written confirmation of the results within 30 days.\n8. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, statements and demands only.\n9. If clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n\nOutput complete HTML only. No prose. No fences.`;
+
+  const raw = await claudeCall(apiKey, [{ type: 'text', text: instructions }], 8000);
+  const m = raw.match(/<!DOCTYPE[\s\S]*<\/html>/i) || raw.match(/<html[\s\S]*<\/html>/i);
+  const html = m ? m[0] : raw;
+
+  if (!html || html.trim().length < 100) throw new Error('Inquiry removal letter generation failed — please try again');
+
+  const syntheticAccount = { furnisher: bureau, id: 'inquiry-removal', type: null };
+  await saveLetter(syntheticAccount, client, html, null, 'Inquiry Removal');
+  return html;
 }

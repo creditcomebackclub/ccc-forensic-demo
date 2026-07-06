@@ -315,7 +315,22 @@ When the user message contains the marker \`<MODE>AUDIT_JSON</MODE>\`, you MUST 
   ],
   "violationsByType": [
     { "type": "string like 'Field 18 Suppression'", "count": number, "statute": "string" }
-  ]
+  ],
+  "inquiries": [
+    {
+      "furnisher": "string",
+      "date": "string (date of inquiry)",
+      "bureaus": ["EQ", "EXP", "TU"] (array of bureaus this inquiry appears on),
+      "linkedAccountId": "string matching an account id above, or null if no matching open account exists",
+      "ageInMonths": number (approximate months since inquiry date, relative to report date),
+      "category": "no_linked_account" | "duplicate" | "stale" | "linked_to_open_account"
+    }
+  ],
+  "personalInfo": {
+    "formerAddresses": ["string"],
+    "nameVariants": ["string"],
+    "formerEmployers": ["string"]
+  }
 }
 \`\`\`
 
