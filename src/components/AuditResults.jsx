@@ -333,6 +333,77 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
         </div>
       )}
 
+      {/* Inquiries & Personal Information — review before generating */}
+      {((audit.inquiries || []).length > 0 || (audit.personalInfo && (
+        (audit.personalInfo.formerAddresses || []).length > 0 ||
+        (audit.personalInfo.nameVariants || []).length > 1 ||
+        (audit.personalInfo.formerEmployers || []).length > 0
+      ))) && (
+        <div className="bg-white border border-border rounded p-6">
+          <div className="flex items-center gap-2 mb-1">
+            <FileWarning size={14} className="text-amber-600" strokeWidth={1.75} />
+            <h3 className="ccc-display text-sm font-medium text-ink">Inquiries &amp; Personal Information</h3>
+          </div>
+          <p className="text-[12px] text-ink-muted mb-4">Review before using the buttons above. A "no linked account" tag means no matching tradeline was found — it does NOT by itself mean the inquiry was unauthorized. Confirm with the client before disputing.</p>
+
+          {(audit.inquiries || []).length > 0 && (
+            <div className="mb-5">
+              <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Hard Inquiries ({audit.inquiries.length})</div>
+              <div className="space-y-1.5">
+                {audit.inquiries.map((inq, i) => {
+                  const cfg = {
+                    no_linked_account: { label: 'No linked account', bg: '#FFFBEB', color: '#B45309' },
+                    linked_to_open_account: { label: 'Linked — do not dispute', bg: '#F0FDF4', color: '#15803D' },
+                    duplicate: { label: 'Duplicate', bg: '#EFF6FF', color: '#1D4ED8' },
+                    stale: { label: 'Stale (' + inq.ageInMonths + 'mo)', bg: '#FEF2F2', color: '#B91C1C' },
+                  }[inq.category] || { label: inq.category, bg: '#F9FAFB', color: '#6B7280' };
+                  return (
+                    <div key={i} className="flex items-center justify-between gap-2 py-1.5 border-b border-border last:border-b-0">
+                      <div className="text-[12px] text-ink">
+                        <span className="font-medium">{inq.furnisher}</span>
+                        <span className="text-ink-muted"> · {inq.date} · {(inq.bureaus || []).join('/')}</span>
+                      </div>
+                      <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm font-medium shrink-0" style={{ background: cfg.bg, color: cfg.color }}>
+                        {cfg.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {audit.personalInfo && (
+            <div className="grid grid-cols-3 gap-4">
+              {(audit.personalInfo.formerAddresses || []).length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Former Addresses</div>
+                  <ul className="text-[12px] text-ink-muted space-y-1">
+                    {audit.personalInfo.formerAddresses.map((a, i) => <li key={i}>{a}</li>)}
+                  </ul>
+                </div>
+              )}
+              {(audit.personalInfo.nameVariants || []).length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Name Variants</div>
+                  <ul className="text-[12px] text-ink-muted space-y-1">
+                    {audit.personalInfo.nameVariants.map((n, i) => <li key={i}>{n}</li>)}
+                  </ul>
+                </div>
+              )}
+              {(audit.personalInfo.formerEmployers || []).length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Former Employers</div>
+                  <ul className="text-[12px] text-ink-muted space-y-1">
+                    {audit.personalInfo.formerEmployers.map((e, i) => <li key={i}>{e}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Round 1 Batch 1 */}
       <AccountTable
         title="Round 1 — Batch 1"
