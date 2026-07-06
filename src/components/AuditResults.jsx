@@ -167,6 +167,13 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   const [existingLetters, setExistingLetters] = React.useState(new Set());
   const [piCleanupStatus, setPiCleanupStatus] = React.useState(null); // null | 'running' | 'done' | error string
   const [inquiryRemovalStatus, setInquiryRemovalStatus] = React.useState(null);
+  const [selectedInquiryKeys, setSelectedInquiryKeys] = React.useState(new Set());
+  const inqKey = (i) => i.furnisher + '|' + i.date;
+
+  React.useEffect(() => {
+    const eligible = (audit.inquiries || []).filter((i) => i.category !== 'linked_to_open_account');
+    setSelectedInquiryKeys(new Set(eligible.map(inqKey)));
+  }, [audit.inquiries]);
 
   const BUREAUS = ['Equifax', 'Experian', 'TransUnion'];
 
@@ -195,7 +202,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
       for (const bureau of BUREAUS) {
         const bureauCode = bureau === 'Equifax' ? 'EQ' : bureau === 'Experian' ? 'EXP' : 'TU';
         const eligible = allInquiries.filter((i) =>
-          (i.bureaus || []).includes(bureauCode) && i.category !== 'linked_to_open_account'
+          (i.bureaus || []).includes(bureauCode) && i.category !== 'linked_to_open_account' && selectedInquiryKeys.has(inqKey(i))
         );
         if (eligible.length === 0) continue;
         await generateInquiryRemovalLetter({ ...audit.client, bureau }, eligible);
@@ -357,11 +364,32 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
                     duplicate: { label: 'Duplicate', bg: '#EFF6FF', color: '#1D4ED8' },
                     stale: { label: 'Stale (' + inq.ageInMonths + 'mo)', bg: '#FEF2F2', color: '#B91C1C' },
                   }[inq.category] || { label: inq.category, bg: '#F9FAFB', color: '#6B7280' };
+                  const key = inqKey(inq);
+                  const disputable = inq.category !== 'linked_to_open_account';
+                  const checked = selectedInquiryKeys.has(key);
                   return (
                     <div key={i} className="flex items-center justify-between gap-2 py-1.5 border-b border-border last:border-b-0">
-                      <div className="text-[12px] text-ink">
-                        <span className="font-medium">{inq.furnisher}</span>
-                        <span className="text-ink-muted"> · {inq.date} · {(inq.bureaus || []).join('/')}</span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        {disputable ? (
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setSelectedInquiryKeys((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(key)) next.delete(key); else next.add(key);
+                                return next;
+                              });
+                            }}
+                            className="shrink-0"
+                          />
+                        ) : (
+                          <span className="w-[13px] shrink-0" />
+                        )}
+                        <div className="text-[12px] text-ink">
+                          <span className="font-medium">{inq.furnisher}</span>
+                          <span className="text-ink-muted"> · {inq.date} · {(inq.bureaus || []).join('/')}</span>
+                        </div>
                       </div>
                       <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm font-medium shrink-0" style={{ background: cfg.bg, color: cfg.color }}>
                         {cfg.label}
