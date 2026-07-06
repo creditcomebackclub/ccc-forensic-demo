@@ -167,6 +167,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   const [existingLetters, setExistingLetters] = React.useState(new Set());
   const [piCleanupStatus, setPiCleanupStatus] = React.useState(null); // null | 'running' | 'done' | error string
   const [inquiryRemovalStatus, setInquiryRemovalStatus] = React.useState(null);
+  const [testStatus, setTestStatus] = React.useState(null);
 
   const BUREAUS = ['Equifax', 'Experian', 'TransUnion'];
 
@@ -262,6 +263,36 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors disabled:opacity-50">
           {inquiryRemovalStatus === 'running' ? 'Generating…' : inquiryRemovalStatus === 'done' ? '✓ Inquiry Removal Sent' : 'Inquiry Removal'}
         </button>
+        <button
+          onClick={async function() {
+            setTestStatus('running');
+            try {
+              const testClient = { name: 'TEST — Synthetic QA', address: '1 Test St, Testville, CO 80000' };
+              const testPersonalInfo = {
+                formerAddresses: ['999 Old Rd, Prior City, CA 90001'],
+                nameVariants: ['Test Q A Person'],
+                formerEmployers: ['Fake Employer Inc'],
+              };
+              const testInquiries = [
+                { furnisher: 'Random Auto Lender', date: '2024-01-15', bureaus: ['EQ', 'EXP', 'TU'], category: 'no_linked_account' },
+                { furnisher: 'Existing Credit Card Co', date: '2024-03-01', bureaus: ['EQ'], category: 'linked_to_open_account' },
+                { furnisher: 'Duplicate Pull Bank', date: '2024-02-10', bureaus: ['TU'], category: 'duplicate' },
+              ];
+              await generatePersonalInfoCleanupLetter({ ...testClient, personalInfo: testPersonalInfo, bureau: 'Equifax' });
+              const eqEligible = testInquiries.filter((i) => i.bureaus.includes('EQ') && i.category !== 'linked_to_open_account');
+              await generateInquiryRemovalLetter({ ...testClient, bureau: 'Equifax' }, eqEligible);
+              setTestStatus('done — check TEST — Synthetic QA in Clients tab, should show 2 letters (Equifax excluded from inquiry test since its only EQ inquiry was linked_to_open_account and correctly filtered)');
+            } catch (e) {
+              setTestStatus('FAILED: ' + e.message);
+            }
+          }}
+          disabled={testStatus === 'running'}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-dashed border-amber-400 text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50">
+          🧪 {testStatus === 'running' ? 'Testing…' : 'Run Synthetic Test'}
+        </button>
+        {testStatus && testStatus !== 'running' && (
+          <div className="w-full text-[11px] text-ink-muted mt-1 basis-full">{testStatus}</div>
+        )}
         <button
           onClick={onReset}
           className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-sm border border-border text-ink-muted hover:bg-gray-50"
