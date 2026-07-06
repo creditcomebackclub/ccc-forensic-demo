@@ -1,5 +1,6 @@
 import { MASTER_SYSTEM_PROMPT } from "../prompts/masterPrompt.js";
 import { saveAudit, saveLetter } from "./storage.js";
+import { supabase } from "./supabase";
 
 function getApiKey() {
   let apiKey = localStorage.getItem('ccc_api_key');
@@ -253,7 +254,20 @@ export async function generatePersonalInfoCleanupLetter(client) {
   const bureau = (client && client.bureau) || 'the consumer reporting agency';
 
   const lpoaSigned = !!(client && client.lpoaSigned);
-  const data = JSON.stringify({ client, personalInfo, bureau, lpoaSigned }, null, 2);
+  let signatureData = null;
+  try {
+    const { data: cp } = await supabase.from('client_profiles').select('signature_data').eq('full_name', client.name).limit(1);
+    if (cp && cp.length > 0 && cp[0].signature_data) {
+      signatureData = cp[0].signature_data;
+    }
+    if (!signatureData) {
+      const { data: cm } = await supabase.from('clients').select('lpoa_signature_data').eq('name', client.name).limit(1);
+      if (cm && cm.length > 0 && cm[0].lpoa_signature_data?.signatureUrl) {
+        signatureData = cm[0].lpoa_signature_data.signatureUrl;
+      }
+    }
+  } catch(e) { console.warn('Could not look up signature:', e); }
+  const data = JSON.stringify({ client, personalInfo, bureau, lpoaSigned, clientSignature: signatureData }, null, 2);
 
   const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting a Personal Information Accuracy Dispute addressed directly to ${bureau}, NOT to any furnisher. This is a completely separate letter type from a Metro 2 tradeline dispute — it does not dispute any account, balance, or payment history. It disputes only the accuracy of identifying information in the consumer's file.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department, not a furnisher.\n2. Cite 15 U.S.C. §1681e(b) — the maximum possible accuracy standard.\n3. Explain that stale former addresses, name variants, and former employers listed in personalInfo increase mixed-file risk and do not reflect the consumer's current, accurate identity.\n4. List each specific former address, name variant, and former employer provided in the data, and demand each one be removed or updated to reflect only current, verified information.\n5. Do NOT dispute any account, balance, payment history, or inquiry in this letter. This letter concerns identity information only.\n6. Demand written confirmation of the correction within 30 days.\n7. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, no emotional appeals, statements and demands only.\n8. If clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n9. lpoaSigned is provided in the data. If lpoaSigned is true, include "Limited Power of Attorney" in the enclosures line. If lpoaSigned is false, do NOT list a Limited Power of Attorney as an enclosure under any circumstance — list only Government-Issued Photo ID and Proof of Current Address.\n\nOutput complete HTML only. No prose. No fences.`;
 
@@ -278,7 +292,20 @@ export async function generateInquiryRemovalLetter(client, inquiries) {
   if (eligibleInquiries.length === 0) throw new Error('No eligible inquiries to dispute — all provided inquiries are linked to open accounts');
 
   const lpoaSigned = !!(client && client.lpoaSigned);
-  const data = JSON.stringify({ client, inquiries: eligibleInquiries, bureau, lpoaSigned }, null, 2);
+  let signatureData = null;
+  try {
+    const { data: cp } = await supabase.from('client_profiles').select('signature_data').eq('full_name', client.name).limit(1);
+    if (cp && cp.length > 0 && cp[0].signature_data) {
+      signatureData = cp[0].signature_data;
+    }
+    if (!signatureData) {
+      const { data: cm } = await supabase.from('clients').select('lpoa_signature_data').eq('name', client.name).limit(1);
+      if (cm && cm.length > 0 && cm[0].lpoa_signature_data?.signatureUrl) {
+        signatureData = cm[0].lpoa_signature_data.signatureUrl;
+      }
+    }
+  } catch(e) { console.warn('Could not look up signature:', e); }
+  const data = JSON.stringify({ client, inquiries: eligibleInquiries, bureau, lpoaSigned, clientSignature: signatureData }, null, 2);
 
   const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting an Inquiry Reinvestigation Demand addressed directly to ${bureau}, NOT to any furnisher. This letter disputes only the hard inquiries listed in the data below. It does not dispute any tradeline, account, balance, or payment history.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department.\n2. Cite 15 U.S.C. §1681i for the reinvestigation duty and 15 U.S.C. §1681b for the permissible purpose requirement every inquiry must satisfy.\n3. For each inquiry listed, state the furnisher name and date, and state that the consumer does not recognize or cannot verify a permissible purpose for this specific inquiry.\n4. Demand the bureau contact each listed subscriber to verify permissible purpose, and demand deletion of any inquiry the subscriber cannot verify within 30 days per 15 U.S.C. §1681i(a)(5)(A).\n5. Do NOT state or imply fraud or identity theft unless that is explicitly present in the provided data — the default framing is "cannot verify/does not recognize," not an accusation.\n6. Do NOT dispute any account, balance, or payment history in this letter.\n7. Demand written confirmation of the results within 30 days.\n8. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, statements and demands only.\n9. If clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n10. lpoaSigned is provided in the data. If lpoaSigned is true, include "Limited Power of Attorney" in the enclosures line. If lpoaSigned is false, do NOT list a Limited Power of Attorney as an enclosure under any circumstance — list only Government-Issued Photo ID and Proof of Current Address.\n\nOutput complete HTML only. No prose. No fences.`;
 
