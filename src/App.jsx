@@ -244,6 +244,7 @@ export default function App() {
   const [session, setSession] = useState(undefined);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [profileLoadFailed, setProfileLoadFailed] = useState(false);
   const [view, setView] = useState(VIEW.DASHBOARD);
   const [clientsContext, setClientsContext] = useState(null);
   const [state, setState] = useState(STATE.IDLE);
@@ -316,9 +317,8 @@ export default function App() {
     setProfileLoading(true);
     // Safety timeout — never stay loading forever
     const safetyTimer = setTimeout(() => {
-      console.warn('loadUser timeout — forcing profile from session');
-      setProfile({ id: session.user.id, email: session.user.email, role: session.user.user_metadata?.role || 'admin', full_name: session.user.user_metadata?.full_name || session.user.email });
-      setIsClient(false);
+      console.warn('loadUser timeout — could not verify account role in time, showing retry screen rather than guessing a role');
+      setProfileLoadFailed(true);
       setProfileLoading(false);
     }, 5000);
     try {
@@ -425,6 +425,24 @@ export default function App() {
   }
 
   if (!session) return <AuthPage />;
+
+  if (profileLoadFailed) {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center">
+        <div className="text-center max-w-sm px-6">
+          <div className="text-[14px] text-ink font-medium mb-2">Couldn't verify your account</div>
+          <p className="text-[13px] text-ink-muted mb-4">This can happen on a slow connection. Please try again — we won't guess your account type.</p>
+          <button
+            onClick={() => { setProfileLoadFailed(false); window.location.reload(); }}
+            className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm"
+            style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (profileLoading || (session && !profile)) {
     return (
