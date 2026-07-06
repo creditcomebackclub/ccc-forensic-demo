@@ -758,7 +758,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       {lobMailerLetter && (
         <LobMailer
           letter={lobMailerLetter}
-          furnisherAddress={lobMailerLetter ? (lobMailerLetter.phase && lobMailerLetter.phase.startsWith('Phase 3') ? parseBureauAddress(lobMailerLetter.phase) : parseFurnisherAddress(lobMailerLetter.furnisher)) : null}
+          furnisherAddress={lobMailerLetter ? ((lobMailerLetter.phase && lobMailerLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(lobMailerLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal'].includes(lobMailerLetter.phase) ? parseBureauAddress(lobMailerLetter.furnisher) : parseFurnisherAddress(lobMailerLetter.furnisher))) : null}
           onClose={() => setLobMailerLetter(null)}
           onSent={async (data) => {
             await updateLetter(lobMailerLetter.id, {
