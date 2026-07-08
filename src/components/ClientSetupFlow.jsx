@@ -15,7 +15,7 @@ export default function ClientSetupFlow({ session, onComplete }) {
     if (password !== confirm) { setError('Passwords do not match.'); return; }
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password });
+      const { error } = await supabase.auth.updateUser({ password, data: { password_set: true } });
       if (error) throw error;
       setStep('onboarding');
     } catch (e) {
