@@ -287,6 +287,7 @@ export default function ClientProfilePanel({ client, onChanged }) {
 
       <Section title="Portal Access">
         <OnboardingButton client={client} onChanged={onChanged} />
+        <ImpersonateButton client={client} />
       </Section>
 
     </div>
@@ -363,6 +364,45 @@ function OnboardingButton({ client, onChanged }) {
           {sent && <div className="text-[11px] text-green-600 mt-1">Magic link sent to {client.email}</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+function ImpersonateButton({ client }) {
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+
+  const handleImpersonate = async () => {
+    if (!client.email) { setErr('No email on file.'); return; }
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch('/.netlify/functions/admin-impersonate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: client.email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed');
+      if (!data.link) throw new Error('No link returned');
+      window.open(data.link, '_blank');
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <button
+        onClick={handleImpersonate}
+        disabled={loading || !client.email}
+        className="flex items-center gap-2 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-amber-300 text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50"
+      >
+        {loading ? 'Generating…' : '🔑 View as Client'}
+      </button>
+      {err && <div className="text-[11px] text-red-600 mt-1">{err}</div>}
     </div>
   );
 }
