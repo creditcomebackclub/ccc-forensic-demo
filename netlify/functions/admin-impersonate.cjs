@@ -1,5 +1,3 @@
-const { createClient } = require('@supabase/supabase-js');
-
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
 
@@ -7,31 +5,33 @@ exports.handler = async (event) => {
     const { email } = JSON.parse(event.body || '{}');
     if (!email) return { statusCode: 400, body: JSON.stringify({ error: 'Email required' }) };
 
-    const supabaseAdmin = createClient(
-      process.env.VITE_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-      {
-        auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
-        realtime: { transport: null },
-      }
-    );
+    const url = process.env.VITE_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    const { data, error } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'magiclink',
-      email,
+    const res = await fetch(`${url}/auth/v1/admin/generate_link`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': key,
+        'Authorization': `Bearer ${key}`,
+      },
+      body: JSON.stringify({ type: 'magiclink', email }),
     });
 
-    if (error) throw error;
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.message || data.error || 'Failed to generate link');
+    if (!data.action_link) throw new Error('No link returned from Supabase');
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ link: data.properties?.action_link }),
+      body: JSON.stringify({ link: data.action_link }),
     };
   } catch (e) {
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: e.message || 'Failed to generate impersonation link' }),
+      body: JSON.stringify({ error: e.message || 'Failed' }),
     };
   }
 };
