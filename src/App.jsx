@@ -393,9 +393,12 @@ export default function App() {
         const { data: cpCheck } = await supabase.from('client_profiles').select('email').eq('email', email).limit(1);
         if (cpCheck && cpCheck.length > 0) {
           // They're a client — don't create auditor profile, let them through as client
+          const cpFull = cpCheck[0];
+          const passwordSetFallback = session.user.user_metadata?.password_set;
+          const fromRecoveryFallback = _event === 'PASSWORD_RECOVERY';
           setIsClient(true);
-          setClientOnboarded(false);
-          setNeedsPasswordSetup(!session.user.user_metadata?.password_set);
+          setClientOnboarded(cpFull.onboarding_complete === true);
+          setNeedsPasswordSetup(fromRecoveryFallback || (!passwordSetFallback && !cpFull.onboarding_complete));
           setProfile({ id: session.user.id, email, role: 'client' });
           setProfileLoading(false);
           return;
