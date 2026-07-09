@@ -9,7 +9,11 @@ exports.handler = async (event) => {
 
     const supabaseAdmin = createClient(
       process.env.VITE_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      {
+        auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
+        realtime: { transport: null },
+      }
     );
 
     const { data, error } = await supabaseAdmin.auth.admin.generateLink({
