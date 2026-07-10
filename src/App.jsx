@@ -663,8 +663,8 @@ function NavItem({ icon: Icon, label, active, onClick }) {
 }
 
 function TopBar({ view, state, isAdmin }) {
-  // Dashboard, Clients, and Leads carry their own branded page headers
-  if (view === 'dashboard' || view === 'clients' || view === 'leads') return null;
+  // These views carry their own branded page headers
+  if (['dashboard', 'clients', 'leads', 'methodology', 'team'].includes(view)) return null;
   if (view === 'clients') return (
     <header className="px-8 py-5 border-b border-border bg-white">
       <h1 className="ccc-display text-2xl text-ink font-medium">Clients</h1>

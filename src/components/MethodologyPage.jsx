@@ -14,20 +14,31 @@ const SECTIONS = [
   { id: 'glossary', label: 'Glossary' },
 ];
 
+const T = {
+  navy: '#1B2A4A',
+  gold: '#C9A84C',
+  border: '#E7EAF0',
+  ink: '#111827',
+  muted: '#6B7280',
+  faint: '#9CA3AF',
+  grid: '#EEF0F4',
+  cardShadow: '0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)',
+};
+
 function Th({ children }) {
-  return <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider font-medium text-white">{children}</th>;
+  return <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider font-medium" style={{ color: T.faint }}>{children}</th>;
 }
 function Td({ children }) {
-  return <td className="px-3 py-2 align-top text-[12px] text-ink border-t border-border">{children}</td>;
+  return <td className="px-3 py-2 align-top text-[12px] text-ink" style={{ borderTop: '1px solid ' + T.grid }}>{children}</td>;
 }
 function Table({ headers, rows }) {
   return (
-    <div className="overflow-x-auto border border-border rounded mb-4">
+    <div className="overflow-x-auto mb-4" style={{ border: '1px solid #EBEEF3', borderRadius: 10 }}>
       <table className="w-full border-collapse">
-        <thead><tr className="bg-navy">{headers.map((h, i) => <Th key={i}>{h}</Th>)}</tr></thead>
+        <thead><tr style={{ background: '#FAFBFC' }}>{headers.map((h, i) => <Th key={i}>{h}</Th>)}</tr></thead>
         <tbody>
           {rows.map((r, ri) => (
-            <tr key={ri} className={ri % 2 ? 'bg-gray-50' : 'bg-white'}>
+            <tr key={ri} className="bg-white">
               {r.map((c, ci) => <Td key={ci}>{c}</Td>)}
             </tr>
           ))}
@@ -69,24 +80,32 @@ export default function MethodologyPage() {
   const current = visibleSections.find((s) => s.id === active) || visibleSections[0];
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <p className="text-[12px] text-ink-muted">
-          The Credit Comeback Club operating doctrine — framework, law, and forensic standards.
-        </p>
+    <div className="max-w-6xl mx-auto" style={{ padding: '20px 32px 32px' }}>
+      {/* Branded page header */}
+      <div className="flex items-center justify-between gap-4 mb-5 flex-wrap">
+        <div className="flex items-center gap-3">
+          <span style={{ width: 4, height: 30, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+          <div>
+            <h1 className="ccc-display text-[22px] font-medium leading-tight" style={{ color: T.ink }}>Methodology</h1>
+            <p className="text-[11px]" style={{ color: T.muted }}>
+              The Setup &amp; Spike operating doctrine — framework, law, and forensic standards
+            </p>
+          </div>
+        </div>
         <button
           onClick={() => setInternal((v) => !v)}
-          className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-border hover:bg-gray-50"
-          style={{ color: internal ? '#1B2A4A' : '#6B7280' }}
+          className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-lg border bg-white transition-colors hover:border-navy"
+          style={{ borderColor: internal ? T.navy : T.border, color: internal ? T.navy : T.muted, fontWeight: internal ? 600 : 400 }}
         >
           {internal ? <Eye size={13} strokeWidth={1.75} /> : <EyeOff size={13} strokeWidth={1.75} />}
           {internal ? 'Internal view' : 'Client-safe view'}
         </button>
       </div>
 
-      <div className="flex gap-6">
+      <div className="flex gap-5">
         <nav className="w-64 shrink-0">
-          <div className="bg-white border border-border rounded overflow-hidden sticky top-0">
+          <div className="bg-white overflow-hidden sticky top-0 py-1.5"
+            style={{ borderRadius: 14, border: '1px solid ' + T.border, boxShadow: T.cardShadow }}>
             {visibleSections.map((s) => {
               const on = current.id === s.id;
               return (
@@ -95,9 +114,9 @@ export default function MethodologyPage() {
                   onClick={() => setActive(s.id)}
                   className="w-full text-left px-4 py-2.5 text-[12px] flex items-center gap-2 transition-colors"
                   style={{
-                    color: on ? '#1B2A4A' : '#5B6472',
+                    color: on ? T.navy : '#5B6472',
                     backgroundColor: on ? '#F4F1E8' : 'transparent',
-                    borderLeft: on ? '2px solid #C9A84C' : '2px solid transparent',
+                    borderLeft: on ? '2px solid ' + T.gold : '2px solid transparent',
                     fontWeight: on ? 600 : 400,
                   }}
                 >
@@ -108,13 +127,14 @@ export default function MethodologyPage() {
             })}
           </div>
           {!internal && (
-            <div className="text-[10px] text-ink-faint mt-3 px-1 leading-relaxed">
+            <div className="text-[10px] mt-3 px-1 leading-relaxed" style={{ color: T.faint }}>
               Pattern intelligence is hidden in client-safe view. Switch to Internal view when working privately.
             </div>
           )}
         </nav>
 
-        <div className="flex-1 min-w-0 bg-white border border-border rounded p-7">
+        <div className="flex-1 min-w-0 bg-white p-7"
+          style={{ borderRadius: 14, border: '1px solid ' + T.border, boxShadow: T.cardShadow }}>
           {renderSection(current.id)}
         </div>
       </div>
