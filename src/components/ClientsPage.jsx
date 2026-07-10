@@ -802,22 +802,25 @@ function CreateClientModal({ onClose, onCreated }) {
     setError(null);
     try {
       const { supabase } = await import('../utils/supabase');
+      const normEmail = email.trim().toLowerCase();
 
-      // Create client_profiles row
-      const { error: cpError } = await supabase.from('client_profiles').upsert({
-        full_name: name.trim(),
-        email: email.trim().toLowerCase(),
-        onboarding_complete: false,
-      }, { onConflict: 'email' });
-      if (cpError) throw cpError;
+      // Provision the auth user + linked client_profiles row server-side
+      // (service role) so both exist, with user_id set, before the magic
+      // link is sent — first login must never find a half-created account
+      const provRes = await fetch('/.netlify/functions/provision-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normEmail, fullName: name.trim(), kind: 'client' }),
+      });
+      if (!provRes.ok) {
+        const out = await provRes.json().catch(() => ({}));
+        throw new Error(out.error || 'Could not provision client account');
+      }
 
       // Send magic link via Supabase
       const { error: authError } = await supabase.auth.signInWithOtp({
-        email: email.trim().toLowerCase(),
-        options: {
-          emailRedirectTo: window.location.origin,
-          data: { full_name: name.trim() },
-        },
+        email: normEmail,
+        options: { emailRedirectTo: window.location.origin },
       });
       if (authError) throw authError;
 

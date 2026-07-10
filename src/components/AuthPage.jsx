@@ -20,10 +20,12 @@ export default function AuthPage() {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
       } else if (mode === 'signup') {
+        // account_type marks explicit auditor signups — loadUser only creates
+        // an auditor profile when this flag is present, never by inference
         const { error } = await supabase.auth.signUp({
           email,
           password,
-          options: { data: { full_name: name } },
+          options: { data: { full_name: name, account_type: 'auditor' } },
         });
         if (error) throw error;
         setSuccess('Account created — check your email to confirm, then sign in.');

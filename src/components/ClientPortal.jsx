@@ -127,7 +127,18 @@ export default function ClientPortal({ session, onSignOut }) {
 
   const loadData = async () => {
     try {
-      const { data: cp } = await supabase.from('client_profiles').select('*').eq('user_id', session.user.id).single();
+      const { data: cpRows } = await supabase.from('client_profiles').select('*').eq('user_id', session.user.id).limit(1);
+      let cp = cpRows && cpRows.length > 0 ? cpRows[0] : null;
+      if (!cp) {
+        // user_id may not be linked yet — fall back to email and link it now
+        const email = (session.user.email || '').toLowerCase();
+        const { data: byEmail } = await supabase.from('client_profiles').select('*').eq('email', email).limit(1);
+        cp = byEmail && byEmail.length > 0 ? byEmail[0] : null;
+        if (cp && !cp.user_id) {
+          const { error: linkErr } = await supabase.from('client_profiles').update({ user_id: session.user.id }).eq('email', email);
+          if (linkErr) console.warn('Could not link client user_id:', linkErr);
+        }
+      }
       setProfile(cp);
       if (cp) {
         const [lettersRes, metaRes, auditsRes] = await Promise.all([
@@ -138,15 +149,15 @@ export default function ClientPortal({ session, onSignOut }) {
         setLetters(lettersRes.data || []);
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
-      }
-      // Load client documents from documents table
-      const { data: docRows, error: docErr } = await supabase.from('documents').select('doc_type,file_name').eq('client_name', cp.full_name);
-      console.log('Doc query — name:', cp.full_name, 'rows:', docRows, 'error:', docErr);
-      if (docRows) {
-        setClientDocs({
-          id: docRows.find(d => d.doc_type === 'id') || null,
-          address: docRows.find(d => d.doc_type === 'address') || null,
-        });
+
+        // Load client documents from documents table
+        const { data: docRows } = await supabase.from('documents').select('doc_type,file_name').eq('client_name', cp.full_name);
+        if (docRows) {
+          setClientDocs({
+            id: docRows.find(d => d.doc_type === 'id') || null,
+            address: docRows.find(d => d.doc_type === 'address') || null,
+          });
+        }
       }
     } catch (e) { console.error('Portal load error:', e); }
     finally { setLoading(false); }
@@ -206,6 +217,26 @@ export default function ClientPortal({ session, onSignOut }) {
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: '#F8F9FA' }}>
       <div className="text-[13px] text-gray-400">Loading your portal…</div>
+    </div>
+  );
+
+  if (!profile) return (
+    <div className="min-h-screen flex items-center justify-center" style={{ background: '#F8F9FA' }}>
+      <div className="text-center max-w-sm px-6">
+        <div className="text-[14px] font-medium mb-2" style={{ color: '#1B2A4A' }}>We couldn't load your portal</div>
+        <p className="text-[12px] text-gray-500 mb-4">Your account may still be setting up. Please try again, or contact us if this keeps happening.</p>
+        <div className="flex items-center justify-center gap-2">
+          <button onClick={() => window.location.reload()}
+            className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm"
+            style={{ background: '#1B2A4A', color: '#C9A84C' }}>
+            Retry
+          </button>
+          <button onClick={onSignOut}
+            className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm border border-gray-300 text-gray-500">
+            Sign Out
+          </button>
+        </div>
+      </div>
     </div>
   );
 

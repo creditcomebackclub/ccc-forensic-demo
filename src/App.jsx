@@ -46,14 +46,12 @@ function AffiliatesPage() {
     setCreating(true);
     setError(null);
     try {
-      // Create Supabase auth user with magic link
-      const { error: inviteErr } = await supabase.auth.admin ? 
-        { error: null } : { error: null }; // admin invite handled separately
-      
-      // Insert affiliate record (user_id wired on first login via email match)
+      const normEmail = form.email.trim().toLowerCase();
+
+      // Insert affiliate record
       const { error: insertErr } = await supabase.from('affiliates').insert({
         name: form.name.trim(),
-        email: form.email.trim().toLowerCase(),
+        email: normEmail,
         company: form.company.trim() || null,
         brand_name: form.brand_name.trim() || form.company.trim() || form.name.trim(),
         brand_color: form.brand_color || '#22C55E',
@@ -62,8 +60,20 @@ function AffiliatesPage() {
       });
       if (insertErr) throw insertErr;
 
+      // Provision the auth user server-side and link affiliates.user_id
+      // before any magic link goes out
+      const provRes = await fetch('/.netlify/functions/provision-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normEmail, fullName: form.name.trim(), kind: 'affiliate' }),
+      });
+      if (!provRes.ok) {
+        const out = await provRes.json().catch(() => ({}));
+        throw new Error(out.error || 'Could not provision affiliate account');
+      }
+
       // Send magic link
-      await supabase.auth.signInWithOtp({ email: form.email.trim().toLowerCase(), options: {
+      await supabase.auth.signInWithOtp({ email: normEmail, options: {
         emailRedirectTo: window.location.origin,
         data: { role: 'affiliate' }
       }});
@@ -258,6 +268,11 @@ export default function App() {
   const [isAffiliate, setIsAffiliate] = useState(false);
   const [clientOnboarded, setClientOnboarded] = useState(false);
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
+  const loadUserInFlight = React.useRef(false);
+  // Mirror of profile state for the visibilitychange handler, which is bound
+  // once on mount and would otherwise close over stale values
+  const appStateRef = React.useRef({ profile: null, profileLoading: false });
+  useEffect(() => { appStateRef.current = { profile, profileLoading }; }, [profile, profileLoading]);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -290,19 +305,23 @@ export default function App() {
         setProfileLoading(false);
         return;
       }
-      // Only reload user on actual auth events, not token refreshes
-      if (_event === 'SIGNED_IN' || _event === 'USER_UPDATED') {
+      // Only reload user on actual sign-in — token refreshes and metadata
+      // updates (USER_UPDATED) don't change role classification, and re-running
+      // loadUser mid-flow unmounts the setup/portal screens
+      if (_event === 'SIGNED_IN') {
         await loadUser(session, _event);
       }
     });
-    // On tab focus — if profile is missing, hard reload to restore state
-    const handleVisibility = async () => {
-      if (document.visibilityState === 'visible') {
-        const token = localStorage.getItem(Object.keys(localStorage).find(k => k.includes('auth-token')) || '');
-        if (token) {
-          // Session exists but app state is lost — reload cleanly
-          window.location.reload();
-        }
+    // On tab focus — reload only if a session exists but the app never
+    // managed to classify the account (state lost). A signed-in user with a
+    // loaded profile must NOT be reloaded, or tabbing away mid-onboarding
+    // wipes their progress.
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      const hasToken = Object.keys(localStorage).some(k => k.includes('auth-token'));
+      const { profile, profileLoading } = appStateRef.current;
+      if (hasToken && !profile && !profileLoading) {
+        window.location.reload();
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
@@ -314,6 +333,10 @@ export default function App() {
   }, []);
 
   const loadUser = async (session, _event) => {
+    // Serialize — initAuth and onAuthStateChange both fire on first login;
+    // two concurrent classification passes must never race each other
+    if (loadUserInFlight.current) return;
+    loadUserInFlight.current = true;
     setProfileLoading(true);
     // Safety timeout — never stay loading forever
     const safetyTimer = setTimeout(() => {
@@ -322,52 +345,52 @@ export default function App() {
       setProfileLoading(false);
     }, 5000);
     try {
-      const email = session.user.email;
+      // PostgREST eq is case-sensitive; auth stores emails lowercased
+      const email = (session.user.email || '').toLowerCase();
 
       // Raw fetch — supabase client hangs intermittently
       const _url = import.meta.env.VITE_SUPABASE_URL;
       const _key = import.meta.env.VITE_SUPABASE_ANON_KEY;
       const _tok = session.access_token;
-      const _pr = await fetch(_url + '/rest/v1/profiles?id=eq.' + session.user.id + '&limit=1', {
-        headers: { apikey: _key, Authorization: 'Bearer ' + _tok }
-      });
+      const _hdrs = { apikey: _key, Authorization: 'Bearer ' + _tok };
+      const _pr = await fetch(_url + '/rest/v1/profiles?id=eq.' + session.user.id + '&limit=1', { headers: _hdrs });
       const _prd = await _pr.json();
       const prof = Array.isArray(_prd) && _prd.length > 0 ? _prd[0] : null;
 
-      // Check affiliates table FIRST — before profiles, so affiliates aren't caught by auditor auto-create
-      const _ar = await fetch(_url + '/rest/v1/affiliates?email=eq.' + encodeURIComponent(email) + '&limit=1', {
-        headers: { apikey: _key, Authorization: 'Bearer ' + _tok }
-      });
+      // Check affiliates table FIRST — before profiles, so affiliates aren't misrouted
+      const _ar = await fetch(_url + '/rest/v1/affiliates?email=eq.' + encodeURIComponent(email) + '&limit=1', { headers: _hdrs });
       const _ard = await _ar.json();
       const aff = Array.isArray(_ard) && _ard.length > 0 ? _ard[0] : null;
       if (aff) {
-        // Wire user_id on first login if not set
+        // Wire user_id on first login if provisioning didn't already set it
         if (!aff.user_id) {
-          await fetch(_url + '/rest/v1/affiliates?id=eq.' + aff.id, {
+          const wireRes = await fetch(_url + '/rest/v1/affiliates?id=eq.' + aff.id, {
             method: 'PATCH',
-            headers: { apikey: _key, Authorization: 'Bearer ' + _key, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+            headers: { ..._hdrs, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
             body: JSON.stringify({ user_id: session.user.id })
           });
+          if (!wireRes.ok) console.warn('Could not link affiliate user_id (status ' + wireRes.status + ')');
         }
         setIsAffiliate(true);
         setIsClient(false);
         setProfile(prof || { id: session.user.id, email, role: 'affiliate' });
-        setProfileLoading(false);
         return;
       }
 
       if (prof && (prof.role === 'admin' || prof.role === 'auditor')) {
         setProfile(prof);
         setIsClient(false);
-        setProfileLoading(false);
         return;
       }
 
-      const _cr = await fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email) + '&limit=1', {
-        headers: { apikey: _key, Authorization: 'Bearer ' + _tok }
-      });
+      const _cr = await fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email) + '&limit=1', { headers: _hdrs });
       const _crd = await _cr.json();
-      const cp = Array.isArray(_crd) && _crd.length > 0 ? _crd[0] : null;
+      let cp = Array.isArray(_crd) && _crd.length > 0 ? _crd[0] : null;
+      if (!cp) {
+        // Second look via the supabase client before concluding they're not a client
+        const { data: cpCheck } = await supabase.from('client_profiles').select('*').eq('email', email).limit(1);
+        cp = cpCheck && cpCheck.length > 0 ? cpCheck[0] : null;
+      }
 
       if (cp) {
         setIsClient(true);
@@ -380,41 +403,43 @@ export default function App() {
         const needsSetup = fromRecovery || (!passwordSet && !cp.onboarding_complete);
         setNeedsPasswordSetup(needsSetup);
         if (!cp.user_id) {
-          await supabase.from('client_profiles').update({ user_id: session.user.id }).eq('email', email);
+          const wireRes = await fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email), {
+            method: 'PATCH',
+            headers: { ..._hdrs, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+            body: JSON.stringify({ user_id: session.user.id })
+          });
+          if (!wireRes.ok) console.warn('Could not link client user_id (status ' + wireRes.status + ')');
         }
         setProfile(prof || { id: session.user.id, email, role: 'client' });
-        setProfileLoading(false);
         return;
       }
 
-      // No profile found — only create auditor profile if NOT a client or affiliate
       if (!prof) {
-        // Check client_profiles one more time before creating auditor row
-        const { data: cpCheck } = await supabase.from('client_profiles').select('email').eq('email', email).limit(1);
-        if (cpCheck && cpCheck.length > 0) {
-          // They're a client — don't create auditor profile, let them through as client
-          const cpFull = cpCheck[0];
-          const passwordSetFallback = session.user.user_metadata?.password_set;
-          const fromRecoveryFallback = _event === 'PASSWORD_RECOVERY';
-          setIsClient(true);
-          setClientOnboarded(cpFull.onboarding_complete === true);
-          setNeedsPasswordSetup(fromRecoveryFallback || (!passwordSetFallback && !cpFull.onboarding_complete));
-          setProfile({ id: session.user.id, email, role: 'client' });
-          setProfileLoading(false);
+        // No role evidence anywhere. Only accounts that explicitly signed up
+        // through AuthPage may get an auditor profile — never guess a role
+        // for an unrecognized account; show the retry screen instead.
+        if (session.user.user_metadata?.account_type === 'auditor') {
+          const fullName = session.user.user_metadata?.full_name || email;
+          await supabase.from('profiles').upsert(
+            { id: session.user.id, full_name: fullName, role: 'auditor' },
+            { onConflict: 'id', ignoreDuplicates: true }
+          );
+          setProfile({ id: session.user.id, full_name: fullName, role: 'auditor' });
+        } else {
+          setProfileLoadFailed(true);
           return;
         }
-        const fullName = session.user.user_metadata?.full_name || email;
-        await supabase.from('profiles').insert({ id: session.user.id, full_name: fullName, role: 'auditor' });
-        setProfile({ id: session.user.id, full_name: fullName, role: 'auditor' });
       } else {
         setProfile(prof);
       }
       setIsClient(false);
     } catch (e) {
       console.error('loadUser error:', e);
+      setProfileLoadFailed(true);
     } finally {
       clearTimeout(safetyTimer);
       setProfileLoading(false);
+      loadUserInFlight.current = false;
     }
   };
 
@@ -463,10 +488,11 @@ export default function App() {
   // Client portal routing
   if (isClient) {
     if (needsPasswordSetup) {
-      return <ClientSetupFlow session={session} onComplete={() => {
+      return <ClientSetupFlow session={session} onComplete={async () => {
         setNeedsPasswordSetup(false);
         setClientOnboarded(true);
-        supabase.auth.updateUser({ data: { password_set: true } });
+        try { await supabase.auth.updateUser({ data: { password_set: true } }); }
+        catch (e) { console.warn('Could not persist password_set flag:', e); }
       }} />;
     }
     if (!clientOnboarded) {

@@ -304,19 +304,23 @@ function OnboardingButton({ client, onChanged }) {
     setErr(null);
     try {
       const { supabase } = await import('../utils/supabase.js');
+      const normEmail = client.email.trim().toLowerCase();
 
-      // Ensure client_profiles row exists BEFORE sending the magic link.
-      // Without this, first login fails the client check in App.jsx's loadUser()
-      // and the person gets routed to the internal admin shell instead of the client portal.
-      const { error: cpError } = await supabase.from('client_profiles').upsert({
-        full_name: client.name,
-        email: client.email,
-        onboarding_complete: false,
-      }, { onConflict: 'email' });
-      if (cpError) throw cpError;
+      // Provision the auth user + linked client_profiles row server-side
+      // (service role) BEFORE sending the magic link. Without this, first
+      // login can find a half-created account and misroute the client.
+      const provRes = await fetch('/.netlify/functions/provision-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normEmail, fullName: client.name, kind: 'client' }),
+      });
+      if (!provRes.ok) {
+        const out = await provRes.json().catch(() => ({}));
+        throw new Error(out.error || 'Could not provision client account');
+      }
 
       const { error } = await supabase.auth.signInWithOtp({
-        email: client.email,
+        email: normEmail,
         options: { emailRedirectTo: window.location.origin }
       });
       if (error) throw error;
@@ -328,7 +332,7 @@ function OnboardingButton({ client, onChanged }) {
         body: JSON.stringify({
           action: 'send_onboarding_welcome',
           clientName: client.name,
-          clientEmail: client.email,
+          clientEmail: normEmail,
           magicLink: window.location.origin,
         }),
       });
