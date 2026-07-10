@@ -663,8 +663,8 @@ function NavItem({ icon: Icon, label, active, onClick }) {
 }
 
 function TopBar({ view, state, isAdmin }) {
-  // Dashboard carries its own branded hero header — no duplicate page header
-  if (view === 'dashboard') return null;
+  // Dashboard, Clients, and Leads carry their own branded page headers
+  if (view === 'dashboard' || view === 'clients' || view === 'leads') return null;
   if (view === 'clients') return (
     <header className="px-8 py-5 border-b border-border bg-white">
       <h1 className="ccc-display text-2xl text-ink font-medium">Clients</h1>

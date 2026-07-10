@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Users, FileText, Mail, UserPlus, Trash2, ChevronDown, ChevronRight, RefreshCw, Shield, Star, Zap, X, Send } from 'lucide-react';
-import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff, updateLeadInfo } from '../utils/storage';
+import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X, Send, MoreHorizontal, Search } from 'lucide-react';
+import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
@@ -9,6 +9,31 @@ import LobMailer from './LobMailer';
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_DAYS = 1;
 const STD_RESPONSE_DAYS = 3;
+
+// Brand tokens — matches the dashboard card system
+const T = {
+  navy: '#1B2A4A',
+  gold: '#C9A84C',
+  border: '#E7EAF0',
+  ink: '#111827',
+  muted: '#6B7280',
+  faint: '#9CA3AF',
+  grid: '#EEF0F4',
+  cardShadow: '0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)',
+};
+
+const LEAD_STAGES = [
+  { key: 'new', label: 'New', bg: '#F3F4F6', text: '#6B7280' },
+  { key: 'contacted', label: 'Contacted', bg: '#EFF6FF', text: '#1D4ED8' },
+  { key: 'audit', label: 'Audit delivered', bg: '#EEF1F7', text: '#3D5A9E' },
+  { key: 'ready', label: 'Ready to convert', bg: '#F0FDF4', text: '#15803D' },
+];
+
+function leadStage(c) {
+  const tag = (c.tags || []).map(String).find((t) => t.startsWith('lead-stage:'));
+  if (tag) return tag.slice('lead-stage:'.length);
+  return (c.audits || []).length > 0 ? 'audit' : 'new';
+}
 
 function todayISO() {
   const d = new Date();
@@ -84,6 +109,8 @@ function clientMatchesFilter(c, filter) {
     });
     case 'phase3': return c.letters.some((l) => l.phase?.startsWith('Phase 3'));
     case 'received': return openLetters.some((l) => l.responseOutcome === 'received');
+    case 'noemail': return !c.email;
+    case 'vip': return !!c.isVip;
     default: return true;
   }
 }
@@ -94,6 +121,8 @@ const FILTER_LABELS = {
   escalate: 'Ready to Escalate',
   phase3: 'Phase 3 Active',
   received: 'Response Received',
+  noemail: 'No Email',
+  vip: 'VIP',
 };
 
 function StatusBadge({ label, tone }) {
@@ -101,9 +130,87 @@ function StatusBadge({ label, tone }) {
   return <span className={'inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm ' + (map[tone] || map.neutral)}>{label}</span>;
 }
 
-function AuditorTag({ name }) {
-  if (!name) return null;
-  return <span className="inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-navy text-gold">{name}</span>;
+// One pill per client — only the most urgent state, so rows stay scannable
+function primaryClientStatus(c, { ripe, needsPhase3, awaiting }) {
+  if (ripe > 0) return { label: ripe + ' to escalate', tone: 'red' };
+  if (needsPhase3 > 0) return { label: needsPhase3 + ' need Phase 3', tone: 'amber' };
+  const importDue = importDueInfo(c);
+  if (importDue && importDue.code === 'due') return importDue;
+  if (awaiting > 0) return { label: awaiting + ' awaiting', tone: 'amber' };
+  if (importDue) return importDue;
+  if (c.letters.length === 0) return { label: 'No letters yet', tone: 'neutral' };
+  return { label: 'On track', tone: 'green' };
+}
+
+function Avatar({ name, isVip, size = 34 }) {
+  const initials = (name || '?').split(' ').filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  return (
+    <div className="shrink-0 flex items-center justify-center rounded-full font-semibold"
+      style={{
+        width: size, height: size, fontSize: Math.round(size * 0.34),
+        background: isVip ? '#FAF3DF' : '#EEF1F7', color: isVip ? '#8F7524' : T.navy,
+        border: isVip ? '1.5px solid ' + T.gold : '1px solid #E3E7EF',
+      }}>
+      {initials}
+    </div>
+  );
+}
+
+function Menu({ items }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+      <button onClick={() => setOpen(!open)} title="More actions"
+        className="flex items-center justify-center rounded-md transition-colors hover:bg-gray-100"
+        style={{ width: 26, height: 26, color: T.faint, background: open ? '#EEF1F7' : 'transparent' }}>
+        <MoreHorizontal size={15} strokeWidth={2} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-40 bg-white py-1"
+            style={{ top: 30, minWidth: 180, border: '1px solid ' + T.border, borderRadius: 10, boxShadow: '0 8px 24px rgba(16,24,40,0.14)' }}>
+            {items.filter(Boolean).map((item, i) => item === 'divider' ? (
+              <div key={i} style={{ height: 1, background: T.grid, margin: '4px 0' }} />
+            ) : (
+              <button key={i}
+                onClick={() => { setOpen(false); item.onClick(); }}
+                disabled={item.disabled}
+                title={item.title}
+                className={'w-full text-left px-3 py-1.5 text-[12px] transition-colors disabled:opacity-40 ' + (item.danger ? 'hover:bg-red-50' : 'hover:bg-gray-50')}
+                style={{ color: item.danger ? '#DC2626' : T.ink }}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Where a letter is in its lifecycle: Generated → Mailed → Delivered → Outcome
+const LETTER_STAGES = ['Generated', 'Mailed', 'Delivered', 'Outcome logged'];
+function letterStageIndex(l) {
+  if (l.responseOutcome) return 3;
+  if (l.trackingStatus === 'Delivered' || l.deliveredAt) return 2;
+  if (l.mailedDate) return 1;
+  return 0;
+}
+
+function StageTracker({ l }) {
+  const idx = letterStageIndex(l);
+  return (
+    <div className="flex items-center shrink-0" title={'Stage: ' + LETTER_STAGES[idx]}>
+      {LETTER_STAGES.map((s, i) => (
+        <React.Fragment key={s}>
+          {i > 0 && <div style={{ width: 13, height: 2, background: i <= idx ? T.navy : '#E5E9F0' }} />}
+          <div title={s}
+            style={{ width: 8, height: 8, borderRadius: '50%', background: i <= idx ? T.navy : '#fff', border: i <= idx ? 'none' : '1.5px solid #D6DCE6', boxSizing: 'border-box' }} />
+        </React.Fragment>
+      ))}
+    </div>
+  );
 }
 
 function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail, onOpenAccount, onEdit }) {
@@ -142,87 +249,93 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     } catch (e) { alert('Could not delete: ' + (e.message || e)); }
   };
 
+  const canAnalyze = !isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response');
+
+  // One visible action per letter; the rest live in the ⋯ menu
+  const primaryAction = (() => {
+    if (!l.mailedDate) return (
+      <button onClick={() => onLobMail(l)}
+        className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border transition-colors shrink-0"
+        style={{ borderColor: T.navy, color: T.navy }}>
+        <Send size={10} strokeWidth={2} /> Send
+      </button>
+    );
+    if (canAnalyze) return (
+      <button onClick={() => onAnalyze(l)}
+        className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0"
+        style={{ backgroundColor: T.navy, color: T.gold }}>
+        <Zap size={10} strokeWidth={2} /> Analyze
+      </button>
+    );
+    if (l.mailedDate && !l.responseOutcome) return (
+      <button onClick={() => { setDateVal(todayISO()); setMode('responding'); }}
+        className="text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border transition-colors shrink-0"
+        style={{ borderColor: T.border, color: T.muted }}>
+        Log response
+      </button>
+    );
+    return null;
+  })();
+
+  const menuItems = [
+    { label: 'View letter', onClick: () => onView(l) },
+    onEdit && { label: 'Edit letter HTML', onClick: () => onEdit(l) },
+    { label: 'Account history', onClick: () => onOpenAccount(l) },
+    'divider',
+    !l.mailedDate && !l.lobId && { label: 'Mark as mailed…', onClick: () => { setDateVal(todayISO()); setMode('mailing'); } },
+    l.mailedDate && !l.responseOutcome && { label: 'Log response…', onClick: () => { setDateVal(todayISO()); setMode('responding'); } },
+    l.mailedDate && !l.responseOutcome && { label: 'Mark no response', onClick: () => save({ responseOutcome: 'no_response' }) },
+    l.mailedDate && { label: 'Edit mail date…', onClick: () => { setDateVal(l.mailedDate); setMode('mailing'); } },
+    l.responseOutcome && { label: 'Reset response', onClick: () => save({ responseOutcome: null, responseDate: null }) },
+    'divider',
+    { label: 'Delete letter…', danger: true, onClick: handleDelete },
+  ];
+
   return (
-    <div className="py-2 border-b border-border last:border-b-0">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="text-[12px] text-ink min-w-0">
-          <button onClick={() => onOpenAccount(l)} className="font-medium hover:text-navy hover:underline underline-offset-2 decoration-dotted">{l.furnisher}</button>
-          <span className="text-ink-muted"> · </span>
-          <span className={isPhase3 ? 'font-medium' : 'text-ink-muted'} style={{ color: isPhase3 ? '#C9A84C' : undefined }}>{l.phase}</span>
+    <div className="py-2.5 border-b last:border-b-0" style={{ borderColor: T.grid }}>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-[12px] min-w-0" style={{ color: T.ink }}>
+          <span className={isPhase3 ? 'font-medium' : ''} style={{ color: isPhase3 ? '#8F7524' : T.ink }}>{l.phase || 'Letter'}</span>
           <span className="text-ink-muted"> · {fmtTime(l.savedAt)}</span>
           {l.mailedDate && <span className="text-ink-muted"> · mailed {fmt(l.mailedDate)}</span>}
           {l.trackingNumber && (
-            <a href={"https://tools.usps.com/go/TrackConfirmAction?tLabels=" + l.trackingNumber} target="_blank" rel="noopener noreferrer" className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2">USPS #{l.trackingNumber ? l.trackingNumber.slice(-8) : ""}</a>
+            <a href={"https://tools.usps.com/go/TrackConfirmAction?tLabels=" + l.trackingNumber} target="_blank" rel="noopener noreferrer" className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2">USPS #{l.trackingNumber.slice(-8)}</a>
           )}
           {l.lobId && !l.trackingNumber && (
-            <span className="text-[10px] text-ink-faint ml-2">Lob: {l.lobId ? l.lobId.slice(0, 12) : ""}</span>
+            <span className="text-[10px] text-ink-faint ml-2">Lob: {l.lobId.slice(0, 12)}</span>
           )}
           {l.trackingStatus && (
             <span className={'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm ml-1 ' + (l.trackingStatus === 'Delivered' ? 'bg-green-50 text-green-700' : l.trackingStatus.includes('Returned') ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700')}>
               {l.trackingStatus}
             </span>
           )}
+          {isAdmin && l.auditorName && <span className="text-[10px] text-ink-faint ml-2">· {l.auditorName}</span>}
         </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
-          {isAdmin && <AuditorTag name={l.auditorName} />}
+        <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+          <StageTracker l={l} />
           {urgency && <StatusBadge label={urgency.label} tone={urgency.tone} />}
           <StatusBadge label={status.label} tone={status.tone} />
-          <button onClick={() => onView(l)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">View</button>
-          {onEdit && <button onClick={() => onEdit(l)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Edit</button>}
-          <button onClick={handleDelete} className="text-[11px] uppercase tracking-wider text-ink-faint hover:text-red-600" title="Delete letter">Delete</button>
-          {!isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response') && (
-            <button onClick={() => onAnalyze(l)}
-              className="flex items-center gap-1 text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-sm"
-              style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}>
-              <Zap size={11} strokeWidth={2} /> Analyze
-            </button>
-          )}
+          {primaryAction}
+          <Menu items={menuItems} />
         </div>
       </div>
 
-      <div className="mt-1.5 flex items-center gap-3 flex-wrap">
-        {mode === 'mailing' && (
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-ink-muted">Mail date:</span>
-            <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
-            <button onClick={() => save({ mailedDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
-            <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
-          </div>
-        )}
-        {mode === 'responding' && (
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-ink-muted">Response date:</span>
-            <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
-            <button onClick={() => save({ responseOutcome: 'received', responseDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
-            <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
-          </div>
-        )}
-        {mode === null && (
-          <>
-            {!l.mailedDate && (
-              <div className="flex items-center gap-3 flex-wrap">
-                {!l.lobId && (
-                  <button onClick={() => { setDateVal(todayISO()); setMode('mailing'); }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Mark mailed</button>
-                )}
-                <button onClick={() => onLobMail(l)}
-                  className="flex items-center gap-1 text-[11px] uppercase tracking-wider px-2 py-0.5 rounded-sm border border-navy text-navy hover:bg-navy hover:text-gold transition-colors">
-                  <Send size={11} strokeWidth={2} /> Send via Lob
-                </button>
-              </div>
-            )}
-            {l.mailedDate && !l.responseOutcome && (
-              <>
-                <button onClick={() => { setDateVal(todayISO()); setMode('responding'); }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Log response</button>
-                <button onClick={() => save({ responseOutcome: 'no_response' })} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-red-600">Mark no response</button>
-                <button onClick={() => { setDateVal(l.mailedDate); setMode('mailing'); }} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Edit mail date</button>
-              </>
-            )}
-            {l.responseOutcome && (
-              <button onClick={() => save({ responseOutcome: null, responseDate: null })} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Reset response</button>
-            )}
-          </>
-        )}
-      </div>
+      {mode === 'mailing' && (
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-[11px] text-ink-muted">Mail date:</span>
+          <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
+          <button onClick={() => save({ mailedDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
+          <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
+        </div>
+      )}
+      {mode === 'responding' && (
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-[11px] text-ink-muted">Response date:</span>
+          <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
+          <button onClick={() => save({ responseOutcome: 'received', responseDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
+          <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -426,8 +539,11 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const activeClients = clients.filter((c) => c.status !== 'lead');
   const tabClients = viewTab === 'leads' ? leadClients : activeClients;
 
+  const stageRank = { ready: 3, audit: 2, contacted: 1, new: 0 };
   const sortedClients = [...tabClients].sort((a, b) => {
     if (viewTab === 'leads') {
+      const d = (stageRank[leadStage(b)] ?? 0) - (stageRank[leadStage(a)] ?? 0);
+      if (d) return d;
       return (b.leadCreatedAt || '').localeCompare(a.leadCreatedAt || '');
     }
     if (a.isVip && !b.isVip) return -1;
@@ -436,78 +552,112 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   });
 
   const baseFiltered = activeFilter
-    ? sortedClients.filter((c) => clientMatchesFilter(c, activeFilter))
+    ? sortedClients.filter((c) => viewTab === 'leads'
+        ? (activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6) : true)
+        : clientMatchesFilter(c, activeFilter))
     : sortedClients;
-  const filteredClients = search.trim()
-    ? baseFiltered.filter((c) => c.name.toLowerCase().includes(search.trim().toLowerCase()))
+  const q = search.trim().toLowerCase();
+  const filteredClients = q
+    ? baseFiltered.filter((c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.email || '').toLowerCase().includes(q) ||
+        (c.leadSource || '').toLowerCase().includes(q) ||
+        c.letters.some((l) => (l.furnisher || '').toLowerCase().includes(q)))
     : baseFiltered;
 
-  const totalAudits = clients.reduce((n, c) => n + c.audits.length, 0);
-  const totalLetters = clients.reduce((n, c) => n + c.letters.length, 0);
-  const totalRipe = clients.reduce((n, c) => n + c.letters.filter((l) => letterStatus(l).code === 'window_closed').length, 0);
-  const needsResponse = clients.reduce((n, c) => n + c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3')).length, 0);
+  const totalAudits = activeClients.reduce((n, c) => n + c.audits.length, 0);
+  const totalLetters = activeClients.reduce((n, c) => n + c.letters.length, 0);
+
+  const filterChips = viewTab === 'clients'
+    ? [
+        { key: null, label: 'All', count: activeClients.length },
+        { key: 'awaiting', label: 'Awaiting', count: activeClients.filter((c) => clientMatchesFilter(c, 'awaiting')).length },
+        { key: 'escalate', label: 'To escalate', count: activeClients.filter((c) => clientMatchesFilter(c, 'escalate')).length },
+        { key: 'received', label: 'Needs Phase 3', count: activeClients.filter((c) => clientMatchesFilter(c, 'received')).length },
+        { key: 'noemail', label: 'No email', count: activeClients.filter((c) => clientMatchesFilter(c, 'noemail')).length },
+        { key: 'vip', label: 'VIP', count: activeClients.filter((c) => clientMatchesFilter(c, 'vip')).length },
+      ]
+    : [
+        { key: null, label: 'All', count: leadClients.length },
+        ...LEAD_STAGES.map((s) => ({ key: 'stage:' + s.key, label: s.label, count: leadClients.filter((c) => leadStage(c) === s.key).length })),
+      ];
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3 flex-wrap">
-          {isAdmin && (
-            <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-navy text-gold">
-              <Shield size={11} strokeWidth={2} /> Admin View
-            </span>
-          )}
-          {viewTab === 'clients' ? (
-            <p className="text-[12px] text-ink-muted">
-              {activeClients.length} client{activeClients.length === 1 ? '' : 's'} · {totalAudits} audit{totalAudits === 1 ? '' : 's'} · {totalLetters} letter{totalLetters === 1 ? '' : 's'}
-              {totalRipe > 0 && <span className="text-red-600 font-medium"> · {totalRipe} ready to escalate</span>}
-              {needsResponse > 0 && <span className="text-amber-600 font-medium"> · {needsResponse} need Phase 3</span>}
-            </p>
-          ) : (
-            <p className="text-[12px] text-ink-muted">
-              {leadClients.length} lead{leadClients.length === 1 ? '' : 's'} in pipeline
-            </p>
-          )}
-        </div>
+    <div className="max-w-5xl mx-auto" style={{ padding: '20px 32px 32px' }}>
+      {/* Branded page header */}
+      <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder={viewTab === 'leads' ? 'Search leads…' : 'Search clients…'}
-            className="border border-border rounded-sm px-3 py-1.5 text-[12px] text-ink focus:outline-none focus:border-navy"
-            style={{ width: 180 }}
-          />
-          {isAdmin && viewTab === 'clients' && (
-            <button onClick={() => setShowCreateClient(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm transition-colors"
-              style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}>
-              <UserPlus size={12} strokeWidth={2} /> New Client
-            </button>
-          )}
-          {isAdmin && viewTab === 'leads' && (
-            <button onClick={() => setShowAddLead(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm transition-colors"
-              style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}>
-              <UserPlus size={12} strokeWidth={2} /> Add Lead
+          <span style={{ width: 4, height: 30, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+          <div>
+            <h1 className="ccc-display text-[22px] font-medium leading-tight" style={{ color: T.ink }}>
+              {viewTab === 'leads' ? 'Leads' : 'Clients'}
+            </h1>
+            <p className="text-[11px]" style={{ color: T.muted }}>
+              {viewTab === 'leads'
+                ? leadClients.length + ' prospect' + (leadClients.length === 1 ? '' : 's') + ' in the pipeline — not yet signed or paid'
+                : activeClients.length + ' client' + (activeClients.length === 1 ? '' : 's') + ' · ' + totalAudits + ' audit' + (totalAudits === 1 ? '' : 's') + ' · ' + totalLetters + ' letter' + (totalLetters === 1 ? '' : 's')}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search size={13} strokeWidth={2} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: T.faint }} />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={viewTab === 'leads' ? 'Search leads…' : 'Search name, email, furnisher…'}
+              className="border rounded-lg pl-8 pr-3 py-1.5 text-[12px] text-ink focus:outline-none focus:border-navy bg-white"
+              style={{ width: 210, borderColor: T.border }}
+            />
+          </div>
+          {isAdmin && (
+            <button onClick={() => viewTab === 'leads' ? setShowAddLead(true) : setShowCreateClient(true)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] uppercase tracking-wider rounded-lg transition-colors"
+              style={{ backgroundColor: T.navy, color: T.gold }}>
+              <UserPlus size={12} strokeWidth={2} /> {viewTab === 'leads' ? 'Add Lead' : 'New Client'}
             </button>
           )}
           <button onClick={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
-            className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
-            <RefreshCw size={13} strokeWidth={1.75} className={refreshing ? 'animate-spin' : ''} /> Refresh
+            title="Refresh"
+            className="flex items-center justify-center rounded-lg border bg-white transition-colors hover:border-navy"
+            style={{ width: 30, height: 30, borderColor: T.border, color: T.muted }}>
+            <RefreshCw size={13} strokeWidth={1.75} className={refreshing ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
 
-      {activeFilter && (
-        <div className="flex items-center gap-2 mb-4">
-          <span className="text-[11px] text-ink-muted">Filtered:</span>
-          <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider px-2 py-1 rounded-sm bg-navy text-gold">
-            {FILTER_LABELS[activeFilter] || activeFilter}
-            <button onClick={() => setActiveFilter(null)} className="hover:text-white ml-1">
-              <X size={11} strokeWidth={2.5} />
+      {/* Quick-filter chips */}
+      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+        {filterChips.map((chip) => {
+          const isActive = activeFilter === chip.key || (!activeFilter && chip.key === null);
+          return (
+            <button key={chip.label}
+              onClick={() => setActiveFilter(chip.key)}
+              disabled={chip.count === 0 && chip.key !== null}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] transition-colors disabled:opacity-40"
+              style={{
+                background: isActive ? T.navy : '#fff',
+                color: isActive ? T.gold : T.muted,
+                border: '1px solid ' + (isActive ? T.navy : T.border),
+                fontWeight: isActive ? 600 : 400,
+              }}>
+              {chip.label}
+              <span style={{ fontSize: 10, opacity: isActive ? 0.9 : 0.7, fontVariantNumeric: 'tabular-nums' }}>{chip.count}</span>
             </button>
+          );
+        })}
+        {activeFilter && !filterChips.some((ch) => ch.key === activeFilter) && (
+          <span className="flex items-center gap-1.5 text-[11px] rounded-full px-3 py-1" style={{ background: T.navy, color: T.gold }}>
+            {FILTER_LABELS[activeFilter] || activeFilter}
+            <button onClick={() => setActiveFilter(null)}><X size={11} strokeWidth={2.5} /></button>
           </span>
-          <span className="text-[11px] text-ink-muted">{filteredClients.length} of {clients.length} clients</span>
+        )}
+      </div>
+
+      {filteredClients.length === 0 && (
+        <div className="text-center py-12 bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>
+          <p className="text-[13px]" style={{ color: T.muted }}>No {viewTab === 'leads' ? 'leads' : 'clients'} match{q ? ' "' + search.trim() + '"' : ' this filter'}.</p>
         </div>
       )}
 
@@ -556,106 +706,89 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             ...c.letters.map((l) => l.auditorName),
           ].filter(Boolean))] : [];
 
+          const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting });
+          const lpoaUrl = c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl;
+          const clientMenu = [
+            { label: togglingVip === c.name ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip), disabled: togglingVip === c.name },
+            { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
+            'divider',
+            !c.lpoaSigned && { label: sendingLpoa === c.name ? 'Sending LPOA…' : 'Send LPOA for signature', onClick: () => handleSendLpoa(c), disabled: !c.email || sendingLpoa === c.name, title: !c.email ? 'Add email first' : undefined },
+            !c.lpoaSigned && { label: 'Preview LPOA', onClick: () => window.open('/lpoa-sign.html?client=' + encodeURIComponent(c.name), '_blank') },
+            c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
+            'divider',
+            { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
+          ];
+
           return (
             <div
               key={c.name}
               ref={(el) => { clientRefs.current[c.name] = el; }}
-              className="bg-white rounded overflow-hidden transition-shadow"
+              className="bg-white overflow-visible transition-shadow"
               style={{
-                border: c.name === jumpTo ? '2px solid #C9A84C' : (c.isVip ? '1px solid #C9A84C' : '1px solid #E5E7EB'),
-                boxShadow: c.name === jumpTo ? '0 0 0 3px rgba(201,168,76,0.15)' : 'none',
+                borderRadius: 14,
+                boxShadow: c.name === jumpTo ? '0 0 0 3px rgba(201,168,76,0.18)' : T.cardShadow,
+                border: c.name === jumpTo ? '2px solid ' + T.gold : (c.isVip ? '1px solid ' + T.gold : '1px solid ' + T.border),
               }}
             >
-              <div className="flex items-center gap-3 px-5 py-4">
-                <button onClick={() => toggle(c.name)} className="shrink-0">
-                  {isOpen ? <ChevronDown size={16} strokeWidth={1.75} className="text-ink-muted" /> : <ChevronRight size={16} strokeWidth={1.75} className="text-ink-muted" />}
-                </button>
-                <button onClick={() => toggle(c.name)} className="flex-1 min-w-0 text-left">
-                  <div className="flex items-center gap-2">
-                    <div className="ccc-display text-[15px] text-ink font-medium">{c.name}</div>
-                    {c.isVip && (
-                      <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium" style={{ backgroundColor: '#C9A84C', color: '#1B2A4A' }}>
-                        <Star size={9} strokeWidth={2.5} /> VIP
-                      </span>
+              {/* Row header — a div, not a button, so inner controls stay valid HTML */}
+              <div className="flex items-center gap-3 px-4 py-3.5 cursor-pointer select-none" role="button"
+                onClick={() => toggle(c.name)}>
+                <ChevronRight size={15} strokeWidth={2} className="shrink-0 transition-transform"
+                  style={{ color: T.faint, transform: isOpen ? 'rotate(90deg)' : 'none' }} />
+                <Avatar name={c.name} isVip={c.isVip} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="ccc-display text-[14px] font-medium truncate" style={{ color: T.ink }}>{c.name}</span>
+                    {c.isVip && <Star size={12} strokeWidth={2} fill={T.gold} style={{ color: T.gold, flexShrink: 0 }} title="VIP client" />}
+                    {c.lpoaSigned && (
+                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-green-50 text-green-700 shrink-0" title="LPOA signed">✓ LPOA</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                    {c.address && <span className="text-[11px] text-ink-muted truncate">{c.address}</span>}
-                  {editingEmail === c.name ? (
-                    <div className="flex items-center gap-2 mt-1" onClick={(e) => e.stopPropagation()}>
-                      <input type="email" value={emailVal} onChange={(e) => setEmailVal(e.target.value)}
-                        className="text-[11px] border border-border rounded-sm px-2 py-0.5 w-48"
-                        placeholder="client@email.com" autoFocus
-                        onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
-                      <button onClick={() => { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
-                      <button onClick={() => setEditingEmail(null)} className="text-[10px] text-ink-muted">Cancel</button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[11px] text-ink-muted">{c.email || <span className="text-amber-600">No email</span>}</span>
-                      <button onClick={(e) => { e.stopPropagation(); setEditingEmail(c.name); setEmailVal(c.email || ''); }} className="text-[10px] text-ink-faint hover:text-navy">✎</button>
-                    </div>
-                  )}
-                    {isAdmin && auditors.map((a) => (
-                      <span key={a} className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-navy text-gold">{a}</span>
-                    ))}
+                  <div className="text-[11px] truncate" style={{ color: T.muted }}>
+                    {c.email || <span className="text-amber-600">No email</span>}
+                    {c.address && <span> · {c.address}</span>}
+                    {isAdmin && auditors.length > 0 && <span style={{ color: T.faint }}> · {auditors.join(', ')}</span>}
                   </div>
-                </button>
-                <div className="flex items-center gap-3 text-[11px] text-ink-muted shrink-0 flex-wrap justify-end">
-                  {needsPhase3 > 0 && <StatusBadge label={needsPhase3 + ' need Phase 3'} tone="amber" />}
-                  {ripe > 0 && <StatusBadge label={ripe + ' to escalate'} tone="red" />}
-                  {awaiting > 0 && <StatusBadge label={awaiting + ' awaiting'} tone="amber" />}
-                  {importDue && <StatusBadge label={importDue.label} tone={importDue.tone} />}
-                  <span className="flex items-center gap-1"><FileText size={13} strokeWidth={1.75} />{c.audits.length}</span>
-                  <span className="flex items-center gap-1"><Mail size={13} strokeWidth={1.75} />{c.letters.length}</span>
-                  {c.lpoaSigned ? (
-                    <div className="flex items-center gap-1.5">
-                      <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-green-50 text-green-700 border border-green-200">
-                        ✓ LPOA Signed
-                      </span>
-                      {c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl && (
-                        <a href={c.lpoaSignatureData.lpoaUrl} target="_blank" rel="noopener noreferrer"
-                          className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
-                          View
-                        </a>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleSendLpoa(c); }}
-                        disabled={!c.email || sendingLpoa === c.name}
-                        className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border border-amber-400 text-amber-700 hover:bg-amber-50 transition-colors"
-                        title={!c.email ? 'Add email first' : 'Send LPOA for signature'}
-                      >
-                        {sendingLpoa === c.name ? 'Sending…' : '✉ Send LPOA'}
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); window.open('/lpoa-sign.html?client=' + encodeURIComponent(c.name), '_blank'); }}
-                        className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors"
-                        title="Preview LPOA"
-                      >
-                        Preview
-                      </button>
-                    </div>
-                  )}
-                  <button
-                    onClick={() => handleVipToggle(c.name, c.isVip)}
-                    disabled={togglingVip === c.name}
-                    className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm border transition-colors"
-                    style={{ borderColor: c.isVip ? '#C9A84C' : '#E5E7EB', color: c.isVip ? '#C9A84C' : '#9CA3AF' }}
-                  >
-                    <Star size={10} strokeWidth={2} />
-                    {togglingVip === c.name ? '…' : c.isVip ? 'VIP' : 'Set VIP'}
-                  </button>
+                </div>
+                <div className="flex items-center gap-2.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                  <StatusBadge label={primary.label} tone={primary.tone} />
+                  <span className="flex items-center gap-1 text-[11px]" style={{ color: T.faint }} title={c.audits.length + ' audits'}>
+                    <FileText size={12} strokeWidth={1.75} />{c.audits.length}
+                  </span>
+                  <span className="flex items-center gap-1 text-[11px]" style={{ color: T.faint }} title={c.letters.length + ' letters'}>
+                    <Mail size={12} strokeWidth={1.75} />{c.letters.length}
+                  </span>
+                  <Menu items={clientMenu} />
                 </div>
               </div>
 
+              {editingEmail === c.name && (
+                <div className="px-4 pb-3 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                  <input type="email" value={emailVal} onChange={(e) => setEmailVal(e.target.value)}
+                    className="text-[11px] border border-border rounded-sm px-2 py-1 w-56"
+                    placeholder="client@email.com" autoFocus
+                    onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
+                  <button onClick={() => { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm">Save</button>
+                  <button onClick={() => setEditingEmail(null)} className="text-[10px] text-ink-muted">Cancel</button>
+                </div>
+              )}
+
+              {confirmDelete === c.name && (
+                <div className="px-4 pb-3 flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+                  <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
+                  <button onClick={() => handleDelete(c.name)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
+                  <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
+                </div>
+              )}
+
               {isOpen && (
-                <div className="border-t border-border px-5 py-4 space-y-4">
+                <div className="px-4 py-4 space-y-4" style={{ borderTop: '1px solid ' + T.grid }}>
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Audits</div>
+                      <div className="flex items-center gap-2">
+                        <span style={{ width: 3, height: 12, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+                        <div className="text-[10px] uppercase tracking-wider font-medium" style={{ color: T.muted }}>Audits</div>
+                      </div>
                       {c.audits.length >= 2 && (
                         <button
                           onClick={async () => {
@@ -682,7 +815,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                         <div className="text-[12px] text-ink">
                           Report {a.reportDate}
                           <span className="text-ink-muted"> · {(a.audit && a.audit.accountsTargeted) || 0} accounts · {(a.audit && a.audit.totalViolations) || 0} violations</span>
-                          {isAdmin && a.auditorName && <span className="ml-2 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-navy text-gold">{a.auditorName}</span>}
+                          {isAdmin && a.auditorName && <span className="text-[10px] text-ink-faint ml-2">· {a.auditorName}</span>}
                           <span className="text-ink-faint text-[11px] ml-2">{fmtTime(a.savedAt)}</span>
                         </div>
                         <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
@@ -690,37 +823,72 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     ))}
                   </div>
 
-                  {/* Tab nav */}
-                  <div className="flex gap-1 border-b border-border mb-4">
-                    {['Letters', 'Profile', 'Documents'].map((tab) => (
-                      <button key={tab}
-                        onClick={() => setActiveTab((p) => ({ ...p, [c.name]: tab }))}
-                        className={'px-3 py-1.5 text-[11px] uppercase tracking-wider transition-colors ' +
-                          ((activeTab[c.name] || 'Letters') === tab
-                            ? 'border-b-2 border-navy text-navy font-medium'
-                            : 'text-ink-muted hover:text-ink')}>
-                        {tab}
-                      </button>
-                    ))}
+                  {/* Tab nav — pills with counts */}
+                  <div className="flex gap-1.5">
+                    {['Letters', 'Profile', 'Documents'].map((tab) => {
+                      const isActiveTab = (activeTab[c.name] || 'Letters') === tab;
+                      return (
+                        <button key={tab}
+                          onClick={() => setActiveTab((p) => ({ ...p, [c.name]: tab }))}
+                          className="rounded-full px-3 py-1 text-[11px] uppercase tracking-wider transition-colors"
+                          style={{
+                            background: isActiveTab ? T.navy : 'transparent',
+                            color: isActiveTab ? T.gold : T.muted,
+                            border: '1px solid ' + (isActiveTab ? T.navy : T.border),
+                            fontWeight: isActiveTab ? 600 : 400,
+                          }}>
+                          {tab}{tab === 'Letters' ? ' ' + c.letters.length : ''}
+                        </button>
+                      );
+                    })}
                   </div>
 
-                  {/* Letters tab */}
+                  {/* Letters tab — grouped by furnisher */}
                   {(activeTab[c.name] || 'Letters') === 'Letters' && (
-                    <div className="space-y-1">
+                    <div>
                       {c.letters.length === 0 ? (
                         <p className="text-[12px] text-ink-muted py-4 text-center">No letters yet — run an audit to generate Phase 1 letters.</p>
                       ) : (
-                        c.letters.map((l) => (
-                          <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip} hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))} onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter} onEdit={(letter) => setEditingLetterHtml(letter)}
-                          onOpenAccount={(letter) => {
+                        (() => {
+                          const openAccount = (letter) => {
                             const clientLetters = c.letters.filter((pl) => pl.accountId === letter.accountId && pl.furnisher === letter.furnisher);
                             const latestAudit = [...c.audits].sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''))[0];
                             const accountData = latestAudit && latestAudit.audit && latestAudit.audit.accounts
                               ? latestAudit.audit.accounts.find((a) => a.id === letter.accountId)
                               : null;
                             setAccountTimeline({ accountId: letter.accountId, furnisher: letter.furnisher, letters: clientLetters, accountData, clientName: c.name });
-                          }} />
-                        ))
+                          };
+                          const groups = [];
+                          const seen = new Map();
+                          for (const l of c.letters) {
+                            const key = l.furnisher || 'Other';
+                            if (!seen.has(key)) { seen.set(key, []); groups.push([key, seen.get(key)]); }
+                            seen.get(key).push(l);
+                          }
+                          return groups.map(([furnisher, letters]) => (
+                            <div key={furnisher} className="mb-2" style={{ border: '1px solid #EBEEF3', borderRadius: 10, overflow: 'visible' }}>
+                              <div className="flex items-center justify-between px-3 py-2"
+                                style={{ background: '#FAFBFC', borderBottom: '1px solid ' + T.grid, borderRadius: '10px 10px 0 0' }}>
+                                <button onClick={() => openAccount(letters[0])}
+                                  className="flex items-center gap-1.5 text-[12px] font-medium hover:text-navy hover:underline underline-offset-2 decoration-dotted"
+                                  style={{ color: T.ink }}
+                                  title="View account history">
+                                  {furnisher}
+                                  <span className="text-[10px] font-normal" style={{ color: T.faint }}>{letters.length} letter{letters.length === 1 ? '' : 's'}</span>
+                                </button>
+                                <span className="text-[10px]" style={{ color: T.faint }}>history →</span>
+                              </div>
+                              <div className="px-3">
+                                {letters.map((l) => (
+                                  <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
+                                    hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
+                                    onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter}
+                                    onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount} />
+                                ))}
+                              </div>
+                            </div>
+                          ));
+                        })()
                       )}
                     </div>
                   )}
@@ -734,20 +902,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   {(activeTab[c.name] || 'Letters') === 'Documents' && (
                     <DocumentManager clientName={c.name} letters={c.letters || []} onChanged={load} setAnalyzingLetter={setAnalyzingLetter} />
                   )}
-
-                  <div className="pt-2 border-t border-border">
-                    {confirmDelete === c.name ? (
-                      <div className="flex items-center gap-3">
-                        <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
-                        <button onClick={() => handleDelete(c.name)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
-                        <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setConfirmDelete(c.name)} className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-red-600">
-                        <Trash2 size={13} strokeWidth={1.75} /> Delete client
-                      </button>
-                    )}
-                  </div>
                 </div>
               )}
             </div>
@@ -965,8 +1119,14 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
   const [sourceVal, setSourceVal] = React.useState(c.leadSource || '');
   const [notesVal, setNotesVal] = React.useState(c.leadNotes || '');
   const [saving, setSaving] = React.useState(false);
-  const created = c.leadCreatedAt ? new Date(c.leadCreatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+  const [quickEmail, setQuickEmail] = React.useState('');
+  const [savingEmail, setSavingEmail] = React.useState(false);
+  const [savingStage, setSavingStage] = React.useState(false);
   const hasAudits = (c.audits || []).length > 0;
+  const stage = leadStage(c);
+  const stageDef = LEAD_STAGES.find((s) => s.key === stage) || LEAD_STAGES[0];
+  const ageDays = c.leadCreatedAt ? daysBetween(c.leadCreatedAt, todayISO()) : null;
+  const ageTone = ageDays == null ? null : ageDays >= 14 ? { bg: '#FEF2F2', text: '#B91C1C' } : ageDays >= 7 ? { bg: '#FFFBEB', text: '#B45309' } : { bg: '#F3F4F6', text: '#6B7280' };
 
   const handleSave = async () => {
     setSaving(true);
@@ -981,17 +1141,53 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
     }
   };
 
+  const handleQuickEmail = async () => {
+    if (!quickEmail.trim()) return;
+    setSavingEmail(true);
+    try {
+      await updateLeadInfo(c.name, { email: quickEmail.trim().toLowerCase() });
+      setQuickEmail('');
+      if (onChanged) await onChanged();
+    } catch (e) {
+      alert('Could not save email: ' + e.message);
+    } finally {
+      setSavingEmail(false);
+    }
+  };
+
+  const handleStageChange = async (next) => {
+    setSavingStage(true);
+    try {
+      await updateLeadStage(c.name, next, c.tags);
+      if (onChanged) await onChanged();
+    } catch (e) {
+      alert('Could not update stage: ' + e.message);
+    } finally {
+      setSavingStage(false);
+    }
+  };
+
   return (
-    <div className="bg-white rounded overflow-hidden border border-border">
-      <div className="flex items-center gap-3 px-5 py-4">
+    <div className="bg-white" style={{ borderRadius: 14, border: '1px solid ' + T.border, boxShadow: T.cardShadow }}>
+      <div className="flex items-center gap-3 px-4 py-3.5">
         {hasAudits && (
-          <button onClick={() => setIsOpen(!isOpen)} className="shrink-0">
-            {isOpen ? <ChevronDown size={16} strokeWidth={1.75} className="text-ink-muted" /> : <ChevronRight size={16} strokeWidth={1.75} className="text-ink-muted" />}
+          <button onClick={() => setIsOpen(!isOpen)} className="shrink-0" title={isOpen ? 'Collapse' : 'View audits'}>
+            <ChevronRight size={15} strokeWidth={2} className="transition-transform" style={{ color: T.faint, transform: isOpen ? 'rotate(90deg)' : 'none' }} />
           </button>
         )}
+        <Avatar name={c.name} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="ccc-display text-[15px] text-ink font-medium">{c.name}</div>
+            <div className="ccc-display text-[14px] text-ink font-medium">{c.name}</div>
+            <select
+              value={stage}
+              disabled={savingStage || !isAdmin}
+              onChange={(e) => handleStageChange(e.target.value)}
+              title="Pipeline stage"
+              className="text-[10px] uppercase tracking-wider rounded-full px-2 py-0.5 font-medium cursor-pointer focus:outline-none disabled:opacity-60"
+              style={{ background: stageDef.bg, color: stageDef.text, border: '1px solid transparent', appearance: 'auto' }}>
+              {LEAD_STAGES.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+            </select>
             {c.leadSource && (
               <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium bg-gray-100 text-gray-600">
                 {c.leadSource}
@@ -1002,9 +1198,10 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
                 {c.audits.length} audit{c.audits.length === 1 ? '' : 's'}
               </span>
             )}
-            {!c.email && (
-              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium bg-red-50 text-red-700">
-                No email — drip won't send
+            {ageTone && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-sm font-medium" style={{ background: ageTone.bg, color: ageTone.text }}
+                title={c.leadCreatedAt ? 'Added ' + new Date(c.leadCreatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''}>
+                {ageDays}d in pipeline
               </span>
             )}
           </div>
@@ -1038,12 +1235,31 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-3 flex-wrap mt-1 text-[11px] text-ink-muted">
-                {c.email && <span>{c.email}</span>}
-                {c.leadPhone && <span>{c.leadPhone}</span>}
-                {created && <span>Added {created}</span>}
-                <button onClick={() => setEditing(true)} className="text-navy hover:text-gold uppercase tracking-wider text-[10px]">Edit</button>
-              </div>
+              {c.email ? (
+                <div className="flex items-center gap-3 flex-wrap mt-1 text-[11px] text-ink-muted">
+                  <span>{c.email}</span>
+                  {c.leadPhone && <span>{c.leadPhone}</span>}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 flex-wrap mt-1.5">
+                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium bg-amber-50 text-amber-700" title="The drip sequence skips leads without an email">
+                    No email — drip paused
+                  </span>
+                  <input
+                    type="email"
+                    value={quickEmail}
+                    onChange={(e) => setQuickEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleQuickEmail()}
+                    placeholder="add email…"
+                    className="text-[11px] border rounded-sm px-2 py-1 focus:outline-none focus:border-navy"
+                    style={{ width: 170, borderColor: T.border }}
+                  />
+                  <button onClick={handleQuickEmail} disabled={!quickEmail.trim() || savingEmail}
+                    className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm disabled:opacity-40">
+                    {savingEmail ? '…' : 'Save'}
+                  </button>
+                </div>
+              )}
               {c.leadNotes && (
                 <p className="text-[12px] text-ink-muted mt-1.5">{c.leadNotes}</p>
               )}
@@ -1055,30 +1271,32 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
             <button
               onClick={onConvert}
               disabled={converting}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm transition-colors disabled:opacity-50"
-              style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-lg transition-colors disabled:opacity-50"
+              style={{ backgroundColor: T.navy, color: T.gold }}
             >
               <UserPlus size={12} strokeWidth={2} /> {converting ? 'Converting…' : 'Convert to Client'}
             </button>
-            <button
-              onClick={onDelete}
-              className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-ink-muted hover:text-red-600 px-2 py-1.5"
-            >
-              <Trash2 size={13} strokeWidth={1.75} />
-            </button>
+            <Menu items={[
+              { label: 'Edit details', onClick: () => setEditing(true) },
+              'divider',
+              { label: 'Delete lead…', danger: true, onClick: onDelete },
+            ]} />
           </div>
         )}
       </div>
 
       {isOpen && hasAudits && (
-        <div className="border-t border-border px-5 py-4">
-          <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Audits</div>
+        <div className="px-4 py-3.5" style={{ borderTop: '1px solid ' + T.grid }}>
+          <div className="flex items-center gap-2 mb-2">
+            <span style={{ width: 3, height: 12, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+            <div className="text-[10px] uppercase tracking-wider font-medium" style={{ color: T.muted }}>Audits</div>
+          </div>
           {c.audits.map((a) => (
             <div key={a.id} className="flex items-center justify-between py-1.5 flex-wrap gap-2">
               <div className="text-[12px] text-ink">
                 Report {a.reportDate}
                 <span className="text-ink-muted"> · {(a.audit && a.audit.accountsTargeted) || 0} accounts · {(a.audit && a.audit.totalViolations) || 0} violations</span>
-                {isAdmin && a.auditorName && <span className="ml-2 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-navy text-gold">{a.auditorName}</span>}
+                {isAdmin && a.auditorName && <span className="text-[10px] text-ink-faint ml-2">· {a.auditorName}</span>}
               </div>
               <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
             </div>

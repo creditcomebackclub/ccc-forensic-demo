@@ -59,6 +59,20 @@ export async function updateLeadInfo(clientName, { email, phone, source, notes }
   if (error) throw error;
 }
 
+// Lead pipeline stage lives in the tags array as 'lead-stage:<stage>' —
+// no schema change needed; other tags are preserved
+export async function updateLeadStage(clientName, stage, existingTags) {
+  const userId = await getUserId();
+  const tags = (existingTags || []).map(String).filter((t) => !t.startsWith('lead-stage:'));
+  if (stage) tags.push('lead-stage:' + stage);
+  const { error } = await supabase.from('clients').upsert({
+    user_id: userId,
+    name: clientName,
+    tags,
+  }, { onConflict: 'user_id,name' });
+  if (error) throw error;
+}
+
 export async function toggleVip(clientName, isVip) {
   const userId = await getUserId();
   const { error } = await supabase.from('clients').upsert({
