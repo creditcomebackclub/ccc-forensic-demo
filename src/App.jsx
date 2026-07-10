@@ -560,7 +560,7 @@ export default function App() {
         <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
           {view === VIEW.DASHBOARD && (
-            <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} onAuditStart={handleAuditStart} />
+            <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} onAuditStart={handleAuditStart} displayName={displayName} />
           )}
           {view === VIEW.CLIENTS && (
             <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" />
@@ -663,14 +663,8 @@ function NavItem({ icon: Icon, label, active, onClick }) {
 }
 
 function TopBar({ view, state, isAdmin }) {
-  if (view === 'dashboard') return (
-    <header className="px-8 py-5 border-b border-border bg-white">
-      <h1 className="ccc-display text-2xl text-ink font-medium">Dashboard</h1>
-      <p className="text-[12px] mt-0.5 text-ink-muted">
-        {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-      </p>
-    </header>
-  );
+  // Dashboard carries its own branded hero header — no duplicate page header
+  if (view === 'dashboard') return null;
   if (view === 'clients') return (
     <header className="px-8 py-5 border-b border-border bg-white">
       <h1 className="ccc-display text-2xl text-ink font-medium">Clients</h1>
