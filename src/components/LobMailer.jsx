@@ -87,16 +87,8 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
     setSending(true);
     setError(null);
     try {
-      // Upload letter HTML to Supabase Storage and get signed URL for Lob
       const { data: { user } } = await supabase.auth.getUser();
       const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
-      const tempPath = user.id + '/temp-letters/' + slug(letter.clientName) + '-' + slug(letter.furnisher) + '-' + Date.now() + '.html';
-      const htmlBlob = new Blob([letter.html], { type: 'text/html' });
-      const { error: uploadErr } = await supabase.storage.from('documents').upload(tempPath, htmlBlob, { upsert: true });
-      if (uploadErr) throw new Error('Could not upload letter for mailing: ' + uploadErr.message);
-      const { data: urlData, error: urlErr } = await supabase.storage.from('documents').createSignedUrl(tempPath, 3600);
-      if (urlErr) throw new Error('Could not get letter URL: ' + urlErr.message);
-      const remoteUrl = urlData.signedUrl;
 
       // Build enclosure pages — different for Phase 3 vs Phase 1
       let enclosurePages = '';
@@ -124,7 +116,6 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
 
         // Exhibit B — furnisher response (from responses bucket)
         try {
-          const { data: { user: respUser } } = await supabase.auth.getUser();
           // Look up client user_id
           const { data: cp } = await supabase.from('client_profiles').select('user_id').eq('full_name', letter.clientName).limit(1);
           const clientUserId = cp && cp.length > 0 ? cp[0].user_id : null;
@@ -216,61 +207,53 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
         }
       }
 
-      // Merge letter HTML with enclosure pages
-      let mergedHtml = letter.html;
+      // Merge letter HTML with enclosure pages, then upload once
+      let finalHtml = letter.html;
       if (enclosurePages) {
-        mergedHtml = mergedHtml.replace('</body>', enclosurePages + '</body>');
-        if (!mergedHtml.includes('</body>')) mergedHtml += enclosurePages;
-        // Re-upload merged HTML
-        const mergedBlob = new Blob([mergedHtml], { type: 'text/html' });
-        const mergedPath = user.id + '/temp-letters/' + slug(letter.clientName) + '-' + slug(letter.furnisher) + '-merged-' + Date.now() + '.html';
-        await supabase.storage.from('documents').upload(mergedPath, mergedBlob, { upsert: true });
-        const { data: mergedUrlData } = await supabase.storage.from('documents').createSignedUrl(mergedPath, 3600);
-        if (mergedUrlData) {
-          // Use merged URL instead
-          const mergedRemoteUrl = mergedUrlData.signedUrl;
-          const res = await callLob('send_letter', {
-            toAddress: toAddr,
-            fromAddress: FROM_ADDRESS,
-            remoteUrl: mergedRemoteUrl,
-            description: letter.clientName + ' — ' + letter.furnisher + ' — ' + letter.phase + ' (w/ enclosures)',
-            enclosures: [],
-          });
-          setResult(res);
-          setStep('sent');
-          onSent({ lobId: res.id, mailedDate: new Date().toISOString().slice(0, 10), trackingNumber: res.tracking_number || null });
-          // Fire phase notification
-          try {
-            const { data: cp } = await supabase.from('client_profiles').select('email,full_name').ilike('full_name', letter.clientName).limit(1);
-            if (cp && cp.length > 0 && cp[0].email) {
-              fetch('/.netlify/functions/send-lpoa', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'send_phase_notification', clientName: cp[0].full_name, clientEmail: cp[0].email, phase: 'phase1_mailed', furnisher: letter.furnisher, trackingNumber: res.tracking_number || '' }),
-              }).catch(e => console.warn('Phase notification failed:', e));
-            }
-          } catch(e) {}
-          return; // Exit early — already handled
-        }
+        if (finalHtml.includes('</body>')) finalHtml = finalHtml.replace('</body>', enclosurePages + '</body>');
+        else finalHtml += enclosurePages;
       }
+      const tempPath = user.id + '/temp-letters/' + slug(letter.clientName) + '-' + slug(letter.furnisher) + '-' + Date.now() + '.html';
+      const htmlBlob = new Blob([finalHtml], { type: 'text/html' });
+      const { error: uploadErr } = await supabase.storage.from('documents').upload(tempPath, htmlBlob, { upsert: true });
+      if (uploadErr) throw new Error('Could not upload letter for mailing: ' + uploadErr.message);
+      const { data: urlData, error: urlErr } = await supabase.storage.from('documents').createSignedUrl(tempPath, 3600);
+      if (urlErr || !urlData) throw new Error('Could not get letter URL' + (urlErr ? ': ' + urlErr.message : ''));
 
       const res = await callLob('send_letter', {
         toAddress: toAddr,
         fromAddress: FROM_ADDRESS,
-        remoteUrl,
-        description: letter.clientName + ' — ' + letter.furnisher + ' — ' + letter.phase,
-        enclosures: [],
+        remoteUrl: urlData.signedUrl,
+        description: letter.clientName + ' — ' + letter.furnisher + ' — ' + letter.phase + (enclosurePages ? ' (w/ enclosures)' : ''),
+        // Retries of this same letter can never mail twice
+        idempotencyKey: letter.id,
+        // Lets the webhook match this letter even if saving lob_id fails below
+        metadata: { letter_id: String(letter.id) },
       });
+
+      // The letter IS mailed at this point — persist the record with retries,
+      // and never let a save failure look like a send failure (resend = double postage)
+      let saveErr = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await onSent({ lobId: res.id, mailedDate: new Date().toISOString().slice(0, 10), trackingNumber: res.tracking_number || null });
+          saveErr = null;
+          break;
+        } catch (e) {
+          saveErr = e;
+          await new Promise((r) => setTimeout(r, attempt * 1000));
+        }
+      }
 
       setResult(res);
       setStep('sent');
-      onSent({
-        lobId: res.id,
-        mailedDate: new Date().toISOString().slice(0, 10),
-        trackingNumber: res.tracking_number || null,
-      });
-      // Fire phase1_mailed notification
+      if (saveErr) {
+        setError('The letter WAS mailed (Lob ID ' + res.id + '), but saving the mail record failed: '
+          + (saveErr.message || saveErr) + '. Do NOT resend — note the Lob ID and set the mail date on the letter manually.');
+      }
+
+      // Fire phase notification (non-blocking)
       try {
-        const { supabase } = await import('../utils/supabase');
         const { data: cp } = await supabase.from('client_profiles').select('email,full_name').ilike('full_name', letter.clientName).limit(1);
         if (cp && cp.length > 0 && cp[0].email) {
           fetch('/.netlify/functions/send-lpoa', {
@@ -284,9 +267,9 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
               furnisher: letter.furnisher,
               trackingNumber: res.tracking_number || '',
             }),
-          }).catch(function(e) { console.warn('Phase notification failed:', e); });
+          }).catch((e) => console.warn('Phase notification failed:', e));
         }
-      } catch(e) { console.warn('Phase notification error:', e); }
+      } catch (e) { console.warn('Phase notification error:', e); }
     } catch (e) {
       setError(e.message || 'Send failed');
     } finally {
@@ -367,7 +350,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
             <div className="text-center py-6">
               <CheckCircle size={36} className="text-green-600 mx-auto mb-3" strokeWidth={1.5} />
               <div className="text-[14px] text-ink font-medium ccc-display mb-1">Letter Sent</div>
-              <div className="text-[12px] text-ink-muted mb-4">Lob is printing and mailing your certified letter</div>
+              <div className="text-[12px] text-ink-muted mb-4">Lob is printing and mailing your certified letter with return receipt</div>
               <div className="border border-border rounded-sm p-4 text-left space-y-2">
                 <div className="text-[11px]">
                   <span className="text-ink-faint uppercase tracking-wider">Lob ID: </span>
@@ -381,9 +364,24 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
                 )}
                 <div className="text-[11px]">
                   <span className="text-ink-faint uppercase tracking-wider">Expected Delivery: </span>
-                  <span className="text-ink">3-5 business days</span>
+                  <span className="text-ink">
+                    {result.expected_delivery_date
+                      ? new Date(result.expected_delivery_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                      : '3-5 business days'}
+                  </span>
                 </div>
+                {result.url && (
+                  <div className="text-[11px]">
+                    <span className="text-ink-faint uppercase tracking-wider">Proof: </span>
+                    <a href={result.url} target="_blank" rel="noopener noreferrer" className="text-navy hover:text-gold underline underline-offset-2">
+                      View the exact PDF that was mailed
+                    </a>
+                  </div>
+                )}
               </div>
+              {error && (
+                <div className="mt-4 text-[12px] text-left text-amber-800 bg-amber-50 border border-amber-300 rounded-sm px-3 py-2">{error}</div>
+              )}
             </div>
           )}
         </div>
@@ -395,6 +393,9 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
           {step === 'confirm' && (
             <div className="flex items-center gap-3">
               {!verified && (
+                <span className="text-[10px] text-ink-faint">Verify the address to enable sending</span>
+              )}
+              {!verified && (
                 <button
                   onClick={handleVerify}
                   disabled={verifying || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip}
@@ -404,11 +405,13 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
                   {verifying ? 'Verifying…' : 'Verify Address'}
                 </button>
               )}
+              {/* Address verification is a hard gate — methodology hard stop */}
               <button
                 onClick={handleSend}
-                disabled={sending || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip}
+                disabled={sending || !verified || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip}
+                title={!verified ? 'Verify the address first' : undefined}
                 className="flex items-center gap-2 px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                style={{ backgroundColor: (sending || !toAddr.line1) ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}
+                style={{ backgroundColor: (sending || !verified || !toAddr.line1) ? '#B5BBC9' : '#1B2A4A', color: (sending || !verified || !toAddr.line1) ? '#FFFFFF' : '#C9A84C' }}
               >
                 <Send size={13} strokeWidth={2} />
                 {sending ? 'Sending…' : 'Send Certified Mail'}

@@ -1,6 +1,6 @@
 const https = require('https');
 
-function lobRequest(path, method, body, apiKey) {
+function lobRequest(path, method, body, apiKey, extraHeaders) {
   return new Promise((resolve, reject) => {
     const auth = Buffer.from(apiKey + ':').toString('base64');
     const data = JSON.stringify(body);
@@ -13,6 +13,7 @@ function lobRequest(path, method, body, apiKey) {
         'Authorization': 'Basic ' + auth,
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(data),
+        ...(extraHeaders || {}),
       },
     };
     const req = https.request(options, (res) => {
@@ -34,10 +35,13 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
 
-  const mode = process.env.VITE_LOB_MODE || 'test';
+  // Prefer non-VITE names — VITE_-prefixed vars risk being inlined into the
+  // client bundle if ever referenced from browser code. Old names kept as
+  // fallback until the Netlify env is renamed.
+  const mode = process.env.LOB_MODE || process.env.VITE_LOB_MODE || 'test';
   const apiKey = mode === 'live'
-    ? process.env.VITE_LOB_LIVE_KEY
-    : process.env.VITE_LOB_TEST_KEY;
+    ? (process.env.LOB_LIVE_KEY || process.env.VITE_LOB_LIVE_KEY)
+    : (process.env.LOB_TEST_KEY || process.env.VITE_LOB_TEST_KEY);
 
   if (!apiKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Lob API key not configured' }) };
@@ -63,7 +67,7 @@ exports.handler = async (event) => {
     }
 
     if (action === 'send_letter') {
-      const { toAddress, fromAddress, pdfBase64, remoteUrl, description } = payload;
+      const { toAddress, fromAddress, remoteUrl, description, idempotencyKey, metadata } = payload;
       const letterPayload = {
         description: description || 'CCC Dispute Letter',
         to: {
@@ -85,14 +89,21 @@ exports.handler = async (event) => {
           address_country: 'US',
         },
         file: remoteUrl,
-        color: true,
-        double_sided: false,
+        // Text letters print B&W double-sided — enclosures are grayscaled
+        // upstream anyway, and this roughly halves the per-letter cost
+        color: false,
+        double_sided: true,
         address_placement: 'top_first_page',
         mail_type: 'usps_first_class',
-        extra_service: 'certified',
+        // Letters state "return receipt requested" — the mailing must match
+        extra_service: 'certified_return_receipt',
+        // Lets the webhook match the letter row even if lob_id never got saved
+        ...(metadata ? { metadata } : {}),
       };
-      const result = await lobRequest('/v1/letters', 'POST', letterPayload, apiKey);
-return { statusCode: result.status, body: JSON.stringify(result.body) };
+      // Idempotency: a retry of the same letter can never mail twice
+      const headers = idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : undefined;
+      const result = await lobRequest('/v1/letters', 'POST', letterPayload, apiKey, headers);
+      return { statusCode: result.status, body: JSON.stringify(result.body) };
     }
 
     if (action === 'get_tracking') {

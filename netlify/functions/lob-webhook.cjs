@@ -1,10 +1,12 @@
 const https = require('https');
 const crypto = require('crypto');
 
-function verifyLobSignature(body, signature, secret) {
-  if (!signature || !secret) return true; // skip if not configured
+// Lob signs webhooks with HMAC-SHA256 over `${timestamp}.${rawBody}` using the
+// webhook's secret; the hex digest arrives in the Lob-Signature header.
+function verifyLobSignature(rawBody, timestamp, signature, secret) {
+  if (!signature || !timestamp) return false;
   try {
-    const computed = crypto.createHmac('sha256', secret).update(body).digest('hex');
+    const computed = crypto.createHmac('sha256', secret).update(timestamp + '.' + rawBody).digest('hex');
     return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(signature));
   } catch (e) {
     return false;
@@ -67,6 +69,25 @@ function sendgridEmail(to, subject, html, apiKey) {
   });
 }
 
+// Certified letters fire `letter.certified.*` event ids; plain letters fire
+// `letter.*`. Handle both so tracking never silently stalls.
+const statusMap = {
+  'letter.mailed': 'Mailed',
+  'letter.certified.mailed': 'Mailed',
+  'letter.in_transit': 'In Transit',
+  'letter.certified.in_transit': 'In Transit',
+  'letter.re-routed': 'In Transit',
+  'letter.certified.re-routed': 'In Transit',
+  'letter.in_local_area': 'Out for Delivery',
+  'letter.certified.in_local_area': 'Out for Delivery',
+  'letter.processed_for_delivery': 'Out for Delivery',
+  'letter.certified.processed_for_delivery': 'Out for Delivery',
+  'letter.delivered': 'Delivered',
+  'letter.certified.delivered': 'Delivered',
+  'letter.returned_to_sender': 'Returned to Sender',
+  'letter.certified.returned_to_sender': 'Returned to Sender',
+};
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
@@ -75,15 +96,29 @@ exports.handler = async (event) => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const sendgridKey = process.env.SENDGRID_API_KEY;
+  const webhookSecret = process.env.LOB_WEBHOOK_SECRET;
 
   if (!supabaseUrl || !supabaseKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Supabase not configured' }) };
   }
 
-  // Verify Lob signature
-  // Signature verification skipped — Lob uses timestamp-based signing
-  // Requests are protected by the function URL being private
-  console.log('Lob webhook received, headers:', JSON.stringify(Object.keys(event.headers)));
+  // Reject spoofed events — anyone can guess this URL, so the signature is
+  // the only thing standing between the internet and our tracking data
+  if (webhookSecret) {
+    const signature = event.headers['lob-signature'];
+    const timestamp = event.headers['lob-signature-timestamp'];
+    if (!verifyLobSignature(event.body, timestamp, signature, webhookSecret)) {
+      console.warn('Rejected Lob webhook: bad or missing signature');
+      return { statusCode: 401, body: JSON.stringify({ error: 'Invalid signature' }) };
+    }
+    const age = Math.abs(Date.now() - Number(timestamp));
+    if (!Number.isFinite(age) || age > 5 * 60 * 1000) {
+      console.warn('Rejected Lob webhook: stale timestamp', timestamp);
+      return { statusCode: 401, body: JSON.stringify({ error: 'Stale timestamp' }) };
+    }
+  } else {
+    console.warn('LOB_WEBHOOK_SECRET not set — accepting webhook WITHOUT signature verification');
+  }
 
   let payload;
   try { payload = JSON.parse(event.body); }
@@ -93,20 +128,13 @@ exports.handler = async (event) => {
   const lobLetter = payload.body;
   const lobId = lobLetter && lobLetter.id;
   const trackingNumber = lobLetter && lobLetter.tracking_number;
+  const metaLetterId = lobLetter && lobLetter.metadata && lobLetter.metadata.letter_id;
 
-  console.log('Lob webhook received:', eventType, 'lob_id:', lobId);
+  console.log('Lob webhook received:', eventType, 'lob_id:', lobId, 'letter_id:', metaLetterId || '—');
 
   if (!eventType || !lobId) {
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'missing event_type or lob_id' }) };
   }
-
-  const statusMap = {
-    'letter.certified.mailed':        'Mailed',
-    'letter.in_transit':              'In Transit',
-    'letter.certified.in_local_area': 'Out for Delivery',
-    'letter.delivered':               'Delivered',
-    'letter.returned_to_sender':      'Returned to Sender',
-  };
 
   const trackingStatus = statusMap[eventType];
   if (!trackingStatus) {
@@ -114,39 +142,46 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'unhandled event type' }) };
   }
 
-  // Build patch
+  const isDelivered = trackingStatus === 'Delivered';
+
+  // Build patch — delivered_at uses Lob's event time, not webhook arrival time
   const patch = { tracking_status: trackingStatus };
   if (trackingNumber) patch.tracking_number = trackingNumber;
-  if (eventType === 'letter.delivered') patch.delivered_at = new Date().toISOString();
+  if (isDelivered) patch.delivered_at = payload.date_created || new Date().toISOString();
 
-  // Update the letter row and get it back
-  const updateRes = await supabaseRequest(
+  // Match by lob_id first; fall back to our own letter id from metadata
+  // (covers letters where saving lob_id failed after sending) and heal lob_id
+  let updateRes = await supabaseRequest(
     '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId),
-    'PATCH',
-    patch,
-    supabaseUrl,
-    supabaseKey
+    'PATCH', patch, supabaseUrl, supabaseKey
   );
+  let updatedRows = Array.isArray(updateRes.body) ? updateRes.body : [];
+
+  if (updatedRows.length === 0 && metaLetterId) {
+    updateRes = await supabaseRequest(
+      '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId),
+      'PATCH', { ...patch, lob_id: lobId }, supabaseUrl, supabaseKey
+    );
+    updatedRows = Array.isArray(updateRes.body) ? updateRes.body : [];
+    if (updatedRows.length > 0) console.log('Matched letter via metadata letter_id, healed lob_id:', lobId);
+  }
 
   if (updateRes.status < 200 || updateRes.status >= 300) {
     console.error('Supabase update failed:', updateRes.status, updateRes.body);
     return { statusCode: 500, body: JSON.stringify({ error: 'Failed to update letter tracking' }) };
   }
+  if (updatedRows.length === 0) {
+    console.warn('No letter row matched lob_id', lobId, 'or letter_id', metaLetterId);
+    return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'no matching letter row' }) };
+  }
 
   console.log('Updated tracking for lob_id:', lobId, '->', trackingStatus);
 
   // Fire delivery email only on actual delivery
-  if (eventType === 'letter.delivered' && sendgridKey) {
+  if (isDelivered && sendgridKey) {
     try {
-      // Get the letter row to find client_name and furnisher
-      const letterRes = await supabaseRequest(
-        '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId) + '&select=client_name,furnisher,tracking_number',
-        'GET', null, supabaseUrl, supabaseKey
-      );
-
-      const letter = letterRes.body && letterRes.body[0];
+      const letter = updatedRows[0];
       if (letter && letter.client_name) {
-        // Get client email from clients table
         const clientRes = await supabaseRequest(
           '/rest/v1/clients?name=eq.' + encodeURIComponent(letter.client_name) + '&select=email',
           'GET', null, supabaseUrl, supabaseKey

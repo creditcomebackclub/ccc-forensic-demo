@@ -832,8 +832,9 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart, displ
           letter={lobMailerLetter}
           onClose={() => setLobMailerLetter(null)}
           onSent={async (data) => {
+            // Don't close the modal here — LobMailer shows the sent/receipt
+            // screen (and a warning if this save fails); user closes it
             await updateLetter(lobMailerLetter.id, { mailedDate: data.mailedDate, lobId: data.lobId, trackingNumber: data.trackingNumber });
-            setLobMailerLetter(null);
             load();
           }}
         />

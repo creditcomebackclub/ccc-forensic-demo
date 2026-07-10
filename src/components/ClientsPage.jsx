@@ -915,12 +915,13 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           furnisherAddress={lobMailerLetter ? ((lobMailerLetter.phase && lobMailerLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(lobMailerLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal'].includes(lobMailerLetter.phase) ? parseBureauAddress(lobMailerLetter.furnisher) : parseFurnisherAddress(lobMailerLetter.furnisher))) : null}
           onClose={() => setLobMailerLetter(null)}
           onSent={async (data) => {
+            // Don't close the modal here — LobMailer shows the sent/receipt
+            // screen (and a warning if this save fails); user closes it
             await updateLetter(lobMailerLetter.id, {
               mailedDate: data.mailedDate,
               lobId: data.lobId,
               trackingNumber: data.trackingNumber,
             });
-            setLobMailerLetter(null);
             load();
           }}
         />
