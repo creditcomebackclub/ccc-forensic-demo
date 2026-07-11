@@ -142,6 +142,7 @@ export default function TeamPage({ currentUserId }) {
         {profiles.map((p, i) => {
           const isCurrentUser = p.id === currentUserId;
           const isAdmin = p.role === 'admin';
+          const isClientRole = p.role === 'client';
           const busy = updating === p.id;
           return (
             <div
@@ -168,6 +169,10 @@ export default function TeamPage({ currentUserId }) {
                     style={{ background: T.navy, color: T.gold }}>
                     <Shield size={10} strokeWidth={2} /> Admin
                   </span>
+                ) : isClientRole ? (
+                  <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full w-fit bg-green-50 text-green-700">
+                    <User size={10} strokeWidth={2} /> Client
+                  </span>
                 ) : (
                   <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full w-fit bg-gray-100 text-gray-600">
                     <User size={10} strokeWidth={2} /> Auditor
@@ -180,14 +185,20 @@ export default function TeamPage({ currentUserId }) {
               </div>
 
               <div className="col-span-2 text-right">
-                <button
-                  onClick={() => handleRoleToggle(p)}
-                  disabled={busy}
-                  className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-lg border transition-colors hover:border-navy"
-                  style={{ borderColor: T.border, color: busy ? '#B5BBC9' : T.navy }}
-                >
-                  {busy ? '…' : isAdmin ? 'Make Auditor' : 'Make Admin'}
-                </button>
+                {isClientRole ? (
+                  <span className="text-[10px]" style={{ color: T.faint }} title="Client accounts are managed from the Clients tab">
+                    Managed in Clients
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => handleRoleToggle(p)}
+                    disabled={busy}
+                    className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-lg border transition-colors hover:border-navy"
+                    style={{ borderColor: T.border, color: busy ? '#B5BBC9' : T.navy }}
+                  >
+                    {busy ? '…' : isAdmin ? 'Make Auditor' : 'Make Admin'}
+                  </button>
+                )}
               </div>
             </div>
           );
