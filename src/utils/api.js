@@ -74,6 +74,23 @@ async function claudeCall(userContent, { maxTokens = 64000, schema = null, onTok
   }
   const msg = await stream.finalMessage();
 
+  // Cost visibility: every call logs real token usage + estimated cost.
+  // Sonnet 5 intro pricing ($2/M in, $10/M out, cache reads $0.20/M,
+  // cache writes $2.50/M) — valid through 2026-08-31.
+  try {
+    const u = msg.usage || {};
+    const cost = ((u.input_tokens || 0) * 2 + (u.output_tokens || 0) * 10
+      + (u.cache_read_input_tokens || 0) * 0.2 + (u.cache_creation_input_tokens || 0) * 2.5) / 1e6;
+    console.log('[audit-usage]', JSON.stringify({
+      input: u.input_tokens || 0,
+      output: u.output_tokens || 0,
+      cache_read: u.cache_read_input_tokens || 0,
+      cache_write: u.cache_creation_input_tokens || 0,
+      est_cost_usd: Math.round(cost * 10000) / 10000,
+      stop_reason: msg.stop_reason,
+    }));
+  } catch (e) { /* logging only */ }
+
   if (msg.stop_reason === 'max_tokens') {
     throw new Error('The analysis hit the output limit before finishing — the report may be too large for one pass. Try Individual mode with one file per bureau.');
   }
