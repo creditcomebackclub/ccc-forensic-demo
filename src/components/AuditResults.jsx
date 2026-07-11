@@ -3,8 +3,52 @@ import { supabase } from '../utils/supabase';
 import { generatePersonalInfoCleanupLetter, generateInquiryRemovalLetter } from '../utils/api';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
-  FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale,
+  FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale, MoreHorizontal, Pencil,
 } from 'lucide-react';
+
+// Brand tokens — matches the dashboard / clients card system
+const T = {
+  navy: '#1B2A4A',
+  gold: '#C9A84C',
+  border: '#E7EAF0',
+  ink: '#111827',
+  muted: '#6B7280',
+  faint: '#9CA3AF',
+  grid: '#EEF0F4',
+  cardShadow: '0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)',
+};
+
+function Menu({ items }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="relative shrink-0">
+      <button onClick={() => setOpen(!open)} title="More actions"
+        className="flex items-center justify-center rounded-lg border bg-white transition-colors hover:border-navy"
+        style={{ width: 30, height: 30, borderColor: T.border, color: T.muted, background: open ? '#EEF1F7' : '#fff' }}>
+        <MoreHorizontal size={15} strokeWidth={2} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-40 bg-white py-1"
+            style={{ top: 34, minWidth: 200, border: '1px solid ' + T.border, borderRadius: 10, boxShadow: '0 8px 24px rgba(16,24,40,0.14)' }}>
+            {items.filter(Boolean).map((item, i) => item === 'divider' ? (
+              <div key={i} style={{ height: 1, background: T.grid, margin: '4px 0' }} />
+            ) : (
+              <button key={i}
+                onClick={() => { setOpen(false); item.onClick(); }}
+                disabled={item.disabled}
+                className="w-full text-left px-3 py-1.5 text-[12px] transition-colors disabled:opacity-40 hover:bg-gray-50"
+                style={{ color: T.ink }}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 function Pill({ children, tone = 'neutral' }) {
   return <span className={`pill pill-${tone}`}>{children}</span>;
@@ -225,66 +269,87 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   }, [audit && audit.client && audit.client.name]);
   const [selectedAccount, setSelectedAccount] = useState(null);
 
-  const totalBalance = audit.accounts.reduce((sum, a) => sum + (a.balance || 0), 0);
-  const batch1 = audit.accounts.filter((a) => a.batch === 1);
-  const batch2 = audit.accounts.filter((a) => a.batch === 2);
+  // Session-local editable copy — auditors can correct extraction errors
+  // (balance, status, account number) before any letter is generated
+  const [accounts, setAccounts] = useState(audit.accounts || []);
+  useEffect(() => { setAccounts(audit.accounts || []); }, [audit]);
+  const auditView = { ...audit, accounts };
+  const updateAccount = (id, patch) => {
+    setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch, _edited: true } : a)));
+    setSelectedAccount((s) => (s && s.id === id ? { ...s, ...patch, _edited: true } : s));
+  };
+
+  const totalBalance = accounts.reduce((sum, a) => sum + (a.balance || 0), 0);
+  const batch1 = accounts.filter((a) => a.batch === 1);
+  const batch2 = accounts.filter((a) => a.batch === 2);
+
+  const genStatus = (status, label) => {
+    if (!status) return null;
+    if (status === 'running') return <span style={{ color: T.muted }}>Generating {label}…</span>;
+    if (status === 'done') return <span className="text-green-700">✓ {label} generated</span>;
+    return <span className="text-red-600">{label}: {status}</span>;
+  };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* Success banner */}
-      <div className="border rounded p-5 flex items-center gap-3 bg-green-50 border-green-200">
-        <CheckCircle2 size={20} className="text-green-700" />
-        <div className="flex-1">
-          <div className="text-[14px] font-medium text-ink">Forensic audit complete</div>
-          <div className="text-[12px] text-ink-muted">
-            {audit.accountsTargeted} accounts targeted · {audit.totalViolations} violations identified · Phase 1 letter strategy ready
+    <div className="max-w-6xl mx-auto space-y-4" style={{ padding: '20px 0 32px' }}>
+      {/* Branded page header */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <span style={{ width: 4, height: 30, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+          <div>
+            <h1 className="ccc-display text-[22px] font-medium leading-tight" style={{ color: T.ink }}>Audit Results</h1>
+            <p className="text-[11px]" style={{ color: T.muted }}>
+              {audit.client?.name || 'Unknown Client'} · Phase 1 strategy ready for review
+            </p>
           </div>
         </div>
-        {onBackToClients && (
+        <div className="flex items-center gap-2">
+          {onBackToClients && (
+            <button
+              onClick={onBackToClients}
+              className="px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-lg border bg-white transition-colors hover:border-navy"
+              style={{ borderColor: T.border, color: T.muted }}>
+              ← Clients
+            </button>
+          )}
           <button
-            onClick={onBackToClients}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
-            ← Back to Clients
+            onClick={function() { generateAuditPDF(auditView); }}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] uppercase tracking-wider rounded-lg transition-colors"
+            style={{ backgroundColor: T.navy, color: T.gold }}>
+            <Download size={13} strokeWidth={1.75} /> Download PDF
           </button>
-        )}
-        <button
-          onClick={function() { generateAuditPDF(audit); }}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
-          <Download size={13} strokeWidth={1.75} /> Download PDF
-        </button>
-        <button
-          onClick={function() { emailAuditToClient(audit); }}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
-          <Mail size={13} strokeWidth={1.75} /> Email Client
-        </button>
-        <button
-          onClick={runPersonalInfoCleanup}
-          disabled={piCleanupStatus === 'running'}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors disabled:opacity-50">
-          {piCleanupStatus === 'running' ? 'Generating…' : piCleanupStatus === 'done' ? '✓ Personal Info Cleanup Sent' : 'Personal Info Cleanup'}
-        </button>
-        <button
-          onClick={runInquiryRemoval}
-          disabled={inquiryRemovalStatus === 'running'}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors disabled:opacity-50">
-          {inquiryRemovalStatus === 'running' ? 'Generating…' : inquiryRemovalStatus === 'done' ? '✓ Inquiry Removal Sent' : 'Inquiry Removal'}
-        </button>
+          <Menu items={[
+            { label: 'Email summary to client', onClick: () => emailAuditToClient(auditView) },
+            'divider',
+            { label: piCleanupStatus === 'done' ? '✓ Personal Info Cleanup generated' : 'Generate Personal Info Cleanup', onClick: runPersonalInfoCleanup, disabled: piCleanupStatus === 'running' },
+            { label: inquiryRemovalStatus === 'done' ? '✓ Inquiry Removal generated' : 'Generate Inquiry Removal', onClick: runInquiryRemoval, disabled: inquiryRemovalStatus === 'running' },
+            'divider',
+            { label: 'New audit', onClick: onReset },
+          ]} />
+        </div>
+      </div>
 
-        <button
-          onClick={onReset}
-          className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-sm border border-border text-ink-muted hover:bg-gray-50"
-        >
-          New audit
-        </button>
+      {/* Success banner + background-generation status */}
+      <div className="flex items-center gap-3 px-4 py-3"
+        style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 12 }}>
+        <CheckCircle2 size={18} className="text-green-700 shrink-0" />
+        <div className="text-[12px]" style={{ color: T.ink }}>
+          <span className="font-medium">Forensic audit complete</span>
+          <span style={{ color: T.muted }}> — {audit.accountsTargeted} accounts targeted · {audit.totalViolations} violations identified</span>
+        </div>
+        <div className="ml-auto text-[11px] flex items-center gap-3">
+          {genStatus(piCleanupStatus, 'Personal Info Cleanup')}
+          {genStatus(inquiryRemovalStatus, 'Inquiry Removal')}
+        </div>
       </div>
 
       {/* Client info */}
-      <div className="bg-white border border-border rounded p-6">
+      <div style={{ background: '#fff', border: '1px solid ' + T.border, borderRadius: 14, padding: 24, boxShadow: T.cardShadow }}>
         <div className="flex items-start justify-between mb-4">
           <div>
-            <h1 className="ccc-display text-2xl text-ink font-medium">
+            <h2 className="ccc-display text-2xl text-ink font-medium">
               {audit.client?.name || 'Unknown Client'}
-            </h1>
+            </h2>
             <div className="flex items-center gap-4 text-[12px] text-ink-muted mt-1">
               {audit.client?.address && (
                 <span className="flex items-center gap-1">
@@ -300,38 +365,27 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           </div>
         </div>
 
-        {/* Score row */}
-        <div className="grid grid-cols-6 gap-6 pt-4 border-t border-border">
+        {/* Score + summary tiles */}
+        <div className="grid grid-cols-6 gap-3">
           {[
-            { label: 'Equifax', val: audit.scores?.equifax },
-            { label: 'Experian', val: audit.scores?.experian },
-            { label: 'TransUnion', val: audit.scores?.transunion },
+            { label: 'Equifax', val: audit.scores?.equifax ?? '—' },
+            { label: 'Experian', val: audit.scores?.experian ?? '—' },
+            { label: 'TransUnion', val: audit.scores?.transunion ?? '—' },
+            { label: 'Accounts', val: audit.accountsTargeted },
+            { label: 'Violations', val: audit.totalViolations, gold: true },
+            { label: 'Total Balance', val: '$' + totalBalance.toLocaleString() },
           ].map((s) => (
-            <div key={s.label}>
-              <div className="text-[10px] uppercase tracking-[0.15em] text-ink-faint">{s.label}</div>
-              <div className="ccc-mono text-2xl text-ink mt-0.5">{s.val ?? '—'}</div>
+            <div key={s.label} style={{ background: '#FAFBFC', border: '1px solid #EBEEF3', borderRadius: 10, padding: '10px 12px' }}>
+              <div className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: T.faint }}>{s.label}</div>
+              <div className="mt-1" style={{ fontSize: 20, fontWeight: 650, lineHeight: 1.1, color: s.gold ? '#8F7524' : T.ink }}>{s.val}</div>
             </div>
           ))}
-          <div className="border-l border-border pl-6">
-            <div className="text-[10px] uppercase tracking-[0.15em] text-ink-faint">Accounts</div>
-            <div className="ccc-mono text-2xl text-ink mt-0.5">{audit.accountsTargeted}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.15em] text-ink-faint">Violations</div>
-            <div className="ccc-mono text-2xl text-gold-dark mt-0.5">{audit.totalViolations}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.15em] text-ink-faint">Total Balance</div>
-            <div className="ccc-mono text-2xl text-ink mt-0.5">
-              ${totalBalance.toLocaleString()}
-            </div>
-          </div>
         </div>
       </div>
 
       {/* Executive summary */}
       {audit.executiveSummary && (
-        <div className="bg-navy-dark text-white rounded p-5">
+        <div className="bg-navy-dark text-white p-5" style={{ borderRadius: 14 }}>
           <div className="flex items-center gap-2 mb-2">
             <Scale size={14} className="text-gold" strokeWidth={1.75} />
             <h3 className="ccc-display text-sm font-medium">Executive Summary</h3>
@@ -346,9 +400,9 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
         (audit.personalInfo.nameVariants || []).length > 1 ||
         (audit.personalInfo.formerEmployers || []).length > 0
       ))) && (
-        <div className="bg-white border border-border rounded p-6">
+        <div style={{ background: '#fff', border: '1px solid ' + T.border, borderRadius: 14, padding: 24, boxShadow: T.cardShadow }}>
           <div className="flex items-center gap-2 mb-1">
-            <FileWarning size={14} className="text-amber-600" strokeWidth={1.75} />
+            <span style={{ width: 3, height: 14, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
             <h3 className="ccc-display text-sm font-medium text-ink">Inquiries &amp; Personal Information</h3>
           </div>
           <p className="text-[12px] text-ink-muted mb-4">Review before using the buttons above. A "no linked account" tag means no matching tradeline was found — it does NOT by itself mean the inquiry was unauthorized. Confirm with the client before disputing.</p>
@@ -455,20 +509,21 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
 
       {/* Violations by type */}
       {audit.violationsByType?.length > 0 && (
-        <div className="bg-white border border-border rounded">
-          <div className="px-5 py-3.5 border-b border-border">
+        <div className="bg-white overflow-hidden" style={{ border: '1px solid ' + T.border, borderRadius: 14, boxShadow: T.cardShadow }}>
+          <div className="px-5 py-3.5 flex items-center gap-2.5" style={{ borderBottom: '1px solid ' + T.grid }}>
+            <span style={{ width: 3, height: 14, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
             <h2 className="ccc-display text-[15px] text-ink font-medium">Violations by Type</h2>
           </div>
           <table className="w-full text-[12px]">
             <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-[0.12em] font-medium text-ink-faint">
+              <tr style={{ background: '#FAFBFC', borderBottom: '1px solid ' + T.grid }}>
+                <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-[0.12em] font-medium" style={{ color: T.faint }}>
                   Violation Type
                 </th>
-                <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-[0.12em] font-medium text-ink-faint">
+                <th className="text-left px-5 py-2.5 text-[10px] uppercase tracking-[0.12em] font-medium" style={{ color: T.faint }}>
                   Statute
                 </th>
-                <th className="text-right px-5 py-2.5 text-[10px] uppercase tracking-[0.12em] font-medium text-ink-faint">
+                <th className="text-right px-5 py-2.5 text-[10px] uppercase tracking-[0.12em] font-medium" style={{ color: T.faint }}>
                   Count
                 </th>
               </tr>
@@ -492,6 +547,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           account={selectedAccount}
           onClose={() => setSelectedAccount(null)}
           onGenerateLetter={onGenerateLetter} existingLetters={existingLetters}
+          onUpdateAccount={updateAccount}
         />
       )}
     </div>
@@ -500,23 +556,29 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
 
 function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, emphasis, existingLetters = new Set() }) {
   return (
-    <div className="bg-white border border-border rounded">
-      <div className={`px-5 py-3.5 border-b border-border ${emphasis ? 'bg-navy-dark text-white' : ''}`}>
-        <h2 className={`ccc-display text-[15px] font-medium ${emphasis ? 'text-white' : 'text-ink'}`}>
-          {title}
-        </h2>
-        <p className={`text-[11px] mt-0.5 ${emphasis ? 'text-gray-300' : 'text-ink-muted'}`}>
-          {subtitle}
-        </p>
+    <div className="bg-white overflow-hidden" style={{ border: '1px solid ' + T.border, borderRadius: 14, boxShadow: T.cardShadow }}>
+      <div className="px-5 py-3.5 flex items-center gap-2.5" style={{ borderBottom: '1px solid ' + T.grid }}>
+        <span style={{ width: 3, height: 14, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+        <div>
+          <h2 className="ccc-display text-[15px] font-medium text-ink">{title}</h2>
+          <p className="text-[11px] mt-0.5 text-ink-muted">{subtitle}</p>
+        </div>
+        {emphasis && (
+          <span className="ml-auto text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-full font-semibold"
+            style={{ background: T.navy, color: T.gold }}>
+            Send Now
+          </span>
+        )}
       </div>
       <table className="w-full text-[12px]">
         <thead>
-          <tr className="border-b border-gray-100 bg-gray-50">
+          <tr style={{ background: '#FAFBFC', borderBottom: '1px solid ' + T.grid }}>
             {['Furnisher', 'Type', 'Status', 'Balance', 'Violations', 'Primary Hook', 'Address', ''].map(
               (h) => (
                 <th
                   key={h}
-                  className="text-left px-5 py-2.5 text-[10px] uppercase tracking-[0.12em] font-medium text-ink-faint"
+                  className="text-left px-5 py-2.5 text-[10px] uppercase tracking-[0.12em] font-medium"
+                  style={{ color: T.faint }}
                 >
                   {h}
                 </th>
@@ -532,7 +594,10 @@ function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, e
               onClick={() => onSelect(a)}
             >
               <td className="px-5 py-3.5">
-                <div className="font-medium text-ink">{a.furnisher}</div>
+                <div className="font-medium text-ink flex items-center gap-1.5">
+                  {a.furnisher}
+                  {a._edited && <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm" style={{ background: '#FAF3DF', color: '#8F7524' }} title="Fields corrected by auditor">edited</span>}
+                </div>
                 <div className="text-[10px] text-ink-faint mt-0.5 ccc-mono">{a.accountNumberMasked}</div>
               </td>
               <td className="px-5 py-3.5">
@@ -635,16 +700,48 @@ function FurnisherAddressInput({ account, onSaved }) {
   );
 }
 
-function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = new Set() }) {
+function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = new Set(), onUpdateAccount }) {
+  const [editing, setEditing] = React.useState(false);
+  const [form, setForm] = React.useState({
+    balance: account.balance ?? 0,
+    status: account.status || '',
+    accountNumberMasked: account.accountNumberMasked || '',
+    originalCreditor: account.originalCreditor || '',
+  });
+
+  const startEdit = () => {
+    setForm({
+      balance: account.balance ?? 0,
+      status: account.status || '',
+      accountNumberMasked: account.accountNumberMasked || '',
+      originalCreditor: account.originalCreditor || '',
+    });
+    setEditing(true);
+  };
+
+  const saveEdit = () => {
+    onUpdateAccount && onUpdateAccount(account.id, {
+      balance: parseFloat(form.balance) || 0,
+      status: form.status.trim() || account.status,
+      accountNumberMasked: form.accountNumberMasked.trim() || account.accountNumberMasked,
+      originalCreditor: form.originalCreditor.trim() || null,
+    });
+    setEditing(false);
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-6" onClick={onClose}>
       <div
-        className="bg-white rounded max-w-3xl w-full max-h-[85vh] overflow-auto"
+        className="bg-white max-w-3xl w-full max-h-[85vh] overflow-auto"
+        style={{ borderRadius: 14 }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-6 py-4 border-b border-border flex items-start justify-between">
           <div>
-            <h2 className="ccc-display text-xl text-ink font-medium">{account.furnisher}</h2>
+            <h2 className="ccc-display text-xl text-ink font-medium flex items-center gap-2">
+              {account.furnisher}
+              {account._edited && <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm" style={{ background: '#FAF3DF', color: '#8F7524' }}>edited</span>}
+            </h2>
             <div className="flex items-center gap-2 mt-1">
               <TypeBadge type={account.type} />
               <span className="text-[11px] text-ink-muted">
@@ -652,12 +749,54 @@ function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = n
               </span>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded">
-            <ChevronRight size={16} className="text-ink-muted rotate-90" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {onUpdateAccount && !editing && (
+              <button onClick={startEdit} title="Correct extracted fields before generating letters"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wider rounded-lg border transition-colors hover:border-navy"
+                style={{ borderColor: T.border, color: T.muted }}>
+                <Pencil size={11} strokeWidth={2} /> Edit Details
+              </button>
+            )}
+            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded">
+              <ChevronRight size={16} className="text-ink-muted rotate-90" />
+            </button>
+          </div>
         </div>
 
         <div className="p-6 space-y-4">
+          {editing && (
+            <div style={{ border: '1px solid ' + T.border, borderRadius: 10, padding: 16, background: '#FAFBFC' }}>
+              <div className="text-[10px] uppercase tracking-wider font-medium mb-3" style={{ color: T.muted }}>
+                Correct extracted fields — letters and exports use your values
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { key: 'balance', label: 'Balance ($)', type: 'number' },
+                  { key: 'status', label: 'Status' },
+                  { key: 'accountNumberMasked', label: 'Account # (masked)' },
+                  { key: 'originalCreditor', label: 'Original creditor (Type C)' },
+                ].map(({ key, label, type }) => (
+                  <div key={key}>
+                    <div className="text-[10px] mb-1" style={{ color: T.faint }}>{label}</div>
+                    <input type={type || 'text'} value={form[key]}
+                      onChange={(e) => setForm((p) => ({ ...p, [key]: e.target.value }))}
+                      className="w-full border rounded-md px-2 py-1.5 text-[12px] focus:outline-none focus:border-navy"
+                      style={{ borderColor: T.border }} />
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 mt-3">
+                <button onClick={saveEdit}
+                  className="px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-lg"
+                  style={{ background: T.navy, color: T.gold }}>
+                  Save Corrections
+                </button>
+                <button onClick={() => setEditing(false)} className="text-[11px] text-ink-muted hover:text-ink">Cancel</button>
+                <span className="text-[10px] ml-auto" style={{ color: T.faint }}>Applies to letters generated this session</span>
+              </div>
+            </div>
+          )}
+
           {account.originalCreditor && (
             <div className="text-[12px]">
               <span className="text-ink-faint uppercase tracking-wider text-[10px]">Original Creditor: </span>

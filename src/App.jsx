@@ -260,6 +260,7 @@ export default function App() {
   const [state, setState] = useState(STATE.IDLE);
   const [auditResult, setAuditResult] = useState(null);
   const [fileName, setFileName] = useState('');
+  const [auditProgress, setAuditProgress] = useState(null);
   const [error, setError] = useState(null);
   const [activeLetter, setActiveLetter] = useState(null);
   const [auditClientName, setAuditClientName] = useState(null);
@@ -519,13 +520,14 @@ export default function App() {
     setView(VIEW.AUDIT);
     setState(STATE.PROCESSING);
     setError(null);
+    setAuditProgress(null);
     try {
       let res;
       if (!payload.mode || payload.mode === 'combined') {
         const file = payload.file || payload;
         setFileName(file.name || 'report.pdf');
         const base64 = await fileToBase64(file);
-        res = await runAudit(base64, file.type);
+        res = await runAudit(base64, file.type, setAuditProgress);
       } else if (payload.mode === 'individual') {
         setFileName('3-Bureau Individual Audit');
         const [eq, exp, tu] = await Promise.all([
@@ -533,7 +535,7 @@ export default function App() {
           fileToBase64(payload.files.experian),
           fileToBase64(payload.files.transunion),
         ]);
-        res = await runTripleBureauAudit(eq, exp, tu, (msg) => setFileName(msg), {
+        res = await runTripleBureauAudit(eq, exp, tu, setAuditProgress, {
           equifax: payload.files.equifax?.type,
           experian: payload.files.experian?.type,
           transunion: payload.files.transunion?.type,
@@ -541,7 +543,7 @@ export default function App() {
       } else if (payload.mode === 'single') {
         setFileName(payload.bureau + ' Single Bureau Audit');
         const base64 = await fileToBase64(payload.file);
-        res = await runSingleBureauAudit(base64, payload.bureau, payload.file?.type);
+        res = await runSingleBureauAudit(base64, payload.bureau, payload.file?.type, setAuditProgress);
       }
       setAuditResult(res.audit);
       setState(STATE.RESULTS);
@@ -578,7 +580,7 @@ export default function App() {
           {view === VIEW.AUDIT && (
             <>
               {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
-              {state === STATE.PROCESSING && <AuditProgress fileName={fileName} />}
+              {state === STATE.PROCESSING && <AuditProgress fileName={fileName} progress={auditProgress} />}
               {state === STATE.RESULTS && auditResult && (
                 <AuditResults audit={auditResult} onGenerateLetter={handleGenerateLetter} onReset={handleReset} onBackToClients={() => setView(VIEW.CLIENTS)} />
               )}
@@ -668,7 +670,7 @@ function NavItem({ icon: Icon, label, active, onClick }) {
 
 function TopBar({ view, state, isAdmin }) {
   // These views carry their own branded page headers
-  if (['dashboard', 'clients', 'leads', 'methodology', 'team'].includes(view)) return null;
+  if (['dashboard', 'clients', 'leads', 'methodology', 'team', 'audit'].includes(view)) return null;
   if (view === 'clients') return (
     <header className="px-8 py-5 border-b border-border bg-white">
       <h1 className="ccc-display text-2xl text-ink font-medium">Clients</h1>
