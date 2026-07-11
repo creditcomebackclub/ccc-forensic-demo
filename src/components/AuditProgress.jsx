@@ -104,8 +104,8 @@ export default function AuditProgress({ fileName, progress }) {
         )}
 
         <p className="text-[10px] mt-6 leading-relaxed" style={{ color: T.faint }}>
-          Claude is reading the report and building the violation record. Large reports can take a few
-          minutes — leave this tab open. If the API rate-limits mid-run, the request retries automatically.
+          The audit runs server-side — it&apos;s safe to close this tab, and the finished audit is saved to the
+          client&apos;s record automatically. Large reports can take a few minutes. Rate limits retry automatically.
         </p>
       </div>
 

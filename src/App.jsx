@@ -15,7 +15,7 @@ import AffiliatePortal from './components/AffiliatePortal';
 import SettingsModal from './components/SettingsModal';
 import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
-import { runAudit, runTripleBureauAudit, runSingleBureauAudit, fileToBase64 } from './utils/api';
+import { runAudit, runTripleBureauAudit, runSingleBureauAudit } from './utils/api';
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
 const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
@@ -526,24 +526,13 @@ export default function App() {
       if (!payload.mode || payload.mode === 'combined') {
         const file = payload.file || payload;
         setFileName(file.name || 'report.pdf');
-        const base64 = await fileToBase64(file);
-        res = await runAudit(base64, file.type, setAuditProgress);
+        res = await runAudit(file, setAuditProgress);
       } else if (payload.mode === 'individual') {
         setFileName('3-Bureau Individual Audit');
-        const [eq, exp, tu] = await Promise.all([
-          fileToBase64(payload.files.equifax),
-          fileToBase64(payload.files.experian),
-          fileToBase64(payload.files.transunion),
-        ]);
-        res = await runTripleBureauAudit(eq, exp, tu, setAuditProgress, {
-          equifax: payload.files.equifax?.type,
-          experian: payload.files.experian?.type,
-          transunion: payload.files.transunion?.type,
-        });
+        res = await runTripleBureauAudit(payload.files, setAuditProgress);
       } else if (payload.mode === 'single') {
         setFileName(payload.bureau + ' Single Bureau Audit');
-        const base64 = await fileToBase64(payload.file);
-        res = await runSingleBureauAudit(base64, payload.bureau, payload.file?.type, setAuditProgress);
+        res = await runSingleBureauAudit(payload.file, payload.bureau, setAuditProgress);
       }
       setAuditResult(res.audit);
       setState(STATE.RESULTS);

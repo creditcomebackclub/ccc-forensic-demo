@@ -137,7 +137,7 @@ export default function UploadZone({ onAuditStart }) {
             <p><strong style={{ color: T.ink }}>3-Bureau Combined:</strong> 1 API call · typically ~1–2 min · roughly $0.10–0.25 depending on report size.</p>
             <p><strong style={{ color: T.ink }}>3 Individual Reports:</strong> 4 API calls · typically ~2–4 min · roughly $0.30–0.60. Most accurate — each bureau parsed independently, then cross-checked.</p>
             <p><strong style={{ color: T.ink }}>Single Bureau:</strong> 1 API call · typically ~1–2 min · roughly $0.10–0.20. No cross-bureau analysis.</p>
-            <p style={{ color: T.faint }}>Estimates vary with report size. The shared audit doctrine is cached between calls, so multi-call runs cost less than 4× a single call.</p>
+            <p style={{ color: T.faint }}>Estimates vary with report size. The shared audit doctrine is cached between calls, so multi-call runs cost less than 4× a single call. Audits run server-side — once started, you can close this tab and the finished audit lands in the client&apos;s record.</p>
           </div>
         )}
       </div>
