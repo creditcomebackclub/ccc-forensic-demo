@@ -533,7 +533,11 @@ export default function App() {
           fileToBase64(payload.files.experian),
           fileToBase64(payload.files.transunion),
         ]);
-        res = await runTripleBureauAudit(eq, exp, tu, (msg) => setFileName(msg));
+        res = await runTripleBureauAudit(eq, exp, tu, (msg) => setFileName(msg), {
+          equifax: payload.files.equifax?.type,
+          experian: payload.files.experian?.type,
+          transunion: payload.files.transunion?.type,
+        });
       } else if (payload.mode === 'single') {
         setFileName(payload.bureau + ' Single Bureau Audit');
         const base64 = await fileToBase64(payload.file);

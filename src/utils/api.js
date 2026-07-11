@@ -1,6 +1,7 @@
 import { MASTER_SYSTEM_PROMPT } from "../prompts/masterPrompt.js";
 import { saveAudit, saveLetter } from "./storage.js";
 import { supabase } from "./supabase";
+import { MAX_REPORT_CHARS, decodeBase64Utf8, htmlToText } from "./reportText.js";
 
 function getApiKey() {
   let apiKey = localStorage.getItem('ccc_api_key');
@@ -58,13 +59,27 @@ async function claudeCall(apiKey, userContent, maxTokens = 20000) {
 
 function pdfContent(base64, label, mediaType) {
   if (mediaType && (mediaType.includes('html') || mediaType.includes('text'))) {
+    let text = null;
     try {
-      const decoded = atob(base64);
+      text = decodeBase64Utf8(base64);
+      if (mediaType.includes('html')) text = htmlToText(text);
+    } catch (e) {
+      text = null; /* undecodable — fall back to the PDF path below */
+    }
+    if (text !== null) {
+      // Never truncate silently — a clipped report yields a confident audit
+      // that's simply missing the later accounts and inquiries
+      if (text.length > MAX_REPORT_CHARS) {
+        throw new Error(
+          'This report is still ' + Math.round(text.length / 1000) + 'k characters of text after cleanup — too large to audit in one pass (limit '
+          + Math.round(MAX_REPORT_CHARS / 1000) + 'k). Split it into per-bureau files and use Individual mode, or export a smaller report.'
+        );
+      }
       return [
-        { type: 'text', text: 'CREDIT REPORT CONTENT (HTML/TEXT FORMAT):\n\n' + decoded.slice(0, 200000) },
+        { type: 'text', text: 'CREDIT REPORT CONTENT (HTML/TEXT FORMAT):\n\n' + text },
         { type: 'text', text: label },
       ];
-    } catch(e) { /* fallback to pdf below */ }
+    }
   }
   return [
     { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
@@ -107,29 +122,30 @@ export async function runAudit(pdfBase64, fileType) {
   return { audit: json };
 }
 
-export async function runTripleBureauAudit(eqBase64, expBase64, tuBase64, onProgress) {
+export async function runTripleBureauAudit(eqBase64, expBase64, tuBase64, onProgress, fileTypes) {
   const apiKey = getApiKey();
   const t = today();
+  const types = fileTypes || {};
 
   const bureauPrompt = (bureau) =>
     `BUREAU_AUDIT_JSON_MODE\n\nToday is ${t}. Bureau: ${bureau}.\n\nParse this single-bureau credit report. Extract client info, score, every account, every hard inquiry, and every personal information variant (former addresses, name variants, former employers) shown in the report.\n\nFor accounts, extract: furnisher, account number (masked), type, status, balance, pastDue, lastPaymentDate, dofd, paymentHistory, remarks, Metro 2 violations (field, currentValue, expectedValue, reason), accountClassification (A/B/C).\n\nFor inquiries, extract every hard inquiry listed: furnisher name, date of inquiry, and type if stated (e.g. 'Individual', 'Joint', 'Promotional'). Do not omit any inquiry regardless of age.\n\nFor personal information, extract every former/alternate address, every name variant, and every former employer listed in the report's personal information or 'also known as' section.\n\nOutput JSON only:\n{"bureau":"${bureau}","client":{"name":"","address":"","score":0},"accounts":[{"furnisher":"","accountNumber":"","type":"","status":"","balance":0,"pastDue":0,"lastPaymentDate":"","dofd":"","paymentHistory":"","accountClassification":"A","violations":[{"field":"","currentValue":"","expectedValue":"","reason":""}]}],"inquiries":[{"furnisher":"","date":"","type":""}],"personalInfo":{"formerAddresses":[""],"nameVariants":[""],"formerEmployers":[""]}}`;
 
   onProgress && onProgress('Analyzing Equifax report...', 10);
-  const eqText = await claudeCall(apiKey, pdfContent(eqBase64, bureauPrompt('Equifax')));
+  const eqText = await claudeCall(apiKey, pdfContent(eqBase64, bureauPrompt('Equifax'), types.equifax));
   const eqData = extractJSON(eqText);
 
   onProgress && onProgress('Waiting 60 seconds (rate limit)...', 25);
   await sleep(60000);
 
   onProgress && onProgress('Analyzing Experian report...', 35);
-  const expText = await claudeCall(apiKey, pdfContent(expBase64, bureauPrompt('Experian')));
+  const expText = await claudeCall(apiKey, pdfContent(expBase64, bureauPrompt('Experian'), types.experian));
   const expData = extractJSON(expText);
 
   onProgress && onProgress('Waiting 60 seconds (rate limit)...', 50);
   await sleep(60000);
 
   onProgress && onProgress('Analyzing TransUnion report...', 60);
-  const tuText = await claudeCall(apiKey, pdfContent(tuBase64, bureauPrompt('TransUnion')));
+  const tuText = await claudeCall(apiKey, pdfContent(tuBase64, bureauPrompt('TransUnion'), types.transunion));
   const tuData = extractJSON(tuText);
 
   onProgress && onProgress('Waiting 60 seconds (rate limit)...', 75);
