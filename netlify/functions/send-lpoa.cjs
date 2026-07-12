@@ -1,12 +1,14 @@
 const https = require('https');
 
-async function sendViaSendGrid(sgKey, to, subject, htmlBody) {
-  const body = JSON.stringify({
+async function sendViaSendGrid(sgKey, to, subject, htmlBody, attachments) {
+  const payload = {
     personalizations: [{ to: [{ email: to }] }],
     from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
     subject,
     content: [{ type: 'text/html', value: htmlBody }],
-  });
+  };
+  if (attachments && attachments.length) payload.attachments = attachments;
+  const body = JSON.stringify(payload);
   const res = await new Promise((resolve, reject) => {
     const req = https.request({
       hostname: 'api.sendgrid.com', path: '/v3/mail/send', method: 'POST',
@@ -83,42 +85,42 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ signed: true, signatureData }) };
   }
 
-  // Send audit summary email to client
-  if (action === 'send_audit') {
-    const { clientName, clientEmail, auditSummary, scores, accountsTargeted, totalViolations, batch1 } = payload;
+  // Send audit to client — auditor-reviewed subject/body from the
+  // "Email Audit to Client" modal, with the audit PDF attached.
+  if (action === 'send_audit_email') {
+    const { clientEmail, subject, bodyText, attachmentBase64, attachmentFilename } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
+    if (!subject || !bodyText) return { statusCode: 400, body: JSON.stringify({ error: 'subject and bodyText required' }) };
     if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
 
-    const scoreRow = Object.entries(scores || {}).map(([b, s]) => `<td style="text-align:center;padding:8px 16px;"><div style="font-size:22px;font-weight:bold;color:#1B2A4A;">${s || '—'}</div><div style="font-size:10px;color:#666;text-transform:uppercase;">${b}</div></td>`).join('');
-    const batchRows = (batch1 || []).map(a => `<tr><td style="padding:6px 8px;font-size:12px;">${a.furnisher}</td><td style="padding:6px 8px;font-size:12px;text-align:center;">${a.accountClassification || '—'}</td><td style="padding:6px 8px;font-size:12px;">${a.primaryViolation || '—'}</td></tr>`).join('');
+    // Auditor-edited plain text, wrapped in the same branded shell as every
+    // other CCC email — paragraphs split on blank lines, single line breaks
+    // preserved within a paragraph.
+    const paragraphs = String(bodyText).split(/\n{2,}/).map((p) =>
+      `<p style="margin:0 0 14px;">${p.split('\n').map((l) => l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')).join('<br>')}</p>`
+    ).join('');
 
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
       <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
         <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
         <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Your Forensic Audit is Ready</p>
       </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p>Hi ${clientName},</p>
-        <p>Your forensic credit audit is complete. Here's what we found:</p>
-        <table style="width:100%;border-collapse:collapse;margin:16px 0;"><tr>${scoreRow}</tr></table>
-        <div style="background:#f5f5f0;border-radius:4px;padding:12px 16px;margin:16px 0;">
-          <strong>${accountsTargeted}</strong> accounts targeted &nbsp;|&nbsp; <strong>${totalViolations}</strong> violations identified
-        </div>
-        ${batchRows ? `<p><strong>Priority Accounts (Batch 1):</strong></p>
-        <table style="width:100%;border-collapse:collapse;font-size:12px;margin:8px 0;">
-          <thead><tr style="background:#1B2A4A;color:#fff;"><th style="padding:6px 8px;text-align:left;">Furnisher</th><th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;text-align:left;">Primary Violation</th></tr></thead>
-          <tbody>${batchRows}</tbody>
-        </table>` : ''}
-        <p>${auditSummary || 'Phase 1 dispute letters are being prepared and will be mailed via certified mail shortly.'}</p>
-        <p>You can track your dispute progress anytime in your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a>.</p>
-        <p>Questions? Reply to this email or call 970-644-0063.</p>
+      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;font-size:14px;line-height:1.6;">
+        ${paragraphs}
         <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
         <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
       </div>
     </body></html>`;
 
+    const attachments = attachmentBase64 ? [{
+      content: attachmentBase64,
+      filename: attachmentFilename || 'forensic-audit.pdf',
+      type: 'application/pdf',
+      disposition: 'attachment',
+    }] : undefined;
+
     try {
-      await sendViaSendGrid(sgKey, clientEmail, 'Your Credit Comeback Club Forensic Audit is Ready', html);
+      await sendViaSendGrid(sgKey, clientEmail, subject, html, attachments);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };

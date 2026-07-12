@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
 import { generatePersonalInfoCleanupLetter, generateInquiryRemovalLetter } from '../utils/api';
+import { buildAuditPdfDoc, auditPdfFilename, blobToBase64 } from '../utils/auditPdf';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
   FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale, MoreHorizontal, Pencil,
+  X, Send, AlertCircle,
 } from 'lucide-react';
 
 // Brand tokens — matches the dashboard / clients card system
@@ -75,136 +77,171 @@ function SeverityBar({ severity }) {
   );
 }
 
-async function emailAuditToClient(audit) {
-  const clientName = (audit.client && audit.client.name) || '';
-  if (!clientName) { alert('No client name in audit'); return; }
-
-  // Look up client email — check client_profiles first, fall back to clients table
-  const { supabase } = await import('../utils/supabase');
+// Client email lookup — client_profiles first, fall back to clients table.
+// Shared by the button's enabled/disabled state and the send modal's "To" field.
+async function lookupClientEmail(clientName) {
+  if (!clientName) return null;
   const { data: cp } = await supabase.from('client_profiles').select('email,full_name').eq('full_name', clientName).limit(1);
-  let clientEmail = cp && cp.length > 0 ? cp[0].email : null;
-  if (!clientEmail) {
+  let email = cp && cp.length > 0 ? cp[0].email : null;
+  if (!email) {
     const { data: cm } = await supabase.from('clients').select('email').eq('name', clientName).limit(1);
-    clientEmail = cm && cm.length > 0 ? cm[0].email : null;
+    email = cm && cm.length > 0 ? cm[0].email : null;
   }
-
-  if (!clientEmail) {
-    alert('No email on file for ' + clientName + '. Add their email in the client card first.');
-    return;
-  }
-  if (confirm('Send audit summary to ' + clientEmail + '?')) {
-    await sendAuditEmail(audit, clientName, clientEmail);
-  }
+  return email || null;
 }
 
-async function sendAuditEmail(audit, clientName, clientEmail) {
-  const batch1 = (audit.accounts || []).filter(function(a) { return a.batch === 1; });
-  try {
-    const res = await fetch('/.netlify/functions/send-lpoa', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'send_audit',
-        clientName: clientName,
-        clientEmail: clientEmail,
-        auditSummary: audit.executiveSummary || '',
-        scores: audit.scores || {},
-        accountsTargeted: audit.accountsTargeted || (audit.accounts && audit.accounts.length) || 0,
-        totalViolations: audit.totalViolations || 0,
-        batch1: batch1.map(function(a) { return { furnisher: a.furnisher, accountClassification: a.accountClassification, primaryViolation: a.primaryViolation }; }),
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Send failed');
-    alert('Audit summary sent to ' + clientEmail);
-  } catch (e) {
-    alert('Could not send: ' + e.message);
-  }
+function defaultAuditEmailBody(audit, clientEmail) {
+  const client = audit.client || {};
+  const firstName = (client.name || '').split(' ')[0] || 'there';
+  const scores = audit.scores || {};
+  const accountsTargeted = audit.accountsTargeted || (audit.accounts && audit.accounts.length) || 0;
+  const totalViolations = audit.totalViolations || 0;
+  return `Hi ${firstName},
+
+Your forensic audit is complete. Here's what we found across your three credit reports:
+
+Scores: Equifax ${scores.equifax ?? '—'} · Experian ${scores.experian ?? '—'} · TransUnion ${scores.transunion ?? '—'}
+
+We identified ${accountsTargeted} accounts with actionable violations and ${totalViolations} total violations under Metro 2®, FCRA, and FDCPA standards.
+
+Your dispute battle plan is attached. Review it and let us know if you have any questions — we'll be in touch with next steps once your first certified letters go out.
+
+— Chris & the Credit Comeback Club Team
+970-644-0063 | creditcomebackclub.com`;
+}
+
+function EmailAuditModal({ audit, clientEmail, onClose }) {
+  const [subject, setSubject] = useState('Your Credit Comeback Club Forensic Audit is Ready');
+  const [body, setBody] = useState(() => defaultAuditEmailBody(audit));
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(null);
+  const [sent, setSent] = useState(false);
+
+  const handleSend = async () => {
+    setSending(true);
+    setError(null);
+    try {
+      const doc = buildAuditPdfDoc(audit);
+      const pdfBase64 = await blobToBase64(doc.output('blob'));
+      const filename = auditPdfFilename(audit);
+
+      const res = await fetch('/.netlify/functions/send-lpoa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'send_audit_email',
+          clientEmail,
+          subject,
+          bodyText: body,
+          attachmentBase64: pdfBase64,
+          attachmentFilename: filename,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Send failed');
+
+      // Log the send event onto the audit record — fetch-fresh-then-merge,
+      // same pattern FurnisherAddressInput uses, so we never clobber newer
+      // server state with a stale local snapshot.
+      try {
+        const clientName = audit.client?.name;
+        const { data: rows } = await supabase.from('audits').select('id, audit')
+          .eq('client_name', clientName || '').order('saved_at', { ascending: false }).limit(1);
+        if (rows && rows.length > 0) {
+          const fresh = rows[0].audit;
+          fresh.sentAt = new Date().toISOString();
+          fresh.sentTo = clientEmail;
+          await supabase.from('audits').update({ audit: fresh }).eq('id', rows[0].id);
+        }
+      } catch (logErr) {
+        console.warn('Could not log send event to audit record:', logErr);
+      }
+
+      setSent(true);
+    } catch (e) {
+      setError(e.message || 'Could not send email');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded border border-border w-full max-w-lg flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-navy rounded-t">
+          <div>
+            <div className="text-white text-[14px] font-medium ccc-display">Email Audit to Client</div>
+            <div className="text-gold text-[11px] uppercase tracking-wider mt-0.5">{audit.client?.name || 'Client'}</div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={18} strokeWidth={1.75} /></button>
+        </div>
+
+        <div className="flex-1 overflow-auto p-6">
+          {sent ? (
+            <div className="text-center py-6">
+              <CheckCircle size={36} className="text-green-600 mx-auto mb-3" strokeWidth={1.5} />
+              <div className="text-[14px] text-ink font-medium ccc-display mb-1">Email Sent</div>
+              <div className="text-[12px] text-ink-muted">Sent to {clientEmail} with the forensic audit PDF attached.</div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">To</label>
+                <div className="w-full border border-border rounded-sm px-3 py-1.5 text-[12px] text-ink-muted bg-gray-50">{clientEmail}</div>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Subject</label>
+                <input
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  className="w-full border border-border rounded-sm px-3 py-1.5 text-[12px] text-ink focus:outline-none focus:border-navy"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Message</label>
+                <textarea
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  rows={12}
+                  className="w-full border border-border rounded-sm px-3 py-2 text-[12px] text-ink leading-relaxed focus:outline-none focus:border-navy font-mono"
+                />
+              </div>
+              <div className="flex items-center gap-1.5 text-[11px] text-ink-faint">
+                <FileWarning size={11} strokeWidth={2} /> {auditPdfFilename(audit)} will be attached automatically
+              </div>
+              {error && (
+                <div className="flex items-start gap-2 text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">
+                  <AlertCircle size={14} strokeWidth={2} className="shrink-0 mt-0.5" /> {error}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-border flex items-center justify-between">
+          <button onClick={onClose} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
+            {sent ? 'Close' : 'Cancel'}
+          </button>
+          {!sent && (
+            <button
+              onClick={handleSend}
+              disabled={sending || !subject.trim() || !body.trim()}
+              className="flex items-center gap-1.5 px-4 py-2 text-[11px] uppercase tracking-wider rounded-sm transition-colors"
+              style={{ backgroundColor: sending ? '#9CA3AF' : '#1B2A4A', color: '#C9A84C' }}
+            >
+              <Send size={13} strokeWidth={1.75} /> {sending ? 'Sending…' : 'Send'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function generateAuditPDF(audit) {
-  var clientName = (audit.client && audit.client.name) || 'Client';
-  var today = new Date().toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'});
-  var rows = (audit.accounts || []).map(function(a) {
-    var cells = [a.furnisher || '', a.accountNumberMasked || a.accountNumber || '-', a.accountClassification || '-', a.status || '-', a.balance ? a.balance.toLocaleString() : '-', String((a.violations && a.violations.length) || 0), 'Batch ' + String(a.batch || 2)];
-    return '<tr>' + cells.map(function(c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
-  }).join('');
-  var vrows = (audit.accounts || []).flatMap(function(a) {
-    return (a.violations || []).map(function(v) {
-      var cells = [a.furnisher, v.field || '-', v.currentlyReports || v.currentValue || '-', v.shouldReport || v.expectedValue || '-', v.statute || v.reason || '-'];
-      return '<tr>' + cells.map(function(c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
-    });
-  }).join('');
-  var eq = String((audit.scores && audit.scores.equifax) || '-');
-  var ex = String((audit.scores && audit.scores.experian) || '-');
-  var tu = String((audit.scores && audit.scores.transunion) || '-');
-  var css = 'body{font-family:Arial,sans-serif;font-size:12px;margin:0}@page{size:letter;margin:.75in}.h{background:#1B2A4A;color:#C9A84C;padding:20px 32px}.s{padding:16px 32px;border-bottom:1px solid #eee}h2{font-size:12px;text-transform:uppercase;color:#1B2A4A;margin:0 0 8px}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#1B2A4A;color:#fff;padding:6px;text-align:left}td{padding:5px;border-bottom:1px solid #f0f0f0}';
-  var parts = ['<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Audit - ', clientName, '</title><style>', css, '</style></head><body>', '<div class="h"><h1 style="margin:0;font-size:18px">Credit Comeback Club Forensic Audit</h1><p style="margin:4px 0 0;font-size:11px;color:#fff">Prepared: ', today, '</p></div>', '<div class="s"><h2>Client Information</h2><p><strong>', clientName, '</strong></p><p>', (audit.client && audit.client.address) || '', '</p><p>Accounts Targeted: ', String(audit.accountsTargeted || 0), ' | Total Violations: ', String(audit.totalViolations || 0), '</p></div>', '<div class="s"><h2>Credit Scores</h2><p>Equifax: <strong>', eq, '</strong> &nbsp; Experian: <strong>', ex, '</strong> &nbsp; TransUnion: <strong>', tu, '</strong></p></div>', audit.executiveSummary ? '<div class="s"><h2>Executive Summary</h2><p>' + audit.executiveSummary + '</p></div>' : '',
-    '<div class="s" style="background:#f8fbff"><h2 style="color:#1B2A4A">Your Dispute Battle Plan</h2><p style="font-size:11px;color:#555;margin-bottom:16px">Here is exactly what Credit Comeback Club is going to do on your behalf, in plain English. Every action is backed by federal law and sent via certified mail with tracking.</p>' +
-    (audit.accounts || []).map(function(a) {
-      var typeLabel = a.type === 'C' ? ' <span style="background:#FEF3C7;color:#92400E;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700">COLLECTOR</span>' : '';
-      var plan = a.type === 'C'
-        ? 'We are hitting <strong>' + a.furnisher + '</strong> with two certified letters at the same time — one demanding they prove you owe this debt and that they have the legal right to collect it (federal debt collection law gives them 30 days), and one disputing the inaccurate reporting directly. If they cannot validate the debt, they are legally required to stop reporting it. If they ignore us or respond inadequately, we escalate to all three credit bureaus with their failure as evidence against them.'
-        : 'We are sending a certified letter directly to <strong>' + a.furnisher + '</strong> demanding they fix or remove the inaccurate information on your credit report. Specifically: ' + (a.primaryViolation ? a.primaryViolation : 'the violations identified in this report') + '. They have 30 days to respond with original source documentation. If they cannot back up what they are reporting, they must correct or delete it. If they ignore us or send a weak response, we take that to the credit bureaus as proof they cannot defend their own reporting.';
-      var topViolations = (a.violations || []).slice(0, 2).map(function(v) {
-        return '<li style="margin:3px 0;color:#374151">' + v.issue + '</li>';
-      }).join('');
-      return '<div style="border:1px solid #dde8f0;border-radius:6px;padding:14px;margin-bottom:12px;background:#fff">' +
-        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">' +
-        '<span style="font-weight:700;font-size:12px;color:#1B2A4A">' + a.furnisher + '</span>' + typeLabel +
-        '<span style="margin-left:auto;font-size:10px;color:#6B7280">Batch ' + (a.batch || 2) + ' · ' + (a.violations ? a.violations.length : 0) + ' violations</span>' +
-        '</div>' +
-        '<p style="font-size:11px;color:#374151;line-height:1.6;margin:0 0 8px">' + plan + '</p>' +
-        (topViolations ? '<div style="font-size:10px;color:#6B7280;margin-top:6px"><strong>Key issues found:</strong><ul style="margin:4px 0 0 16px;padding:0">' + topViolations + '</ul></div>' : '') +
-        (function() {
-          var batchWeek = (a.batch === 1) ? 1 : 3;
-          var isTypeC = a.type === 'C';
-          var steps = [];
-          if (isTypeC) {
-            steps = [
-              ['Week ' + batchWeek, 'Two certified letters mailed simultaneously — debt validation demand + furnisher dispute'],
-              ['Day ' + (batchWeek * 7 + 3) + '-' + (batchWeek * 7 + 5), 'USPS delivery confirmed, 30-day response clock starts'],
-              ['Day ' + (batchWeek * 7 + 30), 'Debt validation + dispute response deadline'],
-              ['Day ' + (batchWeek * 7 + 36) + '-' + (batchWeek * 7 + 40), 'CCC reviews response — Phase 2 analysis'],
-              ['Week ' + (batchWeek + 6), 'Phase 3 escalation mailed to Equifax'],
-              ['Week ' + (batchWeek + 8), 'Phase 3 escalation mailed to Experian'],
-              ['Week ' + (batchWeek + 10), 'Phase 3 escalation mailed to TransUnion'],
-              ['Day 90–120', 'Bureau investigation windows close → deletion, correction, or further escalation'],
-            ];
-          } else {
-            steps = [
-              ['Week ' + batchWeek, 'Phase 1 certified letter mailed directly to ' + a.furnisher],
-              ['Day ' + (batchWeek * 7 + 3) + '-' + (batchWeek * 7 + 5), 'USPS delivery confirmed, 30-day response clock starts'],
-              ['Day ' + (batchWeek * 7 + 30), 'Furnisher response deadline under FCRA §1681s-2(b)'],
-              ['Day ' + (batchWeek * 7 + 36) + '-' + (batchWeek * 7 + 40), 'CCC reviews response — Phase 2 analysis'],
-              ['Week ' + (batchWeek + 6), 'Phase 3 escalation mailed to Equifax'],
-              ['Week ' + (batchWeek + 8), 'Phase 3 escalation mailed to Experian'],
-              ['Week ' + (batchWeek + 10), 'Phase 3 escalation mailed to TransUnion'],
-              ['Day 90–120', 'Bureau investigation windows close → deletion, correction, or further escalation'],
-            ];
-          }
-          var rows = steps.map(function(s, i) {
-            var bg = i % 2 === 0 ? '#F8FAFC' : '#fff';
-            var isLast = i === steps.length - 1;
-            return '<tr style="background:' + bg + '">' +
-              '<td style="padding:5px 8px;font-size:10px;font-weight:700;color:#1B2A4A;white-space:nowrap;border-bottom:1px solid #E5E7EB;width:90px">' + s[0] + '</td>' +
-              '<td style="padding:5px 8px;font-size:10px;color:#374151;border-bottom:1px solid #E5E7EB">' + s[1] + '</td>' +
-              '</tr>';
-          }).join('');
-          return '<div style="margin-top:12px;border:1px solid #DBEAFE;border-radius:5px;overflow:hidden">' +
-            '<div style="background:#1B2A4A;padding:5px 10px;font-size:10px;font-weight:700;color:#C9A84C;text-transform:uppercase;letter-spacing:0.06em">Projected Process Timeline</div>' +
-            '<table style="width:100%;border-collapse:collapse">' + rows + '</table>' +
-            '<div style="padding:5px 10px;font-size:9px;color:#9CA3AF;background:#F9FAFB;border-top:1px solid #E5E7EB">Timeline reflects typical dispute process windows under FCRA. Actual dates depend on mailing date and furnisher response. Results vary — no specific outcome is guaranteed.</div>' +
-            '</div>';
-        })() +
-        '</div>';
-    }).join('') +
-    '</div>', '<div class="s"><h2>Accounts Targeted</h2><table><thead><tr><th>Furnisher</th><th>Acct</th><th>Type</th><th>Status</th><th>Balance</th><th>Viol</th><th>Batch</th></tr></thead><tbody>', rows, '</tbody></table></div>', /* Violation detail table removed from client PDF — forensic detail kept in admin view only */ '<div style="padding:12px 32px;font-size:10px;color:#999">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063</div></body></html>'];
-  var html = parts.join('');
-  var blob = new Blob([html], {type: 'text/html'});
-  var url = URL.createObjectURL(blob);
-  window.open(url, '_blank');
-  setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+  const doc = buildAuditPdfDoc(audit);
+  doc.save(auditPdfFilename(audit));
 }
 
 export default function AuditResults({ audit, onGenerateLetter, onReset, onBackToClients }) {
@@ -212,12 +249,20 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   const [piCleanupStatus, setPiCleanupStatus] = React.useState(null); // null | 'running' | 'done' | error string
   const [inquiryRemovalStatus, setInquiryRemovalStatus] = React.useState(null);
   const [selectedInquiryKeys, setSelectedInquiryKeys] = React.useState(new Set());
+  const [clientEmail, setClientEmail] = React.useState(null);
+  const [emailModalOpen, setEmailModalOpen] = React.useState(false);
   const inqKey = (i) => i.furnisher + '|' + i.date;
 
   React.useEffect(() => {
     const eligible = (audit.inquiries || []).filter((i) => i.category !== 'linked_to_open_account');
     setSelectedInquiryKeys(new Set(eligible.map(inqKey)));
   }, [audit.inquiries]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    lookupClientEmail(audit.client?.name).then((email) => { if (!cancelled) setClientEmail(email); });
+    return () => { cancelled = true; };
+  }, [audit.client?.name]);
 
   const BUREAUS = ['Equifax', 'Experian', 'TransUnion'];
 
@@ -318,9 +363,17 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
             style={{ backgroundColor: T.navy, color: T.gold }}>
             <Download size={13} strokeWidth={1.75} /> Download PDF
           </button>
+          <button
+            onClick={() => clientEmail && setEmailModalOpen(true)}
+            disabled={!clientEmail}
+            title={!clientEmail ? 'Add client email first' : undefined}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] uppercase tracking-wider rounded-lg border transition-colors"
+            style={clientEmail
+              ? { borderColor: T.navy, color: T.navy, background: '#fff' }
+              : { borderColor: T.border, color: '#9CA3AF', background: '#F3F4F6', cursor: 'not-allowed' }}>
+            <Mail size={13} strokeWidth={1.75} /> Email Audit to Client
+          </button>
           <Menu items={[
-            { label: 'Email summary to client', onClick: () => emailAuditToClient(auditView) },
-            'divider',
             { label: piCleanupStatus === 'done' ? '✓ Personal Info Cleanup generated' : 'Generate Personal Info Cleanup', onClick: runPersonalInfoCleanup, disabled: piCleanupStatus === 'running' },
             { label: inquiryRemovalStatus === 'done' ? '✓ Inquiry Removal generated' : 'Generate Inquiry Removal', onClick: runInquiryRemoval, disabled: inquiryRemovalStatus === 'running' },
             'divider',
@@ -328,6 +381,10 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           ]} />
         </div>
       </div>
+
+      {emailModalOpen && (
+        <EmailAuditModal audit={auditView} clientEmail={clientEmail} onClose={() => setEmailModalOpen(false)} />
+      )}
 
       {/* Success banner + background-generation status */}
       <div className="flex items-center gap-3 px-4 py-3"
