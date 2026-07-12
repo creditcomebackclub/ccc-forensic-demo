@@ -395,6 +395,15 @@ function parseFurnisherAddress(furnisher) {
     'bonneville collections': { name: 'Bonneville Collections', line1: 'P.O. Box 150621', city: 'Ogden', state: 'UT', zip: '84415' },
     'align balance': { name: 'Align Balance LLC', line1: '175 W. Jackson Blvd, Suite 600', city: 'Chicago', state: 'IL', zip: '60604' },
     'alignbalance': { name: 'Align Balance LLC', line1: '175 W. Jackson Blvd, Suite 600', city: 'Chicago', state: 'IL', zip: '60604' },
+    'attorney general': { name: 'Office of the Attorney General, Child Support Division', line1: 'P.O. Box 12017', city: 'Austin', state: 'TX', zip: '78711-2017' },
+    'child support division': { name: 'Office of the Attorney General, Child Support Division', line1: 'P.O. Box 12017', city: 'Austin', state: 'TX', zip: '78711-2017' },
+    // NOT a confirmed FCRA dispute correspondence address — corporate HQ only.
+    // Flagged directly in the name field since this prefills a live Lob mail-send form.
+    'self financial': { name: '⚠ PENDING VERIFICATION (HQ address, not confirmed dispute address) — Self Financial, Inc. / Sunrise Banks, N.A.', line1: '93 Red River St, Suite 1000', city: 'Austin', state: 'TX', zip: '78701' },
+    'sunrise banks': { name: '⚠ PENDING VERIFICATION (HQ address, not confirmed dispute address) — Self Financial, Inc. / Sunrise Banks, N.A.', line1: '93 Red River St, Suite 1000', city: 'Austin', state: 'TX', zip: '78701' },
+    'self credit card': { name: '⚠ PENDING VERIFICATION (HQ address, not confirmed dispute address) — Self Financial, Inc. / Sunrise Banks, N.A.', line1: '93 Red River St, Suite 1000', city: 'Austin', state: 'TX', zip: '78701' },
+    'self lender': { name: '⚠ PENDING VERIFICATION (HQ address, not confirmed dispute address) — Self Financial, Inc. / Sunrise Banks, N.A.', line1: '93 Red River St, Suite 1000', city: 'Austin', state: 'TX', zip: '78701' },
+    'sbna': { name: '⚠ PENDING VERIFICATION (HQ address, not confirmed dispute address) — Self Financial, Inc. / Sunrise Banks, N.A.', line1: '93 Red River St, Suite 1000', city: 'Austin', state: 'TX', zip: '78701' },
   };
   const lower = (furnisher || '').toLowerCase();
   for (const [key, addr] of Object.entries(map)) {

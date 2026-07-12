@@ -264,10 +264,22 @@ DEBT COLLECTORS (TYPE C):
 - Aldous / Aldous & Associates / Aldous and Associates: Aldous & Associates PLLC, P.O. Box 171374, Holladay, UT 84117
 - Align Balance / Align Balance LLC: Align Balance LLC, 175 W. Jackson Blvd Suite 600, Chicago, IL 60604
 
+GOVERNMENT / CHILD SUPPORT ENFORCEMENT AGENCIES:
+- Office of the Attorney General / Texas Attorney General / OAG / Attorney General Child Support Division / Child Support Division: Office of the Attorney General, Child Support Division, P.O. Box 12017, Austin, TX 78711-2017
+
 CRAs (PHASE 3 ONLY):
 - Equifax: Equifax Information Services LLC, P.O. Box 740256, Atlanta, GA 30374-0256
 - Experian: Experian Information Solutions Inc., P.O. Box 4500, Allen, TX 75013
 - TransUnion: TransUnion LLC, Consumer Dispute Center, P.O. Box 2000, Chester, PA 19016
+
+## ADDRESSES PENDING VERIFICATION — DO NOT TREAT AS CONFIRMED
+
+These are known candidate addresses that are NOT yet confirmed as the correct FCRA dispute correspondence address for that furnisher (e.g. a corporate headquarters address of unconfirmed dispute-mail validity). If a furnisher matches one of these aliases:
+- Do NOT use this address in a generated letter.
+- Do NOT set addressStatus to "YES". Set it to "CONFIRM".
+- You may reference the candidate address in the account's strategy field as a starting point for the human reviewer, explicitly labeled as unconfirmed.
+
+- Self Financial / Self Financial Inc / Sunrise Banks / Sunrise Banks N.A. / Self Credit Card / Self Lender / SBNA Self Lender: Self Financial, Inc. / Sunrise Banks, N.A., 93 Red River St, Suite 1000, Austin, TX 78701 — PENDING VERIFICATION: this is the corporate headquarters address, not yet confirmed as the FCRA dispute correspondence address. Confirm directly with Self Financial before using.
 
 When the user message contains the marker \`<MODE>AUDIT_JSON</MODE>\`, you MUST output a valid JSON object matching this exact schema, and NOTHING else. No prose before. No prose after. No code fences. Pure JSON. Just the object, parseable by JSON.parse():
 
