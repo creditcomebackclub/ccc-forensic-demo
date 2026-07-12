@@ -98,7 +98,7 @@ export default function SettingsModal({ onClose, displayName, email }) {
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Key size={13} strokeWidth={1.75} className="text-navy" />
-              <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Anthropic API Key</div>
+              <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Anthropic API Key — Letters Only</div>
             </div>
             <div className="space-y-2">
               <div className="flex gap-2">
@@ -137,11 +137,11 @@ export default function SettingsModal({ onClose, displayName, email }) {
                 </div>
               )}
               {!apiKey && (
-                <div className="text-[11px] text-red-600">No API key set — audits and letter generation will fail</div>
+                <div className="text-[11px] text-amber-600">No API key set — letter generation will fail. Audits are unaffected (they run server-side).</div>
               )}
               <div className="text-[10px] text-ink-faint leading-relaxed">
-                Stored in this browser only. Never sent to any server except Anthropic's API directly.
-                Get your key at console.anthropic.com.
+                Used for dispute-letter generation only — audits now run server-side and never use this key.
+                Stored in this browser only; sent nowhere except Anthropic's API directly. Get a key at console.anthropic.com.
               </div>
             </div>
           </div>
