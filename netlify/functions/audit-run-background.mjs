@@ -228,7 +228,7 @@ export const handler = async (event) => {
       await progress('Cross-bureau reconciliation & ranking', 80)(0);
       const mergeRaw = await claudeCall(
         [{ type: 'text', text: mergeAuditPrompt(t, parsed.equifax, parsed.experian, parsed.transunion) }],
-        { schema: AUDIT_SCHEMA, maxTokens: 32000, onTokens: progress('Cross-bureau reconciliation & ranking', 80) },
+        { schema: AUDIT_SCHEMA, onTokens: progress('Cross-bureau reconciliation & ranking', 80) },
       );
       audit = parseAuditJSON(mergeRaw);
       if (audit && audit.client) {

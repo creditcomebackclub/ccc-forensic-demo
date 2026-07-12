@@ -5,7 +5,10 @@ dist
 .env.*.save
 *.save
 .netlify
+deno.lock
 *.log
 .DS_Store
 .vscode
 .idea
+e2e-runner.local.mjs
+e2e-individual-retest.local.mjs
