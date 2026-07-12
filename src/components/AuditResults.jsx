@@ -623,11 +623,14 @@ function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, e
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (existingLetters.has(a.id)) return; onGenerateLetter(a);
+                    if (existingLetters.has(a.id) || a.addressStatus !== 'YES') return;
+                    onGenerateLetter(a);
                   }}
-                  className={`text-[10px] uppercase tracking-wider px-2.5 py-1.5 rounded-sm flex items-center gap-1 transition-colors ${existingLetters.has(a.id) ? 'bg-green-600 text-white cursor-default' : 'bg-navy text-white hover:bg-navy-dark'}`}
+                  disabled={!existingLetters.has(a.id) && a.addressStatus !== 'YES'}
+                  title={a.addressStatus !== 'YES' && !existingLetters.has(a.id) ? 'Furnisher address must be confirmed before a letter can be generated' : undefined}
+                  className={`text-[10px] uppercase tracking-wider px-2.5 py-1.5 rounded-sm flex items-center gap-1 transition-colors ${existingLetters.has(a.id) ? 'bg-green-600 text-white cursor-default' : a.addressStatus !== 'YES' ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-navy text-white hover:bg-navy-dark'}`}
                 >
-                  {existingLetters.has(a.id) ? <><CheckCircle size={10} /> Done</> : <><Mail size={10} /> Letter</>}
+                  {existingLetters.has(a.id) ? <><CheckCircle size={10} /> Done</> : a.addressStatus !== 'YES' ? <><Mail size={10} /> Confirm Address</> : <><Mail size={10} /> Letter</>}
                 </button>
               </td>
             </tr>
@@ -853,16 +856,25 @@ function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = n
             <FurnisherAddressInput account={account} onSaved={(addr) => { account.furnisherAddress = addr; account.addressStatus = 'YES'; }} />
           )}
 
-          <button
-            onClick={() => {
-              onGenerateLetter(account);
-              onClose();
-            }}
-            className="w-full px-4 py-3 text-[12px] uppercase tracking-wider rounded-sm font-medium flex items-center justify-center gap-2 bg-gold text-navy-dark hover:bg-gold-dark hover:text-white transition-colors"
-          >
-            {[...existingLetters].some((lf) => { const af = (account.furnisher || '').toLowerCase().trim(); return lf.includes(af) || af.includes(lf) || lf.split('/').map(s=>s.trim()).some(p => af.includes(p) || p.includes(af)); }) ? <><CheckCircle size={14} className="text-green-600" /> Letter Generated</> : <><Sparkles size={14} /> Generate Phase 1 Letter</>}
-            <ArrowRight size={12} />
-          </button>
+          {(() => {
+            const hasLetter = [...existingLetters].some((lf) => { const af = (account.furnisher || '').toLowerCase().trim(); return lf.includes(af) || af.includes(lf) || lf.split('/').map(s=>s.trim()).some(p => af.includes(p) || p.includes(af)); });
+            const addressBlocked = !hasLetter && account.addressStatus !== 'YES';
+            return (
+              <button
+                onClick={() => {
+                  if (addressBlocked) return;
+                  onGenerateLetter(account);
+                  onClose();
+                }}
+                disabled={addressBlocked}
+                title={addressBlocked ? 'Furnisher address must be confirmed before a letter can be generated' : undefined}
+                className={`w-full px-4 py-3 text-[12px] uppercase tracking-wider rounded-sm font-medium flex items-center justify-center gap-2 transition-colors ${addressBlocked ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gold text-navy-dark hover:bg-gold-dark hover:text-white'}`}
+              >
+                {hasLetter ? <><CheckCircle size={14} className="text-green-600" /> Letter Generated</> : addressBlocked ? <><Mail size={14} /> Confirm Furnisher Address First</> : <><Sparkles size={14} /> Generate Phase 1 Letter</>}
+                <ArrowRight size={12} />
+              </button>
+            );
+          })()}
         </div>
       </div>
     </div>
