@@ -9,6 +9,7 @@
 // audits table (so a closed tab loses nothing), and marks the job done.
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
 import { AUDIT_SCHEMA, BUREAU_SCHEMA } from '../../src/utils/auditSchemas.js';
 import {
@@ -62,7 +63,16 @@ export const handler = async (event) => {
     return { statusCode: 500, body: 'server not configured' };
   }
 
-  const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+  // Netlify's Node 20 runtime has no global WebSocket, and supabase-js always
+  // constructs a RealtimeClient in createClient() even though this function
+  // only does REST calls — without a real transport it throws synchronously
+  // here. `transport: null`/`{enabled:false}` do NOT suppress this (realtime-js
+  // treats null as nullish and still resolves a constructor); only a real
+  // WebSocket implementation avoids the throw.
+  const db = createClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false },
+    realtime: { transport: ws },
+  });
 
   // Atomic claim — only proceeds if the row exists and is still 'queued'.
   // Job rows can only be created by authenticated auditors (RLS), so this is
