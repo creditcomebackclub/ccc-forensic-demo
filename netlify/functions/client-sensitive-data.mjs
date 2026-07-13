@@ -59,15 +59,20 @@ export const handler = async (event) => {
   const token = authHeader.replace(/^Bearer\s+/i, '');
   if (!token) return { statusCode: 401, body: JSON.stringify({ error: 'Missing Authorization token' }) };
 
-  const authClient = createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
+  // Same WebSocket workaround as audit-run-background.mjs -- createClient()
+  // builds a RealtimeClient even for pure-REST usage and throws without it.
+  // Needed on every createClient() call in this function, not just the
+  // service-role one below.
+  const authClient = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false },
+    realtime: { transport: ws },
+  });
   const { data: userData, error: userErr } = await authClient.auth.getUser(token);
   if (userErr || !userData?.user) {
     return { statusCode: 401, body: JSON.stringify({ error: 'Invalid or expired session' }) };
   }
   const caller = userData.user;
 
-  // Same WebSocket workaround as audit-run-background.mjs -- createClient()
-  // builds a RealtimeClient even for pure-REST usage and throws without it.
   const db = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false },
     realtime: { transport: ws },
