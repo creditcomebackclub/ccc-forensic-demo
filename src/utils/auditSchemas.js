@@ -194,3 +194,45 @@ export const BUREAU_SCHEMA = {
   },
   required: ['bureau', 'client', 'accounts', 'inquiries', 'personalInfo'],
 };
+
+// Phase 2 (furnisher response) analysis — mirrors the JSON contract in
+// src/prompts/phase2Prompt.js field-for-field. Consumers: ResponseAnalyzer's
+// results UI and savePhase3Letters(). Do not add/rename fields here without
+// updating both.
+export const PHASE2_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    classification: {
+      type: 'string',
+      enum: ['FORM_LETTER', 'STATEMENT_COPY', 'PARTIAL_FIX', 'WRONG_FRAMEWORK', 'NON_RESPONSE', 'ADEQUATE'],
+    },
+    summary: { type: 'string' },
+    demandAnalysis: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          demand: { type: 'string' },
+          outcome: { type: 'string', enum: ['ADDRESSED', 'IGNORED', 'PARTIALLY_ADDRESSED', 'ADMITTED'] },
+          notes: { type: 'string' },
+        },
+        required: ['demand', 'outcome', 'notes'],
+      },
+    },
+    admissions: { type: 'array', items: { type: 'string' } },
+    phase3Leverage: { type: 'string' },
+    letters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        equifax: { type: 'string' },
+        experian: { type: 'string' },
+        transunion: { type: 'string' },
+      },
+      required: ['equifax', 'experian', 'transunion'],
+    },
+  },
+  required: ['classification', 'summary', 'demandAnalysis', 'admissions', 'phase3Leverage', 'letters'],
+};

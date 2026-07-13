@@ -194,6 +194,8 @@ export async function updateLetter(id, patch) {
   if ('deliveredAt' in patch) mapped.delivered_at = patch.deliveredAt;
   if ('html' in patch) mapped.html = patch.html;
   if ('summary' in patch) mapped.summary = patch.summary;
+  if ('phase2Analysis' in patch) mapped.phase2_analysis = patch.phase2Analysis;
+  if ('phase2AnalyzedAt' in patch) mapped.phase2_analyzed_at = patch.phase2AnalyzedAt;
 
   const { data, error } = await supabase
     .from('letters')
@@ -247,6 +249,8 @@ function normalizeLetter(l) {
     responseOutcome: l.response_outcome,
     notificationsSent: l.notifications_sent || [],
     responseDate: l.response_date,
+    phase2Analysis: l.phase2_analysis || null,
+    phase2AnalyzedAt: l.phase2_analyzed_at || null,
     lobId: l.lob_id,
     trackingNumber: l.tracking_number,
     trackingStatus: l.tracking_status,

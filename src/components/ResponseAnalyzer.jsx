@@ -1,156 +1,9 @@
 import React, { useState } from 'react';
 import { X, Upload, FileText, AlertCircle, CheckCircle, Zap } from 'lucide-react';
 import { supabase } from '../utils/supabase';
-
-const SYSTEM_PROMPT = `You are a forensic credit compliance analyst for Credit Comeback Club operating under the Setup & Spike methodology. You are performing Phase 2 analysis — measuring a furnisher's response against the original Phase 1 dispute demands.
-
-LEGAL STANDARD: Johnson v. MBNA America Bank, 357 F.3d 426 (4th Cir. 2004) — a reasonable reinvestigation requires more than parroting existing database entries. A data match is NOT an investigation. Seamans v. Temple University — furnisher must flag account as disputed once on notice.
-
-RESPONSE CLASSIFICATION:
-- FORM_LETTER: Response does not address specific Metro 2 field violations cited. Uses generic "verified accurate" language without documentation. Classic inadequate investigation.
-- PARTIAL_FIX: Furnisher corrected some but not all violations. Remaining violations are still actionable.
-- WRONG_FRAMEWORK: Furnisher treated this as a bureau-forwarded e-OSCAR dispute rather than a direct furnisher dispute.
-- NON_RESPONSE: No response received within 30-day statutory window.
-- ADEQUATE: Furnisher actually investigated and corrected all cited violations with documentation.
-
-ANALYSIS REQUIREMENTS:
-1. Read the Phase 1 letter — extract every specific violation alleged, every Metro 2 field cited, every demand made
-2. Read the furnisher response — determine what they actually addressed vs. ignored
-3. For each original demand: ADDRESSED, IGNORED, PARTIALLY_ADDRESSED, or ADMITTED
-4. Classify the overall response
-5. Identify any admissions in the response that strengthen Phase 3
-6. Generate three bureau-specific Phase 3 CRA letters (Equifax, Experian, TransUnion)
-
-PHASE 3 LETTER REQUIREMENTS:
-- Opens by establishing the CRA-triggered reinvestigation duty under 15 U.S.C. 1681s-2(b)
-- States that a direct furnisher dispute was sent (Exhibit A) and received an inadequate response (Exhibit B)
-- Rebuilds the full violation stack with added weight of furnisher investigative failure
-- Cites Johnson v. MBNA for the inadequate investigation standard
-- Demands correction or deletion within 30 days
-- Cites 15 U.S.C. 1681n for willful noncompliance — $100 to $1,000 per violation plus punitive damages
-- Tone: forensic and legal. Demands not requests. No emotional language.
-- Signature block: Consumer — All Rights Reserved
-- Each letter addressed to the correct bureau
-- CRITICAL: The enclosures line must list ONLY these three items and nothing else: "Enclosures: Exhibit A: Direct Furnisher Dispute Letter to [Furnisher] (dated [date]); Exhibit B: [Furnisher] Response (dated [date]); Limited Power of Attorney" — DO NOT add Exhibit C or any credit report excerpts under any circumstances. There are only two exhibits.
-
-RESPOND IN THIS EXACT JSON FORMAT:
-{
-  "classification": "FORM_LETTER|PARTIAL_FIX|WRONG_FRAMEWORK|NON_RESPONSE|ADEQUATE",
-  "summary": "2-3 sentence plain-language summary of what the furnisher did and why it fails",
-  "demandAnalysis": [
-    {
-      "demand": "original demand from Phase 1 letter",
-      "outcome": "ADDRESSED|IGNORED|PARTIALLY_ADDRESSED|ADMITTED",
-      "notes": "what the furnisher said or did not say about this"
-    }
-  ],
-  "admissions": ["any statements in the response that help the consumer case"],
-  "phase3Leverage": "the single strongest argument for Phase 3 based on this response",
-  "letters": {
-    "equifax": "full Phase 3 letter text addressed to Equifax",
-    "experian": "full Phase 3 letter text addressed to Experian",
-    "transunion": "full Phase 3 letter text addressed to TransUnion"
-  }
-}`;
-
-async function analyzeNonResponse({ phase1Html, clientName, furnisher, accountId, mailedDate }) {
-  const apiKey = localStorage.getItem('ccc_api_key');
-  if (!apiKey) throw new Error('API key not set — go to Settings to add your Anthropic API key');
-
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  const mailed = mailedDate ? new Date(mailedDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'unknown date';
-
-  const messages = [
-    {
-      role: 'user',
-      content: [
-        {
-          type: 'text',
-          text: `Today: ${today}\nClient: ${clientName}\nFurnisher: ${furnisher}\nAccount: ${accountId}\nLetter mailed: ${mailed}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER (no response was received within 30 days):\n${phase1Html}\n\nThe furnisher failed to respond within the 30-day statutory window. This is an automatic 15 U.S.C. 1681s-2(b) violation. Classify this as NON_RESPONSE and generate three Phase 3 CRA letters citing the failure to respond. Return only valid JSON matching the specified format.`
-        }
-      ]
-    }
-  ];
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 16000,
-      system: SYSTEM_PROMPT,
-      messages,
-    })
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || 'Analysis failed');
-  }
-
-  const data = await res.json();
-  const text = data.content.map((b) => b.text || '').join('');
-  const clean = text.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
-}
-
-async function analyzeResponse({ phase1Html, responseBase64, responseType, clientName, furnisher, accountId }) {
-  const apiKey = localStorage.getItem('ccc_api_key');
-  if (!apiKey) throw new Error('API key not set — go to Settings to add your Anthropic API key');
-
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-
-  const messages = [
-    {
-      role: 'user',
-      content: [
-        {
-          type: 'text',
-          text: `Today: ${today}\nClient: ${clientName}\nFurnisher: ${furnisher}\nAccount: ${accountId}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER:\n${phase1Html}\n\nEXHIBIT B — FURNISHER RESPONSE (attached document):`
-        },
-        {
-          type: 'document',
-          source: { type: 'base64', media_type: responseType, data: responseBase64 }
-        },
-        {
-          type: 'text',
-          text: 'Perform Phase 2 analysis. Return only valid JSON matching the specified format.'
-        }
-      ]
-    }
-  ];
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 16000,
-      system: SYSTEM_PROMPT,
-      messages,
-    })
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || 'Analysis failed');
-  }
-
-  const data = await res.json();
-  const text = data.content.map((b) => b.text || '').join('');
-  const clean = text.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
-}
+import { updateLetter } from '../utils/storage';
+import { analyzeFurnisherResponse, analyzeNonResponse, fileToBase64 } from '../utils/api';
+import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED_TYPE_MESSAGE } from '../utils/responseFiles';
 
 async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
   const { data: { user } } = await supabase.auth.getUser();
@@ -241,6 +94,7 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
 
 const CLASSIFICATION_CONFIG = {
   FORM_LETTER: { label: 'Form Letter — Inadequate Investigation', tone: 'red' },
+  STATEMENT_COPY: { label: 'Statement Copies Only — No Source Substantiation', tone: 'red' },
   PARTIAL_FIX: { label: 'Partial Fix — Remaining Violations Actionable', tone: 'amber' },
   WRONG_FRAMEWORK: { label: 'Wrong Framework — Treated as e-OSCAR Dispute', tone: 'red' },
   NON_RESPONSE: { label: 'Non-Response — Automatic Violation', tone: 'red' },
@@ -256,7 +110,10 @@ const OUTCOME_CONFIG = {
 
 export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
   const isNonResponse = letter.responseOutcome === 'no_response';
-  const [step, setStep] = useState(isNonResponse ? 'nonresponse' : (letter._preloadedFile ? 'upload' : 'upload'));
+  // A previously stored analysis opens straight into results — unless a fresh
+  // file was explicitly passed in for (re-)analysis
+  const storedAnalysis = !letter._preloadedFile && letter.phase2Analysis ? letter.phase2Analysis : null;
+  const [step, setStep] = useState(storedAnalysis ? 'results' : (isNonResponse ? 'nonresponse' : 'upload'));
   const [file, setFile] = useState(letter._preloadedFile || null);
 
   // Auto-analyze if a preloaded file was passed in
@@ -266,44 +123,57 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
     }
   }, []);
   const [analyzing, setAnalyzing] = useState(false);
-  const [analysis, setAnalysis] = useState(null);
+  const [progressTokens, setProgressTokens] = useState(0);
+  const [analysis, setAnalysis] = useState(storedAnalysis);
+  const [viewingStored, setViewingStored] = useState(!!storedAnalysis);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
 
   const handleFile = (f) => {
-    const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
-    if (!allowed.includes(f.type)) { setError('Please upload a PDF or image (JPG, PNG, WEBP)'); return; }
+    if (!ANALYZABLE_TYPES.includes(f.type)) { setError('Please upload a PDF or image (JPG, PNG, WEBP)'); return; }
     setFile(f);
     setError(null);
   };
 
   const handleDrop = (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); };
 
+  // Persist the full analysis (demand table, admissions, leverage, letters) on
+  // the Phase 1 letter row — the evidentiary record, independent of whether
+  // the Phase 3 letters get saved. Soft-fails so analysis is never blocked.
+  const persistAnalysis = async (result) => {
+    try {
+      await updateLetter(letter.id, { phase2Analysis: result, phase2AnalyzedAt: new Date().toISOString() });
+    } catch (e) {
+      console.warn('Could not persist Phase 2 analysis — if the column is missing, run supabase/migrations/20260712_phase2_analysis.sql:', e.message || e);
+    }
+  };
+
   const handleAnalyze = async () => {
     if (!file) return;
+    if (!isAnalyzable(file.type)) { setError(UNSUPPORTED_TYPE_MESSAGE); return; }
     setAnalyzing(true);
     setError(null);
     try {
-      const base64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+      const base64 = await fileToBase64(file);
 
-      // Save response file to storage — convert PDF to images for Lob embedding
+      // Save response file to storage — convert PDF to images for Lob embedding.
+      // Files preloaded from the responses bucket (_fromStorage) are already
+      // saved; only the PDF→JPEG conversion still runs for those.
       try {
         const { data: cp } = await supabase.from('client_profiles').select('user_id').eq('full_name', letter.clientName).limit(1);
         const clientUserId = cp && cp.length > 0 ? cp[0].user_id : null;
         if (clientUserId && letter.id) {
-          const ts = Date.now();
           if (file.type === 'application/pdf') {
-            // Convert PDF pages to JPEG images using pdf.js
+            // Convert PDF pages to JPEG images using pdf.js. Page files are
+            // named after the source file (not a timestamp) and upserted, so
+            // re-analysis overwrites instead of accumulating duplicate pages
+            // that Lob would then mail twice.
             const pdfjsLib = await import('pdfjs-dist');
             pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
             const arrayBuffer = await file.arrayBuffer();
             const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            const base = CONVERTED_PREFIX + slugBase(file.name);
             for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
               const page = await pdfDoc.getPage(pageNum);
               const viewport = page.getViewport({ scale: 2.0 });
@@ -313,28 +183,31 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               const ctx = canvas.getContext('2d');
               await page.render({ canvasContext: ctx, viewport }).promise;
               const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92));
-              const path = clientUserId + '/' + letter.id + '/response_' + ts + '_page' + pageNum + '.jpg';
+              const path = clientUserId + '/' + letter.id + '/' + base + '_page' + pageNum + '.jpg';
               await supabase.storage.from('responses').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
               console.log('Saved PDF page', pageNum, 'as image:', path);
             }
-          } else {
-            // Image file — save directly
-            const path = clientUserId + '/' + letter.id + '/response_' + ts + '.' + (file.name.split('.').pop() || 'jpg');
+          } else if (!letter._fromStorage) {
+            // Image file uploaded directly in this modal — save it
+            const path = clientUserId + '/' + letter.id + '/response_' + Date.now() + '.' + (file.name.split('.').pop() || 'jpg');
             await supabase.storage.from('responses').upload(path, file, { upsert: true });
             console.log('Response image saved:', path);
           }
         }
       } catch(e) { console.error('Could not save response to storage:', e); }
 
-      const result = await analyzeResponse({
+      const result = await analyzeFurnisherResponse({
         phase1Html: letter.html,
         responseBase64: base64,
-        responseType: file.type,
+        responseMediaType: file.type,
         clientName: letter.clientName,
         furnisher: letter.furnisher,
         accountId: letter.accountId || '',
+        onTokens: setProgressTokens,
       });
       setAnalysis(result);
+      setViewingStored(false);
+      persistAnalysis(result);
       setStep('results');
     } catch (e) {
       console.error('Analysis failed', e);
@@ -389,7 +262,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               {analyzing && (
                 <div className="text-center py-4">
                   <div className="text-[13px] text-ink-muted mb-1">Generating Phase 3 non-response letters…</div>
-                  <div className="text-[11px] text-ink-faint">Citing blown 30-day window · §1681s-2(b) automatic violation</div>
+                  <div className="text-[11px] text-ink-faint">Citing blown 30-day window · §1681s-2(b) automatic violation{progressTokens > 0 ? ` · ~${progressTokens.toLocaleString()} tokens` : ''}</div>
                 </div>
               )}
             </div>
@@ -426,7 +299,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               {analyzing && (
                 <div className="mt-6 text-center">
                   <div className="text-[13px] text-ink-muted mb-1">Analyzing response against Phase 1 demands…</div>
-                  <div className="text-[11px] text-ink-faint">Applying Johnson v. MBNA standard · Generating Phase 3 letters</div>
+                  <div className="text-[11px] text-ink-faint">Applying Johnson v. MBNA standard · Generating Phase 3 letters{progressTokens > 0 ? ` · ~${progressTokens.toLocaleString()} tokens` : ''}</div>
                 </div>
               )}
             </div>
@@ -434,6 +307,11 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
 
           {step === 'results' && analysis && (
             <div className="space-y-5">
+              {viewingStored && (
+                <div className="text-[11px] text-ink-muted border border-border rounded-sm px-3 py-2" style={{ backgroundColor: '#F9FAFB' }}>
+                  Previously analyzed{letter.phase2AnalyzedAt ? ' on ' + new Date(letter.phase2AnalyzedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''} — showing the stored analysis. Use Re-analyze to run it again.
+                </div>
+              )}
               <div className="rounded p-4 border" style={{
                 backgroundColor: cfg?.tone === 'red' ? '#FEF2F2' : cfg?.tone === 'amber' ? '#FFFBEB' : '#F0FDF4',
                 borderColor: cfg?.tone === 'red' ? '#FECACA' : cfg?.tone === 'amber' ? '#FDE68A' : '#BBF7D0',
@@ -521,8 +399,11 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
                       furnisher: letter.furnisher,
                       accountId: letter.accountId || '',
                       mailedDate: letter.mailedDate,
+                      onTokens: setProgressTokens,
                     });
                     setAnalysis(result);
+                    setViewingStored(false);
+                    persistAnalysis(result);
                     setStep('results');
                   } catch (e) {
                     setError(e.message || 'Generation failed');

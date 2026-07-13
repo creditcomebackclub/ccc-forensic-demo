@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Upload, FileText, Trash2, Eye, CheckCircle, Zap } from 'lucide-react';
 import { uploadDocument, getDocuments, getDocumentUrl, deleteDocument } from '../utils/documents';
 import { supabase } from '../utils/supabase';
+import { CONVERTED_PREFIX, inferMediaType, isAnalyzable, UNSUPPORTED_TYPE_MESSAGE } from '../utils/responseFiles';
 
 // Brand tokens — matches the dashboard / clients card system
 const T = {
@@ -186,7 +187,9 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
         if (folderFiles && folderFiles.length > 0) {
           // Match folder name (letter ID) to a letter to get furnisher
           const matchedLetter = letters.find(l => l.id === folder.name);
-          folderFiles.forEach(f => {
+          // Hide system artifacts: PDF pages converted to JPEGs for Lob
+          // exhibit embedding live in the same folder but aren't uploads
+          folderFiles.filter(f => !f.name.startsWith(CONVERTED_PREFIX)).forEach(f => {
             allResponses.push({
               path: userId + '/' + folder.name + '/' + f.name,
               letterId: folder.name,
@@ -216,11 +219,16 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
     try {
       const { data } = await supabase.storage.from('responses').createSignedUrl(resp.path, 3600);
       if (!data?.signedUrl) throw new Error('Could not get file URL');
-      // Fetch the file and pass to ResponseAnalyzer
+      // Fetch the file and pass to ResponseAnalyzer. Storage downloads can
+      // come back typeless — infer from the extension before analysis.
       const fileRes = await fetch(data.signedUrl);
       const blob = await fileRes.blob();
-      const file = new File([blob], resp.fileName, { type: blob.type });
-      setAnalyzingLetter({ ...resp.letter, _preloadedFile: file });
+      const mediaType = inferMediaType(resp.fileName, blob.type);
+      if (!isAnalyzable(mediaType)) { alert(UNSUPPORTED_TYPE_MESSAGE); return; }
+      const file = new File([blob], resp.fileName, { type: mediaType });
+      // _fromStorage: the file already lives in the responses bucket — the
+      // analyzer must not re-save it (only convert PDFs for Lob embedding)
+      setAnalyzingLetter({ ...resp.letter, _preloadedFile: file, _fromStorage: true });
     } catch(e) { alert('Could not load response file: ' + e.message); }
   };
 

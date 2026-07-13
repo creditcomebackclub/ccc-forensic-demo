@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
+import { inferMediaType, isAnalyzable, transcodeImageToJpeg, RESPONSE_ACCEPT } from '../utils/responseFiles';
 import { LogOut, FileText, Mail, CheckCircle, Clock, AlertCircle, Shield, TrendingUp, ExternalLink, ChevronRight, Star, Calendar } from 'lucide-react';
 
 const RESPONSE_WINDOW_DAYS = 30;
@@ -186,6 +187,17 @@ export default function ClientPortal({ session, onSignOut }) {
     if (!file) return;
     setUploadingLetter(letter.id);
     try {
+      // Analysis supports PDF/JPG/PNG/WEBP only. Phone cameras often produce
+      // HEIC — try to re-encode to JPEG in the browser before rejecting.
+      if (!isAnalyzable(inferMediaType(file.name, file.type))) {
+        const transcoded = await transcodeImageToJpeg(file);
+        if (!transcoded) {
+          alert('That file format isn’t supported. Please upload a PDF or a JPG/PNG photo — on iPhone, choose "Most Compatible" camera format or take a screenshot of the letter.');
+          setUploadingLetter(null);
+          return;
+        }
+        file = transcoded;
+      }
       const ext = file.name.split('.').pop() || 'pdf';
       const path = session.user.id + '/' + letter.id + '/response_' + Date.now() + '.' + ext;
       const { error: uploadErr } = await supabase.storage.from('responses').upload(path, file, { upsert: true });
@@ -556,7 +568,7 @@ export default function ClientPortal({ session, onSignOut }) {
                             </p>
                             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '7px 14px', background: '#1B2A4A', color: '#C9A84C', borderRadius: 4, fontWeight: 600, cursor: uploadingLetter === l.id ? 'not-allowed' : 'pointer', opacity: uploadingLetter === l.id ? 0.6 : 1 }}>
                               {uploadingLetter === l.id ? 'Uploading…' : '📎 Upload Response'}
-                              <input type="file" accept=".pdf,image/*" style={{ display: 'none' }}
+                              <input type="file" accept={RESPONSE_ACCEPT + ',image/*'} style={{ display: 'none' }}
                                 onChange={e => { if (e.target.files[0]) handleUploadResponse(l, e.target.files[0]); }}
                                 disabled={uploadingLetter === l.id} />
                             </label>
