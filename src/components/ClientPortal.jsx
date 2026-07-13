@@ -127,6 +127,10 @@ export default function ClientPortal({ session, onSignOut }) {
   // one at a time (common on mobile) before submitting them as one response
   const [stagedFiles, setStagedFiles] = useState({});
   const [stageError, setStageError] = useState({});
+  const [submitError, setSubmitError] = useState({});
+  // Lets a client upload a response even if the Lob delivery webhook hasn't
+  // fired/caught up yet — keyed by letter id, set once clicked
+  const [manualUploadUnlocked, setManualUploadUnlocked] = useState({});
 
   useEffect(() => { loadData(); }, [session]);
 
@@ -227,6 +231,7 @@ export default function ClientPortal({ session, onSignOut }) {
     const files = stagedFiles[letter.id] || [];
     if (!files.length) return;
     setUploadingLetter(letter.id);
+    setSubmitError(prev => ({ ...prev, [letter.id]: null }));
     try {
       const basePath = session.user.id + '/' + letter.id;
       const paths = await uploadResponseBatch(supabase, basePath, files);
@@ -250,7 +255,7 @@ export default function ClientPortal({ session, onSignOut }) {
       setTimeout(() => setUploadSuccess(null), 4000);
     } catch (e) {
       console.error('Upload error:', e);
-      alert('Upload failed: ' + (e.message || e));
+      setSubmitError(prev => ({ ...prev, [letter.id]: 'Upload failed: ' + (e.message || e) }));
     } finally {
       setUploadingLetter(null);
     }
@@ -587,7 +592,15 @@ export default function ClientPortal({ session, onSignOut }) {
                         )}
                       </div>
                     )}
-                    {l.tracking_status === 'Delivered' && !l.response_outcome && (
+                    {l.mailed_date && l.tracking_status !== 'Delivered' && !l.response_outcome && !manualUploadUnlocked[l.id] && (
+                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F3F4F6' }}>
+                        <button onClick={() => setManualUploadUnlocked(prev => ({ ...prev, [l.id]: true }))}
+                          style={{ fontSize: 11, color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                          I received a response
+                        </button>
+                      </div>
+                    )}
+                    {(l.tracking_status === 'Delivered' || manualUploadUnlocked[l.id]) && !l.response_outcome && (
                       <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F3F4F6' }}>
                         {uploadSuccess === l.id ? (
                           <div style={{ fontSize: 12, color: '#15803D', fontWeight: 600 }}>✓ Response uploaded — Credit Comeback Club has been notified.</div>
@@ -612,6 +625,9 @@ export default function ClientPortal({ session, onSignOut }) {
                             )}
                             {stageError[l.id] && (
                               <div style={{ fontSize: 11, color: '#DC2626', marginBottom: 8 }}>{stageError[l.id]}</div>
+                            )}
+                            {submitError[l.id] && (
+                              <div style={{ fontSize: 11, color: '#DC2626', marginBottom: 8 }}>{submitError[l.id]}</div>
                             )}
                             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '7px 14px', background: (stagedFiles[l.id] || []).length ? '#fff' : '#1B2A4A', color: (stagedFiles[l.id] || []).length ? '#1B2A4A' : '#C9A84C', border: (stagedFiles[l.id] || []).length ? '1px solid #1B2A4A' : 'none', borderRadius: 4, fontWeight: 600, cursor: uploadingLetter === l.id ? 'not-allowed' : 'pointer', opacity: uploadingLetter === l.id ? 0.6 : 1 }}>
@@ -671,11 +687,7 @@ export default function ClientPortal({ session, onSignOut }) {
                 <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#1B2A4A' }}>Monthly Strategy Call</span>
               </div>
               <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 12 }}>Book your 15-minute strategy call with Christopher Holland. Review your campaign, discuss next steps, and map your path to business credit.</p>
-              <a href="https://calendly.com" target="_blank" rel="noopener noreferrer"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '8px 20px', background: '#1B2A4A', color: '#C9A84C', borderRadius: 4, fontWeight: 700, textDecoration: 'none', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <Calendar size={13} strokeWidth={2} />
-                Book Your Call →
-              </a>
+              <p style={{ fontSize: 12, color: '#9CA3AF', fontStyle: 'italic' }}>Your strategy call link is coming soon — we'll send it to you directly.</p>
             </div>
 
             <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 20 }}>
@@ -695,7 +707,12 @@ export default function ClientPortal({ session, onSignOut }) {
         )}
 
         <div style={{ textAlign: 'center', fontSize: 11, color: '#D1D5DB', paddingBottom: 32 }}>
-          Credit Comeback Club · Grand Junction, CO · creditcomebackclub.com · 970-644-0063
+          Credit Comeback Club ·{' '}
+          <a href="https://maps.google.com/?q=3088+Colorado+Ave+Grand+Junction+CO+81504" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
+            3088 Colorado Ave, Grand Junction, CO 81504
+          </a>{' '}
+          · creditcomebackclub.com ·{' '}
+          <a href="tel:9706440063" style={{ color: 'inherit' }}>970-644-0063</a>
         </div>
       </div>
     </div>

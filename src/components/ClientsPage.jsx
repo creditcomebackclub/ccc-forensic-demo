@@ -722,7 +722,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
             'divider',
             !c.lpoaSigned && { label: sendingLpoa === c.name ? 'Sending LPOA…' : 'Send LPOA for signature', onClick: () => handleSendLpoa(c), disabled: !c.email || sendingLpoa === c.name, title: !c.email ? 'Add email first' : undefined },
-            !c.lpoaSigned && { label: 'Preview LPOA', onClick: () => window.open('/lpoa-sign.html?client=' + encodeURIComponent(c.name), '_blank') },
             c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
             'divider',
             { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
