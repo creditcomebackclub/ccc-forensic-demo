@@ -16,6 +16,7 @@ import SettingsModal from './components/SettingsModal';
 import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit } from './utils/api';
+import { countUnanalyzedResponses } from './utils/actionItems';
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
 const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
@@ -269,11 +270,20 @@ export default function App() {
   const [isAffiliate, setIsAffiliate] = useState(false);
   const [clientOnboarded, setClientOnboarded] = useState(false);
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
+  const [actionItemCount, setActionItemCount] = useState(0);
   const loadUserInFlight = React.useRef(false);
   // Mirror of profile state for the visibilitychange handler, which is bound
   // once on mount and would otherwise close over stale values
   const appStateRef = React.useRef({ profile: null, profileLoading: false });
   useEffect(() => { appStateRef.current = { profile, profileLoading }; }, [profile, profileLoading]);
+
+  // Sidebar action-item badge — unanalyzed client-uploaded responses.
+  // Admin/auditor only; clients and affiliates don't see this shell.
+  useEffect(() => {
+    if (session && profile && !isClient && !isAffiliate) {
+      countUnanalyzedResponses().then(setActionItemCount).catch(() => {});
+    }
+  }, [session, profile, isClient, isAffiliate]);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -514,6 +524,7 @@ export default function App() {
       setClientsContext(null);
     }
     setView(viewName);
+    countUnanalyzedResponses().then(setActionItemCount).catch(() => {});
   };
 
   const handleAuditStart = async (payload) => {
@@ -550,7 +561,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-bg flex">
-      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} />
+      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={actionItemCount} />
       <main className="flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
@@ -588,7 +599,7 @@ export default function App() {
   );
 }
 
-function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, onSettings }) {
+function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, onSettings, actionItemCount }) {
   return (
     <aside className="w-60 flex flex-col border-r border-navy-light bg-navy-dark">
       <div className="px-5 py-5 border-b border-navy-light">
@@ -604,7 +615,7 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
       <nav className="flex-1 py-3">
         <NavItem icon={Home} label="Dashboard" active={view === 'dashboard'} onClick={() => onNavigate('dashboard')} />
         <NavItem icon={LayoutDashboard} label="New Audit" active={view === 'audit'} onClick={() => onNavigate('audit')} />
-        <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients')} />
+        <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients')} badge={actionItemCount} badgeTitle="unanalyzed client response(s)" />
         <NavItem icon={UserPlus} label="Leads" active={view === 'leads'} onClick={() => onNavigate('leads')} />
         <NavItem icon={BookOpen} label="Methodology" active={view === 'methodology'} onClick={() => onNavigate('methodology')} />
         {isAdmin && (
@@ -640,7 +651,7 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
   );
 }
 
-function NavItem({ icon: Icon, label, active, onClick }) {
+function NavItem({ icon: Icon, label, active, onClick, badge, badgeTitle }) {
   return (
     <button
       onClick={onClick}
@@ -653,6 +664,13 @@ function NavItem({ icon: Icon, label, active, onClick }) {
     >
       <Icon size={15} strokeWidth={1.75} />
       {label}
+      {badge > 0 && (
+        <span title={badge + ' ' + badgeTitle}
+          className="ml-auto flex items-center justify-center text-[10px] font-semibold rounded-full"
+          style={{ minWidth: 17, height: 17, padding: '0 5px', background: '#DC2626', color: '#fff' }}>
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </button>
   );
 }
