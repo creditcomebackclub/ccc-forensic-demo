@@ -698,10 +698,39 @@ function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, e
   );
 }
 
+// The audit engine writes furnisherAddress as one free-text string (cheap for
+// the structured-output schema — a nested object pushed the compiled grammar
+// over the API's size limit). Best-effort split into the form's discrete
+// fields for a one-click fill; the human can still correct any part before
+// saving. Returns null if the string doesn't match the "...Street, City, ST
+// ZIP" shape every entry in masterPrompt.js's address list follows.
+function parseAddressString(s, fallbackName) {
+  const parts = String(s || '').split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 3) return null;
+  const stateZip = parts[parts.length - 1];
+  const m = stateZip.match(/^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+  if (!m) return null;
+  return {
+    name: parts.slice(0, parts.length - 3).join(', ') || fallbackName || '',
+    line1: parts[parts.length - 3],
+    city: parts[parts.length - 2],
+    state: m[1],
+    zip: m[2],
+  };
+}
+
 function FurnisherAddressInput({ account, onSaved }) {
-  const [addr, setAddr] = React.useState(account.furnisherAddress || { name: account.furnisher, line1: '', city: '', state: '', zip: '' });
+  const blankAddr = { name: account.furnisher, line1: '', city: '', state: '', zip: '' };
+  const [addr, setAddr] = React.useState(blankAddr);
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
+
+  // account.furnisherAddress is the audit engine's free-text reference (or
+  // null) — never the structured object the form uses (that shape only
+  // exists after a human has already confirmed, at which point addressStatus
+  // is YES and this component isn't rendered at all).
+  const knownAddress = typeof account.furnisherAddress === 'string' ? account.furnisherAddress : null;
+  const parsedAddress = knownAddress ? parseAddressString(knownAddress, account.furnisher) : null;
 
   const handleSave = async () => {
     if (!addr.line1 || !addr.city || !addr.state || !addr.zip) return;
@@ -734,7 +763,22 @@ function FurnisherAddressInput({ account, onSaved }) {
       {saved ? (
         <div style={{ fontSize: 12, color: '#15803D', fontWeight: 600 }}>✓ Address saved</div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div>
+          {knownAddress && (
+            <div style={{ display: 'flex', alignItems: 'start', gap: 10, marginBottom: 10, padding: 10, background: '#fff', border: '1px solid #FDE68A', borderRadius: 6 }}>
+              <div style={{ flex: 1, fontSize: 12, color: '#374151' }}>
+                <div style={{ fontSize: 10, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>Known address on file — verify below</div>
+                {knownAddress}
+              </div>
+              {parsedAddress && (
+                <button onClick={() => setAddr(parsedAddress)}
+                  style={{ fontSize: 11, padding: '5px 10px', background: '#1B2A4A', color: '#C9A84C', border: 'none', borderRadius: 4, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  Use This →
+                </button>
+              )}
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           {[
             { key: 'name', label: 'Name', full: true },
             { key: 'line1', label: 'Street / PO Box', full: true },
@@ -753,6 +797,7 @@ function FurnisherAddressInput({ account, onSaved }) {
               style={{ fontSize: 11, padding: '6px 16px', background: '#1B2A4A', color: '#C9A84C', border: 'none', borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}>
               {saving ? 'Saving…' : 'Save Address'}
             </button>
+          </div>
           </div>
         </div>
       )}
@@ -910,7 +955,12 @@ function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = n
           </div>
 
           {(account.addressStatus === 'PENDING' || account.addressStatus === 'CONFIRM') && (
-            <FurnisherAddressInput account={account} onSaved={(addr) => { account.furnisherAddress = addr; account.addressStatus = 'YES'; }} />
+            <FurnisherAddressInput account={account} onSaved={(addr) => {
+              // Route through the real state-update path (not a raw prop
+              // mutation) so the table row and this modal both re-render —
+              // the Supabase write already happened inside FurnisherAddressInput.
+              onUpdateAccount && onUpdateAccount(account.id, { furnisherAddress: addr, addressStatus: 'YES' });
+            }} />
           )}
 
           {(() => {

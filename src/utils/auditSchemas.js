@@ -36,12 +36,21 @@ const ACCOUNT = {
     violations: { type: 'array', items: VIOLATION },
     primaryViolation: { type: 'string' },
     addressStatus: { type: 'string', enum: ['YES', 'CONFIRM', 'PENDING'] },
+    // The known/candidate address behind addressStatus, if any, as one free-
+    // text string (e.g. "USALLIANCE Financial, 411 Theodore Fremd Avenue
+    // Suite 350, Rye, NY 10580-1426") — lets the human reviewer confirm a
+    // pre-filled address instead of starting blank. A nested {name,line1,
+    // city,state,zip} object was tried first but pushed the structured-
+    // output grammar over the API's compiled-size limit (400 error on every
+    // audit); a flat nullable string costs the same as originalCreditor.
+    // null when addressStatus is PENDING (no candidate address at all).
+    furnisherAddress: NULLABLE_STRING,
     batch: { type: 'integer', enum: [1, 2] },
     strategy: { type: 'string' },
   },
   required: [
     'id', 'furnisher', 'originalCreditor', 'accountNumberMasked', 'type', 'status',
-    'balance', 'bureaus', 'violations', 'primaryViolation', 'addressStatus', 'batch', 'strategy',
+    'balance', 'bureaus', 'violations', 'primaryViolation', 'addressStatus', 'furnisherAddress', 'batch', 'strategy',
   ],
 };
 

@@ -226,6 +226,10 @@ NEVER:
 
 When generating letters, match the furnisher name against these aliases and use the corresponding address. If no match, flag as [Address to be confirmed].
 
+When producing the audit JSON (accounts[].furnisherAddress), populate this field with the matched address as one string whenever the furnisher matches ANY entry below, in this list or in ADDRESSES PENDING VERIFICATION — so the human reviewer confirms a pre-filled address instead of starting from a blank form. Leave furnisherAddress null only when there is truly no match.
+
+CRITICAL: addressStatus must NEVER be "YES" as an output of audit generation, regardless of how confident the match is or which list it came from — including this main verified list. "YES" is set exclusively by a human clicking Confirm in the app after reviewing the address; the audit engine only ever outputs "CONFIRM" (a match exists, populate furnisherAddress) or "PENDING" (no match, furnisherAddress null). This is a hard rule, not a judgment call — every letter uses real postage on legal correspondence, and even a "verified" address can go stale.
+
 BANKS & CREDIT CARDS:
 - Chase / JPMCB / JPMCB Card / JPMorgan Chase / JPMCB CARD SVC: JPMorgan Chase Bank N.A., Credit Bureau Disputes, P.O. Box 15369, Wilmington, DE 19850-5369
 - Capital One / Cap One / Capital One Bank USA: Capital One, Attn: Credit Reporting Disputes, P.O. Box 30279, Salt Lake City, UT 84130-0279
@@ -321,6 +325,7 @@ When the user message contains the marker \`<MODE>AUDIT_JSON</MODE>\`, you MUST 
       ],
       "primaryViolation": "1-line plain-language summary",
       "addressStatus": "YES" | "CONFIRM" | "PENDING",
+      "furnisherAddress": "full mailing address as one string, matching the format in the verified address list above (e.g. 'USALLIANCE Financial, 411 Theodore Fremd Avenue Suite 350, Rye, NY 10580-1426'), or null if no match",
       "batch": 1 | 2,
       "strategy": "1-line strategy summary"
     }
