@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import { X, Upload, FileText, AlertCircle, CheckCircle, Zap } from 'lucide-react';
 import { supabase } from '../utils/supabase';
-import { updateLetter } from '../utils/storage';
-import { analyzeFurnisherResponse, analyzeNonResponse, fileToBase64 } from '../utils/api';
-import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED_TYPE_MESSAGE } from '../utils/responseFiles';
+import { runPhase2Job } from '../utils/phase2Jobs';
+import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED_TYPE_MESSAGE, uploadResponseBatch, validateBatch } from '../utils/responseFiles';
 
 async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
   const { data: { user } } = await supabase.auth.getUser();
@@ -110,15 +109,22 @@ const OUTCOME_CONFIG = {
 
 export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
   const isNonResponse = letter.responseOutcome === 'no_response';
-  // A previously stored analysis opens straight into results — unless a fresh
-  // file was explicitly passed in for (re-)analysis
-  const storedAnalysis = !letter._preloadedFile && letter.phase2Analysis ? letter.phase2Analysis : null;
+  // A previously stored analysis opens straight into results — unless fresh
+  // files were explicitly passed in for (re-)analysis
+  const storedAnalysis = !letter._preloadedFiles?.length && letter.phase2Analysis ? letter.phase2Analysis : null;
   const [step, setStep] = useState(storedAnalysis ? 'results' : (isNonResponse ? 'nonresponse' : 'upload'));
-  const [file, setFile] = useState(letter._preloadedFile || null);
+  // Every page/photo of ONE response — analyzed together as a single
+  // document, not one call per page. See src/utils/responseFiles.js. When
+  // preloaded from the responses bucket these are lightweight {name} stand-ins
+  // (no bytes fetched into the browser) — see DocumentManager.handleAnalyze.
+  const [files, setFiles] = useState(letter._preloadedFiles || []);
+  // True only for the initial preload from storage — cleared on Re-analyze so
+  // a freshly-picked file set doesn't get ignored in favor of stale paths.
+  const [useStoredPaths, setUseStoredPaths] = useState(!!(letter._fromStorage && letter._analyzeFilePaths?.length));
 
-  // Auto-analyze if a preloaded file was passed in
+  // Auto-analyze if preloaded files were passed in
   React.useEffect(() => {
-    if (letter._preloadedFile && !analyzing && !analysis) {
+    if (letter._preloadedFiles?.length && !analyzing && !analysis) {
       handleAnalyze();
     }
   }, []);
@@ -130,88 +136,97 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
 
-  const handleFile = (f) => {
-    if (!ANALYZABLE_TYPES.includes(f.type)) { setError('Please upload a PDF or image (JPG, PNG, WEBP)'); return; }
-    setFile(f);
+  // Accumulates onto the existing selection so a client/admin can add pages
+  // across multiple picks (common on mobile, where multi-select galleries
+  // aren't always available).
+  const handleFiles = (fileList) => {
+    const picked = Array.from(fileList || []).filter(Boolean);
+    if (!picked.length) return;
+    const invalid = picked.find((f) => !ANALYZABLE_TYPES.includes(f.type));
+    if (invalid) { setError('Please upload PDFs or images (JPG, PNG, WEBP) only'); return; }
+    const combined = [...files, ...picked];
+    const batchErr = validateBatch(combined);
+    if (batchErr) { setError(batchErr); return; }
+    setFiles(combined);
     setError(null);
   };
 
-  const handleDrop = (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); };
+  const handleRemoveFile = (idx) => setFiles(files.filter((_, i) => i !== idx));
 
-  // Persist the full analysis (demand table, admissions, leverage, letters) on
-  // the Phase 1 letter row — the evidentiary record, independent of whether
-  // the Phase 3 letters get saved. Soft-fails so analysis is never blocked.
-  const persistAnalysis = async (result) => {
-    try {
-      await updateLetter(letter.id, { phase2Analysis: result, phase2AnalyzedAt: new Date().toISOString() });
-    } catch (e) {
-      console.warn('Could not persist Phase 2 analysis — if the column is missing, run supabase/migrations/20260712_phase2_analysis.sql:', e.message || e);
-    }
-  };
+  const handleDrop = (e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); };
 
+  // Analysis itself now runs server-side (netlify/functions/phase2-analyze-
+  // background.mjs) — the Anthropic key lives only in the server env, never
+  // in the browser. This function's job is just getting the response file(s)
+  // into the `responses` bucket (if they aren't already) and handing the
+  // resulting storage paths to the job; the server downloads and analyzes
+  // them, and persists the result onto the letter row itself.
   const handleAnalyze = async () => {
-    if (!file) return;
-    if (!isAnalyzable(file.type)) { setError(UNSUPPORTED_TYPE_MESSAGE); return; }
+    if (!useStoredPaths && !files.length) return;
+    if (!useStoredPaths) {
+      const unanalyzable = files.find((f) => !isAnalyzable(f.type));
+      if (unanalyzable) { setError(UNSUPPORTED_TYPE_MESSAGE); return; }
+    }
     setAnalyzing(true);
     setError(null);
     try {
-      const base64 = await fileToBase64(file);
+      const { data: cp } = await supabase.from('client_profiles').select('user_id').eq('full_name', letter.clientName).limit(1);
+      const clientUserId = cp && cp.length > 0 ? cp[0].user_id : null;
+      const basePath = clientUserId && letter.id ? clientUserId + '/' + letter.id : null;
 
-      // Save response file to storage — convert PDF to images for Lob embedding.
-      // Files preloaded from the responses bucket (_fromStorage) are already
-      // saved; only the PDF→JPEG conversion still runs for those.
-      try {
-        const { data: cp } = await supabase.from('client_profiles').select('user_id').eq('full_name', letter.clientName).limit(1);
-        const clientUserId = cp && cp.length > 0 ? cp[0].user_id : null;
-        if (clientUserId && letter.id) {
-          if (file.type === 'application/pdf') {
-            // Convert PDF pages to JPEG images using pdf.js. Page files are
-            // named after the source file (not a timestamp) and upserted, so
-            // re-analysis overwrites instead of accumulating duplicate pages
-            // that Lob would then mail twice.
+      let analyzeFilePaths = useStoredPaths ? letter._analyzeFilePaths : null;
+      if (!useStoredPaths) {
+        if (!basePath) throw new Error('Could not resolve where to store this response — client profile not found.');
+        // Manual upload — not yet in storage. Save as one page-ordered batch
+        // (PDFs and images share the same path, single-PDF batches included)
+        // so re-analysis overwrites instead of accumulating duplicates.
+        analyzeFilePaths = await uploadResponseBatch(supabase, basePath, files);
+      }
+
+      // A single-PDF response is also converted to JPEG pages for Lob exhibit
+      // embedding — unrelated to the Claude call, still done client-side
+      // (pdfjs + canvas, no Node-canvas dependency needed on the server).
+      if (basePath && analyzeFilePaths?.length === 1 && /\.pdf$/i.test(analyzeFilePaths[0])) {
+        try {
+          const arrayBuffer = useStoredPaths
+            ? await (async () => {
+                const { data } = await supabase.storage.from('responses').createSignedUrl(analyzeFilePaths[0], 3600);
+                if (!data?.signedUrl) return null;
+                return (await fetch(data.signedUrl)).arrayBuffer();
+              })()
+            : await files[0].arrayBuffer();
+          if (arrayBuffer) {
             const pdfjsLib = await import('pdfjs-dist');
             pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
-            const arrayBuffer = await file.arrayBuffer();
             const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-            const base = CONVERTED_PREFIX + slugBase(file.name);
+            const base = CONVERTED_PREFIX + slugBase(analyzeFilePaths[0].split('/').pop());
             for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
               const page = await pdfDoc.getPage(pageNum);
               const viewport = page.getViewport({ scale: 2.0 });
               const canvas = document.createElement('canvas');
               canvas.width = viewport.width;
               canvas.height = viewport.height;
-              const ctx = canvas.getContext('2d');
-              await page.render({ canvasContext: ctx, viewport }).promise;
+              await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
               const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92));
-              const path = clientUserId + '/' + letter.id + '/' + base + '_page' + pageNum + '.jpg';
-              await supabase.storage.from('responses').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
-              console.log('Saved PDF page', pageNum, 'as image:', path);
+              // Zero-padded so Lob's alphabetical sort keeps 10+ page
+              // responses in order (page10 would otherwise sort before page2)
+              const pagePad = String(pageNum).padStart(2, '0');
+              await supabase.storage.from('responses').upload(basePath + '/' + base + '_p' + pagePad + '.jpg', blob, { upsert: true, contentType: 'image/jpeg' });
             }
-          } else if (!letter._fromStorage) {
-            // Image file uploaded directly in this modal — save it
-            const path = clientUserId + '/' + letter.id + '/response_' + Date.now() + '.' + (file.name.split('.').pop() || 'jpg');
-            await supabase.storage.from('responses').upload(path, file, { upsert: true });
-            console.log('Response image saved:', path);
           }
-        }
-      } catch(e) { console.error('Could not save response to storage:', e); }
+        } catch (e) { console.error('Could not convert PDF for Lob embedding:', e); }
+      }
 
-      const result = await analyzeFurnisherResponse({
-        phase1Html: letter.html,
-        responseBase64: base64,
-        responseMediaType: file.type,
-        clientName: letter.clientName,
-        furnisher: letter.furnisher,
-        accountId: letter.accountId || '',
-        onTokens: setProgressTokens,
-      });
+      const result = await runPhase2Job(
+        { letterId: letter.id, kind: 'response', filePaths: analyzeFilePaths },
+        setProgressTokens
+      );
       setAnalysis(result);
       setViewingStored(false);
-      persistAnalysis(result);
       setStep('results');
     } catch (e) {
       console.error('Analysis failed', e);
-      setError(e.message || 'Analysis failed — check your API key and try again');
+      setError(e.message || 'Analysis failed — try again');
     } finally {
       setAnalyzing(false);
     }
@@ -271,7 +286,8 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
           {step === 'upload' && (
             <div>
               <p className="text-[13px] text-ink-muted mb-5 max-w-xl">
-                Upload the furnisher response. The original Phase 1 letter is Exhibit A — attached automatically.
+                Upload the furnisher response. If it's multiple pages or photos, add them all —
+                they'll be analyzed together as one document. The original Phase 1 letter is Exhibit A — attached automatically.
                 Claude will analyze against Johnson v. MBNA and generate three Phase 3 CRA letters.
               </p>
               <div
@@ -282,17 +298,24 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               >
                 <Upload size={24} className="mx-auto mb-3 text-ink-faint" strokeWidth={1.5} />
                 <div className="text-[13px] text-ink font-medium mb-1">
-                  {file ? file.name : 'Drop response here or click to upload'}
+                  {files.length ? `Add more pages (${files.length} selected)` : 'Drop response here or click to upload'}
                 </div>
-                <div className="text-[11px] text-ink-muted">PDF · JPG · PNG · WEBP</div>
-                <input id="response-file-input" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden"
-                  onChange={(e) => { if (e.target.files[0]) handleFile(e.target.files[0]); }} />
+                <div className="text-[11px] text-ink-muted">PDF · JPG · PNG · WEBP — select multiple for a multi-page response</div>
+                <input id="response-file-input" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" multiple className="hidden"
+                  onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }} />
               </div>
-              {file && (
-                <div className="mt-4 flex items-center gap-2 text-[12px] text-ink">
-                  <FileText size={14} strokeWidth={1.75} className="text-navy" />
-                  <span className="font-medium">{file.name}</span>
-                  <span className="text-ink-muted">({(file.size / 1024).toFixed(0)} KB)</span>
+              {files.length > 0 && (
+                <div className="mt-4 space-y-1.5">
+                  {files.map((f, i) => (
+                    <div key={i} className="flex items-center gap-2 text-[12px] text-ink">
+                      <FileText size={14} strokeWidth={1.75} className="text-navy shrink-0" />
+                      <span className="font-medium">{files.length > 1 ? `Page ${i + 1}: ` : ''}{f.name}</span>
+                      {f.size != null && <span className="text-ink-muted">({(f.size / 1024).toFixed(0)} KB)</span>}
+                      <button onClick={() => handleRemoveFile(i)} className="ml-auto text-ink-faint hover:text-red-600" title="Remove">
+                        <X size={13} strokeWidth={2} />
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
               {error && <div className="mt-4 text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
@@ -393,17 +416,12 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
                   setAnalyzing(true);
                   setError(null);
                   try {
-                    const result = await analyzeNonResponse({
-                      phase1Html: letter.html,
-                      clientName: letter.clientName,
-                      furnisher: letter.furnisher,
-                      accountId: letter.accountId || '',
-                      mailedDate: letter.mailedDate,
-                      onTokens: setProgressTokens,
-                    });
+                    const result = await runPhase2Job(
+                      { letterId: letter.id, kind: 'non_response', mailedDate: letter.mailedDate },
+                      setProgressTokens
+                    );
                     setAnalysis(result);
                     setViewingStored(false);
-                    persistAnalysis(result);
                     setStep('results');
                   } catch (e) {
                     setError(e.message || 'Generation failed');
@@ -421,16 +439,16 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
             )}
 
             {step === 'upload' && (
-              <button onClick={handleAnalyze} disabled={!file || analyzing}
+              <button onClick={handleAnalyze} disabled={!files.length || analyzing}
                 className="flex items-center gap-2 px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                style={{ backgroundColor: (!file || analyzing) ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
+                style={{ backgroundColor: (!files.length || analyzing) ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
                 <Zap size={13} strokeWidth={2} />
-                {analyzing ? 'Analyzing…' : 'Run Phase 2 Analysis'}
+                {analyzing ? 'Analyzing…' : `Run Phase 2 Analysis${files.length > 1 ? ` (${files.length} pages)` : ''}`}
               </button>
             )}
             {step === 'results' && !saved && (
               <>
-                <button onClick={() => { setStep('upload'); setAnalysis(null); setFile(null); }}
+                <button onClick={() => { setStep('upload'); setAnalysis(null); setFiles([]); setUseStoredPaths(false); }}
                   className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Re-analyze</button>
                 <button onClick={handleSave} disabled={saving}
                   className="px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"

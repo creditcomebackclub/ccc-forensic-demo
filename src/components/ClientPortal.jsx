@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
-import { inferMediaType, isAnalyzable, transcodeImageToJpeg, RESPONSE_ACCEPT } from '../utils/responseFiles';
+import { inferMediaType, isAnalyzable, transcodeImageToJpeg, uploadResponseBatch, validateBatch, RESPONSE_ACCEPT } from '../utils/responseFiles';
 import { LogOut, FileText, Mail, CheckCircle, Clock, AlertCircle, Shield, TrendingUp, ExternalLink, ChevronRight, Star, Calendar } from 'lucide-react';
 
 const RESPONSE_WINDOW_DAYS = 30;
@@ -123,6 +123,10 @@ export default function ClientPortal({ session, onSignOut }) {
   const [monitoringStep, setMonitoringStep] = useState('view'); // view | edit
   const [monitoringSaving, setMonitoringSaving] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(null);
+  // Pages staged for upload, keyed by letter id — lets a client add photos
+  // one at a time (common on mobile) before submitting them as one response
+  const [stagedFiles, setStagedFiles] = useState({});
+  const [stageError, setStageError] = useState({});
 
   useEffect(() => { loadData(); }, [session]);
 
@@ -183,27 +187,51 @@ export default function ClientPortal({ session, onSignOut }) {
     setUploadingDoc(null);
   };
 
-  const handleUploadResponse = async (letter, file) => {
-    if (!file) return;
-    setUploadingLetter(letter.id);
-    try {
+  // Stage picked files locally — lets a client photograph a multi-page
+  // letter one page at a time before submitting it as one response.
+  const handleStageFiles = async (letter, fileList) => {
+    const picked = Array.from(fileList || []).filter(Boolean);
+    if (!picked.length) return;
+    const resolved = [];
+    for (let file of picked) {
       // Analysis supports PDF/JPG/PNG/WEBP only. Phone cameras often produce
       // HEIC — try to re-encode to JPEG in the browser before rejecting.
       if (!isAnalyzable(inferMediaType(file.name, file.type))) {
         const transcoded = await transcodeImageToJpeg(file);
         if (!transcoded) {
-          alert('That file format isn’t supported. Please upload a PDF or a JPG/PNG photo — on iPhone, choose "Most Compatible" camera format or take a screenshot of the letter.');
-          setUploadingLetter(null);
-          return;
+          setStageError(prev => ({ ...prev, [letter.id]: 'That file format isn’t supported. Please upload a PDF or a JPG/PNG photo — on iPhone, choose "Most Compatible" camera format or take a screenshot of the letter.' }));
+          continue;
         }
         file = transcoded;
       }
-      const ext = file.name.split('.').pop() || 'pdf';
-      const path = session.user.id + '/' + letter.id + '/response_' + Date.now() + '.' + ext;
-      const { error: uploadErr } = await supabase.storage.from('responses').upload(path, file, { upsert: true });
-      if (uploadErr) throw uploadErr;
+      resolved.push(file);
+    }
+    if (!resolved.length) return;
+    setStagedFiles(prev => {
+      const combined = [...(prev[letter.id] || []), ...resolved];
+      const batchErr = validateBatch(combined);
+      if (batchErr) {
+        setStageError(e => ({ ...e, [letter.id]: batchErr }));
+        return prev;
+      }
+      setStageError(e => ({ ...e, [letter.id]: null }));
+      return { ...prev, [letter.id]: combined };
+    });
+  };
 
-      // Notify Chris
+  const handleRemoveStaged = (letterId, idx) => {
+    setStagedFiles(prev => ({ ...prev, [letterId]: (prev[letterId] || []).filter((_, i) => i !== idx) }));
+  };
+
+  const handleSubmitResponse = async (letter) => {
+    const files = stagedFiles[letter.id] || [];
+    if (!files.length) return;
+    setUploadingLetter(letter.id);
+    try {
+      const basePath = session.user.id + '/' + letter.id;
+      const paths = await uploadResponseBatch(supabase, basePath, files);
+
+      // Notify Chris — one email per response, not per page
       await fetch('/.netlify/functions/send-lpoa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -212,10 +240,12 @@ export default function ClientPortal({ session, onSignOut }) {
           clientName: profile.full_name,
           furnisher: letter.furnisher,
           phase: letter.phase,
-          storagePath: path,
+          storagePath: paths[0],
+          pageCount: paths.length,
         }),
       });
 
+      setStagedFiles(prev => ({ ...prev, [letter.id]: [] }));
       setUploadSuccess(letter.id);
       setTimeout(() => setUploadSuccess(null), 4000);
     } catch (e) {
@@ -565,13 +595,38 @@ export default function ClientPortal({ session, onSignOut }) {
                           <div>
                             <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 8 }}>
                               Did you receive a response from {l.furnisher} in the mail? Upload it here and we'll take it from there.
+                              {' '}If it's more than one page, add every page — we'll review it as one document.
                             </p>
-                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '7px 14px', background: '#1B2A4A', color: '#C9A84C', borderRadius: 4, fontWeight: 600, cursor: uploadingLetter === l.id ? 'not-allowed' : 'pointer', opacity: uploadingLetter === l.id ? 0.6 : 1 }}>
-                              {uploadingLetter === l.id ? 'Uploading…' : '📎 Upload Response'}
-                              <input type="file" accept={RESPONSE_ACCEPT + ',image/*'} style={{ display: 'none' }}
-                                onChange={e => { if (e.target.files[0]) handleUploadResponse(l, e.target.files[0]); }}
-                                disabled={uploadingLetter === l.id} />
-                            </label>
+                            {(stagedFiles[l.id] || []).length > 0 && (
+                              <div style={{ marginBottom: 8 }}>
+                                {stagedFiles[l.id].map((f, i) => (
+                                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#374151', padding: '4px 0' }}>
+                                    <span>Page {i + 1}: {f.name}</span>
+                                    <button onClick={() => handleRemoveStaged(l.id, i)} disabled={uploadingLetter === l.id}
+                                      style={{ marginLeft: 'auto', fontSize: 11, color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer' }}>
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {stageError[l.id] && (
+                              <div style={{ fontSize: 11, color: '#DC2626', marginBottom: 8 }}>{stageError[l.id]}</div>
+                            )}
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '7px 14px', background: (stagedFiles[l.id] || []).length ? '#fff' : '#1B2A4A', color: (stagedFiles[l.id] || []).length ? '#1B2A4A' : '#C9A84C', border: (stagedFiles[l.id] || []).length ? '1px solid #1B2A4A' : 'none', borderRadius: 4, fontWeight: 600, cursor: uploadingLetter === l.id ? 'not-allowed' : 'pointer', opacity: uploadingLetter === l.id ? 0.6 : 1 }}>
+                                {(stagedFiles[l.id] || []).length ? '+ Add Another Page' : '📎 Upload Response'}
+                                <input type="file" accept={RESPONSE_ACCEPT + ',image/*'} multiple style={{ display: 'none' }}
+                                  onChange={e => { handleStageFiles(l, e.target.files); e.target.value = ''; }}
+                                  disabled={uploadingLetter === l.id} />
+                              </label>
+                              {(stagedFiles[l.id] || []).length > 0 && (
+                                <button onClick={() => handleSubmitResponse(l)} disabled={uploadingLetter === l.id}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '7px 14px', background: '#1B2A4A', color: '#C9A84C', borderRadius: 4, fontWeight: 600, border: 'none', cursor: uploadingLetter === l.id ? 'not-allowed' : 'pointer', opacity: uploadingLetter === l.id ? 0.6 : 1 }}>
+                                  {uploadingLetter === l.id ? 'Uploading…' : `Submit Response (${stagedFiles[l.id].length} page${stagedFiles[l.id].length > 1 ? 's' : ''})`}
+                                </button>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>

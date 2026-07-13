@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Upload, FileText, Trash2, Eye, CheckCircle, Zap } from 'lucide-react';
 import { uploadDocument, getDocuments, getDocumentUrl, deleteDocument } from '../utils/documents';
 import { supabase } from '../utils/supabase';
-import { CONVERTED_PREFIX, inferMediaType, isAnalyzable, UNSUPPORTED_TYPE_MESSAGE } from '../utils/responseFiles';
+import { CONVERTED_PREFIX, groupResponseFiles } from '../utils/responseFiles';
 
 // Brand tokens — matches the dashboard / clients card system
 const T = {
@@ -178,25 +178,27 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
 
       if (!files || files.length === 0) { setLoading(false); return; }
 
-      // For each folder (letter ID), list files inside
+      // For each folder (letter ID), list files inside and group multi-page
+      // uploads into a single response entry — a 3-photo response should be
+      // one row with one Analyze button, not three
       const allResponses = [];
       for (const folder of files) {
         const { data: folderFiles } = await supabase.storage
           .from('responses')
-          .list(userId + '/' + folder.name, { limit: 10 });
+          .list(userId + '/' + folder.name, { limit: 50 });
         if (folderFiles && folderFiles.length > 0) {
           // Match folder name (letter ID) to a letter to get furnisher
           const matchedLetter = letters.find(l => l.id === folder.name);
           // Hide system artifacts: PDF pages converted to JPEGs for Lob
           // exhibit embedding live in the same folder but aren't uploads
-          folderFiles.filter(f => !f.name.startsWith(CONVERTED_PREFIX)).forEach(f => {
+          const visible = folderFiles.filter(f => !f.name.startsWith(CONVERTED_PREFIX));
+          groupResponseFiles(visible).forEach(batch => {
             allResponses.push({
-              path: userId + '/' + folder.name + '/' + f.name,
+              files: batch.files.map(f => ({ path: userId + '/' + folder.name + '/' + f.name, fileName: f.name })),
               letterId: folder.name,
               furnisher: matchedLetter ? matchedLetter.furnisher : folder.name,
               phase: matchedLetter ? matchedLetter.phase : 'Phase 1',
-              fileName: f.name,
-              createdAt: f.created_at,
+              createdAt: batch.createdAt,
               letter: matchedLetter || null,
             });
           });
@@ -207,29 +209,28 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
     finally { setLoading(false); }
   };
 
-  const handleDownload = async (path) => {
+  const handleDownload = async (resp) => {
     try {
-      const { data } = await supabase.storage.from('responses').createSignedUrl(path, 3600);
+      // Multi-page responses: open the first page — full multi-page preview
+      // isn't built yet, but this at least confirms what was uploaded.
+      const { data } = await supabase.storage.from('responses').createSignedUrl(resp.files[0].path, 3600);
       if (data?.signedUrl) window.open(data.signedUrl, '_blank');
     } catch(e) { alert('Could not open file'); }
   };
 
-  const handleAnalyze = async (resp) => {
+  const handleAnalyze = (resp) => {
     if (!resp.letter) { alert('Could not find matching letter for this response.'); return; }
-    try {
-      const { data } = await supabase.storage.from('responses').createSignedUrl(resp.path, 3600);
-      if (!data?.signedUrl) throw new Error('Could not get file URL');
-      // Fetch the file and pass to ResponseAnalyzer. Storage downloads can
-      // come back typeless — infer from the extension before analysis.
-      const fileRes = await fetch(data.signedUrl);
-      const blob = await fileRes.blob();
-      const mediaType = inferMediaType(resp.fileName, blob.type);
-      if (!isAnalyzable(mediaType)) { alert(UNSUPPORTED_TYPE_MESSAGE); return; }
-      const file = new File([blob], resp.fileName, { type: mediaType });
-      // _fromStorage: the file already lives in the responses bucket — the
-      // analyzer must not re-save it (only convert PDFs for Lob embedding)
-      setAnalyzingLetter({ ...resp.letter, _preloadedFile: file, _fromStorage: true });
-    } catch(e) { alert('Could not load response file: ' + e.message); }
+    // Files already live in the responses bucket — the server-side analysis
+    // job downloads them directly, so nothing is fetched into the browser
+    // here. _preloadedFiles are lightweight display-only stand-ins (name
+    // only, no bytes); _analyzeFilePaths are the real storage paths the job
+    // needs; _fromStorage tells the analyzer not to re-save them.
+    setAnalyzingLetter({
+      ...resp.letter,
+      _preloadedFiles: resp.files.map(f => ({ name: f.fileName })),
+      _analyzeFilePaths: resp.files.map(f => f.path),
+      _fromStorage: true,
+    });
   };
 
   if (loading) return <div className="text-[11px] py-2" style={{ color: T.muted }}>Loading responses…</div>;
@@ -249,14 +250,20 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
               <FileText size={13} strokeWidth={1.75} style={{ color: T.navy }} />
             </div>
             <div className="min-w-0">
-              <div className="text-[12px] font-medium truncate" style={{ color: T.ink }}>{resp.furnisher}</div>
+              <div className="text-[12px] font-medium truncate" style={{ color: T.ink }}>
+                {resp.furnisher}{resp.files.length > 1 && (
+                  <span className="ml-1.5 text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm" style={{ background: '#EEF1F7', color: T.navy }}>
+                    {resp.files.length} pages
+                  </span>
+                )}
+              </div>
               <div className="text-[10px] truncate" style={{ color: T.muted }}>
                 {resp.phase} · {resp.createdAt ? new Date(resp.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown date'}
               </div>
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <button onClick={() => handleDownload(resp.path)} title="View response file"
+            <button onClick={() => handleDownload(resp)} title={resp.files.length > 1 ? 'View page 1 of ' + resp.files.length : 'View response file'}
               className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border transition-colors hover:border-navy hover:text-navy"
               style={{ borderColor: T.border, color: T.muted }}>
               <Eye size={11} strokeWidth={1.75} /> View

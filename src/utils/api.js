@@ -1,7 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { MASTER_SYSTEM_PROMPT } from "../prompts/masterPrompt.js";
-import { PHASE2_SYSTEM_PROMPT } from "../prompts/phase2Prompt.js";
-import { PHASE2_SCHEMA } from "./auditSchemas.js";
 import { saveLetter } from "./storage.js";
 import { supabase } from "./supabase";
 import { runAuditJob } from "./auditJobs.js";
@@ -92,47 +90,10 @@ async function claudeCall(userContent, { maxTokens = 64000, schema = null, onTok
 const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
 // ---------------------------------------------------------------------------
-// Phase 2 — furnisher response analysis. Same reliability pattern as audits:
-// SDK client with retries, streaming, structured outputs (PHASE2_SCHEMA), and
-// stop_reason checks. The Phase 2 system prompt gets its own cache breakpoint.
-// ---------------------------------------------------------------------------
-
-const PHASE2_SYSTEM = [{ type: 'text', text: PHASE2_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
-
-// The API accepts images and PDFs as different content-block types: base64
-// `document` blocks are PDF-only; JPG/PNG/WEBP must go in `image` blocks.
-function responseFileBlock(base64, mediaType) {
-  if (mediaType && mediaType.startsWith('image/')) {
-    return { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } };
-  }
-  return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } };
-}
-
-export async function analyzeFurnisherResponse({ phase1Html, responseBase64, responseMediaType, clientName, furnisher, accountId, onTokens }) {
-  const raw = await claudeCall([
-    {
-      type: 'text',
-      text: `Today: ${today()}\nClient: ${clientName}\nFurnisher: ${furnisher}\nAccount: ${accountId}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER:\n${phase1Html}\n\nEXHIBIT B — FURNISHER RESPONSE (attached document):`,
-    },
-    responseFileBlock(responseBase64, responseMediaType),
-    { type: 'text', text: 'Perform Phase 2 analysis.' },
-  ], { maxTokens: 32000, schema: PHASE2_SCHEMA, system: PHASE2_SYSTEM, onTokens });
-  return JSON.parse(raw);
-}
-
-export async function analyzeNonResponse({ phase1Html, clientName, furnisher, accountId, mailedDate, onTokens }) {
-  const mailed = mailedDate
-    ? new Date(mailedDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-    : 'unknown date';
-  const raw = await claudeCall([
-    {
-      type: 'text',
-      text: `Today: ${today()}\nClient: ${clientName}\nFurnisher: ${furnisher}\nAccount: ${accountId}\nLetter mailed: ${mailed}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER (no response was received within 30 days):\n${phase1Html}\n\nThe furnisher failed to respond within the 30-day statutory window. This is an automatic 15 U.S.C. 1681s-2(b) violation. Classify this as NON_RESPONSE and generate three Phase 3 CRA letters citing the failure to respond.`,
-    },
-  ], { maxTokens: 32000, schema: PHASE2_SCHEMA, system: PHASE2_SYSTEM, onTokens });
-  return JSON.parse(raw);
-}
-
+// Phase 2 (furnisher response analysis) runs SERVER-SIDE
+// (netlify/functions/phase2-analyze-background.mjs) for the same reason
+// audits do — no Anthropic key stored or used client-side. See
+// src/utils/phase2Jobs.js for the client half.
 // ---------------------------------------------------------------------------
 // Audits run SERVER-SIDE (netlify/functions/audit-run-background.mjs) — the
 // browser uploads files, creates an audit_jobs row, and polls for progress.
@@ -227,16 +188,6 @@ export async function generateLetter(account, client) {
   await saveLetter(account, client, html, summary);
   return { html, summary };
 }
-
-export function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result.split(',')[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 
 export async function generatePersonalInfoCleanupLetter(client) {
   const t = today();
