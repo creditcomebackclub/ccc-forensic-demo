@@ -313,7 +313,11 @@ export async function adminListClients() {
     supabase.from('audits').select('*').order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').order('saved_at', { ascending: false }),
     supabase.from('profiles').select('*'),
-    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,ssn_last4,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,monitoring_password,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at'),
+    // ssn_last4 / monitoring_password are intentionally excluded — they're
+    // encrypted at rest in client_sensitive_data and only ever fetched
+    // on-demand (decrypted server-side) via ClientProfilePanel, never as
+    // part of this bulk dashboard load.
+    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at'),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
@@ -346,7 +350,6 @@ export async function adminListClients() {
       c.lpoaSignedAt = meta.lpoa_signed_at || null;
       c.phone = meta.phone || null;
       c.dateOfBirth = meta.date_of_birth || null;
-      c.ssnLast4 = meta.ssn_last4 || null;
       c.monitoringService = meta.monitoring_service || 'Privacy Guard';
       c.monitoringEmail = meta.monitoring_email || null;
       c.monitoringEnrolled = meta.monitoring_enrolled || false;
@@ -358,7 +361,6 @@ export async function adminListClients() {
       c.scoreEqStart = meta.score_eq_start || null;
       c.scoreExpStart = meta.score_exp_start || null;
       c.scoreTuStart = meta.score_tu_start || null;
-      c.monitoringPassword = meta.monitoring_password || null;
       c.monitoringNotRequired = meta.monitoring_not_required || false;
       c.status = meta.status || 'active';
       c.leadSource = meta.lead_source || null;

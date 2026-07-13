@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { updateClientProfile } from '../utils/storage';
+import { readClientSensitiveData, writeClientSensitiveData } from '../utils/clientSensitiveData';
 import { ExternalLink, Edit2, Check, X } from 'lucide-react';
 
 // Brand tokens — matches the dashboard / clients card system
@@ -53,15 +54,66 @@ function Field({ label, value, onSave, type = 'text', placeholder = '', align = 
   );
 }
 
-function PasswordField({ value, onSave }) {
+// Encrypted field (SSN last-4 / monitoring password). Unlike Field, the
+// plaintext value is never part of the bulk client list — it's fetched and
+// decrypted on demand, only when staff explicitly click reveal or edit.
+function PasswordField({ clientName, field, onSaved }) {
   const [editing, setEditing] = useState(false);
   const [visible, setVisible] = useState(false);
-  const [val, setVal] = useState(value || '');
+  const [val, setVal] = useState('');
+  const [revealed, setRevealed] = useState(null); // null = not fetched yet
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const fetchValue = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const data = await readClientSensitiveData(clientName);
+      const value = (field === 'ssnLast4' ? data.ssnLast4 : data.monitoringPassword) || '';
+      setRevealed(value);
+      return value;
+    } catch (e) {
+      setError('Could not load');
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleReveal = async () => {
+    if (revealed === null) {
+      const value = await fetchValue();
+      if (value !== null) setVisible(true);
+    } else {
+      setVisible(!visible);
+    }
+  };
+
+  const startEdit = async () => {
+    let value = revealed;
+    if (value === null) {
+      value = await fetchValue();
+      if (value === null) return;
+    }
+    setVal(value);
+    setEditing(true);
+  };
 
   const save = async () => {
-    await onSave(val);
-    setEditing(false);
-    setVisible(false);
+    setBusy(true);
+    setError('');
+    try {
+      await writeClientSensitiveData(clientName, { [field]: val });
+      setRevealed(val);
+      setEditing(false);
+      setVisible(false);
+      onSaved && onSaved();
+    } catch (e) {
+      setError('Could not save');
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (editing) {
@@ -82,27 +134,31 @@ function PasswordField({ value, onSave }) {
             {visible ? '○' : '●'}
           </button>
         </div>
-        <button onClick={save} className="text-green-600 hover:text-green-700"><Check size={13} strokeWidth={2} /></button>
+        <button onClick={save} disabled={busy} className="text-green-600 hover:text-green-700"><Check size={13} strokeWidth={2} /></button>
         <button onClick={() => setEditing(false)} className="text-ink-faint hover:text-red-600"><X size={13} strokeWidth={2} /></button>
       </div>
     );
   }
 
+  const displayText = busy ? 'Loading…'
+    : revealed === null ? '••••••••'
+    : revealed ? (visible ? revealed : '••••••••')
+    : 'Not set';
+
   return (
     <div className="flex items-center gap-1.5 group">
-      <span className="text-[12px] font-mono" style={{ color: value ? T.ink : T.faint, fontStyle: value ? 'normal' : 'italic' }}>
-        {value ? (visible ? value : '••••••••') : 'Not set'}
+      <span className="text-[12px] font-mono" style={{ color: revealed ? T.ink : T.faint, fontStyle: revealed === '' ? 'italic' : 'normal' }}>
+        {displayText}
       </span>
-      {value && (
-        <button onClick={() => setVisible(!visible)} className="text-ink-faint hover:text-navy text-[10px]">
-          {visible ? '○' : '●'}
-        </button>
-      )}
-      <button onClick={() => { setVal(value || ''); setEditing(true); }}
+      <button onClick={toggleReveal} disabled={busy} className="text-ink-faint hover:text-navy text-[10px]">
+        {revealed !== null && visible ? '○' : '●'}
+      </button>
+      <button onClick={startEdit}
         title="Edit"
         className="opacity-30 group-hover:opacity-100 text-ink-faint hover:text-navy transition-opacity">
         <Edit2 size={11} strokeWidth={2} />
       </button>
+      {error && <span className="text-[10px] text-red-600">{error}</span>}
     </div>
   );
 }
@@ -226,8 +282,7 @@ export default function ClientProfilePanel({ client, onChanged }) {
             onSave={(v) => save({ date_of_birth: v })} />
         </Row>
         <Row label="SSN last 4">
-          <PasswordField value={client.ssnLast4}
-            onSave={(v) => save({ ssn_last4: v })} />
+          <PasswordField clientName={client.name} field="ssnLast4" onSaved={onChanged} />
         </Row>
       </Section>
 
@@ -241,8 +296,7 @@ export default function ClientProfilePanel({ client, onChanged }) {
             onSave={(v) => save({ monitoring_email: v })} />
         </Row>
         <Row label="Password">
-          <PasswordField value={client.monitoringPassword}
-            onSave={(v) => save({ monitoring_password: v })} />
+          <PasswordField clientName={client.name} field="monitoringPassword" onSaved={onChanged} />
         </Row>
         <Row label="Portal">
           <a href={client.monitoringPortalUrl || 'https://www.privacyguard.com'}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
 import { inferMediaType, isAnalyzable, transcodeImageToJpeg, uploadResponseBatch, validateBatch, RESPONSE_ACCEPT } from '../utils/responseFiles';
+import { writeClientSensitiveData } from '../utils/clientSensitiveData';
 import { LogOut, FileText, Mail, CheckCircle, Clock, AlertCircle, Shield, TrendingUp, ExternalLink, ChevronRight, Star, Calendar } from 'lucide-react';
 
 const RESPONSE_WINDOW_DAYS = 30;
@@ -122,6 +123,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const [monitoringForm, setMonitoringForm] = useState({ service: '', email: '', password: '', ssnLast4: '' });
   const [monitoringStep, setMonitoringStep] = useState('view'); // view | edit
   const [monitoringSaving, setMonitoringSaving] = useState(false);
+  const [monitoringError, setMonitoringError] = useState('');
   const [uploadSuccess, setUploadSuccess] = useState(null);
   // Pages staged for upload, keyed by letter id — lets a client add photos
   // one at a time (common on mobile) before submitting them as one response
@@ -484,6 +486,7 @@ export default function ClientPortal({ session, onSignOut }) {
                   <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                     <button disabled={monitoringSaving} onClick={async () => {
                       setMonitoringSaving(true);
+                      setMonitoringError('');
                       const serviceUrls = {
                         'privacyguard': 'https://www.privacyguard.com',
                         'myscoreiq': 'https://www.myscoreiq.com',
@@ -496,19 +499,35 @@ export default function ClientPortal({ session, onSignOut }) {
                       await supabase.from('clients').update({
                         monitoring_service: monitoringForm.service,
                         monitoring_email: monitoringForm.email,
-                        monitoring_password: monitoringForm.password,
                         monitoring_enrolled: true,
                         monitoring_portal_url: portalUrl,
-                        ...(monitoringForm.ssnLast4 ? { ssn_last4: monitoringForm.ssnLast4 } : {}),
                       }).eq('name', profile.full_name);
+                      // SSN/password are encrypted at rest and never written
+                      // directly to the clients table — only include a key
+                      // the client actually typed something into.
+                      const sensitive = {};
+                      if (monitoringForm.password) sensitive.monitoringPassword = monitoringForm.password;
+                      if (monitoringForm.ssnLast4) sensitive.ssnLast4 = monitoringForm.ssnLast4;
+                      if (Object.keys(sensitive).length > 0) {
+                        try {
+                          await writeClientSensitiveData(profile.full_name, sensitive);
+                        } catch (e) {
+                          setMonitoringSaving(false);
+                          setMonitoringError('Your service/email were saved, but your password/SSN could not be saved securely. Please try again.');
+                          return;
+                        }
+                      }
                       setMonitoringStep('view');
                       setMonitoringSaving(false);
                       loadData();
                     }} style={{ fontSize: 12, padding: '7px 16px', background: '#1B2A4A', color: '#C9A84C', border: 'none', borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}>
                       {monitoringSaving ? 'Saving…' : 'Save Credentials'}
                     </button>
-                    <button onClick={() => setMonitoringStep('view')} style={{ fontSize: 12, padding: '7px 12px', background: 'none', border: '1px solid #E5E7EB', borderRadius: 4, cursor: 'pointer', color: '#6B7280' }}>Cancel</button>
+                    <button onClick={() => { setMonitoringStep('view'); setMonitoringError(''); }} style={{ fontSize: 12, padding: '7px 12px', background: 'none', border: '1px solid #E5E7EB', borderRadius: 4, cursor: 'pointer', color: '#6B7280' }}>Cancel</button>
                   </div>
+                  {monitoringError && (
+                    <div style={{ fontSize: 11, color: '#DC2626', marginTop: 8 }}>{monitoringError}</div>
+                  )}
                 </div>
               ) : clientMeta && clientMeta.monitoring_enrolled ? (
                 <div>
