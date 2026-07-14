@@ -9,6 +9,7 @@ import OverviewTab from './client-portal/OverviewTab';
 import DisputesTab from './client-portal/DisputesTab';
 import TimelineTab from './client-portal/TimelineTab';
 import VipTab from './client-portal/VipTab';
+import ConciergeChat from './client-portal/ConciergeChat';
 
 export default function ClientPortal({ session, onSignOut }) {
   const [profile, setProfile] = useState(null);
@@ -336,6 +337,8 @@ export default function ClientPortal({ session, onSignOut }) {
           <a href="tel:9706440063" className="hover:text-gray-600 transition-colors">970-644-0063</a>
         </div>
       </div>
+      
+      <ConciergeChat clientId={session.user.id} />
     </div>
   );
 }
