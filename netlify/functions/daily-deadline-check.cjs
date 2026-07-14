@@ -48,9 +48,17 @@ function sendgridEmail(to, subject, html, apiKey) {
     const req = https.request(options, (res) => {
       let raw = '';
       res.on('data', c => raw += c);
-      res.on('end', () => resolve({ status: res.statusCode }));
+      res.on('end', () => {
+        if (res.statusCode >= 400) {
+          console.error(`SendGrid Error (${res.statusCode}): ${raw}`);
+        }
+        resolve({ status: res.statusCode });
+      });
     });
-    req.on('error', reject);
+    req.on('error', (e) => {
+      console.error('SendGrid Request Error:', e);
+      reject(e);
+    });
     req.write(data);
     req.end();
   });
@@ -92,15 +100,15 @@ exports.handler = async () => {
   const adminDigestItems = [];
 
   async function fetch_send(action, payload) {
-    try {
-      const base = process.env.URL || process.env.DEPLOY_URL || '';
-      await fetch(base + '/.netlify/functions/send-lpoa', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, ...payload }),
-      });
-    } catch (e) {
-      console.error('Client notification send failed (non-fatal):', e.message);
+    const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+    const res = await fetch(base + '/.netlify/functions/send-lpoa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...payload }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`fetch_send error ${res.status}: ${err}`);
     }
   }
 
@@ -124,13 +132,17 @@ exports.handler = async () => {
     }
 
     if (sgKey && clientEmail && daysElapsed >= 7 && daysElapsed < 8 && !sent.includes('day7')) {
-      await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day7_checkin', furnisher: letter.furnisher, daysElapsed });
-      newSent.push('day7'); touched = true;
+      try {
+        await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day7_checkin', furnisher: letter.furnisher, daysElapsed });
+        newSent.push('day7'); touched = true;
+      } catch(e) { console.error('day7 email failed:', e); }
     }
 
     if (sgKey && clientEmail && daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
-      await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day30_approaching', furnisher: letter.furnisher, daysElapsed });
-      newSent.push('day30'); touched = true;
+      try {
+        await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day30_approaching', furnisher: letter.furnisher, daysElapsed });
+        newSent.push('day30'); touched = true;
+      } catch(e) { console.error('day30 email failed:', e); }
     }
 
     if (daysElapsed >= 30 && !sent.includes('admin30')) {
@@ -211,17 +223,21 @@ exports.handler = async () => {
       for (const d of dripSchedule) {
         if (daysSince >= d.minDay && daysSince <= d.maxDay && !sentDrips.includes(d.key)) {
           try {
-            const base = process.env.URL || process.env.DEPLOY_URL || '';
-            await fetch(base + '/.netlify/functions/send-lpoa', {
+            const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+            const res = await fetch(base + '/.netlify/functions/send-lpoa', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ action: 'send_lead_drip', leadName: lead.name, leadEmail: lead.email, emailNumber: d.num }),
             });
+            if (!res.ok) {
+              const err = await res.text();
+              throw new Error(`Lead drip error ${res.status}: ${err}`);
+            }
             newDrips.push(d.key);
             touched = true;
             leadsProcessed++;
           } catch (e) {
-            console.error('Lead drip send failed (non-fatal):', e.message);
+            console.error('Lead drip send failed:', e.message);
           }
           break; // only one drip per lead per day
         }

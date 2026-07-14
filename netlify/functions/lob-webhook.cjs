@@ -61,9 +61,17 @@ function sendgridEmail(to, subject, html, apiKey) {
     const req = https.request(options, (res) => {
       let raw = '';
       res.on('data', c => raw += c);
-      res.on('end', () => resolve({ status: res.statusCode }));
+      res.on('end', () => {
+        if (res.statusCode >= 400) {
+          console.error(`SendGrid Error (${res.statusCode}): ${raw}`);
+        }
+        resolve({ status: res.statusCode });
+      });
     });
-    req.on('error', reject);
+    req.on('error', (e) => {
+      console.error('SendGrid Request Error:', e);
+      reject(e);
+    });
     req.write(data);
     req.end();
   });
