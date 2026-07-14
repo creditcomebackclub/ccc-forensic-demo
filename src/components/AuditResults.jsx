@@ -121,7 +121,7 @@ function EmailAuditModal({ audit, clientEmail, onClose }) {
     setSending(true);
     setError(null);
     try {
-      const doc = buildAuditPdfDoc(audit);
+      const doc = await buildAuditPdfDoc(audit);
       const pdfBase64 = await blobToBase64(doc.output('blob'));
       const filename = auditPdfFilename(audit);
 
@@ -239,8 +239,8 @@ function EmailAuditModal({ audit, clientEmail, onClose }) {
   );
 }
 
-function generateAuditPDF(audit) {
-  const doc = buildAuditPdfDoc(audit);
+async function generateAuditPDF(audit) {
+  const doc = await buildAuditPdfDoc(audit);
   doc.save(auditPdfFilename(audit));
 }
 

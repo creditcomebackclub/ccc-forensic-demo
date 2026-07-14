@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { Toaster, toast } from 'react-hot-toast';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X, Send, MoreHorizontal, Search } from 'lucide-react';
 import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
@@ -235,7 +237,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
       await updateLetter(l.id, patch);
       setMode(null);
       onChange();
-    } catch (e) { alert('Could not save: ' + (e.message || e)); }
+    } catch (e) { toast.error('Could not save: ' + (e.message || e)); }
   };
 
   const handleDelete = async () => {
@@ -246,7 +248,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     try {
       await deleteLetter(l.id);
       onChange();
-    } catch (e) { alert('Could not delete: ' + (e.message || e)); }
+    } catch (e) { toast.error('Could not delete: ' + (e.message || e)); }
   };
 
   const canAnalyze = !isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response');
@@ -466,7 +468,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   const openLetter = (letter) => {
     const w = window.open('', '_blank');
-    if (!w) { alert('Popup blocked — allow popups to view letters.'); return; }
+    if (!w) { toast.error('Popup blocked — allow popups to view letters.'); return; }
     w.document.open();
     w.document.write(letter.html);
     w.document.close();
@@ -484,14 +486,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       await toggleVip(clientName, !currentVip);
       await load();
     } catch (e) {
-      alert('Could not update VIP status: ' + (e.message || e));
+      toast.error('Could not update VIP status: ' + (e.message || e));
     } finally {
       setTogglingVip(null);
     }
   };
 
   const handleSendLpoa = async (c) => {
-    if (!c.email) { alert('Add client email first'); return; }
+    if (!c.email) { toast.error('Add client email first'); return; }
     setSendingLpoa(c.name);
     try {
       const signingUrl = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(c.name);
@@ -502,9 +504,9 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Send failed');
-      alert('LPOA signing link sent to ' + c.email);
+      toast.error('LPOA signing link sent to ' + c.email);
     } catch (e) {
-      alert('Could not send LPOA: ' + e.message);
+      toast.error('Could not send LPOA: ' + e.message);
     } finally {
       setSendingLpoa(null);
     }
@@ -687,7 +689,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     await convertLeadToClient(c.name);
                     await load();
                   } catch (e) {
-                    alert('Could not convert lead: ' + e.message);
+                    toast.error('Could not convert lead: ' + e.message);
                   } finally {
                     setConvertingLead(null);
                   }
@@ -699,7 +701,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     await deleteLead(c.name);
                     await load();
                   } catch (e) {
-                    alert('Could not delete lead: ' + e.message);
+                    toast.error('Could not delete lead: ' + e.message);
                   }
                 }}
               />
@@ -805,7 +807,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                               const result = await runProgressDiff(c.name);
                               setDiffResult({ clientName: c.name, ...result });
                             } catch (e) {
-                              alert('Could not run comparison: ' + e.message);
+                              toast.error('Could not run comparison: ' + e.message);
                             } finally {
                               setDiffLoading(null);
                             }
@@ -1144,7 +1146,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
       setEditing(false);
       if (onChanged) await onChanged();
     } catch (e) {
-      alert('Could not save: ' + e.message);
+      toast.error('Could not save: ' + e.message);
     } finally {
       setSaving(false);
     }
@@ -1158,7 +1160,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
       setQuickEmail('');
       if (onChanged) await onChanged();
     } catch (e) {
-      alert('Could not save email: ' + e.message);
+      toast.error('Could not save email: ' + e.message);
     } finally {
       setSavingEmail(false);
     }
@@ -1170,7 +1172,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
       await updateLeadStage(c.name, next, c.tags);
       if (onChanged) await onChanged();
     } catch (e) {
-      alert('Could not update stage: ' + e.message);
+      toast.error('Could not update stage: ' + e.message);
     } finally {
       setSavingStage(false);
     }
@@ -1509,7 +1511,7 @@ function LetterEditModal({ letter, onClose, onSaved }) {
       if (onSaved) await onSaved();
       onClose();
     } catch (e) {
-      alert('Could not save: ' + e.message);
+      toast.error('Could not save: ' + e.message);
     } finally {
       setSaving(false);
     }

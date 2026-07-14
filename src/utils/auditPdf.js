@@ -1,6 +1,3 @@
-// Builds a real, on-brand PDF summary of a forensic audit — used by the
-// "Download PDF" button and shared as the email attachment for "Email Audit
-// to Client" so both features produce byte-identical output.
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -8,6 +5,8 @@ const NAVY = [27, 42, 74];
 const GOLD = [201, 168, 76];
 const INK = [17, 24, 39];
 const MUTED = [107, 114, 128];
+const FAINT = [156, 163, 175];
+const GRID = [238, 240, 244];
 
 function slugName(s) {
   return String(s || 'client')
@@ -22,63 +21,97 @@ export function auditPdfFilename(audit) {
   return `ccc-forensic-audit-${name}-${date}.pdf`;
 }
 
-export function buildAuditPdfDoc(audit) {
+export function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+export async function buildAuditPdfDoc(audit) {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 48;
   let y = 0;
 
+  let logoDataUrl = null;
+  try {
+    const resp = await fetch('/logo.jpg');
+    if (resp.ok) {
+      const blob = await resp.blob();
+      const base64 = await blobToBase64(blob);
+      logoDataUrl = 'data:image/jpeg;base64,' + base64;
+    }
+  } catch (e) {
+    console.warn('Could not load logo for PDF', e);
+  }
+
   const client = audit.client || {};
   const scores = audit.scores || {};
   const accounts = audit.accounts || [];
+  const inquiries = audit.inquiries || [];
+  const personalInfo = audit.personalInfo || {};
   const preparedDate = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
-  // Header band
+  // --- 1. Header Band ---
   doc.setFillColor(...NAVY);
-  doc.rect(0, 0, pageWidth, 74, 'F');
+  doc.rect(0, 0, pageWidth, 84, 'F');
+  
+  if (logoDataUrl) {
+    // 40x40 logo, nicely rounded if it was PNG, but we'll just draw it
+    doc.addImage(logoDataUrl, 'JPEG', margin, 22, 40, 40);
+  }
+  
+  const textStartX = logoDataUrl ? margin + 56 : margin;
+  
   doc.setTextColor(...GOLD);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text('Credit Comeback Club Forensic Audit', margin, 34);
+  doc.setFontSize(18);
+  doc.text('Credit Comeback Club Forensic Audit', textStartX, 42);
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
-  doc.text(`Prepared: ${preparedDate}`, margin, 52);
-  y = 100;
+  doc.text(`Prepared: ${preparedDate}`, textStartX, 60);
+  y = 114;
 
-  // Client info
+  // --- 2. Client Info & Executive Summary Side-by-Side ---
   doc.setTextColor(...INK);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
+  doc.setFontSize(16);
   doc.text(client.name || 'Client', margin, y);
-  y += 16;
+  
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.setTextColor(...MUTED);
+  y += 18;
   if (client.address) { doc.text(client.address, margin, y); y += 14; }
   doc.text(`Accounts Targeted: ${audit.accountsTargeted || 0}   |   Total Violations: ${audit.totalViolations || 0}`, margin, y);
-  y += 26;
+  y += 24;
 
-  // Scores row
+  // Draw Scores
+  doc.setFillColor(...GRID);
+  doc.rect(margin, y, pageWidth - (margin * 2), 60, 'F');
   const bureaus = [['Equifax', scores.equifax], ['Experian', scores.experian], ['TransUnion', scores.transunion]];
   const colWidth = (pageWidth - margin * 2) / 3;
   bureaus.forEach(([label, score], i) => {
-    const x = margin + i * colWidth;
+    const x = margin + i * colWidth + 24;
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(18);
+    doc.setFontSize(22);
     doc.setTextColor(...NAVY);
-    doc.text(String(score ?? '—'), x, y);
-    doc.setFont('helvetica', 'normal');
+    doc.text(String(score ?? '—'), x, y + 30);
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.setTextColor(...MUTED);
-    doc.text(label.toUpperCase(), x, y + 13);
+    doc.text(label.toUpperCase(), x, y + 46);
   });
-  y += 36;
+  y += 84;
 
   // Executive summary
   if (audit.executiveSummary) {
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
+    doc.setFontSize(11);
     doc.setTextColor(...NAVY);
     doc.text('EXECUTIVE SUMMARY', margin, y);
     y += 14;
@@ -87,11 +120,44 @@ export function buildAuditPdfDoc(audit) {
     doc.setTextColor(...INK);
     const lines = doc.splitTextToSize(audit.executiveSummary, pageWidth - margin * 2);
     doc.text(lines, margin, y);
-    y += lines.length * 13 + 16;
+    y += lines.length * 14 + 20;
   }
 
-  // Accounts table
+  // --- 3. Personal Information Discrepancies ---
+  // personalInfo has keys like names, addresses, employers which are arrays of strings
+  const hasPersonalInfo = personalInfo.names?.length > 0 || personalInfo.addresses?.length > 0;
+  if (hasPersonalInfo) {
+    if (y > doc.internal.pageSize.getHeight() - 100) { doc.addPage(); y = margin; }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(...NAVY);
+    doc.text('PERSONAL INFORMATION VARIANCES', margin, y);
+    y += 12;
+
+    const piData = [];
+    if (personalInfo.names && personalInfo.names.length) piData.push(['Name Variations', personalInfo.names.join(', ')]);
+    if (personalInfo.addresses && personalInfo.addresses.length) piData.push(['Address Variations', personalInfo.addresses.join(' | ')]);
+    if (personalInfo.employers && personalInfo.employers.length) piData.push(['Employers', personalInfo.employers.join(', ')]);
+
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      body: piData,
+      theme: 'plain',
+      styles: { cellPadding: 4, fontSize: 9, textColor: INK },
+      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 120 } }
+    });
+    y = doc.lastAutoTable.finalY + 24;
+  }
+
+  // --- 4. Accounts Table ---
   if (accounts.length) {
+    if (y > doc.internal.pageSize.getHeight() - 150) { doc.addPage(); y = margin; }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(...NAVY);
+    doc.text('TARGETED ACCOUNTS (METRO 2 VIOLATIONS)', margin, y);
+    y += 8;
     autoTable(doc, {
       startY: y,
       margin: { left: margin, right: margin },
@@ -104,38 +170,79 @@ export function buildAuditPdfDoc(audit) {
         String((a.violations && a.violations.length) || 0),
         `Batch ${a.batch || 2}`,
       ]),
-      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9 },
+      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9, fontStyle: 'bold' },
       bodyStyles: { fontSize: 9, textColor: INK },
       alternateRowStyles: { fillColor: [248, 250, 252] },
-      styles: { cellPadding: 5 },
+      styles: { cellPadding: 6 },
     });
     y = doc.lastAutoTable.finalY + 24;
   }
 
-  // Battle plan — one row per account, condensed
+  // --- 5. Inquiries Table ---
+  if (inquiries.length) {
+    if (y > doc.internal.pageSize.getHeight() - 120) { doc.addPage(); y = margin; }
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(...NAVY);
+    doc.text('UNAUTHORIZED INQUIRIES', margin, y);
+    y += 8;
+    autoTable(doc, {
+      startY: y,
+      margin: { left: margin, right: margin },
+      head: [['Creditor', 'Date', 'Bureau(s)']],
+      body: inquiries.map((iq) => [
+        iq.creditor || '',
+        iq.date || '-',
+        (iq.bureau || []).join(', ') || '-',
+      ]),
+      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9, fontStyle: 'bold' },
+      bodyStyles: { fontSize: 9, textColor: INK },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      styles: { cellPadding: 6 },
+    });
+    y = doc.lastAutoTable.finalY + 24;
+  }
+
+  // --- 6. Battle Plan (Detailed Layout) ---
   if (accounts.length) {
     if (y > doc.internal.pageSize.getHeight() - 120) { doc.addPage(); y = margin; }
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
-    doc.setTextColor(...NAVY);
+    doc.setFontSize(14);
+    doc.setTextColor(...GOLD);
     doc.text('Your Dispute Battle Plan', margin, y);
-    y += 18;
+    y += 24;
 
     accounts.forEach((a) => {
-      const planLines = doc.splitTextToSize(
-        `${a.furnisher || 'Furnisher'} (Batch ${a.batch || 2}, ${a.type === 'C' ? 'Collector' : 'Type ' + (a.type || 'B')}): ${a.primaryViolation || 'Violations identified in this report.'}`,
-        pageWidth - margin * 2
-      );
-      if (y + planLines.length * 13 > doc.internal.pageSize.getHeight() - 60) { doc.addPage(); y = margin; }
+      // Check space before drawing block
+      if (y > doc.internal.pageSize.getHeight() - 80) { doc.addPage(); y = margin; }
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.setTextColor(...NAVY);
+      doc.text(`${a.furnisher || 'Furnisher'} (Batch ${a.batch || 2})`, margin, y);
+      y += 14;
+
+      const details = [];
+      if (a.furnisherAddress) details.push(`Address: ${a.furnisherAddress}`);
+      if (a.addressStatus) details.push(`Verification: ${a.addressStatus}`);
+      if (a.primaryViolation) details.push(`Core Violation: ${a.primaryViolation}`);
+      if (a.strategy) details.push(`Action Plan: ${a.strategy}`);
+
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9.5);
       doc.setTextColor(...INK);
-      doc.text(planLines, margin, y);
-      y += planLines.length * 13 + 10;
+
+      details.forEach(det => {
+        const lines = doc.splitTextToSize(`• ${det}`, pageWidth - margin * 2);
+        if (y + lines.length * 13 > doc.internal.pageSize.getHeight() - 40) { doc.addPage(); y = margin; }
+        doc.text(lines, margin + 4, y);
+        y += lines.length * 13 + 4;
+      });
+      y += 12;
     });
   }
 
-  // Footer on every page
+  // --- 7. Footer on every page ---
   const pageCount = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -143,17 +250,8 @@ export function buildAuditPdfDoc(audit) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.setTextColor(...MUTED);
-    doc.text('Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063', margin, h - 24);
+    doc.text(`Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063 | Page ${i} of ${pageCount}`, margin, h - 24);
   }
 
   return doc;
-}
-
-export function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(',')[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
 }
