@@ -1,114 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
 import { inferMediaType, isAnalyzable, transcodeImageToJpeg, uploadResponseBatch, validateBatch, RESPONSE_ACCEPT } from '../utils/responseFiles';
-import { writeClientSensitiveData } from '../utils/clientSensitiveData';
-import { LogOut, FileText, Mail, CheckCircle, Clock, AlertCircle, Shield, TrendingUp, ExternalLink, ChevronRight, Star, Calendar } from 'lucide-react';
+import { LogOut } from 'lucide-react';
+import { Toaster, toast } from 'react-hot-toast';
+import { motion, AnimatePresence } from 'framer-motion';
 
-const RESPONSE_WINDOW_DAYS = 30;
-function todayISO() { return new Date().toISOString().slice(0, 10); }
-function daysBetween(aIso, bIso) {
-  const a = new Date(aIso + 'T00:00:00');
-  const b = new Date(bIso + 'T00:00:00');
-  return Math.round((b - a) / 86400000);
-}
-function responseCountdown(l) {
-  if (l.response_outcome === 'deleted' || l.response_outcome === 'received') return null;
-  const clockStart = l.delivered_at ? l.delivered_at.slice(0, 10) : l.mailed_date;
-  if (!clockStart) return null;
-  const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = RESPONSE_WINDOW_DAYS - elapsed;
-  if (remaining > 0) return { label: 'Day ' + elapsed + ' of 30 — ' + remaining + ' day' + (remaining === 1 ? '' : 's') + ' remaining', tone: remaining <= 7 ? '#D97706' : '#6B7280', bg: remaining <= 7 ? '#FFFBEB' : '#F9FAFB' };
-  return { label: 'Response window closed — ready for escalation', tone: '#B91C1C', bg: '#FEF2F2' };
-}
-
-function ScoreMeter({ label, start, current }) {
-  const score = current || start || null;
-  const diff = (start && current && current !== start) ? current - start : null;
-  const pct = score ? Math.min(100, Math.max(0, ((score - 300) / 550) * 100)) : 0;
-  const startPct = start ? Math.min(100, Math.max(0, ((start - 300) / 550) * 100)) : 0;
-
-  const getColor = (s) => {
-    if (!s) return '#9CA3AF';
-    if (s >= 750) return '#15803D';
-    if (s >= 700) return '#16A34A';
-    if (s >= 650) return '#D97706';
-    if (s >= 600) return '#EA580C';
-    return '#DC2626';
-  };
-
-  const getRating = (s) => {
-    if (!s) return '';
-    if (s >= 750) return 'Excellent';
-    if (s >= 700) return 'Good';
-    if (s >= 650) return 'Fair';
-    if (s >= 600) return 'Poor';
-    return 'Very Poor';
-  };
-
-  return (
-    <div className="w-full" style={{ flex: 1, minWidth: 140 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF', fontWeight: 600 }}>{label}</span>
-        {diff !== null && (
-          <span style={{ fontSize: 11, fontWeight: 700, color: diff > 0 ? '#15803D' : diff < 0 ? '#DC2626' : '#6B7280', background: diff > 0 ? '#F0FDF4' : diff < 0 ? '#FEF2F2' : '#F9FAFB', padding: '1px 6px', borderRadius: 4 }}>
-            {diff > 0 ? '▲ +' : diff < 0 ? '▼ ' : ''}{diff}
-          </span>
-        )}
-      </div>
-
-      <div style={{ position: 'relative', marginBottom: 8 }}>
-        <div style={{ height: 8, background: '#F3F4F6', borderRadius: 8, position: 'relative' }}>
-          <div style={{ position: 'absolute', inset: 0, borderRadius: 8, background: 'linear-gradient(90deg, #DC2626 0%, #EA580C 20%, #D97706 40%, #16A34A 65%, #15803D 100%)', opacity: 0.15 }} />
-          {start && current && current !== start && (
-            <div style={{ position: 'absolute', top: -2, width: 3, height: 12, background: '#9CA3AF', borderRadius: 2, left: startPct + '%', transform: 'translateX(-50%)' }} title={'Started: ' + start} />
-          )}
-          <div style={{ height: '100%', borderRadius: 8, transition: 'width 0.8s ease', background: getColor(score), width: pct + '%', position: 'relative' }}>
-            <div style={{ position: 'absolute', right: -1, top: -3, width: 14, height: 14, borderRadius: '50%', background: getColor(score), border: '2px solid #fff', boxShadow: '0 1px 4px rgba(0,0,0,0.2)' }} />
-          </div>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-          <span style={{ fontSize: 9, color: '#D1D5DB' }}>300</span>
-          <span style={{ fontSize: 9, color: '#D1D5DB' }}>850</span>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <span style={{ fontSize: 28, fontWeight: 800, color: getColor(score), lineHeight: 1 }}>{score || '—'}</span>
-        <span style={{ fontSize: 11, color: getColor(score), fontWeight: 600 }}>{getRating(score)}</span>
-      </div>
-      {start && current && current !== start && (
-        <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>Started at {start}</div>
-      )}
-      {start && (!current || current === start) && (
-        <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>Enrollment score</div>
-      )}
-    </div>
-  );
-}
-
-function TimelineEvent({ icon, title, subtitle, date, tone }) {
-  const colors = {
-    default: { bg: '#F9FAFB', border: '#E5E7EB' },
-    green: { bg: '#F0FDF4', border: '#BBF7D0' },
-    blue: { bg: '#EFF6FF', border: '#BFDBFE' },
-    gold: { bg: '#FFFBEB', border: '#FDE68A' },
-    red: { bg: '#FEF2F2', border: '#FECACA' },
-  };
-  const c = colors[tone] || colors.default;
-  return (
-    <div className="flex gap-3 items-start">
-      <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 text-[13px]"
-        style={{ backgroundColor: c.bg, border: '1px solid ' + c.border }}>
-        {icon}
-      </div>
-      <div className="flex-1 min-w-0 pb-4 border-b border-border last:border-b-0">
-        <div className="text-[13px] font-medium text-ink">{title}</div>
-        {subtitle && <div className="text-[11px] text-ink-muted mt-0.5">{subtitle}</div>}
-        {date && <div className="text-[10px] text-ink-faint mt-1">{new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>}
-      </div>
-    </div>
-  );
-}
+import OverviewTab from './client-portal/OverviewTab';
+import DisputesTab from './client-portal/DisputesTab';
+import TimelineTab from './client-portal/TimelineTab';
+import VipTab from './client-portal/VipTab';
 
 export default function ClientPortal({ session, onSignOut }) {
   const [profile, setProfile] = useState(null);
@@ -120,18 +20,16 @@ export default function ClientPortal({ session, onSignOut }) {
   const [uploadingLetter, setUploadingLetter] = useState(null);
   const [clientDocs, setClientDocs] = useState({ id: null, address: null });
   const [uploadingDoc, setUploadingDoc] = useState(null);
+  
   const [monitoringForm, setMonitoringForm] = useState({ service: '', email: '', password: '', ssnLast4: '' });
   const [monitoringStep, setMonitoringStep] = useState('view'); // view | edit
   const [monitoringSaving, setMonitoringSaving] = useState(false);
   const [monitoringError, setMonitoringError] = useState('');
+  
   const [uploadSuccess, setUploadSuccess] = useState(null);
-  // Pages staged for upload, keyed by letter id — lets a client add photos
-  // one at a time (common on mobile) before submitting them as one response
   const [stagedFiles, setStagedFiles] = useState({});
   const [stageError, setStageError] = useState({});
   const [submitError, setSubmitError] = useState({});
-  // Lets a client upload a response even if the Lob delivery webhook hasn't
-  // fired/caught up yet — keyed by letter id, set once clicked
   const [manualUploadUnlocked, setManualUploadUnlocked] = useState({});
 
   useEffect(() => { loadData(); }, [session]);
@@ -141,7 +39,6 @@ export default function ClientPortal({ session, onSignOut }) {
       const { data: cpRows } = await supabase.from('client_profiles').select('*').eq('user_id', session.user.id).limit(1);
       let cp = cpRows && cpRows.length > 0 ? cpRows[0] : null;
       if (!cp) {
-        // user_id may not be linked yet — fall back to email and link it now
         const email = (session.user.email || '').toLowerCase();
         const { data: byEmail } = await supabase.from('client_profiles').select('*').eq('email', email).limit(1);
         cp = byEmail && byEmail.length > 0 ? byEmail[0] : null;
@@ -161,7 +58,6 @@ export default function ClientPortal({ session, onSignOut }) {
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
 
-        // Load client documents from documents table
         const { data: docRows } = await supabase.from('documents').select('doc_type,file_name').eq('client_name', cp.full_name);
         if (docRows) {
           setClientDocs({
@@ -170,17 +66,21 @@ export default function ClientPortal({ session, onSignOut }) {
           });
         }
       }
-    } catch (e) { console.error('Portal load error:', e); }
-    finally { setLoading(false); }
+    } catch (e) {
+      console.error('Portal load error:', e);
+      toast.error('Failed to load portal data');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleUploadDoc = async (docType, file) => {
     setUploadingDoc(docType);
+    const toastId = toast.loading('Uploading document...');
     try {
       const ext = file.name.split('.').pop();
       const path = session.user.id + '/' + docType + '_' + Date.now() + '.' + ext;
       await supabase.storage.from('client-docs').upload(path, file, { upsert: true });
-      // Also write to documents table so admin side can see it
       await supabase.from('documents').upsert({
         client_name: profile.full_name,
         doc_type: docType === 'government_id' ? 'id' : 'address',
@@ -189,38 +89,45 @@ export default function ClientPortal({ session, onSignOut }) {
         uploaded_at: new Date().toISOString(),
       }, { onConflict: 'client_name,doc_type' });
       setClientDocs(prev => ({ ...prev, [docType === 'government_id' ? 'id' : 'address']: { name: path } }));
-    } catch(e) { console.error('Doc upload error:', e); }
+      toast.success('Document uploaded successfully!', { id: toastId });
+    } catch(e) {
+      console.error('Doc upload error:', e);
+      toast.error('Upload failed. Please try again.', { id: toastId });
+    }
     setUploadingDoc(null);
   };
 
-  // Stage picked files locally — lets a client photograph a multi-page
-  // letter one page at a time before submitting it as one response.
   const handleStageFiles = async (letter, fileList) => {
     const picked = Array.from(fileList || []).filter(Boolean);
     if (!picked.length) return;
     const resolved = [];
+    const toastId = toast.loading('Processing files...');
     for (let file of picked) {
-      // Analysis supports PDF/JPG/PNG/WEBP only. Phone cameras often produce
-      // HEIC — try to re-encode to JPEG in the browser before rejecting.
       if (!isAnalyzable(inferMediaType(file.name, file.type))) {
         const transcoded = await transcodeImageToJpeg(file);
         if (!transcoded) {
           setStageError(prev => ({ ...prev, [letter.id]: 'That file format isn’t supported. Please upload a PDF or a JPG/PNG photo — on iPhone, choose "Most Compatible" camera format or take a screenshot of the letter.' }));
+          toast.error('Unsupported file format', { id: toastId });
           continue;
         }
         file = transcoded;
       }
       resolved.push(file);
     }
-    if (!resolved.length) return;
+    if (!resolved.length) {
+      toast.dismiss(toastId);
+      return;
+    }
     setStagedFiles(prev => {
       const combined = [...(prev[letter.id] || []), ...resolved];
       const batchErr = validateBatch(combined);
       if (batchErr) {
         setStageError(e => ({ ...e, [letter.id]: batchErr }));
+        toast.error('Error adding files', { id: toastId });
         return prev;
       }
       setStageError(e => ({ ...e, [letter.id]: null }));
+      toast.success('File(s) added successfully', { id: toastId });
       return { ...prev, [letter.id]: combined };
     });
   };
@@ -234,11 +141,11 @@ export default function ClientPortal({ session, onSignOut }) {
     if (!files.length) return;
     setUploadingLetter(letter.id);
     setSubmitError(prev => ({ ...prev, [letter.id]: null }));
+    const toastId = toast.loading('Submitting response...');
     try {
       const basePath = session.user.id + '/' + letter.id;
       const paths = await uploadResponseBatch(supabase, basePath, files);
 
-      // Notify Chris — one email per response, not per page
       await fetch('/.netlify/functions/send-lpoa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -254,34 +161,34 @@ export default function ClientPortal({ session, onSignOut }) {
 
       setStagedFiles(prev => ({ ...prev, [letter.id]: [] }));
       setUploadSuccess(letter.id);
+      toast.success('Response submitted to Credit Comeback Club!', { id: toastId });
       setTimeout(() => setUploadSuccess(null), 4000);
     } catch (e) {
       console.error('Upload error:', e);
       setSubmitError(prev => ({ ...prev, [letter.id]: 'Upload failed: ' + (e.message || e) }));
+      toast.error('Upload failed. Please try again.', { id: toastId });
     } finally {
       setUploadingLetter(null);
     }
   };
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: '#F8F9FA' }}>
-      <div className="text-[13px] text-gray-400">Loading your portal…</div>
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="w-12 h-12 border-4 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
     </div>
   );
 
   if (!profile) return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: '#F8F9FA' }}>
-      <div className="text-center max-w-sm px-6">
-        <div className="text-[14px] font-medium mb-2" style={{ color: '#1B2A4A' }}>We couldn't load your portal</div>
-        <p className="text-[12px] text-gray-500 mb-4">Your account may still be setting up. Please try again, or contact us if this keeps happening.</p>
-        <div className="flex items-center justify-center gap-2">
-          <button onClick={() => window.location.reload()}
-            className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm"
-            style={{ background: '#1B2A4A', color: '#C9A84C' }}>
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+      <div className="text-center max-w-sm bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
+        <div className="w-12 h-12 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4 text-xl">!</div>
+        <h2 className="text-lg font-bold text-slate-900 mb-2">We couldn't load your portal</h2>
+        <p className="text-sm text-gray-500 mb-6 leading-relaxed">Your account may still be setting up. Please try again, or contact us if this keeps happening.</p>
+        <div className="flex flex-col gap-3">
+          <button onClick={() => window.location.reload()} className="w-full py-2.5 bg-slate-900 text-amber-400 font-bold uppercase tracking-wider rounded-lg hover:bg-slate-800 transition-colors">
             Retry
           </button>
-          <button onClick={onSignOut}
-            className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm border border-gray-300 text-gray-500">
+          <button onClick={onSignOut} className="w-full py-2.5 bg-white border border-gray-200 text-gray-500 font-semibold rounded-lg hover:bg-gray-50 transition-colors">
             Sign Out
           </button>
         </div>
@@ -296,7 +203,6 @@ export default function ClientPortal({ session, onSignOut }) {
   const isVip = clientMeta && clientMeta.is_vip;
   const firstName = (profile && profile.full_name || '').split(' ')[0] || 'there';
 
-  // Most recent audit's scores, pulled from the jsonb audit blob
   const latestScores = (auditHistory.length > 0 && auditHistory[0].audit && auditHistory[0].audit.scores) || null;
 
   const timeline = [];
@@ -310,428 +216,124 @@ export default function ClientPortal({ session, onSignOut }) {
   });
   timeline.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  const tabs = ['overview', 'disputes', 'timeline', ...(isVip ? ['vip'] : [])];
+  const tabs = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'disputes', label: 'Disputes' },
+    { id: 'timeline', label: 'Timeline' },
+    ...(isVip ? [{ id: 'vip', label: '⭐ VIP' }] : []),
+  ];
 
   return (
-    <div className="min-h-screen" style={{ background: '#F8F9FA' }}>
-      <div style={{ background: '#1B2A4A' }} className="px-6 py-4">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
+    <div className="min-h-screen bg-gray-50/50 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]">
+      <Toaster position="top-center" toastOptions={{ style: { fontSize: '13px', fontWeight: '500' } }} />
+      
+      {/* Header */}
+      <div className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-sm">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
             <img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="Credit Comeback Club"
-              style={{ height: 48, width: 48, borderRadius: 8, objectFit: 'cover', border: '2px solid #C9A84C' }} />
+              className="w-12 h-12 rounded-xl object-cover border-2 border-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.3)]" />
             <div>
-              <div style={{ color: '#C9A84C', fontWeight: 700, fontSize: 14 }}>Credit Comeback Club</div>
-              <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                Client Portal {isVip ? '· ⭐ VIP Member' : ''}
+              <div className="text-amber-400 font-bold text-[15px] tracking-wide">Credit Comeback Club</div>
+              <div className="text-white/50 text-[10px] uppercase tracking-[0.1em] font-medium mt-0.5">
+                Client Portal {isVip ? '· ⭐ VIP' : ''}
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 sm:gap-4">
-            <span className="hidden sm:inline" style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>{profile && profile.full_name}</span>
-            <button onClick={onSignOut} className="flex items-center gap-1 hover:opacity-100 transition-opacity"
-              style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              <LogOut size={14} strokeWidth={1.75} /> <span className="hidden sm:inline">Sign Out</span>
+          <div className="flex items-center gap-4">
+            <span className="hidden sm:inline text-white/70 text-xs font-medium">{profile && profile.full_name}</span>
+            <button onClick={onSignOut} className="flex items-center gap-1.5 text-white/40 hover:text-white transition-colors text-xs uppercase tracking-wider font-semibold bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg">
+              <LogOut size={14} strokeWidth={2} /> <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
         </div>
       </div>
 
-      <div style={{ background: '#fff', borderBottom: '1px solid #E5E7EB' }}>
-        <div className="max-w-3xl mx-auto px-6 flex">
+      {/* Navigation */}
+      <div className="bg-white/70 backdrop-blur-md border-b border-gray-200 sticky top-[80px] z-30">
+        <div className="max-w-4xl mx-auto px-6 flex gap-2">
           {tabs.map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)}
-              className="px-4 py-3 text-[12px] uppercase tracking-wider transition-colors"
-              style={{
-                color: activeTab === tab ? '#1B2A4A' : '#9CA3AF',
-                borderBottom: activeTab === tab ? '2px solid #C9A84C' : '2px solid transparent',
-                fontWeight: activeTab === tab ? 600 : 400,
-              }}>
-              {tab === 'vip' ? '⭐ VIP' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className={`relative px-4 py-3.5 text-xs uppercase tracking-wider font-bold transition-colors ${activeTab === tab.id ? 'text-slate-900' : 'text-gray-400 hover:text-gray-700'}`}>
+              {tab.label}
+              {activeTab === tab.id && (
+                <motion.div layoutId="activeTabIndicator" className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-400" />
+              )}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto px-6 py-6 space-y-4">
-
-        {activeTab === 'overview' && (
-          <>
-            {/* Campaign Setup Checklist */}
-            {(() => {
-              const checks = [
-                { key: 'lpoa', label: 'Authorization Signed (LPOA)', done: clientMeta && clientMeta.lpoa_signed, action: null },
-                { key: 'id', label: 'Government-Issued Photo ID', done: !!clientDocs.id, docType: 'government_id' },
-                { key: 'address', label: 'Proof of Current Address', done: !!clientDocs.address, docType: 'proof_of_address' },
-                { key: 'monitoring', label: 'Credit Monitoring (Recommended)', done: (clientMeta && clientMeta.monitoring_enrolled) || (clientMeta && clientMeta.monitoring_not_required), docType: null },
-              ];
-              const allDone = checks.every(c => c.done);
-              if (allDone) return null;
-              return (
-                <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: 16, marginBottom: 8 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: '#92400E', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>⚡ Action Required — Complete Your Setup</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {checks.map(({ key, label, done, docType }) => (
-                      <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 14 }}>{done ? '✅' : '⭕'}</span>
-                          <span style={{ fontSize: 12, color: done ? '#6B7280' : '#1B2A4A', fontWeight: done ? 400 : 600, textDecoration: done ? 'line-through' : 'none' }}>{label}</span>
-                        </div>
-                        {!done && docType && (
-                          <label style={{ fontSize: 11, padding: '4px 12px', background: '#1B2A4A', color: '#C9A84C', borderRadius: 4, fontWeight: 600, cursor: uploadingDoc === docType ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                            {uploadingDoc === docType ? 'Uploading…' : 'Upload →'}
-                            <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }}
-                              onChange={e => { if (e.target.files[0]) handleUploadDoc(docType, e.target.files[0]); }} />
-                          </label>
-                        )}
-                        {!done && !docType && key === 'monitoring' && (
-                          <button onClick={() => setMonitoringStep('edit')} style={{ fontSize: 11, padding: '4px 12px', background: '#1B2A4A', color: '#C9A84C', border: 'none', borderRadius: 4, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                            Set Up →
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-
-            <div>
-              <h1 style={{ fontSize: 22, fontWeight: 700, color: '#1B2A4A' }}>Welcome back, {firstName}.</h1>
-              <p style={{ fontSize: 13, color: '#6B7280', marginTop: 4 }}>Here's your credit restoration campaign at a glance.</p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {[
-                { label: 'Letters Sent', value: mailed.length, icon: '✉️' },
-                { label: 'Delivered', value: delivered.length, icon: '✅' },
-                { label: 'Responses', value: responded.length, icon: '📬' },
-                { label: 'Deletions', value: deletions.length, icon: '🏆' },
-              ].map(({ label, value, icon }) => (
-                <div key={label} style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 16 }}>
-                  <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: '#1B2A4A' }}>{value}</div>
-                  <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9CA3AF', marginTop: 2 }}>{label}</div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, overflow: 'hidden' }}>
-              <div style={{ background: '#1B2A4A', padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <TrendingUp size={14} style={{ color: '#C9A84C' }} strokeWidth={2} />
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#C9A84C' }}>Credit Score Tracker</span>
-              </div>
-              <div style={{ padding: 20 }}>
-                {clientMeta && (clientMeta.score_eq_start || clientMeta.score_exp_start || clientMeta.score_tu_start) ? (
-                  <>
-                    <div className="flex flex-col sm:flex-row" style={{ gap: 24 }}>
-                      <ScoreMeter label="Equifax"
-                        start={clientMeta.score_eq_start}
-                        current={latestScores ? latestScores.equifax : clientMeta.score_eq_start} />
-                      <ScoreMeter label="Experian"
-                        start={clientMeta.score_exp_start}
-                        current={latestScores ? latestScores.experian : clientMeta.score_exp_start} />
-                      <ScoreMeter label="TransUnion"
-                        start={clientMeta.score_tu_start}
-                        current={latestScores ? latestScores.transunion : clientMeta.score_tu_start} />
-                    </div>
-                    {auditHistory.length > 0 && (
-                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #F3F4F6', fontSize: 11, color: '#9CA3AF' }}>
-                        Last updated: {new Date(auditHistory[0].saved_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                        {auditHistory.length > 1 && ' · ' + auditHistory.length + ' audits on file'}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                    <TrendingUp size={24} style={{ color: '#E5E7EB', margin: '0 auto 8px' }} strokeWidth={1.5} />
-                    <p style={{ fontSize: 12, color: '#9CA3AF' }}>Score tracking will appear here once your audit is complete.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-              <Shield size={15} style={{ color: '#15803D' }} strokeWidth={1.75} />
-              <div className="flex-1">
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#1B2A4A' }}>Authorization Active</div>
-                <div style={{ fontSize: 11, color: '#6B7280' }}>Credit Comeback Club is authorized to dispute on your behalf{profile && profile.agreement_signed_at ? ' since ' + new Date(profile.agreement_signed_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''}</div>
-              </div>
-              <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Active</span>
-            </div>
-
-            <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 20 }}>
-              <div className="flex items-center justify-between mb-3">
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#1B2A4A' }}>Credit Monitoring</span>
-                {clientMeta && clientMeta.monitoring_enrolled
-                  ? <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0' }}>✓ Enrolled</span>
-                  : <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: '#FFFBEB', color: '#D97706', border: '1px solid #FDE68A' }}>Action Required</span>
-                }
-              </div>
-              {monitoringStep === 'edit' ? (
-                <div>
-                  {[
-                    { key: 'service', label: 'Service', placeholder: 'e.g. PrivacyGuard, MyScoreIQ' },
-                    { key: 'email', label: 'Login Email', placeholder: 'your@email.com' },
-                    { key: 'password', label: 'Password', placeholder: '••••••••', type: 'password' },
-                    { key: 'ssnLast4', label: 'SSN Last 4 Digits', placeholder: '1234' },
-                  ].map(({ key, label, placeholder, type }) => (
-                    <div key={key} style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9CA3AF', marginBottom: 4 }}>{label}</div>
-                      <input type={type || 'text'} placeholder={placeholder}
-                        value={monitoringForm[key]}
-                        onChange={e => setMonitoringForm(p => ({ ...p, [key]: e.target.value }))}
-                        style={{ width: '100%', border: '1px solid #E5E7EB', borderRadius: 4, padding: '7px 10px', fontSize: 12, outline: 'none', boxSizing: 'border-box' }} />
-                    </div>
-                  ))}
-                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                    <button disabled={monitoringSaving} onClick={async () => {
-                      setMonitoringSaving(true);
-                      setMonitoringError('');
-                      const serviceUrls = {
-                        'privacyguard': 'https://www.privacyguard.com',
-                        'myscoreiq': 'https://www.myscoreiq.com',
-                        'smart credit': 'https://www.smartcredit.com',
-                        'experian': 'https://www.experian.com',
-                        'identityiq': 'https://www.identityiq.com',
-                      };
-                      const svcKey = (monitoringForm.service || '').toLowerCase();
-                      const portalUrl = Object.entries(serviceUrls).find(([k]) => svcKey.includes(k))?.[1] || 'https://www.privacyguard.com';
-                      await supabase.from('clients').update({
-                        monitoring_service: monitoringForm.service,
-                        monitoring_email: monitoringForm.email,
-                        monitoring_enrolled: true,
-                        monitoring_portal_url: portalUrl,
-                      }).eq('name', profile.full_name);
-                      // SSN/password are encrypted at rest and never written
-                      // directly to the clients table — only include a key
-                      // the client actually typed something into.
-                      const sensitive = {};
-                      if (monitoringForm.password) sensitive.monitoringPassword = monitoringForm.password;
-                      if (monitoringForm.ssnLast4) sensitive.ssnLast4 = monitoringForm.ssnLast4;
-                      if (Object.keys(sensitive).length > 0) {
-                        try {
-                          await writeClientSensitiveData(profile.full_name, sensitive);
-                        } catch (e) {
-                          setMonitoringSaving(false);
-                          setMonitoringError('Your service/email were saved, but your password/SSN could not be saved securely. Please try again.');
-                          return;
-                        }
-                      }
-                      setMonitoringStep('view');
-                      setMonitoringSaving(false);
-                      loadData();
-                    }} style={{ fontSize: 12, padding: '7px 16px', background: '#1B2A4A', color: '#C9A84C', border: 'none', borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}>
-                      {monitoringSaving ? 'Saving…' : 'Save Credentials'}
-                    </button>
-                    <button onClick={() => { setMonitoringStep('view'); setMonitoringError(''); }} style={{ fontSize: 12, padding: '7px 12px', background: 'none', border: '1px solid #E5E7EB', borderRadius: 4, cursor: 'pointer', color: '#6B7280' }}>Cancel</button>
-                  </div>
-                  {monitoringError && (
-                    <div style={{ fontSize: 11, color: '#DC2626', marginTop: 8 }}>{monitoringError}</div>
-                  )}
-                </div>
-              ) : clientMeta && clientMeta.monitoring_enrolled ? (
-                <div>
-                  <a href={(clientMeta && clientMeta.monitoring_portal_url) || 'https://www.privacyguard.com'} target="_blank" rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-[12px] font-medium" style={{ color: '#1B2A4A' }}>
-                    <ExternalLink size={12} strokeWidth={2} />
-                    Access {(clientMeta && clientMeta.monitoring_service) || 'Privacy Guard'} →
-                  </a>
-                  <button onClick={() => { setMonitoringForm({ service: clientMeta.monitoring_service || '', email: clientMeta.monitoring_email || '', password: '', ssnLast4: '' }); setMonitoringStep('edit'); }}
-                    style={{ marginTop: 8, fontSize: 11, color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                    Update credentials
-                  </button>
-                </div>
-              ) : (
-                <div>
-                  <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 10 }}>Credit monitoring lets us track your score progress. Enter your credentials below or sign up for a service.</p>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-                    {[['PrivacyGuard', 'https://www.privacyguard.com'], ['MyScoreIQ', 'https://www.myscoreiq.com'], ['Smart Credit', 'https://www.smartcredit.com'], ['IdentityIQ', 'https://www.identityiq.com']].map(([name, url]) => (
-                      <a key={name} href={url} target="_blank" rel="noopener noreferrer"
-                        style={{ fontSize: 11, padding: '4px 10px', border: '1px solid #E5E7EB', borderRadius: 4, color: '#1B2A4A', textDecoration: 'none', fontWeight: 500 }}>
-                        {name} →
-                      </a>
-                    ))}
-                  </div>
-                  <button onClick={() => setMonitoringStep('edit')}
-                    style={{ fontSize: 12, padding: '7px 16px', background: '#1B2A4A', color: '#C9A84C', border: 'none', borderRadius: 4, fontWeight: 600, cursor: 'pointer' }}>
-                    Enter My Credentials
-                  </button>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {activeTab === 'disputes' && (
-          <>
-            <h2 style={{ fontSize: 16, fontWeight: 700, color: '#1B2A4A' }}>Your Dispute Letters</h2>
-            {letters.length === 0 ? (
-              <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 40, textAlign: 'center' }}>
-                <p style={{ fontSize: 13, color: '#9CA3AF' }}>No dispute letters yet. Your campaign will begin shortly.</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {letters.map(l => (
-                  <div key={l.id} style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 16 }}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#1B2A4A' }}>{l.furnisher}</div>
-                        <div style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>{l.phase}{l.type ? ' · Type ' + l.type : ''}</div>
-                      </div>
-                      <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em',
-                        ...(l.response_outcome === 'deleted' ? { background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0' }
-                          : l.tracking_status === 'Delivered' ? { background: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE' }
-                          : l.mailed_date ? { background: '#FFFBEB', color: '#D97706', border: '1px solid #FDE68A' }
-                          : { background: '#F9FAFB', color: '#9CA3AF', border: '1px solid #E5E7EB' })
-                      }}>
-                        {l.response_outcome === 'deleted' ? '🏆 Deleted' : l.response_outcome === 'received' ? 'Response Received' : l.tracking_status === 'Delivered' ? 'Delivered' : l.mailed_date ? 'In Transit' : 'Pending'}
-                      </span>
-                    </div>
-                    {l.summary && (
-                      <div style={{ fontSize: 12, color: '#4B5563', marginTop: 10, paddingTop: 10, borderTop: '1px solid #F3F4F6', lineHeight: 1.5 }}>
-                        {l.summary}
-                      </div>
-                    )}
-                    {(() => {
-                      const cd = responseCountdown(l);
-                      if (!cd) return null;
-                      return (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: cd.tone, background: cd.bg, borderRadius: 4, padding: '6px 10px', marginTop: 10 }}>
-                          <Calendar size={12} strokeWidth={2} />
-                          {cd.label}
-                        </div>
-                      );
-                    })()}
-                    {l.mailed_date && (
-                      <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 8 }}>
-                        Mailed {new Date(l.mailed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                        {l.tracking_number && (
-                          <a href={'https://tools.usps.com/go/TrackConfirmAction?tLabels=' + l.tracking_number} target="_blank" rel="noopener noreferrer"
-                            style={{ marginLeft: 8, color: '#1B2A4A', fontWeight: 500 }}>Track →</a>
-                        )}
-                      </div>
-                    )}
-                    {l.mailed_date && l.tracking_status !== 'Delivered' && !l.response_outcome && !manualUploadUnlocked[l.id] && (
-                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F3F4F6' }}>
-                        <button onClick={() => setManualUploadUnlocked(prev => ({ ...prev, [l.id]: true }))}
-                          style={{ fontSize: 11, color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
-                          I received a response
-                        </button>
-                      </div>
-                    )}
-                    {(l.tracking_status === 'Delivered' || manualUploadUnlocked[l.id]) && !l.response_outcome && (
-                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F3F4F6' }}>
-                        {uploadSuccess === l.id ? (
-                          <div style={{ fontSize: 12, color: '#15803D', fontWeight: 600 }}>✓ Response uploaded — Credit Comeback Club has been notified.</div>
-                        ) : (
-                          <div>
-                            <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 8 }}>
-                              Did you receive a response from {l.furnisher} in the mail? Upload it here and we'll take it from there.
-                              {' '}If it's more than one page, add every page — we'll review it as one document.
-                            </p>
-                            {(stagedFiles[l.id] || []).length > 0 && (
-                              <div style={{ marginBottom: 8 }}>
-                                {stagedFiles[l.id].map((f, i) => (
-                                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#374151', padding: '4px 0' }}>
-                                    <span>Page {i + 1}: {f.name}</span>
-                                    <button onClick={() => handleRemoveStaged(l.id, i)} disabled={uploadingLetter === l.id}
-                                      style={{ marginLeft: 'auto', fontSize: 11, color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer' }}>
-                                      Remove
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {stageError[l.id] && (
-                              <div style={{ fontSize: 11, color: '#DC2626', marginBottom: 8 }}>{stageError[l.id]}</div>
-                            )}
-                            {submitError[l.id] && (
-                              <div style={{ fontSize: 11, color: '#DC2626', marginBottom: 8 }}>{submitError[l.id]}</div>
-                            )}
-                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '7px 14px', background: (stagedFiles[l.id] || []).length ? '#fff' : '#1B2A4A', color: (stagedFiles[l.id] || []).length ? '#1B2A4A' : '#C9A84C', border: (stagedFiles[l.id] || []).length ? '1px solid #1B2A4A' : 'none', borderRadius: 4, fontWeight: 600, cursor: uploadingLetter === l.id ? 'not-allowed' : 'pointer', opacity: uploadingLetter === l.id ? 0.6 : 1 }}>
-                                {(stagedFiles[l.id] || []).length ? '+ Add Another Page' : '📎 Upload Response'}
-                                <input type="file" accept={RESPONSE_ACCEPT + ',image/*'} multiple style={{ display: 'none' }}
-                                  onChange={e => { handleStageFiles(l, e.target.files); e.target.value = ''; }}
-                                  disabled={uploadingLetter === l.id} />
-                              </label>
-                              {(stagedFiles[l.id] || []).length > 0 && (
-                                <button onClick={() => handleSubmitResponse(l)} disabled={uploadingLetter === l.id}
-                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '7px 14px', background: '#1B2A4A', color: '#C9A84C', borderRadius: 4, fontWeight: 600, border: 'none', cursor: uploadingLetter === l.id ? 'not-allowed' : 'pointer', opacity: uploadingLetter === l.id ? 0.6 : 1 }}>
-                                  {uploadingLetter === l.id ? 'Uploading…' : `Submit Response (${stagedFiles[l.id].length} page${stagedFiles[l.id].length > 1 ? 's' : ''})`}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+      {/* Main Content */}
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.2 }}
+          >
+            {activeTab === 'overview' && (
+              <OverviewTab 
+                profile={profile}
+                clientMeta={clientMeta}
+                firstName={firstName}
+                mailed={mailed}
+                delivered={delivered}
+                responded={responded}
+                deletions={deletions}
+                latestScores={latestScores}
+                auditHistory={auditHistory}
+                clientDocs={clientDocs}
+                uploadingDoc={uploadingDoc}
+                handleUploadDoc={handleUploadDoc}
+                monitoringStep={monitoringStep}
+                setMonitoringStep={setMonitoringStep}
+                monitoringForm={monitoringForm}
+                setMonitoringForm={setMonitoringForm}
+                monitoringSaving={monitoringSaving}
+                setMonitoringSaving={setMonitoringSaving}
+                monitoringError={monitoringError}
+                setMonitoringError={setMonitoringError}
+                loadData={loadData}
+              />
             )}
-          </>
-        )}
-
-        {activeTab === 'timeline' && (
-          <>
-            <h2 style={{ fontSize: 16, fontWeight: 700, color: '#1B2A4A' }}>Dispute Journal</h2>
-            <p style={{ fontSize: 12, color: '#6B7280', marginTop: -8 }}>A chronological record of every action in your campaign.</p>
-            {timeline.length === 0 ? (
-              <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 40, textAlign: 'center' }}>
-                <p style={{ fontSize: 13, color: '#9CA3AF' }}>Your timeline will populate as your campaign progresses.</p>
-              </div>
-            ) : (
-              <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 20 }}>
-                {timeline.map((event, i) => <TimelineEvent key={i} {...event} />)}
-              </div>
+            
+            {activeTab === 'disputes' && (
+              <DisputesTab 
+                letters={letters}
+                manualUploadUnlocked={manualUploadUnlocked}
+                setManualUploadUnlocked={setManualUploadUnlocked}
+                uploadSuccess={uploadSuccess}
+                stagedFiles={stagedFiles}
+                handleRemoveStaged={handleRemoveStaged}
+                uploadingLetter={uploadingLetter}
+                stageError={stageError}
+                submitError={submitError}
+                handleStageFiles={handleStageFiles}
+                handleSubmitResponse={handleSubmitResponse}
+                RESPONSE_ACCEPT={RESPONSE_ACCEPT}
+              />
             )}
-          </>
-        )}
+            
+            {activeTab === 'timeline' && (
+              <TimelineTab timeline={timeline} />
+            )}
+            
+            {activeTab === 'vip' && isVip && (
+              <VipTab isVip={isVip} />
+            )}
+          </motion.div>
+        </AnimatePresence>
 
-        {activeTab === 'vip' && isVip && (
-          <>
-            <div style={{ background: 'linear-gradient(135deg, #1B2A4A 0%, #2A3C5F 100%)', borderRadius: 12, padding: 24 }}>
-              <div className="flex items-center gap-2 mb-2">
-                <Star size={15} style={{ color: '#C9A84C' }} strokeWidth={2} />
-                <span style={{ color: '#C9A84C', fontWeight: 700, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em' }}>VIP Member</span>
-              </div>
-              <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Your VIP Benefits</h2>
-              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>Priority service, monthly strategy calls, and exclusive business credit resources.</p>
-            </div>
-
-            <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 20 }}>
-              <div className="flex items-center gap-2 mb-3">
-                <Calendar size={14} style={{ color: '#C9A84C' }} strokeWidth={2} />
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#1B2A4A' }}>Monthly Strategy Call</span>
-              </div>
-              <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 12 }}>Book your 15-minute strategy call with Christopher Holland. Review your campaign, discuss next steps, and map your path to business credit.</p>
-              <p style={{ fontSize: 12, color: '#9CA3AF', fontStyle: 'italic' }}>Your strategy call link is coming soon — we'll send it to you directly.</p>
-            </div>
-
-            <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 8, padding: 20 }}>
-              <div className="flex items-center gap-2 mb-3">
-                <TrendingUp size={14} style={{ color: '#C9A84C' }} strokeWidth={2} />
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#1B2A4A' }}>Business Credit & Funding</span>
-              </div>
-              <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 4 }}>Once your personal credit is positioned, the next step is business credit and funding. Our partner Swiftedly specializes in business funding for entrepreneurs.</p>
-              <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 12 }}>Business credit is completely separate from personal credit — you can start building it now.</p>
-              <a href="https://swiftedly.com" target="_blank" rel="noopener noreferrer"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '8px 20px', background: '#C9A84C', color: '#1B2A4A', borderRadius: 4, fontWeight: 700, textDecoration: 'none', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <ExternalLink size={13} strokeWidth={2} />
-                Explore Business Funding →
-              </a>
-            </div>
-          </>
-        )}
-
-        <div style={{ textAlign: 'center', fontSize: 11, color: '#D1D5DB', paddingBottom: 32 }}>
+        <div className="text-center text-[11px] text-gray-400 mt-16 pb-8 font-medium">
           Credit Comeback Club ·{' '}
-          <a href="https://maps.google.com/?q=3088+Colorado+Ave+Grand+Junction+CO+81504" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
+          <a href="https://maps.google.com/?q=3088+Colorado+Ave+Grand+Junction+CO+81504" target="_blank" rel="noopener noreferrer" className="hover:text-gray-600 transition-colors">
             3088 Colorado Ave, Grand Junction, CO 81504
           </a>{' '}
           · creditcomebackclub.com ·{' '}
-          <a href="tel:9706440063" style={{ color: 'inherit' }}>970-644-0063</a>
+          <a href="tel:9706440063" className="hover:text-gray-600 transition-colors">970-644-0063</a>
         </div>
       </div>
     </div>
