@@ -15,9 +15,15 @@ const T = {
 };
 
 async function listProfiles() {
+  // profiles is the staff identity table — admin/auditor only. Some rows
+  // with role 'client' exist as leftovers from before the handle_new_user
+  // trigger was fixed to stop granting staff-table rows to client signups;
+  // client portal access is driven by client_profiles, not this table, so
+  // those rows are never meant to appear here.
   const { data, error } = await supabase
     .from('profiles')
     .select('*')
+    .in('role', ['admin', 'auditor'])
     .order('created_at', { ascending: true });
   if (error) throw error;
   return data || [];
