@@ -3,7 +3,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
 import os
-from google.antigravity import Agent, LocalAgentConfig, tool
+try:
+    from google.antigravity import Agent, LocalAgentConfig, tool
+except ImportError:
+    # Fallback mock for public Render deployment since the proprietary SDK isn't on public PyPI
+    print("Warning: Google Antigravity SDK not found. Using Mock Agent.")
+    def tool(func): return func
+    class LocalAgentConfig:
+        def __init__(self, **kwargs): pass
+    class MockResponse:
+        async def text(self): return "This is a mock response from Render! The Google Antigravity SDK needs to be uploaded as a wheel file to work on public servers."
+    class Agent:
+        def __init__(self, config): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, exc_type, exc_val, exc_tb): pass
+        async def chat(self, msg): return MockResponse()
 
 app = FastAPI()
 
