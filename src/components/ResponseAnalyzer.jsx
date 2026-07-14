@@ -48,26 +48,22 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
   } catch(e) { console.warn('Could not look up signature:', e); }
 
   for (const bureau of activeBureaus) {
-    let letterText = analysis.letters[bureau];
-    if (!letterText) continue;
+    let html = analysis.letters[bureau];
+    if (!html) continue;
     // Strip any Exhibit C references — only A and B are physically attached
-    letterText = letterText.replace(/\n?Exhibit C[^\n]*/gi, '').replace(/;?\s*Exhibit C[^;\n]*/gi, '');
+    html = html.replace(/\n?Exhibit C[^\n]*/gi, '').replace(/;?\s*Exhibit C[^;\n]*/gi, '');
 
-    // Inject signature — split letterText on ___ BEFORE escaping so HTML chars don't break the regex
-    const sigHtml = signatureData
-      ? '<img src="' + signatureData + '" style="max-height:60px;max-width:220px;display:block;" />'
-      : '';
-    const sigParts = letterText.split(/_{3,}[^\n]*\n/);
-    let bodyHtml;
-    if (sigParts.length > 1 && sigHtml) {
-      const before = sigParts[0].replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const after = sigParts.slice(1).join('\n').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      bodyHtml = before + '</pre>' + sigHtml + '<pre>' + after;
-    } else {
-      bodyHtml = letterText.replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      if (sigHtml) bodyHtml += '</pre>' + sigHtml + '<pre>';
+    // Inject signature image if available — replace the ___ signature line placeholder
+    if (signatureData) {
+      const sigHtml = '<img src="' + signatureData + '" style="max-height:60px;max-width:220px;display:block;" />';
+      html = html.replace(/_{3,}[^\n]*/, sigHtml);
     }
-    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>' + bodyHtml + '</pre></body></html>';
+
+    // If the model output plain text instead of HTML (fallback safety), wrap it
+    if (!html.trim().startsWith('<!') && !html.trim().startsWith('<html')) {
+      const escaped = html.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>' + escaped + '</pre></body></html>';
+    }
 
     const id = slug(clientName) + '__' + slug(furnisher) + '__phase3-' + bureau + '__' + today;
     const { error } = await supabase.from('letters').upsert({

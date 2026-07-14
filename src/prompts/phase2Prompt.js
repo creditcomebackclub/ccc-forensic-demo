@@ -25,19 +25,59 @@ ANALYSIS REQUIREMENTS:
 5. Identify any admissions in the response that strengthen Phase 3
 6. Generate three bureau-specific Phase 3 CRA letters (Equifax, Experian, TransUnion)
 
-PHASE 3 LETTER REQUIREMENTS:
-- Opens by establishing the CRA-triggered reinvestigation duty under 15 U.S.C. 1681s-2(b)
+PHASE 3 LETTER REQUIREMENTS — CONTENT:
+- Opens with the RE line: "RE: Formal Dispute and Demand for Reinvestigation — 15 U.S.C. §1681s-2(b) and §1681i | Furnisher: [NAME] | Account No. [MASKED]"
+- Establishes the CRA-triggered reinvestigation duty under 15 U.S.C. 1681s-2(b)
 - States that a direct furnisher dispute was sent (Exhibit A) and received an inadequate response (Exhibit B) — except for NON_RESPONSE, where it states the furnisher received the dispute (Exhibit A) and failed to respond at all (see enclosures rule below)
-- Rebuilds the full violation stack with added weight of furnisher investigative failure
+- REBUILDS THE FULL VIOLATION STACK with added weight. For each original violation:
+  (a) Restate the specific Metro 2 field violation from Phase 1
+  (b) State exactly how the furnisher failed to address it (quote or paraphrase their response)
+  (c) Explain why their non-response/inadequate response makes this violation STRONGER, not weaker
+  (d) If the furnisher made any admissions, weaponize them here
 - Cites Johnson v. MBNA for the inadequate investigation standard
 - Demands correction or deletion within 30 days
 - Cites 15 U.S.C. 1681n for willful noncompliance — $100 to $1,000 per violation plus punitive damages
-- Tone: forensic and legal. Demands not requests. No emotional language.
-- Signature block: Consumer — All Rights Reserved
-- Each letter addressed to the correct bureau
+
+PHASE 3 LETTER REQUIREMENTS — DEVASTATING CLOSING:
+Before the signature block, you MUST include ONE devastating sentence that frames the furnisher's inadequate response as the strongest evidence against them. Examples:
+- "The furnisher's own response — a pre-printed checkbox form with no substantive documentation — is itself the strongest evidence that no reasonable investigation occurred under the Johnson v. MBNA standard."
+- "By responding with nothing more than a form letter stating 'verified as accurate' while ignoring every specific Metro 2 violation cited, [Furnisher] has created a textbook record of willful noncompliance."
+- "The furnisher's failure to produce a single piece of original source documentation despite receiving an itemized list of violations is not an investigation — it is an admission."
+Then close with: "I expect your prompt attention to this matter and full compliance within thirty (30) days."
+
+PHASE 3 LETTER REQUIREMENTS — FORMAT (CRITICAL):
+Each letter MUST be a complete HTML document matching the Phase 1 letter style exactly. The HTML must:
+- Be a complete \`<!DOCTYPE html>\` document with inline CSS only (no external stylesheets)
+- Use Arial font, US Letter dimensions (8.5in × 11in), 1in margins
+- Use navy #1B2A4A for section header backgrounds with white bold text
+- Have alternating gray rows in two-column violation/demand tables
+- Have a navy header row in violation tables
+- Use numbered demands with navy number cells
+- Include @page CSS for letter dimensions (print-ready)
+- Open directly with date → sender address → bureau address → RE line (NO CCC branding header, NO "To Whom It May Concern")
+- Signature block: "Consumer — All Rights Reserved" (NO "Respectfully submitted", NO "Sincerely", NO polite closings)
+- Certified mail notation at bottom
 - CRITICAL — ENCLOSURES LINE. Two cases, depending on whether a furnisher response exists:
   - When a furnisher response was received (every classification except NON_RESPONSE): the enclosures line must list ONLY these three items and nothing else: "Enclosures: Exhibit A: Direct Furnisher Dispute Letter to [Furnisher] (dated [date]); Exhibit B: [Furnisher] Response (dated [date]); Limited Power of Attorney" — DO NOT add Exhibit C or any credit report excerpts under any circumstances. There are only two exhibits.
   - NON_RESPONSE: there is no furnisher response and therefore NO Exhibit B. The enclosures line must list ONLY: "Enclosures: Exhibit A: Direct Furnisher Dispute Letter to [Furnisher] (dated [date]); Limited Power of Attorney". The letter body must NOT reference an Exhibit B or an enclosed response anywhere; instead it states that the furnisher received the direct dispute (Exhibit A, with mailing date) and failed to respond within the 30-day statutory window — the failure to respond IS the inadequate investigation under Johnson v. MBNA and an automatic 15 U.S.C. 1681s-2(b) violation.
+
+HARD RULES — PHASE 3 LETTERS:
+- NO "To Whom It May Concern" — address to the bureau directly
+- NO "Respectfully submitted" or "Sincerely" — close with "Consumer — All Rights Reserved"
+- NO "thank you", "hope", "please", "kindly", or any polite/deferential language
+- NO CCC branding in letter headers
+- NO emotional language or goodwill requests
+- Tone: Forensic, legal, demands not requests, evidence-backed, deadline-driven (30 days), consequence-anchored
+- Each letter is addressed to the correct bureau with the correct address:
+  - Equifax: Equifax Information Services LLC, P.O. Box 740256, Atlanta, GA 30374-0256
+  - Experian: Experian Information Solutions Inc., P.O. Box 4500, Allen, TX 75013
+  - TransUnion: TransUnion LLC, Consumer Dispute Center, P.O. Box 2000, Chester, PA 19016
+
+SIGNATURE BLOCK:
+Use this exact format — include the underscores line for signature injection:
+___________________________
+[Consumer Full Name]
+Consumer — All Rights Reserved
 
 OUTPUT FIELDS (the response format is enforced as JSON — fill each field as follows):
 - classification: one of the classification codes above
@@ -45,4 +85,4 @@ OUTPUT FIELDS (the response format is enforced as JSON — fill each field as fo
 - demandAnalysis: one entry per original Phase 1 demand — the demand, its outcome (ADDRESSED | IGNORED | PARTIALLY_ADDRESSED | ADMITTED), and notes on what the furnisher said or did not say about it
 - admissions: any statements in the response that help the consumer case
 - phase3Leverage: the single strongest argument for Phase 3 based on this response
-- letters: full Phase 3 letter text for each bureau (equifax, experian, transunion)`;
+- letters: full Phase 3 letter as a COMPLETE HTML DOCUMENT for each bureau (equifax, experian, transunion) — NOT plain text`;

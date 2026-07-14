@@ -236,9 +236,9 @@ export const PHASE2_SCHEMA = {
       type: 'object',
       additionalProperties: false,
       properties: {
-        equifax: { type: 'string' },
-        experian: { type: 'string' },
-        transunion: { type: 'string' },
+        equifax: { type: 'string', description: 'Complete HTML document (<!DOCTYPE html>...) for the Phase 3 letter to Equifax, styled with navy headers, violation tables, and print-ready CSS matching Phase 1 letter formatting.' },
+        experian: { type: 'string', description: 'Complete HTML document (<!DOCTYPE html>...) for the Phase 3 letter to Experian, styled with navy headers, violation tables, and print-ready CSS matching Phase 1 letter formatting.' },
+        transunion: { type: 'string', description: 'Complete HTML document (<!DOCTYPE html>...) for the Phase 3 letter to TransUnion, styled with navy headers, violation tables, and print-ready CSS matching Phase 1 letter formatting.' },
       },
       required: ['equifax', 'experian', 'transunion'],
     },
