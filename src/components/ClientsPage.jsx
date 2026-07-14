@@ -419,6 +419,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [expanded, setExpanded] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [analyzingLetter, setAnalyzingLetter] = useState(null);
+  const [lobMailerQueue, setLobMailerQueue] = useState([]);
   const [togglingVip, setTogglingVip] = useState(null);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
   const [accountTimeline, setAccountTimeline] = useState(null); // { accountId, furnisher, letters, accountData }
@@ -427,6 +428,11 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [diffResult, setDiffResult] = useState(null);
   const [activeFilter, setActiveFilter] = useState(initialFilter || null);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
   const [refreshing, setRefreshing] = useState(false);
   const [editingEmail, setEditingEmail] = useState(null);
   const [activeTab, setActiveTab] = useState({});
@@ -568,7 +574,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         ? (activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6) : true)
         : clientMatchesFilter(c, activeFilter, unanalyzedNames))
     : sortedClients;
-  const q = search.trim().toLowerCase();
+  const q = debouncedSearch.trim().toLowerCase();
   const filteredClients = q
     ? baseFiltered.filter((c) =>
         c.name.toLowerCase().includes(q) ||
@@ -670,7 +676,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
       {filteredClients.length === 0 && (
         <div className="text-center py-12 bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>
-          <p className="text-[13px]" style={{ color: T.muted }}>No {viewTab === 'leads' ? 'leads' : 'clients'} match{q ? ' "' + search.trim() + '"' : ' this filter'}.</p>
+          <p className="text-[13px]" style={{ color: T.muted }}>No {viewTab === 'leads' ? 'leads' : 'clients'} match{q ? ' "' + debouncedSearch.trim() + '"' : ' this filter'}.</p>
         </div>
       )}
 
@@ -894,7 +900,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                                 {letters.map((l) => (
                                   <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
                                     hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
-                                    onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={setLobMailerLetter}
+                                    onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={(l) => setLobMailerQueue([l])}
                                     onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount} />
                                 ))}
                               </div>
@@ -907,13 +913,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
                   {/* Profile tab */}
                   {(activeTab[c.name] || 'Letters') === 'Profile' && (
-                    <ClientProfilePanel client={c} onChanged={load} />
+                    <ClientProfilePanel client={c} onChanged={load} onBatchMail={setLobMailerQueue} />
                   )}
 
                   {/* Documents tab */}
                   {(activeTab[c.name] || 'Letters') === 'Documents' && (
                     <DocumentManager clientName={c.name} letters={c.letters || []} onChanged={load} setAnalyzingLetter={setAnalyzingLetter} />
                   )}
+
                 </div>
               )}
             </div>
@@ -921,23 +928,27 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         })}
       </div>
 
-      {lobMailerLetter && (
-        <LobMailer
-          letter={lobMailerLetter}
-          furnisherAddress={lobMailerLetter ? ((lobMailerLetter.phase && lobMailerLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(lobMailerLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal'].includes(lobMailerLetter.phase) ? parseBureauAddress(lobMailerLetter.furnisher) : parseFurnisherAddress(lobMailerLetter.furnisher))) : null}
-          onClose={() => setLobMailerLetter(null)}
-          onSent={async (data) => {
-            // Don't close the modal here — LobMailer shows the sent/receipt
-            // screen (and a warning if this save fails); user closes it
-            await updateLetter(lobMailerLetter.id, {
-              mailedDate: data.mailedDate,
-              lobId: data.lobId,
-              trackingNumber: data.trackingNumber,
-            });
-            load();
-          }}
-        />
-      )}
+      {lobMailerQueue.length > 0 && (() => {
+        const currentLetter = lobMailerQueue[0];
+        return (
+          <LobMailer
+            letter={currentLetter}
+            furnisherAddress={currentLetter ? ((currentLetter.phase && currentLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+            batchRemaining={lobMailerQueue.length - 1}
+            onNext={() => setLobMailerQueue(prev => prev.slice(1))}
+            onClose={() => setLobMailerQueue([])}
+            onSent={async (trackingStatus, statusMsg, trackingNum, expectedDeliv) => {
+              await updateLetter(currentLetter.id, {
+                mailed_date: new Date().toISOString(),
+                tracking_status: trackingStatus || 'Mailed',
+                tracking_number: trackingNum || null,
+                delivered_at: null,
+              });
+              load();
+            }}
+          />
+        );
+      })()}
 
       {analyzingLetter && (
         <ResponseAnalyzer

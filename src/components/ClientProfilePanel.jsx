@@ -243,7 +243,7 @@ function ScoreTile({ label, current, start, onSaveStart }) {
   );
 }
 
-export default function ClientProfilePanel({ client, onChanged }) {
+export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
   const save = async (fields) => {
     await updateClientProfile(client.name, fields);
     onChanged();
@@ -350,7 +350,17 @@ export default function ClientProfilePanel({ client, onChanged }) {
             onSave={(v) => save({ referral_source: v })} />
         </Row>
         <Row label="Letters">
-          <span className="text-[12px]" style={{ color: T.ink }}>{client.letters ? client.letters.length : 0} total</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[12px]" style={{ color: T.ink }}>{client.letters ? client.letters.length : 0} total</span>
+            {client.letters && client.letters.filter(l => !l.mailed_date && !l.mailedDate).length > 0 && (
+              <button 
+                onClick={() => onBatchMail(client.letters.filter(l => !l.mailed_date && !l.mailedDate))}
+                className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm hover:opacity-90"
+              >
+                Mail {client.letters.filter(l => !l.mailed_date && !l.mailedDate).length} Unmailed
+              </button>
+            )}
+          </div>
         </Row>
       </Section>
 

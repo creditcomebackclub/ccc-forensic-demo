@@ -44,7 +44,7 @@ function AddressField({ label, value, onChange }) {
   );
 }
 
-export default function LobMailer({ letter, furnisherAddress, onClose, onSent }) {
+export default function LobMailer({ letter, furnisherAddress, onClose, onSent, onNext, batchRemaining = 0 }) {
   const [step, setStep] = useState('confirm');
   const [toAddr, setToAddr] = useState(furnisherAddress || { name: letter.furnisher, line1: '', line2: '', city: '', state: '', zip: '' });
   const [docs, setDocs] = useState([]);
@@ -392,8 +392,8 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent })
         </div>
 
         <div className="px-6 py-4 border-t border-border flex items-center justify-between">
-          <button onClick={onClose} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
-            {step === 'sent' ? 'Close' : 'Cancel'}
+          <button onClick={step === 'sent' && batchRemaining > 0 ? onNext : onClose} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
+            {step === 'sent' ? (batchRemaining > 0 ? `Next Letter (${batchRemaining})` : 'Close') : 'Cancel'}
           </button>
           {step === 'confirm' && (
             <div className="flex items-center gap-3">

@@ -140,14 +140,24 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
     if (!picked.length) return;
     const invalid = picked.find((f) => !ANALYZABLE_TYPES.includes(f.type));
     if (invalid) { setError('Please upload PDFs or images (JPG, PNG, WEBP) only'); return; }
-    const combined = [...files, ...picked];
+    
+    const currentFiles = useStoredPaths ? [] : files;
+    if (useStoredPaths) setUseStoredPaths(false);
+
+    const combined = [...currentFiles, ...picked];
     const batchErr = validateBatch(combined);
     if (batchErr) { setError(batchErr); return; }
     setFiles(combined);
     setError(null);
   };
 
-  const handleRemoveFile = (idx) => setFiles(files.filter((_, i) => i !== idx));
+  const handleRemoveFile = (idx) => {
+    if (useStoredPaths) {
+      setError('To change pages, please upload a new response.');
+      return;
+    }
+    setFiles(files.filter((_, i) => i !== idx));
+  };
 
   const handleDrop = (e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); };
 
@@ -444,7 +454,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
             )}
             {step === 'results' && !saved && (
               <>
-                <button onClick={() => { setStep('upload'); setAnalysis(null); setFiles([]); setUseStoredPaths(false); }}
+                <button onClick={() => { setStep('upload'); setAnalysis(null); }}
                   className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Re-analyze</button>
                 <button onClick={handleSave} disabled={saving}
                   className="px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
