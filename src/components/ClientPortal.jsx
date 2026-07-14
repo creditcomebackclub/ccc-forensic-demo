@@ -59,7 +59,7 @@ export default function ClientPortal({ session, onSignOut }) {
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
 
-        const { data: docRows } = await supabase.from('documents').select('doc_type,file_name').eq('client_name', cp.full_name);
+        const { data: docRows } = await supabase.from('documents').select('doc_type,file_name,uploaded_at').eq('client_name', cp.full_name);
         if (docRows) {
           setClientDocs({
             id: docRows.find(d => d.doc_type === 'id') || null,
@@ -218,6 +218,12 @@ export default function ClientPortal({ session, onSignOut }) {
     if (l.response_outcome === 'no_response') timeline.push({ date: l.response_date || l.mailed_date, icon: '⚠️', title: 'No response — Phase 3 escalation triggered', subtitle: l.furnisher, tone: 'red' });
     if (l.response_outcome === 'deleted') timeline.push({ date: l.response_date, icon: '🏆', title: 'DELETED — ' + l.furnisher, subtitle: 'Account removed from your credit report', tone: 'green' });
   });
+
+  if (clientMeta?.created_at) timeline.push({ date: clientMeta.created_at, icon: '👋', title: 'Enrolled in Credit Comeback Club', tone: 'blue' });
+  if (clientMeta?.lpoa_signed_at) timeline.push({ date: clientMeta.lpoa_signed_at, icon: '✍️', title: 'Authorization Signed (LPOA)', tone: 'green' });
+  if (clientDocs?.id?.uploaded_at) timeline.push({ date: clientDocs.id.uploaded_at, icon: '🪪', title: 'ID Uploaded', tone: 'default' });
+  if (clientDocs?.address?.uploaded_at) timeline.push({ date: clientDocs.address.uploaded_at, icon: '🏠', title: 'Utility Bill Uploaded', tone: 'default' });
+
   timeline.sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const tabs = [

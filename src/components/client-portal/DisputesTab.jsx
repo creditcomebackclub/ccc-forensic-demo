@@ -14,7 +14,18 @@ function responseCountdown(l) {
   if (!clockStart) return null;
   const elapsed = daysBetween(clockStart, todayISO());
   const remaining = RESPONSE_WINDOW_DAYS - elapsed;
-  if (remaining > 0) return { label: 'Day ' + elapsed + ' of 30 — ' + remaining + ' day' + (remaining === 1 ? '' : 's') + ' remaining', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
+  const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
+  
+  if (remaining > 0) {
+    if (isPhase3) {
+      return { label: 'Day ' + elapsed + ' of 30 — Bureau investigation in progress', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
+    }
+    return { label: 'Day ' + elapsed + ' of 30 — ' + remaining + ' day' + (remaining === 1 ? '' : 's') + ' remaining', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
+  }
+  
+  if (isPhase3) {
+    return { label: 'Bureau investigation window closed — final review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
+  }
   return { label: 'Response window closed — ready for escalation', tone: 'text-red-700 bg-red-50 border-red-200' };
 }
 
@@ -45,8 +56,12 @@ export default function DisputesTab({
             <div key={l.id} className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="text-sm font-bold text-slate-900">{l.furnisher}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">{l.phase}{l.type ? ' · Type ' + l.type : ''}</div>
+                  <div className="text-sm font-bold text-slate-900">
+                    {l.phase && l.phase.startsWith('Phase 3') ? `${l.phase.split('—')[1]?.trim() || l.phase} (re: ${l.furnisher})` : l.furnisher}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {l.phase && l.phase.startsWith('Phase 3') ? 'Phase 3 Escalation' : l.phase}{l.type ? ' · Type ' + l.type : ''}
+                  </div>
                 </div>
                 <span className={`text-[10px] px-2.5 py-1 rounded-md whitespace-nowrap uppercase tracking-[0.05em] font-semibold border ${
                   l.response_outcome === 'deleted' ? 'bg-green-50 text-green-700 border-green-200'

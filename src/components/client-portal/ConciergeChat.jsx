@@ -1,20 +1,42 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { MessageCircle, X, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+const SUGGESTIONS = [
+  "When is my next update?",
+  "How long does the process take?",
+  "What is a Phase 3 dispute?"
+];
+
 export default function ConciergeChat({ clientId, accessToken }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState([
-    { role: 'assistant', text: 'Hi! I am the CCC Concierge. How can I help you with your credit repair journey today?' }
-  ]);
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`ccc_chat_${clientId}`);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [{ role: 'assistant', text: 'Hi! I am the CCC Concierge. How can I help you with your credit repair journey today?' }];
+  });
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef(null);
 
-  const sendMessage = async () => {
-    if (!input.trim() || loading) return;
+  useEffect(() => {
+    localStorage.setItem(`ccc_chat_${clientId}`, JSON.stringify(messages));
+  }, [messages, clientId]);
+
+  useEffect(() => {
+    if (isOpen) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, isOpen, loading]);
+
+  const sendMessage = async (overrideText = null) => {
+    const textToSend = typeof overrideText === 'string' ? overrideText : input;
+    if (!textToSend.trim() || loading) return;
     
-    const userMsg = input.trim();
-    setInput('');
+    const userMsg = textToSend.trim();
+    if (typeof overrideText !== 'string') setInput('');
     setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
     setLoading(true);
 
@@ -68,13 +90,30 @@ export default function ConciergeChat({ clientId, accessToken }) {
                   </div>
                 </div>
               ))}
+              {messages.length === 1 && (
+                <div className="flex flex-col gap-2 mt-2 items-start pl-2">
+                  {SUGGESTIONS.map((s, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => sendMessage(s)}
+                      className="text-[12px] bg-white text-navy border border-gray-200 rounded-full px-3 py-1.5 shadow-sm hover:bg-gray-50 transition-colors text-left"
+                      style={{ color: '#1B2A4A' }}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
               {loading && (
                 <div className="flex justify-start">
-                  <div className="bg-white border border-gray-100 text-gray-400 rounded-2xl rounded-bl-sm px-4 py-2 text-[13px] shadow-sm">
-                    typing...
+                  <div className="bg-white border border-gray-100 text-gray-400 rounded-2xl rounded-bl-sm px-4 py-3 text-[13px] shadow-sm flex items-center gap-1.5 h-[38px]">
+                    <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0 }} className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
+                    <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.2 }} className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
+                    <motion.div animate={{ y: [0, -4, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.4 }} className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
                   </div>
                 </div>
               )}
+              <div ref={messagesEndRef} />
             </div>
 
             <div className="p-3 bg-white border-t border-gray-100">
