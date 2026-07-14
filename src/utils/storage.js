@@ -559,11 +559,18 @@ export async function convertLeadToClient(clientName) {
 
 export async function deleteLead(clientName) {
   const userId = await getUserId();
-  const { error } = await supabase
-    .from('clients')
-    .delete()
-    .eq('user_id', userId)
-    .eq('name', clientName)
-    .eq('status', 'lead');
-  if (error) throw error;
+  // A "lead" in the dashboard can be a clients row, or purely synthesized
+  // from orphan audits/letters with no clients row at all (buildClientMap
+  // treats any client_name with no matching clients row as a lead). Only
+  // deleting from clients left those orphan-only leads undeletable — the
+  // delete matched zero rows, threw no error, and the lead reappeared on
+  // reload. Clear all three, same as deleteClient().
+  const [a, b, c] = await Promise.all([
+    supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
+    supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
+    supabase.from('clients').delete().eq('user_id', userId).eq('name', clientName).eq('status', 'lead'),
+  ]);
+  if (a.error) throw a.error;
+  if (b.error) throw b.error;
+  if (c.error) throw c.error;
 }
