@@ -1,5 +1,7 @@
 node_modules
 dist
+agents/venv
+agents/__pycache__
 .env
 .env.local
 .env.*.save
