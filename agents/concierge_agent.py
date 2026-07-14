@@ -105,7 +105,7 @@ async def chat_with_concierge(req: ChatRequest):
         # Note: A robust chat agent loop would handle tool calls recursively. 
         # We will let the model answer directly for this basic setup.
         response = client.models.generate_content(
-            model='gemini-3.5-flash',
+            model='gemini-3.1-flash-lite',
             contents=prompt,
             config=config
         )
@@ -134,7 +134,7 @@ async def chat_with_concierge(req: ChatRequest):
                 
             # Send all tool results back to the model
             final_response = client.models.generate_content(
-                model='gemini-3.5-flash',
+                model='gemini-3.1-flash-lite',
                 contents=[prompt, response.candidates[0].content, types.Content(parts=tool_response_parts, role="user")],
                 config=config
             )
