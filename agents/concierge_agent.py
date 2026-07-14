@@ -33,8 +33,10 @@ def _get_client_name(client_id: str) -> str:
     return ""
 
 # Define tools as standard Python functions
+import json
+
 def check_audit_status(client_id: str) -> str:
-    """Checks if the forensic audit has been completed for the client and summarizes violations."""
+    """Checks if the forensic audit has been completed for the client and returns the FULL forensic data."""
     if not supabase: return "Database not connected."
     name = _get_client_name(client_id)
     if not name: return "Client profile not found."
@@ -44,14 +46,7 @@ def check_audit_status(client_id: str) -> str:
         return "No audit has been run for this client yet."
         
     audit_data = res.data[0].get('audit', {})
-    violations = []
-    for bureau, data in audit_data.items():
-        count = data.get('violationCount', 0)
-        violations.append(f"{bureau.capitalize()}: {count} violations")
-        
-    if not violations:
-        return "Audit found no violations."
-    return "Audit is completed. Violations found: " + ", ".join(violations)
+    return f"Audit is completed. Raw forensic audit data (use this to answer specific account questions): {json.dumps(audit_data)}"
 
 def check_letter_delivery_status(client_id: str) -> str:
     """Checks the delivery status of the Phase 1 letters via Lob."""
@@ -63,15 +58,7 @@ def check_letter_delivery_status(client_id: str) -> str:
     if not res.data:
         return "No letters have been sent for this client."
         
-    statuses = []
-    for letter in res.data:
-        furnisher = letter.get('furnisher')
-        phase = letter.get('phase')
-        status = letter.get('status')
-        date = letter.get('saved_at', '').split('T')[0]
-        statuses.append(f"{furnisher} ({phase}): {status} on {date}")
-        
-    return "Letter statuses: " + " | ".join(statuses)
+    return f"Letter delivery records: {json.dumps(res.data)}"
 
 def check_missing_onboarding_documents(client_id: str) -> str:
     """Checks if the client is missing their ID or utility bill."""
