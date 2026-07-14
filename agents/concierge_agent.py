@@ -125,26 +125,29 @@ async def chat_with_concierge(req: ChatRequest):
         # If the model decided to call a tool, we'd need to execute it and return the result.
         # For simplicity in this demo endpoint, if it calls a tool, we will just manually execute it and provide a raw reply.
         if response.function_calls:
-            fc = response.function_calls[0]
-            func_name = fc.name
-            # extremely basic router for the demo
-            if func_name == "check_audit_status":
-                res = check_audit_status(req.client_id)
-            elif func_name == "check_letter_delivery_status":
-                res = check_letter_delivery_status(req.client_id)
-            elif func_name == "check_missing_onboarding_documents":
-                res = check_missing_onboarding_documents(req.client_id)
-            else:
-                res = "Tool not found."
+            tool_response_parts = []
+            for fc in response.function_calls:
+                func_name = fc.name
+                if func_name == "check_audit_status":
+                    res = check_audit_status(req.client_id)
+                elif func_name == "check_letter_delivery_status":
+                    res = check_letter_delivery_status(req.client_id)
+                elif func_name == "check_missing_onboarding_documents":
+                    res = check_missing_onboarding_documents(req.client_id)
+                else:
+                    res = "Tool not found."
+                    
+                tool_response_parts.append(
+                    types.Part.from_function_response(
+                        name=func_name,
+                        response={"result": res}
+                    )
+                )
                 
-            # Send the tool result back to the model to get the final conversational response
-            tool_response_part = types.Part.from_function_response(
-                name=func_name,
-                response={"result": res}
-            )
+            # Send all tool results back to the model
             final_response = client.models.generate_content(
                 model='gemini-3.5-flash',
-                contents=[prompt, response.candidates[0].content, tool_response_part],
+                contents=[prompt, response.candidates[0].content, types.Content(parts=tool_response_parts, role="user")],
                 config=config
             )
             return {"reply": final_response.text}
