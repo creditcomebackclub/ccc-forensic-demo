@@ -2,8 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
+import json
 from google import genai
 from google.genai import types
+from supabase import create_client, Client
 
 app = FastAPI()
 
@@ -19,129 +21,125 @@ class ChatRequest(BaseModel):
     client_id: str
     message: str
 
-from supabase import create_client, Client
-
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
 
-def _get_client_name(client_id: str) -> str:
-    if not supabase: return ""
-    res = supabase.table('client_profiles').select('full_name').eq('user_id', client_id).execute()
-    if res.data and len(res.data) > 0:
-        return res.data[0]['full_name']
-    return ""
 
-# Define tools as standard Python functions
-import json
+def _load_full_client_context(client_id: str) -> str:
+    """Load ALL data for this client from every relevant table and return it as a single context string."""
+    if not supabase:
+        return "Database not connected."
 
-def check_audit_status(client_id: str) -> str:
-    """Checks if the forensic audit has been completed for the client and returns the FULL forensic data."""
-    if not supabase: return "Database not connected."
-    name = _get_client_name(client_id)
-    if not name: return "Client profile not found."
-    
-    res = supabase.table('audits').select('audit').eq('client_name', name).order('saved_at', desc=True).limit(1).execute()
-    if not res.data:
-        return "No audit has been run for this client yet."
-        
-    audit_data = res.data[0].get('audit', {})
-    return f"Audit is completed. Raw forensic audit data (use this to answer specific account questions): {json.dumps(audit_data)}"
+    # 1. Resolve identity
+    profile_res = supabase.table('client_profiles').select('*').eq('user_id', client_id).execute()
+    if not profile_res.data:
+        return "Client profile not found."
+    profile = profile_res.data[0]
+    name = profile.get('full_name', '')
 
-def check_letter_delivery_status(client_id: str) -> str:
-    """Checks the delivery status of the Phase 1 letters via Lob."""
-    if not supabase: return "Database not connected."
-    name = _get_client_name(client_id)
-    if not name: return "Client profile not found."
-    
-    res = supabase.table('letters').select('furnisher, phase, status, saved_at').eq('client_name', name).execute()
-    if not res.data:
-        return "No letters have been sent for this client."
-        
-    return f"Letter delivery records: {json.dumps(res.data)}"
+    # 2. Load client metadata (scores, enrollment, monitoring, etc.)
+    client_res = supabase.table('clients').select('*').eq('name', name).execute()
+    client_meta = client_res.data[0] if client_res.data else {}
 
-def check_missing_onboarding_documents(client_id: str) -> str:
-    """Checks if the client is missing their ID or utility bill."""
-    if not supabase: return "Database not connected."
-    name = _get_client_name(client_id)
-    if not name: return "Client profile not found."
-    
-    res = supabase.table('documents').select('doc_type').eq('client_name', name).execute()
-    docs = [d.get('doc_type') for d in (res.data or [])]
-    
-    missing = []
-    if 'id' not in docs: missing.append("Government ID")
-    if 'address' not in docs: missing.append("Utility Bill")
-    
-    if not missing:
-        return "All onboarding documents have been received."
-    return "Client is missing: " + ", ".join(missing)
+    # 3. Load ALL audits (contains every account with full forensic detail)
+    audits_res = supabase.table('audits').select('audit, report_date, saved_at').eq('client_name', name).order('saved_at', desc=True).execute()
+    audits = audits_res.data or []
+
+    # 4. Load ALL letters (every furnisher, phase, mailed date, tracking, response outcome)
+    letters_res = supabase.table('letters').select('furnisher, account_id, phase, type, saved_at, mailed_date, tracking_number, tracking_status, delivered_at, response_outcome, response_date, summary').eq('client_name', name).execute()
+    letters = letters_res.data or []
+
+    # 5. Load documents (onboarding ID + utility bill)
+    docs_res = supabase.table('documents').select('doc_type').eq('client_name', name).execute()
+    docs = [d.get('doc_type') for d in (docs_res.data or [])]
+    missing_docs = []
+    if 'id' not in docs:
+        missing_docs.append("Government ID")
+    if 'address' not in docs:
+        missing_docs.append("Utility Bill")
+
+    # 6. Load progress updates (audit-to-audit diffs)
+    progress_res = supabase.table('progress_updates').select('from_report_date, to_report_date, diff').eq('client_name', name).order('to_report_date', desc=True).execute()
+    progress = progress_res.data or []
+
+    # Build the context blob
+    context_parts = []
+    context_parts.append(f"=== CLIENT PROFILE ===")
+    context_parts.append(f"Name: {name}")
+    context_parts.append(f"Email: {profile.get('email', 'N/A')}")
+    context_parts.append(f"Onboarding Complete: {profile.get('onboarding_complete', False)}")
+
+    if client_meta:
+        context_parts.append(f"\n=== CLIENT DETAILS ===")
+        context_parts.append(f"Status: {client_meta.get('status', 'N/A')}")
+        context_parts.append(f"Enrollment Date: {client_meta.get('enrollment_date', 'N/A')}")
+        context_parts.append(f"Starting Scores - EQ: {client_meta.get('score_eq_start', 'N/A')}, EXP: {client_meta.get('score_exp_start', 'N/A')}, TU: {client_meta.get('score_tu_start', 'N/A')}")
+        context_parts.append(f"Monitoring Service: {client_meta.get('monitoring_service', 'N/A')}")
+        context_parts.append(f"Monitoring Enrolled: {client_meta.get('monitoring_enrolled', False)}")
+
+    if missing_docs:
+        context_parts.append(f"\n⚠️ MISSING DOCUMENTS: {', '.join(missing_docs)}")
+    else:
+        context_parts.append(f"\n✅ All onboarding documents received.")
+
+    if audits:
+        context_parts.append(f"\n=== FORENSIC AUDIT DATA ({len(audits)} audit(s)) ===")
+        for i, a in enumerate(audits):
+            context_parts.append(f"\n--- Audit #{i+1} (Report Date: {a.get('report_date', 'N/A')}) ---")
+            context_parts.append(json.dumps(a.get('audit', {})))
+    else:
+        context_parts.append(f"\n=== NO AUDITS RUN YET ===")
+
+    if letters:
+        context_parts.append(f"\n=== DISPUTE LETTERS ({len(letters)} letter(s)) ===")
+        context_parts.append(json.dumps(letters))
+    else:
+        context_parts.append(f"\n=== NO LETTERS SENT YET ===")
+
+    if progress:
+        context_parts.append(f"\n=== PROGRESS UPDATES ({len(progress)} update(s)) ===")
+        context_parts.append(json.dumps(progress))
+
+    return "\n".join(context_parts)
+
 
 @app.post("/chat")
 async def chat_with_concierge(req: ChatRequest):
-    # Initialize the public Gemini client
-    # It automatically picks up GEMINI_API_KEY from the environment variables
+    # Load the full client context from the database
+    client_context = _load_full_client_context(req.client_id)
+
     client = genai.Client()
-    
+
     system_instruction = (
-        "You are the Credit Comeback Club Concierge. Your primary goal is to be highly precise and concise. "
-        "1. Simply answer the exact question the client asks. Do NOT proactively list the status of audits, letters, or documents unless they specifically ask for them. "
-        "2. EXCEPTION: You must ALWAYS check if the client is missing onboarding documents. If they are missing documents, you must proactively inform them before answering their question. "
-        "3. Never guess or hallucinate data. Use your tools to look up the exact status."
+        "You are the Credit Comeback Club Concierge, a precise and knowledgeable AI assistant. "
+        "You have been given the client's COMPLETE file below. This includes their full forensic audit "
+        "(with every account, furnisher, violation, and balance), all dispute letters sent, tracking info, "
+        "response outcomes, onboarding documents, credit scores, and progress updates.\n\n"
+        "RULES:\n"
+        "1. Answer the client's exact question using the data provided. Be specific — reference account names, "
+        "furnishers, violation types, dates, and statuses directly from the data.\n"
+        "2. If the client asks about a specific account (e.g. 'Discover', 'USAlliance', 'Capital One'), search "
+        "through the audit data for that furnisher/account and give them the exact details.\n"
+        "3. If the client is missing onboarding documents, ALWAYS mention this first before answering their question.\n"
+        "4. Never guess. If the data genuinely does not contain what they asked about, say so clearly.\n"
+        "5. Keep responses concise but thorough when specifics are needed.\n\n"
+        f"=== CLIENT FILE ===\n{client_context}\n=== END CLIENT FILE ==="
     )
-    
-    # Configure the request with tools
+
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        tools=[check_audit_status, check_letter_delivery_status, check_missing_onboarding_documents],
-        temperature=0.4
+        temperature=0.3
     )
-    
-    prompt = f"Client {req.client_id} says: {req.message}"
-    
+
     try:
-        # In this demo, we use stateless generate_content and rely on the model to call the tool and return.
-        # Since we just want a simple response or tool call, we'll handle a single interaction.
-        # Note: A robust chat agent loop would handle tool calls recursively. 
-        # We will let the model answer directly for this basic setup.
         response = client.models.generate_content(
             model='gemini-3.1-flash-lite',
-            contents=prompt,
+            contents=req.message,
             config=config
         )
-        
-        # If the model decided to call a tool, we'd need to execute it and return the result.
-        # For simplicity in this demo endpoint, if it calls a tool, we will just manually execute it and provide a raw reply.
-        if response.function_calls:
-            tool_response_parts = []
-            for fc in response.function_calls:
-                func_name = fc.name
-                if func_name == "check_audit_status":
-                    res = check_audit_status(req.client_id)
-                elif func_name == "check_letter_delivery_status":
-                    res = check_letter_delivery_status(req.client_id)
-                elif func_name == "check_missing_onboarding_documents":
-                    res = check_missing_onboarding_documents(req.client_id)
-                else:
-                    res = "Tool not found."
-                    
-                tool_response_parts.append(
-                    types.Part.from_function_response(
-                        name=func_name,
-                        response={"result": res}
-                    )
-                )
-                
-            # Send all tool results back to the model
-            final_response = client.models.generate_content(
-                model='gemini-3.1-flash-lite',
-                contents=[prompt, response.candidates[0].content, types.Content(parts=tool_response_parts, role="user")],
-                config=config
-            )
-            return {"reply": final_response.text}
-            
         return {"reply": response.text}
-        
+
     except Exception as e:
         print(f"Error: {e}")
         return {"reply": f"Developer Error: {e}"}
