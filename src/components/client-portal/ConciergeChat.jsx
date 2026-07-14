@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { MessageCircle, X, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-export default function ConciergeChat({ clientId }) {
+export default function ConciergeChat({ clientId, accessToken }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
     { role: 'assistant', text: 'Hi! I am the CCC Concierge. How can I help you with your credit repair journey today?' }
@@ -22,7 +22,10 @@ export default function ConciergeChat({ clientId }) {
       const apiUrl = import.meta.env.VITE_AGENTS_API_URL || 'http://localhost:8000';
       const res = await fetch(`${apiUrl}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
         body: JSON.stringify({ client_id: clientId, message: userMsg })
       });
       const data = await res.json();
