@@ -34,6 +34,34 @@ exports.handler = async (event) => {
 
   const { action } = payload;
 
+  // Auth gate: client_response_uploaded is called from the portal by a logged-in
+  // client — just require any valid session. All other actions are admin-only.
+  const ADMIN_ACTIONS = ['send', 'send_audit_email', 'send_phase_notification', 'send_campaign_update', 'send_lead_drip', 'send_educational', 'affiliate_welcome', 'affiliate_new_referral'];
+  if (ADMIN_ACTIONS.includes(action)) {
+    const { requireAdmin } = require('./_requireAdmin.cjs');
+    try { await requireAdmin(event); }
+    catch (e) { if (e.statusCode) return e; throw e; }
+  } else if (action === 'client_response_uploaded') {
+    // Verify any valid Supabase session (client or admin)
+    const authHeader = (event.headers.authorization || event.headers.Authorization || '');
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (!token) return { statusCode: 401, body: JSON.stringify({ error: 'Missing Authorization token' }) };
+    // We trust Supabase RLS for data isolation; just confirm the session is real
+    const https = require('https');
+    const sessionOk = await new Promise((resolve) => {
+      const u = new URL((supabaseUrl || '') + '/auth/v1/user');
+      const req = https.request({ hostname: u.hostname, port: 443, path: u.pathname, method: 'GET',
+        headers: { apikey: supabaseKey, Authorization: 'Bearer ' + token } }, (res) => {
+        resolve(res.statusCode === 200);
+      });
+      req.on('error', () => resolve(false));
+      req.end();
+    });
+    if (!sessionOk) return { statusCode: 401, body: JSON.stringify({ error: 'Invalid or expired session' }) };
+  } else {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Unknown action' }) };
+  }
+
   if (action === 'send') {
     const { clientName, clientEmail, lpoaUrl } = payload;
     if (!clientEmail || !lpoaUrl) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail and lpoaUrl required' }) };

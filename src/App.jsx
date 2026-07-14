@@ -63,9 +63,13 @@ function AffiliatesPage() {
 
       // Provision the auth user server-side and link affiliates.user_id
       // before any magic link goes out
+      const { data: { session: _adminSess } } = await supabase.auth.getSession();
+      const _adminTok = _adminSess?.access_token;
+      const _adminHeaders = { 'Content-Type': 'application/json', ...(_adminTok ? { Authorization: `Bearer ${_adminTok}` } : {}) };
+
       const provRes = await fetch('/.netlify/functions/provision-user', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: _adminHeaders,
         body: JSON.stringify({ email: normEmail, fullName: form.name.trim(), kind: 'affiliate' }),
       });
       if (!provRes.ok) {
@@ -82,7 +86,7 @@ function AffiliatesPage() {
       // Send branded welcome email
       await fetch('/.netlify/functions/send-lpoa', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: _adminHeaders,
         body: JSON.stringify({
           action: 'affiliate_welcome',
           affiliateName: form.name.trim(),

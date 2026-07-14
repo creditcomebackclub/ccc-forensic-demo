@@ -147,6 +147,10 @@ async def chat_with_concierge(req: ChatRequest, authorization: str | None = Head
     # asking about — never trust a client-supplied id for whose data to load.
     _verify_caller(authorization, req.client_id)
 
+    # Reject oversized messages — prevents prompt injection and runaway token costs.
+    if len(req.message) > 2000:
+        raise HTTPException(status_code=400, detail="Message too long (max 2000 characters)")
+
     # Load the full client context from the database
     client_context = _load_full_client_context(req.client_id)
 

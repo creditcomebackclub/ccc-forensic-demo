@@ -974,9 +974,14 @@ function CreateClientModal({ onClose, onCreated }) {
       // Provision the auth user + linked client_profiles row server-side
       // (service role) so both exist, with user_id set, before the magic
       // link is sent — first login must never find a half-created account
+      const { data: { session: _cpSess } } = await supabase.auth.getSession();
+      const _cpTok = _cpSess?.access_token;
       const provRes = await fetch('/.netlify/functions/provision-user', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(_cpTok ? { Authorization: `Bearer ${_cpTok}` } : {}),
+        },
         body: JSON.stringify({ email: normEmail, fullName: name.trim(), kind: 'client' }),
       });
       if (!provRes.ok) {

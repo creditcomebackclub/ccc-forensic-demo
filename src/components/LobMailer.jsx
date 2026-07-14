@@ -15,9 +15,14 @@ const FROM_ADDRESS = {
 };
 
 async function callLob(action, payload) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
   const res = await fetch(LOB_FUNCTION_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ action, ...payload }),
   });
   const data = await res.json();

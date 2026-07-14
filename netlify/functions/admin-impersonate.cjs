@@ -1,6 +1,11 @@
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
 
+  // Only authenticated admins may generate impersonation links.
+  const { requireAdmin } = require('./_requireAdmin.cjs');
+  try { await requireAdmin(event); }
+  catch (e) { if (e.statusCode) return e; throw e; }
+
   try {
     const { email } = JSON.parse(event.body || '{}');
     if (!email) return { statusCode: 400, body: JSON.stringify({ error: 'Email required' }) };

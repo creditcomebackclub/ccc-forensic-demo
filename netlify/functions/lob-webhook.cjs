@@ -104,7 +104,12 @@ exports.handler = async (event) => {
 
   // Reject spoofed events — anyone can guess this URL, so the signature is
   // the only thing standing between the internet and our tracking data
-  if (webhookSecret) {
+  if (!webhookSecret) {
+    console.error('LOB_WEBHOOK_SECRET not configured — rejecting all webhook requests');
+    return { statusCode: 500, body: JSON.stringify({ error: 'Webhook not configured' }) };
+  }
+
+  {
     const signature = event.headers['lob-signature'];
     const timestamp = event.headers['lob-signature-timestamp'];
     if (!verifyLobSignature(event.body, timestamp, signature, webhookSecret)) {
@@ -116,8 +121,9 @@ exports.handler = async (event) => {
       console.warn('Rejected Lob webhook: stale timestamp', timestamp);
       return { statusCode: 401, body: JSON.stringify({ error: 'Stale timestamp' }) };
     }
-  } else {
-    console.warn('LOB_WEBHOOK_SECRET not set — accepting webhook WITHOUT signature verification');
+  }
+
+  {
   }
 
   let payload;

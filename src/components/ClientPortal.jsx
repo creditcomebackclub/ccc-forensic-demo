@@ -149,7 +149,10 @@ export default function ClientPortal({ session, onSignOut }) {
 
       await fetch('/.netlify/functions/send-lpoa', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({
           action: 'client_response_uploaded',
           clientName: profile.full_name,

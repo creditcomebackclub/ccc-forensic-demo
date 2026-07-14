@@ -385,9 +385,16 @@ function OnboardingButton({ client, onChanged }) {
       // Provision the auth user + linked client_profiles row server-side
       // (service role) BEFORE sending the magic link. Without this, first
       // login can find a half-created account and misroute the client.
+      const { data: { session: adminSession } } = await supabase.auth.getSession();
+      const adminToken = adminSession?.access_token;
+      const authHeaders = {
+        'Content-Type': 'application/json',
+        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+      };
+
       const provRes = await fetch('/.netlify/functions/provision-user', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({ email: normEmail, fullName: client.name, kind: 'client' }),
       });
       if (!provRes.ok) {
@@ -457,9 +464,15 @@ function ImpersonateButton({ client }) {
     setLoading(true);
     setErr(null);
     try {
+      const { supabase: sb } = await import('../utils/supabase.js');
+      const { data: { session: adminSess } } = await sb.auth.getSession();
+      const adminTok = adminSess?.access_token;
       const res = await fetch('/.netlify/functions/admin-impersonate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(adminTok ? { Authorization: `Bearer ${adminTok}` } : {}),
+        },
         body: JSON.stringify({ email: client.email }),
       });
       const data = await res.json();

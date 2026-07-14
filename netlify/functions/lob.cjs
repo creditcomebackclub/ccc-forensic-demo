@@ -35,13 +35,18 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
 
+  // Only authenticated admins may send letters or verify addresses via Lob.
+  const { requireAdmin } = require('./_requireAdmin.cjs');
+  try { await requireAdmin(event); }
+  catch (e) { if (e.statusCode) return e; throw e; }
+
   // Prefer non-VITE names — VITE_-prefixed vars risk being inlined into the
   // client bundle if ever referenced from browser code. Old names kept as
   // fallback until the Netlify env is renamed.
-  const mode = process.env.LOB_MODE || process.env.VITE_LOB_MODE || 'test';
+  const mode = process.env.LOB_MODE || 'test';
   const apiKey = mode === 'live'
-    ? (process.env.LOB_LIVE_KEY || process.env.VITE_LOB_LIVE_KEY)
-    : (process.env.LOB_TEST_KEY || process.env.VITE_LOB_TEST_KEY);
+    ? process.env.LOB_LIVE_KEY
+    : process.env.LOB_TEST_KEY;
 
   if (!apiKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Lob API key not configured' }) };

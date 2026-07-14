@@ -59,12 +59,19 @@ export default function LetterViewer({ account, client, onClose }) {
   }, [account, client]);
 
   const handlePrint = () => {
-    const printWindow = window.open('', '_blank', 'width=900,height=1100');
+    // Use a Blob URL instead of document.write — document.write executes any
+    // <script> tags in the HTML, which is a XSS vector for AI-generated content.
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const printWindow = window.open(url, '_blank', 'width=900,height=1100');
     if (printWindow) {
-      printWindow.document.write(html);
-      printWindow.document.close();
       printWindow.focus();
-      setTimeout(() => printWindow.print(), 500);
+      setTimeout(() => {
+        printWindow.print();
+        URL.revokeObjectURL(url);
+      }, 500);
+    } else {
+      URL.revokeObjectURL(url);
     }
   };
 
@@ -143,6 +150,7 @@ export default function LetterViewer({ account, client, onClose }) {
             >
               <iframe
                 srcDoc={html}
+                sandbox="allow-same-origin"
                 title="Phase 1 Letter"
                 className="w-full"
                 style={{ minHeight: '11in', border: 'none' }}
