@@ -121,9 +121,8 @@ async def chat_with_concierge(req: ChatRequest):
         "furnishers, violation types, dates, and statuses directly from the data.\n"
         "2. If the client asks about a specific account (e.g. 'Discover', 'USAlliance', 'Capital One'), search "
         "through the audit data for that furnisher/account and give them the exact details.\n"
-        "3. If the client is missing onboarding documents, ALWAYS mention this first before answering their question.\n"
-        "4. Never guess. If the data genuinely does not contain what they asked about, say so clearly.\n"
-        "5. Keep responses concise but thorough when specifics are needed.\n\n"
+        "3. Never guess. If the data genuinely does not contain what they asked about, say so clearly.\n"
+        "4. Keep responses concise but thorough when specifics are needed.\n\n"
         f"=== CLIENT FILE ===\n{client_context}\n=== END CLIENT FILE ==="
     )
 
