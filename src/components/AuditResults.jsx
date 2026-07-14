@@ -125,9 +125,16 @@ function EmailAuditModal({ audit, clientEmail, onClose }) {
       const pdfBase64 = await blobToBase64(doc.output('blob'));
       const filename = auditPdfFilename(audit);
 
+      const { supabase } = await import('../utils/supabase.js');
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
       const res = await fetch('/.netlify/functions/send-lpoa', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           action: 'send_audit_email',
           clientEmail,

@@ -421,7 +421,7 @@ function OnboardingButton({ client, onChanged }) {
       // Send branded welcome email
       await fetch('/.netlify/functions/send-lpoa', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           action: 'send_onboarding_welcome',
           clientName: client.name,

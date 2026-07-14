@@ -261,9 +261,14 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       try {
         const { data: cp } = await supabase.from('client_profiles').select('email,full_name').ilike('full_name', letter.clientName).limit(1);
         if (cp && cp.length > 0 && cp[0].email) {
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
           fetch('/.netlify/functions/send-lpoa', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            },
             body: JSON.stringify({
               action: 'send_phase_notification',
               clientName: cp[0].full_name,

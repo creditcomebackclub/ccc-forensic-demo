@@ -504,9 +504,16 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     setSendingLpoa(c.name);
     try {
       const signingUrl = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(c.name);
+      const { supabase } = await import('../utils/supabase.js');
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
       const res = await fetch('/.netlify/functions/send-lpoa', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ action: 'send', clientName: c.name, clientEmail: c.email, lpoaUrl: signingUrl }),
       });
       const data = await res.json();
