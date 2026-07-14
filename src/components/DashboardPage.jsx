@@ -105,6 +105,8 @@ function computeDashboard(clients) {
   }
 
   for (const c of clients) {
+    if (c.status === 'lead') continue;
+
     const hasActiveLetters = c.letters.some((l) => !l.phase?.startsWith('Phase 3'));
     if (hasActiveLetters) active++;
 
