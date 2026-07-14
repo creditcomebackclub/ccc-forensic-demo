@@ -98,7 +98,7 @@ function importDueInfo(c) {
   return { code: 'due', label: 'Import due', tone: 'red' };
 }
 
-function clientMatchesFilter(c, filter) {
+function clientMatchesFilter(c, filter, unanalyzedNames) {
   if (!filter) return true;
   const openLetters = c.letters.filter((l) => !l.phase?.startsWith('Phase 3'));
   switch (filter) {
@@ -113,6 +113,7 @@ function clientMatchesFilter(c, filter) {
     case 'received': return openLetters.some((l) => l.responseOutcome === 'received');
     case 'noemail': return !c.email;
     case 'vip': return !!c.isVip;
+    case 'unanalyzed': return !!unanalyzedNames && unanalyzedNames.has(c.name);
     default: return true;
   }
 }
@@ -125,6 +126,7 @@ const FILTER_LABELS = {
   received: 'Response Received',
   noemail: 'No Email',
   vip: 'VIP',
+  unanalyzed: 'Needs Analysis',
 };
 
 function StatusBadge({ label, tone }) {
@@ -412,7 +414,7 @@ function parseFurnisherAddress(furnisher) {
   }
   return null;
 }
-export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, forceTab }) {
+export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, forceTab, unanalyzedNames }) {
   const [clients, setClients] = useState(null);
   const [expanded, setExpanded] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -564,7 +566,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const baseFiltered = activeFilter
     ? sortedClients.filter((c) => viewTab === 'leads'
         ? (activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6) : true)
-        : clientMatchesFilter(c, activeFilter))
+        : clientMatchesFilter(c, activeFilter, unanalyzedNames))
     : sortedClients;
   const q = search.trim().toLowerCase();
   const filteredClients = q
@@ -584,6 +586,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         { key: 'awaiting', label: 'Awaiting', count: activeClients.filter((c) => clientMatchesFilter(c, 'awaiting')).length },
         { key: 'escalate', label: 'To escalate', count: activeClients.filter((c) => clientMatchesFilter(c, 'escalate')).length },
         { key: 'received', label: 'Needs Phase 3', count: activeClients.filter((c) => clientMatchesFilter(c, 'received')).length },
+        { key: 'unanalyzed', label: 'Needs Analysis', count: activeClients.filter((c) => clientMatchesFilter(c, 'unanalyzed', unanalyzedNames)).length },
         { key: 'noemail', label: 'No email', count: activeClients.filter((c) => clientMatchesFilter(c, 'noemail')).length },
         { key: 'vip', label: 'VIP', count: activeClients.filter((c) => clientMatchesFilter(c, 'vip')).length },
       ]

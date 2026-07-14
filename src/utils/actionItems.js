@@ -6,12 +6,16 @@
 import { supabase } from './supabase';
 import { CONVERTED_PREFIX } from './responseFiles';
 
-export async function countUnanalyzedResponses() {
+// Returns both the badge count and the set of client names that have at
+// least one unanalyzed response, so the sidebar badge can link straight to
+// the clients that actually need attention instead of just the count.
+export async function getUnanalyzedResponseStats() {
+  const empty = { count: 0, clientNames: new Set() };
   const { data: letters } = await supabase
     .from('letters')
     .select('id, client_name')
     .is('phase2_analyzed_at', null);
-  if (!letters || !letters.length) return 0;
+  if (!letters || !letters.length) return empty;
 
   const lettersByClient = new Map();
   for (const l of letters) {
@@ -23,9 +27,10 @@ export async function countUnanalyzedResponses() {
     .from('client_profiles')
     .select('user_id, full_name')
     .in('full_name', [...lettersByClient.keys()]);
-  if (!profiles || !profiles.length) return 0;
+  if (!profiles || !profiles.length) return empty;
 
   let count = 0;
+  const clientNames = new Set();
   for (const p of profiles) {
     const letterIds = lettersByClient.get(p.full_name);
     if (!letterIds || !letterIds.size || !p.user_id) continue;
@@ -37,8 +42,12 @@ export async function countUnanalyzedResponses() {
       if (!letterIds.has(folder.name)) continue;
       const { data: files } = await supabase.storage.from('responses').list(p.user_id + '/' + folder.name, { limit: 50 });
       const visible = (files || []).filter((f) => !f.name.startsWith(CONVERTED_PREFIX));
-      if (visible.length > 0) count += 1; // one action item per response, not per page
+      if (visible.length > 0) { count += 1; clientNames.add(p.full_name); } // one action item per response, not per page
     }
   }
-  return count;
+  return { count, clientNames };
+}
+
+export async function countUnanalyzedResponses() {
+  return (await getUnanalyzedResponseStats()).count;
 }
