@@ -19,7 +19,8 @@ export default function ConciergeChat({ clientId }) {
     setLoading(true);
 
     try {
-      const res = await fetch('http://localhost:8000/chat', {
+      const apiUrl = import.meta.env.VITE_AGENTS_API_URL || 'http://localhost:8000';
+      const res = await fetch(`${apiUrl}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ client_id: clientId, message: userMsg })
