@@ -9,15 +9,15 @@
 
 const https = require('https');
 
-function supabaseGet(path, supabaseUrl, serviceKey) {
+function supabaseGet(path, supabaseUrl, apiKey, authToken) {
   return new Promise((resolve, reject) => {
     const u = new URL(supabaseUrl + path);
     const options = {
       hostname: u.hostname, port: 443,
       path: u.pathname + u.search, method: 'GET',
       headers: {
-        'apikey': serviceKey,
-        'Authorization': 'Bearer ' + serviceKey,
+        'apikey': apiKey,
+        'Authorization': 'Bearer ' + (authToken || apiKey),
       },
     };
     const req = https.request(options, (res) => {
@@ -91,7 +91,7 @@ async function requireAdmin(event) {
   }
 
   // 2. Verify the token against Supabase Auth (anon key, not service key)
-  const userRes = await supabaseGet('/auth/v1/user', supabaseUrl, token);
+  const userRes = await supabaseGet('/auth/v1/user', supabaseUrl, anonKey, token);
   if (userRes.status !== 200 || !userRes.body || !userRes.body.id) {
     throw { statusCode: 401, body: JSON.stringify({ error: 'Invalid or expired session' }) };
   }
