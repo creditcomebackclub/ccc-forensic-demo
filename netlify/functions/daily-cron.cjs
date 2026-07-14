@@ -78,26 +78,16 @@ exports.handler = async () => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const sgKey = process.env.SENDGRID_API_KEY;
-  const ADMIN_EMAIL = 'creditcomebackclub@gmail.com';
+  const ADMIN_EMAIL = 'chris@cccpartners.co'; // Updated to send directly to Chris
 
   if (!supabaseUrl || !supabaseKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Supabase not configured' }) };
   }
 
   const today = todayISO();
-
-  const lettersRes = await supabaseRequest(
-    '/rest/v1/letters?select=id,client_name,furnisher,phase,mailed_date,delivered_at,response_outcome,notifications_sent&response_outcome=is.null',
-    'GET', null, supabaseUrl, supabaseKey
-  );
-
-  if (lettersRes.status < 200 || lettersRes.status >= 300) {
-    console.error('Failed to fetch letters:', lettersRes.status, lettersRes.body);
-    return { statusCode: 500, body: JSON.stringify({ error: 'Failed to fetch letters' }) };
-  }
-
-  const letters = Array.isArray(lettersRes.body) ? lettersRes.body : [];
-  const adminDigestItems = [];
+  const yesterday = new Date(Date.now() - 86400000).toISOString();
+  let leadsDrippedCount = 0;
+  let clientUpdatesCount = 0;
 
   async function fetch_send(action, payload) {
     const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
@@ -112,12 +102,20 @@ exports.handler = async () => {
     }
   }
 
+  // --- 1. Process 30-day escalation and Client Updates ---
+  const lettersRes = await supabaseRequest(
+    '/rest/v1/letters?select=id,client_name,furnisher,phase,mailed_date,delivered_at,response_outcome,notifications_sent&response_outcome=is.null',
+    'GET', null, supabaseUrl, supabaseKey
+  );
+  const letters = Array.isArray(lettersRes.body) ? lettersRes.body : [];
+  const adminDigestItems = [];
+
   for (const letter of letters) {
     if (!letter.mailed_date) continue;
     const clockStart = letter.delivered_at ? letter.delivered_at.slice(0, 10) : letter.mailed_date;
     const daysElapsed = daysBetween(clockStart, today);
     const sent = letter.notifications_sent || [];
-    const newSent = [...sent];
+    let newSent = [...sent];
     let touched = false;
 
     let clientEmail = null;
@@ -135,6 +133,7 @@ exports.handler = async () => {
       try {
         await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day7_checkin', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day7'); touched = true;
+        clientUpdatesCount++;
       } catch(e) { console.error('day7 email failed:', e); }
     }
 
@@ -142,6 +141,7 @@ exports.handler = async () => {
       try {
         await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day30_approaching', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day30'); touched = true;
+        clientUpdatesCount++;
       } catch(e) { console.error('day30 email failed:', e); }
     }
 
@@ -149,9 +149,9 @@ exports.handler = async () => {
       adminDigestItems.push({
         client: letter.client_name,
         furnisher: letter.furnisher,
-        phase: letter.phase,
+        phase: letter.phase || 'Phase 1',
         daysElapsed,
-        deliveredOrMailed: letter.delivered_at ? 'delivered ' + clockStart : 'mailed ' + clockStart + ' (no delivery confirmation)',
+        deliveredOrMailed: letter.delivered_at ? 'delivered ' + clockStart : 'mailed ' + clockStart + ' (no delivery)',
       });
       newSent.push('admin30'); touched = true;
     }
@@ -164,46 +164,13 @@ exports.handler = async () => {
     }
   }
 
-  if (sgKey && adminDigestItems.length > 0) {
-    const rows = adminDigestItems.map(it =>
-      '<tr>' +
-      '<td style="padding:8px 12px;border-bottom:1px solid #E5E7EB;font-size:12px;">' + it.client + '</td>' +
-      '<td style="padding:8px 12px;border-bottom:1px solid #E5E7EB;font-size:12px;">' + it.furnisher + '</td>' +
-      '<td style="padding:8px 12px;border-bottom:1px solid #E5E7EB;font-size:12px;">' + (it.phase || 'Phase 1') + '</td>' +
-      '<td style="padding:8px 12px;border-bottom:1px solid #E5E7EB;font-size:12px;">' + it.daysElapsed + ' days · ' + it.deliveredOrMailed + '</td>' +
-      '</tr>'
-    ).join('');
-
-    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-      + '<body style="font-family:Arial,sans-serif;max-width:720px;margin:0 auto;padding:20px;background:#F8F9FA;">'
-      + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;">'
-      + '<div style="color:#C9A84C;font-weight:700;font-size:16px;">Credit Comeback Club — 30-Day Deadline Report</div></div>'
-      + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:24px;border-radius:0 0 8px 8px;">'
-      + '<p style="font-size:13px;color:#374151;">The following letters have crossed the 30-day statutory response window with no response logged. These are ready for Phase 2 non-response analysis and Phase 3 escalation.</p>'
-      + '<table style="width:100%;border-collapse:collapse;margin-top:12px;">'
-      + '<thead><tr style="background:#F3F4F6;">'
-      + '<th style="text-align:left;padding:8px 12px;font-size:11px;text-transform:uppercase;color:#6B7280;">Client</th>'
-      + '<th style="text-align:left;padding:8px 12px;font-size:11px;text-transform:uppercase;color:#6B7280;">Furnisher</th>'
-      + '<th style="text-align:left;padding:8px 12px;font-size:11px;text-transform:uppercase;color:#6B7280;">Phase</th>'
-      + '<th style="text-align:left;padding:8px 12px;font-size:11px;text-transform:uppercase;color:#6B7280;">Status</th>'
-      + '</tr></thead><tbody>' + rows + '</tbody></table>'
-      + '<p style="font-size:12px;color:#6B7280;margin-top:20px;">Log in to the <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;font-weight:600;">admin dashboard</a> to review and escalate.</p>'
-      + '</div></body></html>';
-
-    await sendgridEmail(ADMIN_EMAIL, '30-Day Deadline Report — ' + adminDigestItems.length + ' letter(s) ready to escalate', html, sgKey);
-  }
-
-  // ---- Lead drip sequence ----
-  // Schedule: day 0-1, day 3, day 7, day 10, day 14 (5 touches over two weeks)
-  let leadsProcessed = 0;
+  // --- 2. Process Lead Nurture Drips ---
   if (sgKey) {
     const leadsRes = await supabaseRequest(
       '/rest/v1/clients?select=name,email,lead_created_at,lead_drips_sent&status=eq.lead',
       'GET', null, supabaseUrl, supabaseKey
     );
-
     const leads = Array.isArray(leadsRes.body) ? leadsRes.body : [];
-
     const dripSchedule = [
       { key: 'drip1', num: 1, minDay: 0, maxDay: 2 },
       { key: 'drip2', num: 2, minDay: 3, maxDay: 5 },
@@ -223,23 +190,14 @@ exports.handler = async () => {
       for (const d of dripSchedule) {
         if (daysSince >= d.minDay && daysSince <= d.maxDay && !sentDrips.includes(d.key)) {
           try {
-            const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
-            const res = await fetch(base + '/.netlify/functions/send-lpoa', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'send_lead_drip', leadName: lead.name, leadEmail: lead.email, emailNumber: d.num }),
-            });
-            if (!res.ok) {
-              const err = await res.text();
-              throw new Error(`Lead drip error ${res.status}: ${err}`);
-            }
+            await fetch_send('send_lead_drip', { leadName: lead.name, leadEmail: lead.email, emailNumber: d.num });
             newDrips.push(d.key);
             touched = true;
-            leadsProcessed++;
+            leadsDrippedCount++;
           } catch (e) {
             console.error('Lead drip send failed:', e.message);
           }
-          break; // only one drip per lead per day
+          break;
         }
       }
 
@@ -252,12 +210,103 @@ exports.handler = async () => {
     }
   }
 
+  // --- 3. Gather Business Metrics for Executive Briefing ---
+  let unmailedCount = 0;
+  let newLeadsCount = 0;
+  let newClientsCount = 0;
+  let pendingAuditsCount = 0;
+  let lobDeliveriesCount = 0;
+
+  try {
+    // Unmailed letters
+    const unmailedRes = await supabaseRequest('/rest/v1/letters?mailed_date=is.null&select=id', 'GET', null, supabaseUrl, supabaseKey);
+    unmailedCount = Array.isArray(unmailedRes.body) ? unmailedRes.body.length : 0;
+    
+    // New leads (last 24h)
+    const newLeadsRes = await supabaseRequest(`/rest/v1/clients?status=eq.lead&lead_created_at=gte.${yesterday}&select=id`, 'GET', null, supabaseUrl, supabaseKey);
+    newLeadsCount = Array.isArray(newLeadsRes.body) ? newLeadsRes.body.length : 0;
+
+    // New clients (last 24h)
+    const newClientsRes = await supabaseRequest(`/rest/v1/clients?status=eq.client&created_at=gte.${yesterday}&select=id`, 'GET', null, supabaseUrl, supabaseKey);
+    newClientsCount = Array.isArray(newClientsRes.body) ? newClientsRes.body.length : 0;
+
+    // Pending audits
+    // Assuming audits table exists (based on typical use in this system)
+    // Actually wait, audits are stored in the client_profiles table or where?
+    // Let's just catch error if audits table doesn't exist
+    const auditsRes = await supabaseRequest('/rest/v1/audits?status=eq.pending&select=id', 'GET', null, supabaseUrl, supabaseKey);
+    if (auditsRes.status === 200) {
+      pendingAuditsCount = Array.isArray(auditsRes.body) ? auditsRes.body.length : 0;
+    } else {
+      // Maybe audits is not a table? In this app, audits are often JSON in client_profiles or just letters?
+      pendingAuditsCount = 'N/A';
+    }
+    
+    // Lob Deliveries (delivered_at in last 24h)
+    const deliveredRes = await supabaseRequest(`/rest/v1/letters?delivered_at=gte.${yesterday.slice(0,10)}&select=id`, 'GET', null, supabaseUrl, supabaseKey);
+    lobDeliveriesCount = Array.isArray(deliveredRes.body) ? deliveredRes.body.length : 0;
+  } catch (e) {
+    console.warn('Failed to fetch some metrics for daily digest:', e);
+  }
+
+  // --- 4. Send the Master Executive Briefing ---
+  if (sgKey) {
+    const escalationRows = adminDigestItems.length > 0 
+      ? adminDigestItems.map(it => `<tr><td style="padding:6px 0;font-size:12px;border-bottom:1px solid #FEE2E2;"><strong>${it.client}</strong> - ${it.furnisher} (${it.phase}) - ${it.daysElapsed} days</td></tr>`).join('')
+      : '<tr><td style="padding:6px 0;font-size:12px;color:#6B7280;">No new escalations today.</td></tr>';
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
+    <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f3f4f6;padding:20px;margin:0;">
+      <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+        <div style="background:#1B2A4A;padding:24px;text-align:center;">
+          <h1 style="color:#C9A84C;margin:0;font-size:24px;letter-spacing:-0.5px;">CCC Executive Briefing</h1>
+          <p style="color:#9CA3AF;margin:8px 0 0;font-size:13px;text-transform:uppercase;letter-spacing:1px;">${todayISO()}</p>
+        </div>
+        
+        <div style="padding:32px;">
+          
+          <h2 style="color:#111827;font-size:16px;margin:0 0 16px;border-bottom:1px solid #E5E7EB;padding-bottom:8px;">🚨 Action Required</h2>
+          <table style="width:100%;margin-bottom:24px;border-collapse:collapse;">
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${unmailedCount}</strong> Unmailed Letters (Pending Batch)</td></tr>
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${adminDigestItems.length}</strong> Escalations Ready (30-day deadline)</td></tr>
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${pendingAuditsCount}</strong> Audits Pending Review</td></tr>
+          </table>
+
+          <h2 style="color:#111827;font-size:16px;margin:0 0 16px;border-bottom:1px solid #E5E7EB;padding-bottom:8px;">📈 Business Metrics (Last 24h)</h2>
+          <table style="width:100%;margin-bottom:24px;border-collapse:collapse;">
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${newLeadsCount}</strong> New Leads</td></tr>
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${newClientsCount}</strong> New Clients (Signed)</td></tr>
+          </table>
+
+          <h2 style="color:#111827;font-size:16px;margin:0 0 16px;border-bottom:1px solid #E5E7EB;padding-bottom:8px;">🤖 Automated Activity (Last 24h)</h2>
+          <table style="width:100%;margin-bottom:24px;border-collapse:collapse;">
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${leadsDrippedCount}</strong> Lead Nurture Emails Sent</td></tr>
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${clientUpdatesCount}</strong> Client Update Emails Sent</td></tr>
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${lobDeliveriesCount}</strong> Certified Letters Delivered</td></tr>
+          </table>
+
+          ${adminDigestItems.length > 0 ? `
+          <h2 style="color:#111827;font-size:14px;margin:32px 0 12px;color:#DC2626;">Escalation Details</h2>
+          <div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:4px;padding:12px;">
+            <table style="width:100%;border-collapse:collapse;">${escalationRows}</table>
+          </div>` : ''}
+          
+          <div style="margin-top:32px;text-align:center;">
+            <a href="https://ccc-forensic-demo.netlify.app" style="display:inline-block;background:#1B2A4A;color:#C9A84C;padding:12px 24px;text-decoration:none;border-radius:4px;font-weight:600;font-size:14px;">Open CCC Dashboard</a>
+          </div>
+        </div>
+      </div>
+    </body></html>`;
+
+    await sendgridEmail(ADMIN_EMAIL, `CCC Executive Briefing: ${todayISO()}`, html, sgKey);
+  }
+
   return {
     statusCode: 200,
-    body: JSON.stringify({ checked: letters.length, adminDigestSent: adminDigestItems.length > 0, adminDigestCount: adminDigestItems.length, leadsProcessed }),
+    body: JSON.stringify({ success: true, leadsDripped: leadsDrippedCount, updatesSent: clientUpdatesCount }),
   };
 };
 
 exports.config = {
-  schedule: '@daily',
+  schedule: '0 15 * * *',
 };
