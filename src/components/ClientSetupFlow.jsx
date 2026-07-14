@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
 import { supabase } from '../utils/supabase';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Toaster, toast } from 'react-hot-toast';
+import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-react';
 
 export default function ClientSetupFlow({ session, onComplete }) {
   const [step, setStep] = useState('password'); // password | onboarding
@@ -7,19 +10,19 @@ export default function ClientSetupFlow({ session, onComplete }) {
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
-  const [error, setError] = useState(null);
 
   const handleSetPassword = async () => {
-    setError(null);
-    if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
-    if (password !== confirm) { setError('Passwords do not match.'); return; }
+    if (password.length < 8) { toast.error('Password must be at least 8 characters.'); return; }
+    if (password !== confirm) { toast.error('Passwords do not match.'); return; }
     setLoading(true);
+    const toastId = toast.loading('Setting up your account...');
     try {
       const { error } = await supabase.auth.updateUser({ password, data: { password_set: true } });
       if (error) throw error;
+      toast.success('Password created securely!', { id: toastId });
       setStep('onboarding');
     } catch (e) {
-      setError(e.message || 'Could not set password');
+      toast.error(e.message || 'Could not set password', { id: toastId });
     } finally {
       setLoading(false);
     }
@@ -27,36 +30,40 @@ export default function ClientSetupFlow({ session, onComplete }) {
 
   if (step === 'password') {
     return (
-      <div className="min-h-screen bg-bg flex items-center justify-center p-6">
-        <div className="w-full max-w-sm">
+      <div className="min-h-screen bg-gray-50/50 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] flex items-center justify-center p-6">
+        <Toaster position="top-center" toastOptions={{ style: { fontSize: '13px', fontWeight: '500' } }} />
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}
+          className="w-full max-w-sm">
           <div className="text-center mb-8">
-            <img src="/logo.jpg" alt="CCC" className="w-12 h-12 object-contain rounded mx-auto mb-4" onError={(e) => e.target.style.display='none'} />
-            <h1 className="ccc-display text-2xl text-ink font-medium">Welcome to Credit Comeback Club</h1>
-            <p className="text-[12px] text-ink-muted mt-2">Create a password to secure your account.</p>
+            <img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="CCC" 
+              className="w-16 h-16 object-cover rounded-2xl mx-auto mb-4 shadow-[0_0_20px_rgba(251,191,36,0.3)] border-2 border-amber-400" />
+            <h1 className="ccc-display text-2xl text-slate-900 font-bold mb-2">Welcome to Credit Comeback Club</h1>
+            <p className="text-sm text-gray-500 leading-relaxed">Create a password to secure your account and access your client portal.</p>
           </div>
-          <div className="bg-white border border-border rounded p-6 space-y-4">
+          <div className="bg-white/80 backdrop-blur-xl border border-gray-100 shadow-xl shadow-slate-200/50 rounded-2xl p-8 space-y-5">
             <div>
-              <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">New Password</label>
+              <label className="text-xs uppercase tracking-[0.08em] text-gray-500 font-bold block mb-1.5 flex items-center gap-1.5"><Lock size={14} /> New Password</label>
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
                 placeholder="At least 8 characters"
-                className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white transition-all"
                 onKeyDown={(e) => e.key === 'Enter' && handleSetPassword()} />
             </div>
             <div>
-              <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Confirm Password</label>
+              <label className="text-xs uppercase tracking-[0.08em] text-gray-500 font-bold block mb-1.5 flex items-center gap-1.5"><Lock size={14} /> Confirm Password</label>
               <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
                 placeholder="Repeat password"
-                className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white transition-all"
                 onKeyDown={(e) => e.key === 'Enter' && handleSetPassword()} />
             </div>
-            {error && <div className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
             <button onClick={handleSetPassword} disabled={loading}
-              className="w-full py-2.5 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-              style={{ backgroundColor: loading ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
-              {loading ? 'Setting up…' : 'Create Password & Continue →'}
+              className="w-full py-3.5 mt-2 text-xs font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-70"
+              style={{ backgroundColor: loading ? '#94a3b8' : '#0f172a', color: loading ? '#f1f5f9' : '#fbbf24' }}>
+              {loading ? 'Setting up…' : 'Create Password'}
+              {!loading && <ChevronRight size={16} strokeWidth={2.5} />}
             </button>
           </div>
-        </div>
+        </motion.div>
       </div>
     );
   }
@@ -74,7 +81,7 @@ function ClientOnboardingModal({ session, onComplete }) {
   const [addressFile, setAddressFile] = useState(null);
   const [signature, setSignature] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const canvasRef = React.useRef(null);
   const isDrawing = React.useRef(false);
 
@@ -98,8 +105,8 @@ function ClientOnboardingModal({ session, onComplete }) {
     const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
     const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
     ctx.lineTo(x, y);
-    ctx.strokeStyle = '#1B2A4A';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 2.5;
     ctx.lineCap = 'round';
     ctx.stroke();
   };
@@ -107,7 +114,7 @@ function ClientOnboardingModal({ session, onComplete }) {
   const stopDraw = () => {
     isDrawing.current = false;
     const canvas = canvasRef.current;
-    setSignature(canvas.toDataURL('image/png'));
+    if (canvas) setSignature(canvas.toDataURL('image/png'));
   };
 
   const clearSignature = () => {
@@ -132,12 +139,12 @@ function ClientOnboardingModal({ session, onComplete }) {
 
   const handleComplete = async () => {
     if (!signature) {
-      setError('Please draw your signature in Step 3 before completing enrollment.');
+      toast.error('Please draw your signature in Step 3 before completing enrollment.');
       setStep(3);
       return;
     }
     setLoading(true);
-    setError(null);
+    const toastId = toast.loading('Finalizing your enrollment...');
     const userId = session.user.id;
     try {
       let sigUrl = null;
@@ -147,7 +154,6 @@ function ClientOnboardingModal({ session, onComplete }) {
       if (idFile) await uploadFile(idFile, `${userId}/id.${idFile.name.split('.').pop()}`);
       if (addressFile) await uploadFile(addressFile, `${userId}/address.${addressFile.name.split('.').pop()}`);
 
-      // Update client_profiles — use email as key since user_id may not be linked yet
       const userEmail = session.user.email;
       await supabase.from('client_profiles').update({
         signature_data: sigUrl,
@@ -157,17 +163,16 @@ function ClientOnboardingModal({ session, onComplete }) {
         user_id: userId,
       }).eq('email', userEmail);
 
-      // Generate signed LPOA document
       const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('email', session.user.email).single();
       const signedAt = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
       const clientFullName = (cp && cp.full_name) || session.user.email;
 
       const lpoaHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
         + 'body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;margin:0;padding:40px;color:#000;}'
-        + '.header{background:#1B2A4A;color:#C9A84C;padding:20px 32px;margin:-40px -40px 32px;}'
+        + '.header{background:#0f172a;color:#fbbf24;padding:20px 32px;margin:-40px -40px 32px;}'
         + '.header h1{margin:0;font-size:20px;}'
         + '.header p{margin:4px 0 0;font-size:11px;color:#fff;opacity:0.8;}'
-        + 'h2{font-size:12px;background:#1B2A4A;color:#fff;padding:6px 12px;margin:24px -12px 12px;}'
+        + 'h2{font-size:12px;background:#0f172a;color:#fff;padding:6px 12px;margin:24px -12px 12px;}'
         + 'ul{padding-left:20px;margin:8px 0;}'
         + 'li{margin:4px 0;}'
         + '.sig-block{margin-top:32px;padding-top:16px;border-top:1px solid #ddd;}'
@@ -206,7 +211,6 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '<div class="footer">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063 | creditcomebackclub.com | Executed under ESIGN Act 15 U.S.C. §7001</div>'
         + '</body></html>';
 
-      // Upload LPOA to storage
       const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });
       const lpoaFile = new File([lpoaBlob], 'lpoa-signed.html', { type: 'text/html' });
       const { error: lpoaErr } = await supabase.storage.from('client-docs').upload(userId + '/lpoa-signed.html', lpoaFile, { upsert: true });
@@ -216,12 +220,10 @@ function ClientOnboardingModal({ session, onComplete }) {
         lpoaUrl = lpoaData.publicUrl;
       }
 
-      // Update client_profiles with LPOA url
       if (lpoaUrl) {
         await supabase.from('client_profiles').update({ lpoa_url: lpoaUrl }).eq('email', session.user.email);
       }
 
-      // Update clients table
       if (cp) {
         await supabase.from('clients').update({
           lpoa_signed: true,
@@ -230,199 +232,243 @@ function ClientOnboardingModal({ session, onComplete }) {
         }).eq('name', cp.full_name);
       }
 
-      onComplete({ signatureUrl: sigUrl });
+      toast.success('Enrollment Complete! Entering Portal...', { id: toastId });
+      setTimeout(() => onComplete({ signatureUrl: sigUrl }), 1500);
     } catch (e) {
-      setError(e.message || 'Could not complete setup');
-    } finally {
+      toast.error(e.message || 'Could not complete setup', { id: toastId });
       setLoading(false);
     }
   };
 
-  const steps = ['Government ID', 'Proof of Address', 'Your Signature', 'Review & Sign'];
+  const steps = [
+    { title: 'Government ID', icon: <UserCheck size={16} /> },
+    { title: 'Proof of Address', icon: <FileText size={16} /> },
+    { title: 'Your Signature', icon: <PenTool size={16} /> },
+    { title: 'Review & Sign', icon: <Check size={16} /> }
+  ];
 
   return (
-    <div className="min-h-screen bg-bg flex items-center justify-center p-6">
-      <div className="w-full max-w-lg">
-        <div className="text-center mb-6">
-          <img src="/logo.jpg" alt="CCC" className="w-10 h-10 object-contain rounded mx-auto mb-3" onError={(e) => e.target.style.display='none'} />
-          <h1 className="ccc-display text-xl text-ink font-medium">Complete Your Enrollment</h1>
-          <p className="text-[12px] text-ink-muted mt-1">Step {step} of {steps.length} — {steps[step - 1]}</p>
+    <div className="min-h-screen bg-gray-50/50 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] flex items-center justify-center p-6">
+      <Toaster position="top-center" toastOptions={{ style: { fontSize: '13px', fontWeight: '500' } }} />
+      <div className="w-full max-w-2xl">
+        <div className="text-center mb-8">
+          <img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="CCC" 
+            className="w-16 h-16 object-cover rounded-2xl mx-auto mb-4 shadow-[0_0_20px_rgba(251,191,36,0.3)] border-2 border-amber-400" />
+          <h1 className="ccc-display text-2xl text-slate-900 font-bold mb-2">Complete Your Enrollment</h1>
+          <p className="text-sm text-gray-500 font-medium">Step {step} of 4 — {steps[step - 1].title}</p>
         </div>
 
         {/* Progress bar */}
-        <div className="flex gap-1 mb-6">
-          {steps.map((_, i) => (
-            <div key={i} className="h-1 flex-1 rounded-full transition-colors"
-              style={{ backgroundColor: i < step ? '#1B2A4A' : '#E5E7EB' }} />
+        <div className="flex gap-2 mb-8 px-4 max-w-lg mx-auto">
+          {steps.map((s, i) => (
+            <div key={i} className="flex-1">
+              <div className={`h-2 rounded-full transition-all duration-300 ${i + 1 <= step ? 'bg-slate-900' : 'bg-gray-200'}`} />
+              <div className={`text-[9px] uppercase tracking-wider font-bold mt-2 text-center transition-colors duration-300 ${i + 1 === step ? 'text-slate-900' : 'text-gray-400'}`}>
+                {s.title}
+              </div>
+            </div>
           ))}
         </div>
 
-        <div className="bg-white border border-border rounded p-6">
-
-          {/* Step 1 — Government ID */}
-          {step === 1 && (
-            <div className="space-y-4">
-              <div>
-                <h2 className="text-[14px] font-medium text-ink mb-1">Upload Government ID</h2>
-                <p className="text-[12px] text-ink-muted">Driver's license, passport, or state ID. Used to verify your identity on dispute letters.</p>
-              </div>
-              <label className="block border-2 border-dashed border-border rounded-sm p-8 text-center cursor-pointer hover:border-navy transition-colors">
-                {idFile ? (
-                  <div className="text-[13px] text-green-600 font-medium">✓ {idFile.name}</div>
-                ) : (
-                  <>
-                    <div className="text-[13px] text-ink-muted">Drop file or click to browse</div>
-                    <div className="text-[11px] text-ink-faint mt-1">JPG, PNG, or PDF</div>
-                  </>
-                )}
-                <input type="file" accept=".jpg,.jpeg,.png,.pdf" className="hidden"
-                  onChange={(e) => e.target.files[0] && setIdFile(e.target.files[0])} />
-              </label>
-              <button onClick={() => setStep(2)} disabled={!idFile}
-                className="w-full py-2.5 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                style={{ backgroundColor: idFile ? '#1B2A4A' : '#B5BBC9', color: '#C9A84C' }}>
-                Continue →
-              </button>
-              <button onClick={() => setStep(2)} className="w-full text-[11px] text-ink-muted hover:text-ink text-center py-1">
-                Skip for now
-              </button>
-            </div>
-          )}
-
-          {/* Step 2 — Proof of Address */}
-          {step === 2 && (
-            <div className="space-y-4">
-              <div>
-                <h2 className="text-[14px] font-medium text-ink mb-1">Upload Proof of Address</h2>
-                <p className="text-[12px] text-ink-muted">Utility bill, bank statement, or lease agreement dated within 90 days.</p>
-              </div>
-              <label className="block border-2 border-dashed border-border rounded-sm p-8 text-center cursor-pointer hover:border-navy transition-colors">
-                {addressFile ? (
-                  <div className="text-[13px] text-green-600 font-medium">✓ {addressFile.name}</div>
-                ) : (
-                  <>
-                    <div className="text-[13px] text-ink-muted">Drop file or click to browse</div>
-                    <div className="text-[11px] text-ink-faint mt-1">JPG, PNG, or PDF</div>
-                  </>
-                )}
-                <input type="file" accept=".jpg,.jpeg,.png,.pdf" className="hidden"
-                  onChange={(e) => e.target.files[0] && setAddressFile(e.target.files[0])} />
-              </label>
-              <div className="flex gap-2">
-                <button onClick={() => setStep(1)} className="flex-1 py-2.5 text-[12px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-ink transition-colors">
-                  ← Back
-                </button>
-                <button onClick={() => setStep(3)} disabled={!addressFile}
-                  className="flex-1 py-2.5 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                  style={{ backgroundColor: addressFile ? '#1B2A4A' : '#B5BBC9', color: '#C9A84C' }}>
-                  Continue →
-                </button>
-              </div>
-              <button onClick={() => setStep(3)} className="w-full text-[11px] text-ink-muted hover:text-ink text-center py-1">
-                Skip for now
-              </button>
-            </div>
-          )}
-
-          {/* Step 3 — Signature */}
-          {step === 3 && (
-            <div className="space-y-4">
-              <div>
-                <h2 className="text-[14px] font-medium text-ink mb-1">Draw Your Signature</h2>
-                <p className="text-[12px] text-ink-muted">This signature will appear on all dispute letters sent on your behalf.</p>
-              </div>
-              <div className="border border-border rounded-sm overflow-hidden">
-                <canvas ref={canvasRef} width={460} height={140}
-                  className="block w-full touch-none bg-gray-50 cursor-crosshair"
-                  onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw}
-                  onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw} />
-                <div className="flex items-center justify-between px-3 py-1.5 border-t border-border bg-white">
-                  <span className="text-[10px] text-ink-faint uppercase tracking-wider">Sign above</span>
-                  <button onClick={clearSignature} className="text-[10px] text-ink-muted hover:text-red-600 uppercase tracking-wider">Clear</button>
+        <div className="bg-white/80 backdrop-blur-xl border border-gray-100 shadow-xl shadow-slate-200/50 rounded-2xl p-8 relative overflow-hidden">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={step}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.3 }}
+            >
+              {/* Step 1 */}
+              {step === 1 && (
+                <div className="space-y-6">
+                  <div className="text-center">
+                    <h2 className="text-lg font-bold text-slate-900 mb-2">Upload Government ID</h2>
+                    <p className="text-sm text-gray-500 leading-relaxed max-w-sm mx-auto">Driver's license, passport, or state ID. Used to verify your identity on dispute letters sent to bureaus.</p>
+                  </div>
+                  <label className="block border-2 border-dashed border-gray-300 bg-gray-50/50 rounded-xl p-10 text-center cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
+                    {idFile ? (
+                      <div className="text-sm text-green-600 font-bold flex items-center justify-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center"><Check size={16} /></div>
+                        {idFile.name}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-sm border border-gray-100"><UserCheck size={20} className="text-amber-500" /></div>
+                        <div className="text-sm font-semibold text-slate-900">Click to browse or drop file here</div>
+                        <div className="text-xs text-gray-400 mt-2">Accepts JPG, PNG, or PDF</div>
+                      </>
+                    )}
+                    <input type="file" accept=".jpg,.jpeg,.png,.pdf" className="hidden"
+                      onChange={(e) => e.target.files[0] && setIdFile(e.target.files[0])} />
+                  </label>
+                  <div className="flex flex-col gap-3 pt-2">
+                    <button onClick={() => setStep(2)} disabled={!idFile}
+                      className="w-full py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-md disabled:opacity-50 disabled:shadow-none"
+                      style={{ backgroundColor: idFile ? '#0f172a' : '#cbd5e1', color: idFile ? '#fbbf24' : '#64748b' }}>
+                      Continue to Step 2
+                    </button>
+                    <button onClick={() => setStep(2)} className="w-full text-xs font-semibold text-gray-400 hover:text-slate-900 uppercase tracking-wider py-2 transition-colors">
+                      Skip for now
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => setStep(2)} className="flex-1 py-2.5 text-[12px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-ink transition-colors">
-                  ← Back
-                </button>
-                <button onClick={() => setStep(4)} disabled={!signature}
-                  className="flex-1 py-2.5 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                  style={{ backgroundColor: signature ? '#1B2A4A' : '#B5BBC9', color: '#C9A84C' }}>
-                  Continue →
-                </button>
-              </div>
-              <button onClick={() => setStep(4)} className="w-full text-[11px] text-ink-muted hover:text-ink text-center py-1">
-                Skip for now
-              </button>
-            </div>
-          )}
+              )}
 
-          {/* Step 4 — Review & Sign */}
-          {step === 4 && (
-            <div className="space-y-4">
-              <div>
-                <h2 className="text-[14px] font-medium text-ink mb-1">Review & Complete Enrollment</h2>
-                <p className="text-[12px] text-ink-muted">By completing enrollment you authorize Credit Comeback Club to dispute credit information on your behalf per the Limited Power of Attorney.</p>
-              </div>
-              <div className="bg-gray-50 border border-border rounded-sm p-3 space-y-1.5 text-[12px]">
-                <div className="flex items-center gap-2">
-                  <span className={idFile ? 'text-green-600' : 'text-amber-600'}>{idFile ? '✓' : '○'}</span>
-                  <span className="text-ink">{idFile ? `Government ID: ${idFile.name}` : 'Government ID: Not uploaded'}</span>
+              {/* Step 2 */}
+              {step === 2 && (
+                <div className="space-y-6">
+                  <div className="text-center">
+                    <h2 className="text-lg font-bold text-slate-900 mb-2">Upload Proof of Address</h2>
+                    <p className="text-sm text-gray-500 leading-relaxed max-w-sm mx-auto">Utility bill, bank statement, or lease agreement dated within the last 90 days.</p>
+                  </div>
+                  <label className="block border-2 border-dashed border-gray-300 bg-gray-50/50 rounded-xl p-10 text-center cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
+                    {addressFile ? (
+                      <div className="text-sm text-green-600 font-bold flex items-center justify-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center"><Check size={16} /></div>
+                        {addressFile.name}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-sm border border-gray-100"><FileText size={20} className="text-amber-500" /></div>
+                        <div className="text-sm font-semibold text-slate-900">Click to browse or drop file here</div>
+                        <div className="text-xs text-gray-400 mt-2">Accepts JPG, PNG, or PDF</div>
+                      </>
+                    )}
+                    <input type="file" accept=".jpg,.jpeg,.png,.pdf" className="hidden"
+                      onChange={(e) => e.target.files[0] && setAddressFile(e.target.files[0])} />
+                  </label>
+                  <div className="flex gap-3 pt-2">
+                    <button onClick={() => setStep(1)} className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-slate-900 transition-colors">
+                      Back
+                    </button>
+                    <button onClick={() => setStep(3)} disabled={!addressFile}
+                      className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-md disabled:opacity-50 disabled:shadow-none"
+                      style={{ backgroundColor: addressFile ? '#0f172a' : '#cbd5e1', color: addressFile ? '#fbbf24' : '#64748b' }}>
+                      Continue
+                    </button>
+                  </div>
+                  <button onClick={() => setStep(3)} className="w-full text-xs font-semibold text-gray-400 hover:text-slate-900 uppercase tracking-wider py-2 transition-colors">
+                    Skip for now
+                  </button>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={addressFile ? 'text-green-600' : 'text-amber-600'}>{addressFile ? '✓' : '○'}</span>
-                  <span className="text-ink">{addressFile ? `Proof of Address: ${addressFile.name}` : 'Proof of Address: Not uploaded'}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={signature ? 'text-green-600' : 'text-amber-600'}>{signature ? '✓' : '○'}</span>
-                  <span className="text-ink">{signature ? 'Signature: Drawn' : 'Signature: Not drawn'}</span>
-                </div>
-              </div>
-              {/* Service Agreement */}
-              <div className="border border-border rounded-sm overflow-hidden">
-                <div className="bg-navy px-3 py-2">
-                  <span className="text-[11px] uppercase tracking-wider text-gold font-medium">Client Service Agreement</span>
-                </div>
-                <div className="p-3 max-h-48 overflow-y-auto text-[11px] text-ink-muted space-y-2 bg-gray-50">
-                  <p><strong className="text-ink">Services:</strong> Credit Comeback Club ("CCC") will perform a forensic Metro 2 and FCRA audit of your credit reports and prepare direct furnisher dispute letters on your behalf.</p>
-                  <p><strong className="text-ink">Fee Schedule (Pay-Per-Delete):</strong></p>
-                  <p>• First Work Fee: $49 (due after audit delivery, before letters are mailed — covers postage and processing)</p>
-                  <p>• Type A deletion (original creditor, derogatory): $125 per bureau</p>
-                  <p>• Type B deletion (original creditor, paid/current): $75 per bureau</p>
-                  <p>• Type C deletion (debt collector/buyer): $150 per bureau</p>
-                  <p>• Public Record deletion: $175 per bureau</p>
-                  <p>• No deletion = no charge. You only pay for confirmed removals.</p>
-                  <p><strong className="text-ink">Credit Monitoring:</strong> ScoreFusion monitoring at $16/month is the client's direct responsibility and is required to track dispute progress.</p>
-                  <p><strong className="text-ink">No Guarantee:</strong> CCC makes no guarantee of specific outcomes. Results vary by credit profile and creditor response. CCC does not guarantee deletion of any specific account.</p>
-                  <p><strong className="text-ink">Prohibited Practices:</strong> CCC does not dispute accurate information, create new credit identities, or advise clients to misrepresent their identity to any creditor or agency.</p>
-                  <p><strong className="text-ink">CROA Compliance:</strong> This agreement complies with the Credit Repair Organizations Act (15 U.S.C. §1679 et seq.). You have the right to cancel within 3 business days of signing.</p>
-                  <p><strong className="text-ink">Governing Law:</strong> This agreement is governed by Colorado law. Any disputes shall be resolved in Mesa County, Colorado.</p>
-                  <p><strong className="text-ink">Contact:</strong> Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063 | creditcomebackclub@gmail.com</p>
-                </div>
-              </div>
+              )}
 
-              {/* Consent checkbox */}
-              <label className="flex items-start gap-2 cursor-pointer">
-                <input type="checkbox" checked={agreedToTerms} onChange={(e) => setAgreedToTerms(e.target.checked)}
-                  className="mt-0.5 shrink-0" />
-                <span className="text-[11px] text-ink-muted">
-                  I have read and agree to the Client Service Agreement above. I authorize Credit Comeback Club to dispute credit information on my behalf per the Limited Power of Attorney. I understand my electronic signature is legally binding under the ESIGN Act (15 U.S.C. §7001).
-                </span>
-              </label>
+              {/* Step 3 */}
+              {step === 3 && (
+                <div className="space-y-6">
+                  <div className="text-center">
+                    <h2 className="text-lg font-bold text-slate-900 mb-2">Draw Your Signature</h2>
+                    <p className="text-sm text-gray-500 leading-relaxed max-w-sm mx-auto">This signature will securely authorize dispute letters sent on your behalf.</p>
+                  </div>
+                  <div className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-inner">
+                    <canvas ref={canvasRef} width={600} height={180}
+                      className="block w-full touch-none cursor-crosshair bg-[url('https://www.transparenttextures.com/patterns/graphy.png')]"
+                      onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw}
+                      onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw} />
+                    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
+                      <span className="text-[10px] text-gray-400 uppercase tracking-[0.1em] font-bold">Sign above the line</span>
+                      <button onClick={clearSignature} className="text-[10px] font-bold text-red-500 hover:text-red-700 uppercase tracking-[0.1em] bg-red-50 px-3 py-1.5 rounded-md transition-colors">Clear</button>
+                    </div>
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                    <button onClick={() => setStep(2)} className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-slate-900 transition-colors">
+                      Back
+                    </button>
+                    <button onClick={() => setStep(4)} disabled={!signature}
+                      className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-md disabled:opacity-50 disabled:shadow-none"
+                      style={{ backgroundColor: signature ? '#0f172a' : '#cbd5e1', color: signature ? '#fbbf24' : '#64748b' }}>
+                      Continue
+                    </button>
+                  </div>
+                </div>
+              )}
 
-              {error && <div className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
-              <div className="flex gap-2">
-                <button onClick={() => setStep(3)} className="flex-1 py-2.5 text-[12px] uppercase tracking-wider rounded-sm border border-border text-ink-muted hover:text-ink transition-colors">
-                  ← Back
-                </button>
-                <button onClick={handleComplete} disabled={loading || !agreedToTerms}
-                  className="flex-1 py-2.5 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                  style={{ backgroundColor: (loading || !agreedToTerms) ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
-                  {loading ? 'Saving…' : '✓ Complete Enrollment'}
-                </button>
-              </div>
-            </div>
-          )}
+              {/* Step 4 */}
+              {step === 4 && (
+                <div className="space-y-6">
+                  <div className="text-center">
+                    <h2 className="text-lg font-bold text-slate-900 mb-2">Review & Complete</h2>
+                    <p className="text-sm text-gray-500 leading-relaxed mx-auto">By completing enrollment, you authorize Credit Comeback Club to dispute information on your behalf.</p>
+                  </div>
+                  
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${idFile ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>
+                        {idFile ? <Check size={16} strokeWidth={2.5} /> : <div className="w-2 h-2 bg-amber-600 rounded-full" />}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-slate-900 uppercase tracking-wider">Government ID</div>
+                        <div className="text-xs text-gray-500">{idFile ? idFile.name : 'Not uploaded (Will need later)'}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${addressFile ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>
+                        {addressFile ? <Check size={16} strokeWidth={2.5} /> : <div className="w-2 h-2 bg-amber-600 rounded-full" />}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-slate-900 uppercase tracking-wider">Proof of Address</div>
+                        <div className="text-xs text-gray-500">{addressFile ? addressFile.name : 'Not uploaded (Will need later)'}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${signature ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                        {signature ? <Check size={16} strokeWidth={2.5} /> : <div className="text-red-600 font-bold">!</div>}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-slate-900 uppercase tracking-wider">Signature</div>
+                        <div className="text-xs text-gray-500">{signature ? 'Drawn securely' : 'Required to proceed'}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+                    <div className="bg-slate-900 px-4 py-3 flex items-center gap-2">
+                      <FileText size={16} className="text-amber-400" />
+                      <span className="text-xs uppercase tracking-[0.1em] text-amber-400 font-bold">Client Service Agreement</span>
+                    </div>
+                    <div className="p-5 max-h-48 overflow-y-auto text-xs text-gray-600 space-y-3 custom-scrollbar">
+                      <p><strong className="text-slate-900">Services:</strong> Credit Comeback Club ("CCC") will perform a forensic Metro 2 and FCRA audit of your credit reports and prepare direct furnisher dispute letters on your behalf.</p>
+                      <p><strong className="text-slate-900">Fee Schedule (Pay-Per-Delete):</strong></p>
+                      <ul className="pl-4 space-y-1 text-gray-500">
+                        <li>• First Work Fee: $49 (due after audit delivery)</li>
+                        <li>• Type A deletion: $125 per bureau</li>
+                        <li>• Type B deletion: $75 per bureau</li>
+                        <li>• Type C deletion: $150 per bureau</li>
+                        <li>• Public Record deletion: $175 per bureau</li>
+                        <li>• No deletion = no charge.</li>
+                      </ul>
+                      <p><strong className="text-slate-900">Credit Monitoring:</strong> ScoreFusion monitoring at $16/month is the client's direct responsibility.</p>
+                      <p><strong className="text-slate-900">No Guarantee:</strong> CCC makes no guarantee of specific outcomes. Results vary by credit profile and creditor response.</p>
+                      <p><strong className="text-slate-900">Prohibited Practices:</strong> CCC does not dispute accurate information or create new credit identities.</p>
+                      <p><strong className="text-slate-900">CROA Compliance:</strong> This agreement complies with the Credit Repair Organizations Act (15 U.S.C. §1679 et seq.). You have the right to cancel within 3 business days of signing.</p>
+                      <p><strong className="text-slate-900">Contact:</strong> 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063</p>
+                    </div>
+                  </div>
+
+                  <label className="flex items-start gap-3 cursor-pointer p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-amber-50/50 hover:border-amber-200 transition-colors">
+                    <input type="checkbox" checked={agreedToTerms} onChange={(e) => setAgreedToTerms(e.target.checked)}
+                      className="mt-1 w-4 h-4 rounded border-gray-300 text-amber-500 focus:ring-amber-400" />
+                    <span className="text-xs text-gray-600 leading-relaxed">
+                      I have read and agree to the <strong className="text-slate-900">Client Service Agreement</strong> above. I authorize Credit Comeback Club to dispute credit information on my behalf per the Limited Power of Attorney. I understand my electronic signature is legally binding under the ESIGN Act (15 U.S.C. §7001).
+                    </span>
+                  </label>
+
+                  <div className="flex gap-3 pt-4">
+                    <button onClick={() => setStep(3)} className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-slate-900 transition-colors">
+                      Back
+                    </button>
+                    <button onClick={handleComplete} disabled={loading || !agreedToTerms}
+                      className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-70 disabled:shadow-none"
+                      style={{ backgroundColor: (loading || !agreedToTerms) ? '#94a3b8' : '#0f172a', color: (loading || !agreedToTerms) ? '#f1f5f9' : '#fbbf24' }}>
+                      {loading ? 'Saving…' : 'Complete Enrollment'}
+                      {!loading && <Check size={16} strokeWidth={2.5} />}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
       </div>
     </div>
