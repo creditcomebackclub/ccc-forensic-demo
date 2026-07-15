@@ -28,4 +28,4 @@
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
     # CSP: allow scripts/styles from self + Supabase + Google Fonts only.
     # 'unsafe-inline' is required for React's inline styles; no eval is allowed.
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://*.supabase.co https://*.supabase.com https://api.anthropic.com https://generativelanguage.googleapis.com; frame-src 'none'; object-src 'none'; base-uri 'self';"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; connect-src 'self' https://*.supabase.co https://*.supabase.com https://api.anthropic.com https://generativelanguage.googleapis.com https://ccc-agents-api.onrender.com; frame-src 'none'; object-src 'none'; base-uri 'self';"
