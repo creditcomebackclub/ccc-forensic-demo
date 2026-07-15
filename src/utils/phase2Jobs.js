@@ -24,9 +24,13 @@ export async function runPhase2Job({ letterId, kind, filePaths, mailedDate }, on
   });
   if (insErr) throw new Error('Could not create analysis job: ' + insErr.message);
 
+  const { data: { session } } = await supabase.auth.getSession();
   const res = await fetch('/.netlify/functions/phase2-analyze-background', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+    },
     body: JSON.stringify({ jobId, mailedDate: mailedDate || null }),
   });
   // Netlify background functions ACK with 202 and run detached

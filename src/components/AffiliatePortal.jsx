@@ -78,7 +78,10 @@ export default function AffiliatePortal({ session, onSignOut }) {
       // Notify Chris of new referral
       await fetch('/.netlify/functions/send-lpoa', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+        },
         body: JSON.stringify({
           action: 'affiliate_new_referral',
           affiliateName: affiliate.name,
