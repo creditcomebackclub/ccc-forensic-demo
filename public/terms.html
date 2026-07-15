@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terms of Service | Credit Comeback Club</title>
+<meta name="description" content="Terms of Service for Credit Comeback Club, LLC — CROA-compliant credit repair service agreement covering all membership tiers.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --navy: #0B1F3A;
+  --sky: #2B8FD4;
+  --sky-light: #EBF5FB;
+  --sky-mid: #B8DDEF;
+  --white: #FFFFFF;
+  --off-white: #F5F9FD;
+  --black: #080E18;
+  --gray: #566070;
+  --gray-light: #D5E0EC;
+  --gold: #F0B429;
+  --font-d: 'Barlow Condensed', sans-serif;
+  --font-b: 'Barlow', sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{font-family:var(--font-b);background:var(--white);color:var(--navy);overflow-x:hidden;}
+
+/* NAV */
+nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: transparent;
+  height: 66px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 28px;
+  transition: all .3s;
+}
+nav.scrolled {
+  background: rgba(11,31,58,0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  box-shadow: 0 4px 20px rgba(0,0,0,.2);
+}
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.btn-portal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--sky);
+  color: #fff;
+  text-decoration: none;
+  padding: 9px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  transition: background .2s, transform .15s;
+  white-space: nowrap;
+}
+.btn-portal:hover {
+  background: #2278b5;
+  transform: translateY(-1px);
+}
+.btn-portal svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.hamburger {
+  background: none;
+  border: 1.5px solid rgba(255,255,255,0.3);
+  border-radius: 6px;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all .2s;
+}
+.hamburger:hover {
+  border-color: var(--sky);
+  background: rgba(255,255,255,0.1);
+}
+.hamburger span {
+  display: block;
+  width: 17px;
+  height: 2px;
+  background: #fff;
+  border-radius: 2px;
+  transition: all .3s;
+}
+.hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.hamburger.open span:nth-child(2) { opacity: 0; }
+.hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+/* SLIDING DROPDOWN */
+.nav-dropdown {
+  position: fixed;
+  top: 66px;
+  right: -300px; 
+  width: 250px;
+  background-color: #ffffff;
+  border-left: 1px solid var(--gray-light);
+  border-bottom: 1px solid var(--gray-light);
+  box-shadow: -5px 10px 30px rgba(11,31,58,0.15);
+  border-radius: 0 0 0 12px;
+  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 999;
+  display: block;
+}
+.nav-dropdown.open {
+  right: 0;
+}
+.nav-dropdown a {
+  display: block;
+  padding: 16px 24px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--navy);
+  text-decoration: none;
+  border-bottom: 1px solid var(--sky-light);
+  text-align: left;
+  transition: all 0.2s;
+}
+.nav-dropdown a:last-child {
+  border-bottom: none;
+}
+.nav-dropdown a:hover {
+  background-color: var(--sky-light);
+  color: var(--sky);
+  padding-left: 30px;
+}
+
+/* HERO (Mini for legal pages) */
+.hero{min-height:40vh;background:linear-gradient(140deg,#081626 0%,#0d2240 45%,#122e54 100%);display:flex;align-items:center;padding:100px 28px 40px;position:relative;overflow:hidden;}
+.hero-watermark{position:absolute;top:0;left:0;width:100%;height:100%;background-image:url('https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg');background-repeat:no-repeat;background-position:center;background-size:cover;background-attachment:fixed;opacity:0.06;pointer-events:none;z-index:0;}
+.hero-inner{max-width:880px;margin:0 auto;width:100%;text-align:center;position:relative;z-index:2;}
+.hero h1{font-family:var(--font-d);font-size:clamp(36px,4.5vw,54px);font-weight:800;line-height:1.1;color:#fff;margin-bottom:14px;letter-spacing:-.01em;}
+.hero p{font-size:16.5px;line-height:1.72;color:rgba(255,255,255,.68);margin:0 auto;}
+.hero-date{color:var(--sky);font-weight:700;font-size:14px;margin-top:8px;text-transform:uppercase;letter-spacing:.05em;}
+
+/* DOCUMENT CONTENT */
+.doc-section {
+  padding: 60px 28px 90px;
+  background: var(--off-white);
+}
+.doc-container {
+  max-width: 860px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 16px;
+  padding: 50px 60px;
+  box-shadow: 0 10px 40px rgba(11,31,58,0.06);
+  border: 1px solid var(--gray-light);
+}
+
+.doc-container h2 {
+  font-family: var(--font-d);
+  color: var(--navy);
+  font-size: 28px;
+  font-weight: 800;
+  margin: 40px 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid var(--sky-light);
+}
+.doc-container h2:first-of-type { margin-top: 0; }
+
+.doc-container h3 {
+  color: var(--navy);
+  font-size: 18px;
+  font-weight: 700;
+  margin: 28px 0 12px;
+}
+
+.doc-container p {
+  color: var(--gray);
+  font-size: 15.5px;
+  margin-bottom: 18px;
+  line-height: 1.8;
+}
+
+.doc-container ul {
+  margin: 16px 0 24px 0;
+  padding-left: 0;
+  list-style: none;
+}
+.doc-container li {
+  padding: 8px 0 8px 28px;
+  position: relative;
+  font-size: 15.5px;
+  color: var(--gray);
+  border-bottom: 1px solid var(--sky-light);
+  line-height: 1.6;
+}
+.doc-container li:last-child { border-bottom: none; }
+.doc-container li::before {
+  content: '✓';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  color: var(--sky);
+  font-weight: 800;
+}
+
+.highlight-box {
+  background: var(--sky-light);
+  border-left: 4px solid var(--sky);
+  padding: 22px 28px;
+  border-radius: 0 8px 8px 0;
+  margin: 24px 0;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--navy);
+  font-weight: 600;
+}
+
+.warning-box {
+  background: #FFF9F0;
+  border-left: 4px solid var(--gold);
+  padding: 22px 28px;
+  border-radius: 0 8px 8px 0;
+  margin: 24px 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--navy);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  line-height: 1.6;
+}
+
+.contact-block {
+  background: var(--navy);
+  border-radius: 12px;
+  padding: 34px 40px;
+  margin-top: 50px;
+  color: #fff;
+  text-align: center;
+}
+.contact-block h3 { color: #fff; margin: 0 0 16px; border:none; padding:0; font-family:var(--font-d); font-size:24px;}
+.contact-block p { color: rgba(255,255,255,0.75); margin: 6px 0; font-size: 16px; }
+.contact-block a { color: var(--sky); text-decoration: none; font-weight: 700; }
+.contact-block a:hover { color: #fff; }
+
+/* FOOTER */
+footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5);}
+.footer-top{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr;gap:44px;padding-bottom:36px;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:28px;}
+.footer-brand img{height:38px;width:auto;border-radius:5px;margin-bottom:14px;opacity:.88;}
+.footer-brand p{font-size:13px;line-height:1.72;max-width:290px;margin-bottom:14px;}
+.footer-contact a{display:block;font-size:13.5px;color:rgba(255,255,255,.65);text-decoration:none;margin-bottom:5px;transition:color .2s;}
+.footer-contact a:hover{color:var(--sky);}
+.footer-col h4{font-size:11px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:14px;}
+.footer-col a{display:block;font-size:13.5px;color:rgba(255,255,255,.58);text-decoration:none;margin-bottom:9px;transition:color .2s;}
+.footer-col a:hover{color:var(--sky);}
+.footer-bottom{max-width:1080px;margin:0 auto;}
+.footer-bottom p{font-size:11.5px;line-height:1.78;color:rgba(255,255,255,.28);margin-bottom:7px;}
+.footer-bottom p.copyright{font-size:12.5px;color:rgba(255,255,255,.35);margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.05);}
+
+/* RESPONSIVE */
+@media(max-width:900px){
+  .doc-container { padding: 40px 30px; }
+  .footer-top{grid-template-columns:1fr;gap:28px;}
+  nav{padding:0 18px;}
+  .doc-section{padding:40px 18px 60px;}
+}
+@media(max-width:600px){
+  .doc-container { padding: 30px 20px; }
+}
+</style>
+</head>
+<body>
+
+<nav id="navbar">
+  <div class="nav-right">
+    <a href="https://secure.scorexer.com" target="_blank" class="btn-portal">
+      <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+      Club Member Login
+    </a>
+    <button class="hamburger" id="hamburger" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+  
+  <div class="nav-dropdown" id="dropdown">
+    <a href='/'>Home</a>
+    <a href='/#why'>Why Us</a>
+    <a href='/#method'>Our Method</a>
+    <a href='/#faq'>FAQ</a>
+    <a href='/#contact'>Contact</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="hero-watermark"></div>
+  <div class="hero-inner">
+    <h1>Terms of Service</h1>
+    <p>Credit Comeback Club, LLC — Colorado</p>
+    <div class="hero-date">Effective Date: April 1, 2025</div>
+  </div>
+</section>
+
+<section class="doc-section">
+  <div class="doc-container">
+
+    <div class="warning-box">
+        Please read these Terms of Service carefully before using our services. By scheduling a consultation, signing a service agreement, or making any payment, you acknowledge that you have read, understood, and agree to be bound by these Terms.
+    </div>
+
+    <h2>1. Company Information</h2>
+    <p>Credit Comeback Club, LLC ("Company," "we," "us," or "our") is a credit repair organization registered in the State of Colorado. We provide credit repair services as defined under the Credit Repair Organizations Act (CROA), 15 U.S.C. § 1679 et seq., and subject to applicable Colorado state law.</p>
+    <ul>
+        <li>Website: creditcomebackclub.com</li>
+        <li>Phone/Text: 970-644-0063</li>
+        <li>Email: creditcomebackclub@gmail.com</li>
+    </ul>
+
+    <h2>2. Your Rights Under Federal Law — CROA Disclosure</h2>
+    <div class="highlight-box">
+        You have a right to dispute inaccurate information in your credit report without the help of a credit repair organization, for free or for a minimal charge. You may contact a consumer reporting agency directly. There is no guarantee that a credit repair organization will be able to improve your credit report.
+    </div>
+    <div class="highlight-box">
+        You have a right to sue a credit repair organization that violates the Credit Repair Organizations Act. This law prohibits deceptive practices by credit repair organizations.
+    </div>
+    <div class="highlight-box">
+        You have the right to cancel your contract with any credit repair organization for any reason within 3 business days from the date you signed it.
+    </div>
+    <p>Under the Credit Repair Organizations Act:</p>
+    <ul>
+        <li>We cannot charge you for credit repair services before those services have been fully performed.</li>
+        <li>We cannot make untrue or misleading statements about the services we will provide.</li>
+        <li>We cannot advise you to alter your identification to change your credit record.</li>
+        <li>We cannot advise you to make any false statement to a consumer reporting agency or creditor.</li>
+    </ul>
+
+    <h2>3. Description of Services</h2>
+    <p>Credit Comeback Club, LLC provides credit dispute and credit repair services utilizing a furnisher-first methodology grounded in the Fair Credit Reporting Act (FCRA), specifically FCRA §623, and Metro 2 data format compliance standards. Our services include:</p>
+    <ul>
+        <li>Review and analysis of client credit reports from one or more of the three major credit bureaus</li>
+        <li>Identification of potential Metro 2 format violations and FCRA §623 compliance failures by data furnishers</li>
+        <li>Drafting and sending of customized, legally-grounded dispute correspondence directed to data furnishers</li>
+        <li>Ongoing creditor follow-up and dispute escalation as applicable</li>
+        <li>Credit monitoring coordination and strategic planning sessions (Membership tiers)</li>
+        <li>Monthly 1-on-1 strategy calls and business credit roadmap (VIP Membership only)</li>
+    </ul>
+    <p>We do not provide legal advice, legal representation, or services as a licensed attorney. Nothing in these Terms or in our services constitutes legal advice.</p>
+
+    <h2>4. Service Tiers and Fees</h2>
+
+    <h3>4.1 Standard CCC Membership</h3>
+    <ul>
+        <li>First Work Fee: $75.00 (due at enrollment — covers initial Metro 2 violation analysis and first round of dispute letters)</li>
+        <li>Monthly Fee: $79.00 per month</li>
+        <li>Includes: Monthly credit report analysis, up to 3 custom dispute letters per billing cycle, printing, mailing, and tracking of all correspondence, continuous creditor challenges</li>
+        <li>Standard turnaround: initial letters delivered within 5–7 business days of enrollment; monthly letters within 5–7 business days of each billing cycle</li>
+        <li>Cancel anytime with no penalty</li>
+    </ul>
+
+    <h3>4.2 VIP Membership</h3>
+    <ul>
+        <li>First Work Fee: $99.00 (due at enrollment)</li>
+        <li>Monthly Fee: $149.00 per month</li>
+        <li>Includes: All Standard services plus up to 5 custom dispute letters per billing cycle, priority turnaround (initial letters within 2–3 business days; furnisher responses reviewed and countered within 48 hours of receipt), monthly 1-on-1 strategy call with the founder, and business credit roadmap upon personal profile completion</li>
+        <li>Cancel anytime with no penalty</li>
+    </ul>
+
+    <h3>4.3 Paid in Full (6-Month Engagement)</h3>
+    <ul>
+        <li>Total Fee: $499.00 (due at enrollment — covers 6 months of Standard-level service)</li>
+        <li>First Work Fee: Waived — a savings of $75.00 versus Standard enrollment</li>
+        <li>Total cost of $499.00 represents a $50.00 savings versus 6 months of Standard month-to-month ($549.00)</li>
+        <li>Includes: Up to 3 custom dispute letters per billing cycle; all Standard services for 6 months</li>
+        <li>No monthly billing — one payment covers the full 6-month engagement</li>
+        <li>Refund policy: Prorated refund for unused months minus a $75 administrative fee if cancelled after the 3-day right to cancel period</li>
+    </ul>
+
+    <p>Monthly dispute letter limits apply per billing cycle. Unused letters do not roll over. Additional letters beyond the applicable cap may be available at an additional fee at the Company's discretion.</p>
+
+    <h2>5. Right to Cancel</h2>
+    <p>Pursuant to CROA, you have the right to cancel your service agreement without penalty or obligation within <strong>three (3) business days</strong> of the date you signed the agreement. To cancel within this period, notify us in writing via email at creditcomebackclub@gmail.com or by certified mail. Upon valid cancellation within 3 business days, any fees paid will be refunded in full within 10 business days.</p>
+    <p>After the 3-business-day period, monthly membership clients may cancel at any time and will not be billed for subsequent months. The First Work Fee is non-refundable after the initial cancellation period as the associated services will have been performed.</p>
+
+    <h2>6. No Guarantee of Results</h2>
+    <div class="warning-box">
+        Credit Comeback Club, LLC makes no guarantee, warranty, or promise that our services will result in any specific improvement to your credit score, the removal of any specific item from your credit report, or any other particular outcome.
+    </div>
+    <p>Credit repair results vary based on the specific inaccuracies, violations, and circumstances present in each client's credit file, the responsiveness of data furnishers, and other factors outside our control. Past results achieved for other clients are not a guarantee of future results.</p>
+
+    <h2>7. Client Responsibilities</h2>
+    <p>By enrolling in our services, you agree to:</p>
+    <ul>
+        <li>Provide accurate, complete, and truthful information about yourself and your credit accounts</li>
+        <li>Provide copies of your credit reports from all three bureaus upon request</li>
+        <li>Notify us promptly of any communications you receive from creditors, debt collectors, or credit bureaus related to disputed accounts</li>
+        <li>Sign dispute letters as required and cooperate with the dispute process</li>
+        <li>Not independently contact furnishers or bureaus regarding accounts we are actively disputing without notifying us first</li>
+        <li>Maintain an active credit monitoring service or provide updated credit reports as requested</li>
+    </ul>
+    <p>Monthly dispute letter limits apply per billing cycle as follows: Standard and Paid in Full clients receive up to 3 dispute letters per billing cycle; VIP clients receive up to 5 dispute letters per billing cycle. Unused letters do not roll over to subsequent billing cycles.</p>
+
+    <h2>8. Prohibited Conduct</h2>
+    <p>You agree that you will not provide false or fraudulent information, request assistance creating a new credit identity, or use our services for any unlawful purpose. We reserve the right to immediately terminate services without refund if a client engages in prohibited conduct.</p>
+
+    <h2>9. Limitation of Liability</h2>
+    <div class="warning-box">
+        To the maximum extent permitted by applicable law, Credit Comeback Club, LLC shall not be liable for any indirect, incidental, special, consequential, or punitive damages arising out of or related to your use of our services. Our total liability shall not exceed the total fees paid by you in the three months preceding the claim.
+    </div>
+
+    <h2>10. Dispute Resolution and Governing Law</h2>
+    <p>These Terms shall be governed by the laws of the State of Colorado. Any disputes shall first be submitted to good-faith negotiation. If not resolved within 30 days, disputes shall be resolved by binding arbitration in Mesa County, Colorado, under the rules of the American Arbitration Association. Nothing in this section waives any rights you may have under CROA or other applicable federal consumer protection law.</p>
+
+    <h2>11. Privacy</h2>
+    <p>Your use of our services is also governed by our <a href='/privacy' style='color: var(--sky); font-weight: 600;'>Privacy Policy</a>, which is incorporated into these Terms by reference.</p>
+
+    <h2>12. Modifications to Terms</h2>
+    <p>We reserve the right to modify these Terms at any time. We will provide at least 30 days' notice to active clients of any material changes via email. Your continued use of our services after the effective date constitutes acceptance of the updated Terms.</p>
+
+    <h2>13. Entire Agreement</h2>
+    <p>These Terms, together with any signed service agreement and our Privacy Policy, constitute the entire agreement between you and Credit Comeback Club, LLC with respect to our services.</p>
+
+    <div class="contact-block">
+        <h3>Questions About These Terms?</h3>
+        <p><a href="mailto:creditcomebackclub@gmail.com">creditcomebackclub@gmail.com</a></p>
+        <p><a href="tel:9706440063">970-644-0063</a></p>
+        <p><a href='/'>creditcomebackclub.com</a></p>
+    </div>
+
+  </div>
+</section>
+
+<footer>
+  <div class="footer-top">
+    <div class="footer-brand">
+      <img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="Credit Comeback Club">
+      <p>Strategic credit repair grounded in FCRA §623 and Metro 2 compliance. We challenge data furnishers directly — not bureaus.</p>
+      <div class="footer-contact">
+        <a href="tel:9706440063">📞 970-644-0063</a>
+        <a href="mailto:creditcomebackclub@gmail.com">✉ creditcomebackclub@gmail.com</a>
+      </div>
+    </div>
+    <div class="footer-col">
+      <h4>Navigate</h4>
+      <a href='/#why'>Why Us</a>
+      <a href='/#method'>Our Method</a>
+      <a href='/#pricing'>Pricing</a>
+      <a href='/#faq'>FAQ</a>
+      <a href='/#contact'>Contact</a>
+    </div>
+    <div class="footer-col">
+      <h4>Resources</h4>
+      <a href="https://creditcomebackclub.netlify.app/freeguide" target="_blank">Free Dispute Guide</a>
+      <a href="/login">Client Portal Login</a>
+      <a href="/terms.html" target="_blank">Terms of Service</a>
+      <a href="/privacy.html" target="_blank">Privacy Policy</a>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <p><strong style="color:rgba(255,255,255,.45);">TSR Compliance Notice:</strong> Under the Telemarketing Sales Rule (TSR), credit repair organizations may not charge or receive payment until the services have been fully performed. Credit Comeback Club complies fully with the TSR and all applicable federal and state credit repair laws. We do not charge until after your free consultation and a service agreement is executed.</p>
+    <p>Credit Comeback Club, LLC provides credit repair services. Individual results vary. No specific outcome is guaranteed. Results depend on individual credit history, furnisher responses, and other factors outside our control. We operate in full compliance with the Fair Credit Reporting Act (FCRA), the Credit Repair Organizations Act (CROA), and the Telemarketing Sales Rule (TSR).</p>
+    <p class="copyright">© 2026 Credit Comeback Club, LLC · Grand Junction, CO · All rights reserved.</p>
+  </div>
+</footer>
+
+<script>
+// NAV scroll
+const navbar = document.getElementById('navbar');
+window.addEventListener('scroll', () => {
+  navbar.classList.toggle('scrolled', window.scrollY > 20);
+});
+
+// Hamburger
+const hamburger = document.getElementById('hamburger');
+const dropdown = document.getElementById('dropdown');
+hamburger.addEventListener('click', () => {
+  hamburger.classList.toggle('open');
+  dropdown.classList.toggle('open');
+});
+function closeMenu() {
+  hamburger.classList.remove('open');
+  dropdown.classList.remove('open');
+}
+document.addEventListener('click', (e) => {
+  if (!hamburger.contains(e.target) && !dropdown.contains(e.target)) closeMenu();
+});
+</script>
+</body>
+</html>
