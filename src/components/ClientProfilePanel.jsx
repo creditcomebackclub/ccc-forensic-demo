@@ -473,6 +473,10 @@ function ImpersonateButton({ client }) {
     if (!client.email) { setErr('No email on file.'); return; }
     setLoading(true);
     setErr(null);
+    
+    // Open tab synchronously to prevent popup blockers
+    const newTab = window.open('about:blank', '_blank');
+    
     try {
       const { supabase: sb } = await import('../utils/supabase.js');
       const { data: { session: adminSess } } = await sb.auth.getSession();
@@ -488,8 +492,14 @@ function ImpersonateButton({ client }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
       if (!data.link) throw new Error('No link returned');
-      window.open(data.link, '_blank');
+      
+      if (newTab) {
+        newTab.location.href = data.link;
+      } else {
+        window.open(data.link, '_blank');
+      }
     } catch (e) {
+      if (newTab) newTab.close();
       setErr(e.message);
     } finally {
       setLoading(false);
