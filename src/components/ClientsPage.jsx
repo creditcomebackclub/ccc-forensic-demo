@@ -474,11 +474,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const toggle = (name) => setExpanded((prev) => ({ ...prev, [name]: !prev[name] }));
 
   const openLetter = (letter) => {
-    const w = window.open('', '_blank');
+    if (!letter.html) {
+      toast.error('This letter has no HTML content to view.');
+      return;
+    }
+    const blob = new Blob([letter.html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
     if (!w) { toast.error('Popup blocked — allow popups to view letters.'); return; }
-    w.document.open();
-    w.document.write(letter.html);
-    w.document.close();
   };
 
   const handleDelete = async (name) => {
