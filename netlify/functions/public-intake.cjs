@@ -30,7 +30,22 @@ exports.handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: 'Name and email are required' }) };
     }
 
-    // 1. Create the lead in Supabase via REST API
+    // 1. Fetch the admin user_id from an existing client
+    const userRes = await fetch(`${supabaseUrl}/rest/v1/clients?select=user_id&limit=1`, {
+      headers: {
+        'apikey': serviceKey,
+        'Authorization': `Bearer ${serviceKey}`
+      }
+    });
+    const users = await userRes.json();
+    const adminUserId = users.length > 0 ? users[0].user_id : null;
+
+    if (!adminUserId) {
+      console.error('No admin user found to assign lead to');
+      return { statusCode: 500, body: JSON.stringify({ error: 'No admin user configured' }) };
+    }
+
+    // 2. Create the lead in Supabase via REST API
     const insertRes = await fetch(`${supabaseUrl}/rest/v1/clients`, {
       method: 'POST',
       headers: {
@@ -40,12 +55,14 @@ exports.handler = async (event) => {
         'Prefer': 'return=representation'
       },
       body: JSON.stringify({
+        user_id: adminUserId,
         name: name.trim(),
         email: email.trim().toLowerCase(),
-        phone: phone ? phone.trim() : null,
+        lead_phone: phone ? phone.trim() : null,
         status: 'lead',
         lead_source: 'Website Intake',
-        notes: tier ? `Selected Tier: ${tier}` : null
+        lead_notes: tier ? `Selected Tier: ${tier}` : null,
+        lead_created_at: new Date().toISOString()
       })
     });
 
