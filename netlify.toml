@@ -15,6 +15,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  VITE_AGENTS_API_URL = "https://ccc-agents-api.onrender.com"
 
 [functions]
   node_bundler = "esbuild"
