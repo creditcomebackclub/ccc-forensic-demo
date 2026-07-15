@@ -10,20 +10,12 @@ const SUGGESTIONS = [
 
 export default function ConciergeChat({ clientId, accessToken }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`ccc_chat_${clientId}`);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return [{ role: 'assistant', text: 'Hi! I am the CCC Concierge. How can I help you with your credit repair journey today?' }];
-  });
+  const [messages, setMessages] = useState([
+    { role: 'assistant', text: 'Hi! I am the CCC Concierge. How can I help you with your credit repair journey today?' }
+  ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef(null);
-
-  useEffect(() => {
-    localStorage.setItem(`ccc_chat_${clientId}`, JSON.stringify(messages));
-  }, [messages, clientId]);
 
   useEffect(() => {
     if (isOpen) {
