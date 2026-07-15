@@ -93,7 +93,10 @@ exports.handler = async () => {
     const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
     const res = await fetch(base + '/.netlify/functions/send-lpoa', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseKey}`
+      },
       body: JSON.stringify({ action, ...payload }),
     });
     if (!res.ok) {

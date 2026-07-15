@@ -89,6 +89,11 @@ async function requireAdmin(event) {
   if (!token) {
     throw { statusCode: 401, body: JSON.stringify({ error: 'Missing Authorization token' }) };
   }
+  
+  // Allow internal server-to-server calls (like daily-cron) using the service key
+  if (token === serviceKey) {
+    return { userId: 'system', email: 'cron@cccpartners.co' };
+  }
 
   // 2. Verify the token against Supabase Auth (anon key, not service key)
   const userRes = await supabaseGet('/auth/v1/user', supabaseUrl, anonKey, token);
