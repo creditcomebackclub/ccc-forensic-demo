@@ -1,5 +1,3 @@
-const { createClient } = require('@supabase/supabase-js');
-
 exports.handler = async (event) => {
   // Handle CORS preflight
   if (event.httpMethod === 'OPTIONS') {
@@ -24,8 +22,6 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ error: 'Server not configured' }) };
   }
 
-  const supabase = createClient(supabaseUrl, serviceKey);
-
   try {
     const payload = JSON.parse(event.body);
     const { name, email, phone, tier } = payload;
@@ -34,20 +30,33 @@ exports.handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: 'Name and email are required' }) };
     }
 
-    // 1. Create the lead in Supabase
-    const { data: lead, error: insertErr } = await supabase.from('clients').insert([{
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      phone: phone ? phone.trim() : null,
-      status: 'lead',
-      lead_source: 'Website Intake',
-      notes: tier ? `Selected Tier: ${tier}` : null
-    }]).select().single();
+    // 1. Create the lead in Supabase via REST API
+    const insertRes = await fetch(`${supabaseUrl}/rest/v1/clients`, {
+      method: 'POST',
+      headers: {
+        'apikey': serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+      },
+      body: JSON.stringify({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone ? phone.trim() : null,
+        status: 'lead',
+        lead_source: 'Website Intake',
+        notes: tier ? `Selected Tier: ${tier}` : null
+      })
+    });
 
-    if (insertErr) {
-      console.error('Insert error:', insertErr);
+    if (!insertRes.ok) {
+      console.error('Insert error:', await insertRes.text());
       return { statusCode: 500, body: JSON.stringify({ error: 'Failed to create lead' }) };
     }
+
+    const insertedData = await insertRes.json();
+    const lead = insertedData[0]; // Prefer return=representation returns an array
+
 
     // 2. Trigger the magic link email (using service key to bypass admin check)
     const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
