@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Consultation Booked | Credit Comeback Club</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+--navy: #0B1F3A;
+--sky: #2B8FD4;
+--sky-light: #EBF5FB;
+--sky-mid: #B8DDEF;
+--white: #FFFFFF;
+--off-white: #F5F9FD;
+--black: #080E18;
+--gray: #566070;
+--gray-light: #D5E0EC;
+--gold: #F0B429;
+--font-d: 'Barlow Condensed', sans-serif;
+--font-b: 'Barlow', sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:var(--font-b);background:var(--white);color:var(--navy);overflow-x:hidden;}
+
+/* NAV */
+nav {
+position: fixed;
+top: 0;
+left: 0;
+right: 0;
+z-index: 1000;
+background: rgba(11,31,58,0.95);
+backdrop-filter: blur(12px);
+border-bottom: 1px solid rgba(255,255,255,0.05);
+box-shadow: 0 4px 20px rgba(0,0,0,.2);
+height: 66px;
+display: flex;
+align-items: center;
+justify-content: flex-end;
+padding: 0 28px;
+}
+.nav-right {
+display: flex;
+align-items: center;
+gap: 12px;
+}
+.btn-portal {
+display: flex;
+align-items: center;
+gap: 6px;
+background: var(--sky);
+color: #fff;
+text-decoration: none;
+padding: 9px 16px;
+border-radius: 6px;
+font-size: 13px;
+font-weight: 600;
+letter-spacing: .02em;
+transition: background .2s, transform .15s;
+white-space: nowrap;
+}
+.btn-portal:hover {
+background: #2278b5;
+transform: translateY(-1px);
+}
+.btn-portal svg {
+width: 13px;
+height: 13px;
+fill: none;
+stroke: #fff;
+stroke-width: 2;
+stroke-linecap: round;
+stroke-linejoin: round;
+}
+
+/* SUCCESS HERO */
+.success-hero {
+background: var(--navy);
+min-height: 100vh;
+display: flex;
+align-items: center;
+justify-content: center;
+padding: 100px 24px;
+position: relative;
+}
+.success-hero::before {
+content: 'SUCCESS';
+position: absolute;
+top: 50%;
+left: 50%;
+transform: translate(-50%, -50%);
+font-family: var(--font-d);
+font-size: 18vw;
+font-weight: 900;
+color: rgba(255,255,255,0.02);
+white-space: nowrap;
+z-index: 0;
+}
+.success-card {
+background: rgba(255,255,255,0.03);
+border: 1px solid rgba(255,255,255,0.08);
+border-radius: 20px;
+padding: 50px 40px;
+max-width: 600px;
+width: 100%;
+text-align: center;
+position: relative;
+z-index: 1;
+backdrop-filter: blur(10px);
+}
+.success-icon {
+width: 80px;
+height: 80px;
+background: rgba(43, 143, 212, 0.1);
+border-radius: 50%;
+display: flex;
+align-items: center;
+justify-content: center;
+margin: 0 auto 24px auto;
+}
+.success-icon svg {
+width: 40px;
+height: 40px;
+stroke: var(--sky);
+stroke-width: 2;
+fill: none;
+stroke-linecap: round;
+stroke-linejoin: round;
+}
+.success-card h1 {
+font-family: var(--font-d);
+font-size: 42px;
+color: #fff;
+margin-bottom: 16px;
+text-transform: uppercase;
+letter-spacing: .02em;
+}
+.success-card p {
+color: rgba(255,255,255,0.7);
+font-size: 17px;
+line-height: 1.6;
+margin-bottom: 30px;
+}
+.steps {
+text-align: left;
+background: rgba(0,0,0,0.2);
+border-radius: 12px;
+padding: 24px;
+margin-bottom: 30px;
+}
+.step-item {
+display: flex;
+align-items: flex-start;
+gap: 16px;
+margin-bottom: 16px;
+}
+.step-item:last-child {
+margin-bottom: 0;
+}
+.step-num {
+width: 28px;
+height: 28px;
+border-radius: 50%;
+background: var(--sky);
+color: #fff;
+display: flex;
+align-items: center;
+justify-content: center;
+font-weight: 700;
+font-size: 14px;
+flex-shrink: 0;
+}
+.step-text h4 {
+color: #fff;
+font-size: 16px;
+margin-bottom: 4px;
+}
+.step-text p {
+color: rgba(255,255,255,0.6);
+font-size: 14px;
+margin-bottom: 0;
+}
+.btn-main {
+display: inline-flex;
+align-items: center;
+justify-content: center;
+background: var(--sky);
+color: #fff;
+text-decoration: none;
+padding: 16px 32px;
+border-radius: 8px;
+font-size: 16px;
+font-weight: 600;
+transition: background .2s, transform .15s;
+width: 100%;
+}
+.btn-main:hover {
+background: #2278b5;
+transform: translateY(-2px);
+}
+</style>
+</head>
+<body>
+
+<nav>
+<div class="nav-right">
+<a href="/login" class="btn-portal">
+<svg viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/></svg>
+Club Member Login
+</a>
+</div>
+</nav>
+
+<section class="success-hero">
+<div class="success-card">
+<div class="success-icon">
+<svg viewBox="0 0 24 24">
+<polyline points="20 6 9 17 4 12"></polyline>
+</svg>
+</div>
+<h1>Your Consultation Is Booked!</h1>
+<p>We look forward to speaking with you. Before our call, please complete your onboarding so Chris can review your file in advance.</p>
+
+<div class="steps">
+<div class="step-item">
+<div class="step-num">1</div>
+<div class="step-text">
+<h4>Check Your Email</h4>
+<p>We just sent you a secure Magic Link.</p>
+</div>
+</div>
+<div class="step-item">
+<div class="step-num">2</div>
+<div class="step-text">
+<h4>Log Into Your Portal</h4>
+<p>Click the link to instantly access your secure Client Portal.</p>
+</div>
+</div>
+<div class="step-item">
+<div class="step-num">3</div>
+<div class="step-text">
+<h4>Complete Onboarding</h4>
+<p>Sign your agreement and securely provide your credit monitoring details.</p>
+</div>
+</div>
+</div>
+
+<a href="/login" class="btn-main">Go To Client Portal →</a>
+</div>
+</section>
+
+</body>
+</html>
