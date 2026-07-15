@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X, Send, MoreHorizontal, Search } from 'lucide-react';
+import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X, Send, MoreHorizontal, Search, Pencil } from 'lucide-react';
 import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage } from '../utils/storage';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
@@ -283,7 +283,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
 
   const menuItems = [
     { label: 'View letter', onClick: () => onView(l) },
-    onEdit && { label: 'Edit letter HTML', onClick: () => onEdit(l) },
+    onEdit && { label: 'Edit letter', onClick: () => onEdit(l) },
     { label: 'Account history', onClick: () => onOpenAccount(l) },
     'divider',
     !l.mailedDate && !l.lobId && { label: 'Mark as mailed…', onClick: () => { setDateVal(todayISO()); setMode('mailing'); } },
