@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Credit Comeback Club | Metro 2 & FCRA Dispute Experts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+--navy: #0B1F3A;
+--sky: #2B8FD4;
+--sky-light: #EBF5FB;
+--sky-mid: #B8DDEF;
+--white: #FFFFFF;
+--off-white: #F5F9FD;
+--black: #080E18;
+--gray: #566070;
+--gray-light: #D5E0EC;
+--gold: #F0B429;
+--font-d: 'Barlow Condensed', sans-serif;
+--font-b: 'Barlow', sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{font-family:var(--font-b);background:var(--white);color:var(--navy);overflow-x:hidden;}
+
+/* NAV */
+nav {
+position: fixed;
+top: 0;
+left: 0;
+right: 0;
+z-index: 1000;
+background: transparent;
+height: 66px;
+display: flex;
+align-items: center;
+justify-content: flex-end;
+padding: 0 28px;
+transition: all .3s;
+}
+nav.scrolled {
+background: rgba(11,31,58,0.95);
+backdrop-filter: blur(12px);
+border-bottom: 1px solid rgba(255,255,255,0.05);
+box-shadow: 0 4px 20px rgba(0,0,0,.2);
+}
+.nav-right {
+display: flex;
+align-items: center;
+gap: 12px;
+}
+.btn-portal {
+display: flex;
+align-items: center;
+gap: 6px;
+background: var(--sky);
+color: #fff;
+text-decoration: none;
+padding: 9px 16px;
+border-radius: 6px;
+font-size: 13px;
+font-weight: 600;
+letter-spacing: .02em;
+transition: background .2s, transform .15s;
+white-space: nowrap;
+}
+.btn-portal:hover {
+background: #2278b5;
+transform: translateY(-1px);
+}
+.btn-portal svg {
+width: 13px;
+height: 13px;
+fill: none;
+stroke: #fff;
+stroke-width: 2;
+stroke-linecap: round;
+stroke-linejoin: round;
+}
+.hamburger {
+background: none;
+border: 1.5px solid rgba(255,255,255,0.3);
+border-radius: 6px;
+width: 38px;
+height: 38px;
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+gap: 5px;
+cursor: pointer;
+transition: all .2s;
+}
+.hamburger:hover {
+border-color: var(--sky);
+background: rgba(255,255,255,0.1);
+}
+.hamburger span {
+display: block;
+width: 17px;
+height: 2px;
+background: #fff;
+border-radius: 2px;
+transition: all .3s;
+}
+.hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+.hamburger.open span:nth-child(2) { opacity: 0; }
+.hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+/* BULLETPROOF DROPDOWN - MOVED INSIDE NAV */
+.nav-dropdown {
+position: absolute;
+top: 100%; /* Sits exactly below the navigation bar */
+right: 28px; /* Aligns with the right padding of the nav */
+width: 220px;
+background: #fff;
+border: 1px solid var(--gray-light);
+border-radius: 8px;
+box-shadow: 0 8px 24px rgba(11,31,58,0.15);
+display: none; /* Hard hidden by default */
+flex-direction: column;
+overflow: hidden;
+margin-top: 10px; /* Small gap from the header */
+}
+.nav-dropdown.open {
+display: flex; /* Hard shown when open */
+}
+.nav-dropdown a {
+display: block;
+padding: 15px 22px;
+font-size: 15px;
+font-weight: 600;
+color: var(--navy);
+text-decoration: none;
+border-bottom: 1px solid var(--sky-light);
+text-align: left;
+transition: all 0.2s;
+}
+.nav-dropdown a:last-child {
+border-bottom: none;
+}
+.nav-dropdown a:hover {
+background: var(--sky-light);
+color: var(--sky);
+padding-left: 28px;
+}
+
+/* HERO */
+.hero{min-height:100vh;background:linear-gradient(140deg,#081626 0%,#0d2240 45%,#122e54 100%);display:flex;align-items:center;padding:100px 28px 60px;position:relative;overflow:hidden;}
+.hero-watermark{position:absolute;top:0;left:0;width:100%;height:100%;background-image:url('https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg');background-repeat:no-repeat;background-position:center;background-size:cover;background-attachment:fixed;opacity:0.06;pointer-events:none;z-index:0;}
+.hero::before{content:'';position:absolute;top:-120px;right:-120px;width:550px;height:550px;background:radial-gradient(circle,rgba(43,143,212,.18) 0%,transparent 68%);pointer-events:none;z-index:1;}
+.hero::after{content:'';position:absolute;bottom:-80px;left:-60px;width:350px;height:350px;background:radial-gradient(circle,rgba(43,143,212,.08) 0%,transparent 68%);pointer-events:none;z-index:1;}
+.hero-inner{max-width:1080px;margin:0 auto;width:100%;display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;position:relative;z-index:2;}
+.hero h1{font-family:var(--font-d);font-size:clamp(40px,4.8vw,62px);font-weight:800;line-height:1.05;color:#fff;margin-bottom:18px;letter-spacing:-.01em;}
+.hero h1 em{font-style:normal;color:#5eb8f5;}
+.hero p{font-size:16.5px;line-height:1.72;color:rgba(255,255,255,.68);margin-bottom:34px;max-width:430px;}
+.hero-cta{display:flex;gap:12px;flex-wrap:wrap;}
+.btn-primary{display:inline-flex;align-items:center;gap:8px;background:var(--sky);color:#fff;text-decoration:none;padding:14px 26px;border-radius:8px;font-size:15px;font-weight:700;transition:all .2s;box-shadow:0 4px 20px rgba(43,143,212,.38);}
+.btn-primary:hover{background:#2278b5;transform:translateY(-2px);box-shadow:0 8px 28px rgba(43,143,212,.48);}
+.btn-ghost{display:inline-flex;align-items:center;gap:8px;background:transparent;color:#fff;text-decoration:none;padding:14px 26px;border-radius:8px;font-size:15px;font-weight:600;border:2px solid rgba(255,255,255,.22);transition:all .2s;}
+.btn-ghost:hover{border-color:rgba(255,255,255,.55);background:rgba(255,255,255,.07);}
+.hero-video {
+    position: relative;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 24px 72px rgba(0,0,0,.5);
+    aspect-ratio: 1/1;
+    background: #000;
+    border: 1px solid rgba(43,143,212,.22);
+    transition: transform .3s;
+    max-width: 480px;
+    width: 100%;
+    margin: 0 auto;
+}
+.intro-video{
+width:100%;
+height:100%;
+display:block;
+object-fit:cover;
+background:#000;
+}
+
+/* STATS */
+.stats{background:var(--sky);padding:28px 28px;}
+.stats-inner{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);}
+.stat-item{text-align:center;padding:18px 20px;border-right:1px solid rgba(255,255,255,.22);}
+.stat-item:last-child{border-right:none;}
+.stat-num{font-family:var(--font-d);font-size:40px;font-weight:900;color:#fff;line-height:1;letter-spacing:-.02em;}
+.stat-label{font-size:12.5px;font-weight:500;color:rgba(255,255,255,.78);margin-top:4px;text-transform:uppercase;letter-spacing:.06em;}
+
+/* SECTIONS */
+section{padding:92px 28px;}
+.section-inner{max-width:1080px;margin:0 auto;}
+.section-tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--sky);background:var(--sky-light);padding:5px 12px;border-radius:100px;margin-bottom:14px;}
+.section-title{font-family:var(--font-d);font-size:clamp(30px,3.8vw,46px);font-weight:800;line-height:1.1;color:var(--navy);margin-bottom:14px;letter-spacing:-.01em;}
+.section-sub{font-size:16.5px;line-height:1.72;color:var(--gray);max-width:540px;margin-bottom:52px;}
+
+/* WHY */
+#why{background:#fff;}
+.why-grid{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center;}
+.why-text .big-quote{font-family:var(--font-d);font-size:21px;font-weight:700;color:var(--navy);line-height:1.4;margin-bottom:22px;padding-left:18px;border-left:4px solid var(--sky);}
+.why-text p{font-size:15.5px;line-height:1.78;color:var(--gray);margin-bottom:18px;}
+.why-text strong{color:var(--navy);}
+.why-card{background:var(--navy);border-radius:16px;padding:38px;color:#fff;position:relative;overflow:hidden;}
+.why-card::before{content:'';position:absolute;top:-60px;right:-60px;width:200px;height:200px;background:radial-gradient(circle,rgba(43,143,212,.18) 0%,transparent 70%);}
+.why-card-title{font-family:var(--font-d);font-size:20px;font-weight:800;margin-bottom:22px;color:#5eb8f5;}
+.why-step{display:flex;gap:14px;margin-bottom:22px;align-items:flex-start;}
+.why-step:last-child{margin-bottom:0;}
+.why-step-num{width:26px;height:26px;background:rgba(43,143,212,.18);border:1px solid rgba(43,143,212,.38);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:700;color:#5eb8f5;flex-shrink:0;margin-top:2px;}
+.why-step-text{font-size:14px;line-height:1.62;color:rgba(255,255,255,.72);}
+.why-step-text strong{color:#fff;}
+
+/* METHOD */
+#method{background:var(--off-white);}
+.method-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:22px;}
+.method-card{background:#fff;border-radius:13px;padding:30px;border:1px solid var(--gray-light);transition:transform .2s,box-shadow .2s,border-color .2s;}
+.method-card:hover{transform:translateY(-4px);box-shadow:0 10px 36px rgba(11,31,58,.08);border-color:var(--sky-mid);}
+.method-icon{width:46px;height:46px;background:var(--sky-light);border-radius:11px;display:flex;align-items:center;justify-content:center;margin-bottom:16px;}
+.method-icon svg{width:21px;height:21px;stroke:var(--sky);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+.method-card h3{font-family:var(--font-d);font-size:19px;font-weight:700;color:var(--navy);margin-bottom:9px;}
+.method-card p{font-size:14px;line-height:1.7;color:var(--gray);}
+
+/* HOW IT WORKS */
+#how{background:#fff;}
+.steps{display:flex;gap:0;position:relative;max-width:880px;margin:0 auto;}
+.steps::before{content:'';position:absolute;top:30px;left:40px;right:40px;height:2px;background:var(--sky-mid);z-index:0;}
+.step{flex:1;text-align:center;padding:0 14px;position:relative;z-index:1;}
+.step-num{width:60px;height:60px;background:var(--sky);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--font-d);font-size:22px;font-weight:800;color:#fff;margin:0 auto 18px;box-shadow:0 4px 14px rgba(43,143,212,.32);}
+.step h3{font-family:var(--font-d);font-size:17px;font-weight:700;color:var(--navy);margin-bottom:7px;}
+.step p{font-size:13.5px;line-height:1.65;color:var(--gray);}
+
+/* PRICING */
+#pricing{background:var(--off-white);}
+.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-bottom:36px;}
+.pricing-card{background:#fff;border-radius:15px;padding:34px 30px;border:2px solid var(--gray-light);position:relative;transition:transform .2s,box-shadow .2s;display:flex;flex-direction:column;}
+.pricing-card:hover{transform:translateY(-4px);box-shadow:0 14px 44px rgba(11,31,58,.10);}
+.pricing-card.featured{border-color:var(--sky);background:var(--navy);transform:scale(1.03);box-shadow:0 16px 56px rgba(11,31,58,.22);}
+.pricing-card.featured:hover{transform:scale(1.03) translateY(-4px);}
+.pricing-badge{position:absolute;top:-13px;left:50%;transform:translateX(-50%);background:var(--sky);color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;padding:5px 15px;border-radius:100px;white-space:nowrap;}
+.pricing-tier{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--sky);margin-bottom:6px;}
+.pricing-card.featured .pricing-tier{color:rgba(94,184,245,.85);}
+.pricing-name{font-family:var(--font-d);font-size:25px;font-weight:800;color:var(--navy);margin-bottom:4px;}
+.pricing-card.featured .pricing-name{color:#fff;}
+.pricing-work-fee{font-size:12.5px;color:var(--gray);margin-bottom:18px;}
+.pricing-card.featured .pricing-work-fee{color:rgba(255,255,255,.45);}
+.pricing-price{display:flex;align-items:flex-end;gap:3px;margin-bottom:22px;padding-bottom:22px;border-bottom:1px solid var(--gray-light);}
+.pricing-card.featured .pricing-price{border-bottom-color:rgba(255,255,255,.12);}
+.pricing-dollar{font-size:20px;font-weight:700;color:var(--gray);padding-bottom:8px;}
+.pricing-card.featured .pricing-dollar{color:rgba(255,255,255,.55);}
+.pricing-num{font-family:var(--font-d);font-size:52px;font-weight:900;color:var(--navy);line-height:1;letter-spacing:-.02em;}
+.pricing-card.featured .pricing-num{color:#fff;}
+.pricing-period{font-size:13px;color:var(--gray);padding-bottom:9px;}
+.pricing-card.featured .pricing-period{color:rgba(255,255,255,.5);}
+.pricing-features{list-style:none;margin-bottom:30px;flex:1;}
+.pricing-features li{display:flex;align-items:flex-start;gap:9px;font-size:13.5px;line-height:1.5;color:var(--gray);padding:7px 0;border-bottom:1px solid var(--sky-light);}
+.pricing-features li:last-child{border-bottom:none;}
+.pricing-card.featured .pricing-features li{color:rgba(255,255,255,.72);border-bottom-color:rgba(255,255,255,.07);}
+.check{width:17px;height:17px;background:var(--sky-light);border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
+.pricing-card.featured .check{background:rgba(43,143,212,.2);}
+.check svg{width:9px;height:9px;stroke:var(--sky);fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;}
+.btn-signup{display:block;text-align:center;background:var(--sky-light);color:var(--sky);text-decoration:none;padding:13px;border-radius:8px;font-size:14.5px;font-weight:700;transition:all .2s;border:2px solid var(--sky-mid);}
+.btn-signup:hover{background:var(--sky);color:#fff;border-color:var(--sky);}
+.pricing-card.featured .btn-signup{background:var(--sky);color:#fff;border-color:var(--sky);}
+.pricing-card.featured .btn-signup:hover{background:#2278b5;border-color:#2278b5;}
+.pricing-note{text-align:center;font-size:14px;line-height:1.72;color:var(--gray);max-width:820px;margin:0 auto;padding:22px;background:#fff;border-radius:11px;border:1px solid var(--gray-light);}
+
+/* TESTIMONIALS FIX */
+#testimonials{background:var(--navy);overflow:hidden;}
+#testimonials .section-title{color:#fff;}
+#testimonials .section-sub{color:rgba(255,255,255,.58);}
+#testimonials .section-tag{background:rgba(43,143,212,.14);color:#5eb8f5;}
+.carousel-wrap {
+position: relative;
+overflow: hidden;
+padding-bottom: 20px; /* Extra padding so borders don't get cut off */
+}
+.carousel-track {
+display: flex;
+gap: 22px;
+align-items: stretch !important; /* Force all boxes in a row to the same height */
+transition: transform .5s cubic-bezier(.4,0,.2,1);
+}
+.testi-card {
+background: rgba(255,255,255,.06);
+border: 1px solid rgba(255,255,255,.09);
+border-radius: 14px;
+padding: 30px;
+flex: 0 0 calc(33.333% - 15px); /* Strict width control */
+display: flex;
+flex-direction: column;
+height: auto !important; /* Let the content decide the height */
+min-height: min-content;
+transition: border-color .2s;
+}
+.testi-card:hover{border-color:rgba(43,143,212,.35);}
+.testi-stars{display:flex;gap:3px;margin-bottom:14px;}
+.testi-stars span{color:var(--gold);font-size:15px;}
+.testi-quote {
+font-size: 14.5px;
+line-height: 1.72;
+color: rgba(255,255,255,.76);
+margin-bottom: 22px;
+white-space: normal !important; /* Forces text to wrap */
+word-wrap: break-word !important; /* Prevents long words from breaking layout */
+overflow: visible !important; /* Do not hide any text */
+flex-grow: 1; /* Pushes the author block to the bottom perfectly */
+}
+.testi-author{display:flex;align-items:center;gap:11px;margin-top:auto;}
+.testi-avatar{width:40px;height:40px;background:var(--sky);border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--font-d);font-size:14px;font-weight:700;color:#fff;flex-shrink:0;}
+.testi-name{font-weight:600;color:#fff;font-size:14.5px;}
+.testi-result{font-size:11.5px;color:#5eb8f5;font-weight:500;margin-top:2px;}
+.carousel-controls{display:flex;gap:11px;justify-content:center;margin-top:36px;align-items:center;}
+.carousel-btn{width:40px;height:40px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .2s;color:#fff;}
+.carousel-btn:hover{background:var(--sky);border-color:var(--sky);}
+.carousel-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+.carousel-dots{display:flex;gap:7px;align-items:center;}
+.carousel-dot{width:7px;height:7px;background:rgba(255,255,255,.22);border-radius:50%;cursor:pointer;transition:all .2s;}
+.carousel-dot.active{background:var(--sky);width:22px;border-radius:4px;}
+
+/* FAQ */
+#faq{background:#fff;}
+.faq-list{max-width:740px;margin:0 auto;}
+.faq-item{border-bottom:1px solid var(--gray-light);}
+.faq-q{width:100%;background:none;border:none;display:flex;align-items:center;justify-content:space-between;padding:21px 0;font-family:var(--font-b);font-size:15.5px;font-weight:600;color:var(--navy);cursor:pointer;text-align:left;gap:14px;transition:color .2s;}
+.faq-q:hover{color:var(--sky);}
+.faq-icon{width:23px;height:23px;background:var(--sky-light);border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .3s;}
+.faq-icon svg{width:11px;height:11px;stroke:var(--sky);fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;transition:transform .3s;}
+.faq-item.open .faq-icon{background:var(--sky);}
+.faq-item.open .faq-icon svg{stroke:#fff;transform:rotate(45deg);}
+.faq-a{font-size:14.5px;line-height:1.78;color:var(--gray);max-height:0;overflow:hidden;transition:max-height .4s ease,padding .3s;padding-bottom:0;}
+.faq-a.open{max-height:600px;padding-bottom:22px;}
+.faq-a strong{color:var(--navy);}
+
+/* CONTACT */
+#contact{background:var(--sky-light);}
+.contact-inner{max-width:680px;margin:0 auto;text-align:center;}
+.contact-inner .section-sub{max-width:100%;margin-left:auto;margin-right:auto;}
+.contact-cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:28px;}
+.contact-card{background:#fff;border-radius:11px;padding:18px;text-align:center;border:1px solid var(--sky-mid);text-decoration:none;transition:all .2s;display:block;}
+.contact-card:hover{background:var(--sky);border-color:var(--sky);transform:translateY(-2px);box-shadow:0 8px 22px rgba(43,143,212,.28);}
+.contact-card:hover .contact-card-label,.contact-card:hover .contact-card-val{color:#fff;}
+.contact-card-label{font-size:10.5px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:var(--sky);margin-bottom:3px;transition:color .2s;}
+.contact-card-val{font-size:16px;font-weight:600;color:var(--navy);transition:color .2s;}
+.btn-cta-main{display:inline-flex;align-items:center;gap:9px;background:var(--navy);color:#fff;text-decoration:none;padding:16px 34px;border-radius:8px;font-size:15.5px;font-weight:700;transition:all .2s;box-shadow:0 4px 18px rgba(11,31,58,.18);}
+.btn-cta-main:hover{background:var(--sky);transform:translateY(-2px);box-shadow:0 8px 28px rgba(43,143,212,.38);}
+
+/* FOOTER */
+footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5);}
+.footer-top{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr;gap:44px;padding-bottom:36px;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:28px;}
+.footer-brand img{height:38px;width:auto;border-radius:5px;margin-bottom:14px;opacity:.88;}
+.footer-brand p{font-size:13px;line-height:1.72;max-width:290px;margin-bottom:14px;}
+.footer-contact a{display:block;font-size:13.5px;color:rgba(255,255,255,.65);text-decoration:none;margin-bottom:5px;transition:color .2s;}
+.footer-contact a:hover{color:var(--sky);}
+.footer-col h4{font-size:11px;font-weight:700;letter-spacing:.10em;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:14px;}
+.footer-col a{display:block;font-size:13.5px;color:rgba(255,255,255,.58);text-decoration:none;margin-bottom:9px;transition:color .2s;}
+.footer-col a:hover{color:var(--sky);}
+.footer-bottom{max-width:1080px;margin:0 auto;}
+.footer-bottom p{font-size:11.5px;line-height:1.78;color:rgba(255,255,255,.28);margin-bottom:7px;}
+.footer-bottom p.copyright{font-size:12.5px;color:rgba(255,255,255,.35);margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.05);}
+
+/* RESPONSIVE */
+@media(max-width:900px){
+.hero-inner{grid-template-columns:1fr;gap:38px;}
+.hero-video{max-width:460px;margin:0 auto;}
+.stats-inner{grid-template-columns:repeat(2,1fr);}
+.stat-item:nth-child(2){border-right:none;}
+.why-grid{grid-template-columns:1fr;}
+.method-grid{grid-template-columns:1fr;}
+.pricing-grid{grid-template-columns:1fr;}
+.pricing-card.featured{transform:none;}
+.steps{flex-direction:column;align-items:center;}
+.steps::before{display:none;}
+.step{max-width:340px;width:100%;}
+.testi-card{min-width:100%;}
+.footer-top{grid-template-columns:1fr;gap:28px;}
+.contact-cards{grid-template-columns:1fr;}
+nav{padding:0 18px;}
+section{padding:60px 18px;}
+.hero{padding:86px 18px 46px;}
+.stats{padding:22px 18px;}
+}
+@media(max-width:600px){
+.hero-watermark { background-attachment: scroll; }
+.stats-inner{grid-template-columns:repeat(2,1fr);}
+.stat-num{font-size:32px;}
+}
+/* Intake Modal */
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 9999; backdrop-filter: blur(4px); align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s; padding: 20px; }
+.modal-overlay.active { display: flex; opacity: 1; }
+.modal-box { background: #fff; border-radius: 12px; max-width: 460px; width: 100%; padding: 40px; position: relative; transform: translateY(20px); transition: transform 0.3s; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
+.modal-overlay.active .modal-box { transform: translateY(0); }
+.modal-close { position: absolute; top: 20px; right: 20px; background: none; border: none; font-size: 24px; color: #9CA3AF; cursor: pointer; line-height: 1; }
+.modal-close:hover { color: #1B2A4A; }
+.modal-title { font-size: 24px; color: #1B2A4A; margin-bottom: 8px; font-weight: 700; }
+.modal-sub { color: #6B7280; font-size: 14.5px; margin-bottom: 24px; line-height: 1.5; }
+.form-group { margin-bottom: 16px; text-align: left; }
+.form-group label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #4B5563; font-weight: 700; margin-bottom: 6px; }
+.form-group input { width: 100%; padding: 12px 16px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 15px; font-family: inherit; transition: border-color 0.2s; outline: none; }
+.form-group input:focus { border-color: #C9A84C; box-shadow: 0 0 0 3px rgba(201, 168, 76, 0.1); }
+.form-group input[readonly] { background: #F3F4F6; color: #6B7280; font-weight: 600; cursor: not-allowed; }
+.btn-submit { width: 100%; background: #C9A84C; color: #1B2A4A; border: none; padding: 14px; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; transition: opacity 0.2s; margin-top: 8px; }
+.btn-submit:hover { opacity: 0.9; }
+.btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.modal-success { text-align: center; display: none; }
+.modal-success svg { width: 48px; height: 48px; color: #10B981; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+
+<nav id="navbar">
+<div class="nav-right">
+<a href="/login" class="btn-portal">
+<svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+Club Member Login
+</a>
+<button class="hamburger" id="hamburger" aria-label="Menu">
+<span></span><span></span><span></span>
+</button>
+</div>
+
+<div class="nav-dropdown" id="dropdown">
+<a href="#why" onclick="closeMenu()">Why Us</a>
+<a href="#method" onclick="closeMenu()">Our Method</a>
+<a href="#faq" onclick="closeMenu()">FAQ</a>
+<a href="#contact" onclick="closeMenu()">Contact</a>
+</div>
+</nav>
+
+<section class="hero" id="home">
+<div class="hero-watermark"></div>
+<div class="hero-inner">
+<div>
+<h1>Your Credit Comeback Starts With The <em>Right Strategy</em></h1>
+<p>We don't waste time with generic bureau disputes. We challenge creditors and data furnishers directly — identifying Metro 2 compliance violations and FCRA failures they can't ignore.</p>
+<div class="hero-cta">
+<a href="#" onclick="openIntake('Consultation'); return false;" class="btn-primary">Schedule Free Consultation</a>
+<a href="#pricing" class="btn-ghost">View Pricing</a>
+</div>
+<video
+class="intro-video"
+controls
+autoplay
+muted
+playsinline
+loop
+poster="og-image.png"
+preload="metadata"
+>
+<source src="videos/intro.mp4" type="video/mp4">
+Your browser does not support the video tag.
+</video>
+</div>
+</div>
+</div>
+</section>
+
+<div class="stats">
+<div class="stats-inner">
+<div class="stat-item"><div class="stat-num">437+</div><div class="stat-label">Accounts Deleted</div></div>
+<div class="stat-item"><div class="stat-num">$6.2M+</div><div class="stat-label">Total Debt Removed</div></div>
+<div class="stat-item"><div class="stat-num">150+</div><div class="stat-label">Points — Top Result</div></div>
+<div class="stat-item"><div class="stat-num">45 Days</div><div class="stat-label">Avg. First Results</div></div>
+</div>
+</div>
+
+<section id="why">
+<div class="section-inner">
+<div class="why-grid">
+<div class="why-text">
+<span class="section-tag">Why Us</span>
+<h2 class="section-title">Why Most Credit Repair Fails</h2>
+<div class="big-quote">"When you dispute with the bureaus, they just forward it to the creditor. The creditor clicks 'verified.' Your dispute dies."</div>
+<p>Here's what most companies won't tell you: when you dispute an item with Experian, TransUnion, or Equifax, they forward your dispute to the creditor through a system called e-OSCAR. The creditor clicks "verified" in seconds and your dispute dies — no real investigation required.</p>
+<p><strong>Our approach is different.</strong> We skip the bureaus entirely and go straight to the source. We audit how creditors are furnishing your data, identify Metro 2 format violations and FCRA compliance failures, then challenge them with legally precise dispute letters they can't ignore.</p>
+</div>
+<div class="why-card">
+<div class="why-card-title">The CCC Difference</div>
+<div class="why-step">
+<div class="why-step-num">1</div>
+<div class="why-step-text"><strong>Skip the bureaus entirely.</strong> We go straight to the data furnisher — the creditor responsible for the reporting.</div>
+</div>
+<div class="why-step">
+<div class="why-step-num">2</div>
+<div class="why-step-text"><strong>Find the technical violations.</strong> Metro 2 format errors and FCRA §623 failures give us real legal leverage.</div>
+</div>
+<div class="why-step">
+<div class="why-step-num">3</div>
+<div class="why-step-text"><strong>Challenge with precision.</strong> Every letter is customized, legally cited, and delivered directly to the furnisher.</div>
+</div>
+<div class="why-step">
+<div class="why-step-num">4</div>
+<div class="why-step-text"><strong>Sustained pressure.</strong> We keep pushing until the item is removed or corrected — not until the contract ends.</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<section id="method">
+<div class="section-inner">
+<span class="section-tag">Our Method</span>
+<h2 class="section-title">The Credit Comeback Club Method</h2>
+<p class="section-sub">Precision over templates. Every case gets a custom approach — we find the specific technical violations in your file and exploit them.</p>
+<div class="method-grid">
+<div class="method-card">
+<div class="method-icon">
+<svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+</div>
+<h3>Custom Metro 2 Violation Analysis</h3>
+<p>We manually review how each creditor is reporting your account and identify the technical compliance failures that give us leverage — not a scan, a real audit.</p>
+</div>
+<div class="method-card">
+<div class="method-icon">
+<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+</div>
+<h3>FCRA Furnisher Compliance Audits</h3>
+<p>Creditors have legal obligations under FCRA §623 when they report to bureaus. We find where they're cutting corners and use it against them.</p>
+</div>
+<div class="method-card">
+<div class="method-icon">
+<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+</div>
+<h3>Creditor-First Dispute Strategy</h3>
+<p>We challenge the furnisher directly with evidence-backed legal arguments. No bureau middleman. No e-OSCAR runaround. No generic disputes.</p>
+</div>
+<div class="method-card">
+<div class="method-icon">
+<svg viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+</div>
+<h3>Professionally Crafted Letters</h3>
+<p>Every dispute letter is written specifically for your situation, citing exact violations with legal precision. Not a form. Not a template. Never.</p>
+</div>
+</div>
+</div>
+</section>
+
+<section id="how">
+<div class="section-inner">
+<div style="text-align:center;margin-bottom:52px;">
+<span class="section-tag">The Process</span>
+<h2 class="section-title">Simple Process. Serious Results.</h2>
+</div>
+<div class="steps">
+<div class="step">
+<div class="step-num">1</div>
+<h3>Free Consultation</h3>
+<p>Pull your credit reports and schedule a free call. We'll identify which accounts are vulnerable and what we can challenge.</p>
+</div>
+<div class="step">
+<div class="step-num">2</div>
+<h3>Violation Analysis</h3>
+<p>We audit how your creditors are furnishing data, documenting every Metro 2 error and FCRA compliance failure.</p>
+</div>
+<div class="step">
+<div class="step-num">3</div>
+<h3>Strategic Disputes</h3>
+<p>We craft legally precise challenge letters targeting furnishers directly. No bureau middleman — pressure on the source.</p>
+</div>
+<div class="step">
+<div class="step-num">4</div>
+<h3>Results</h3>
+<p>When creditors can't defend their reporting methods, items get removed. We keep pressure on until your credit reflects reality.</p>
+</div>
+</div>
+</div>
+</section>
+
+<section id="pricing">
+<div class="section-inner">
+<div style="text-align:center;margin-bottom:52px;">
+<span class="section-tag">Pricing</span>
+<h2 class="section-title">Three Tiers. One Goal.</h2>
+</div>
+<div class="pricing-grid">
+<div class="pricing-card">
+<div class="pricing-tier">Standard</div>
+<div class="pricing-name">CCC Membership</div>
+<div class="pricing-work-fee">First work fee: $75</div>
+<div class="pricing-price">
+<span class="pricing-dollar">$</span>
+<span class="pricing-num">79</span>
+<span class="pricing-period">/ month</span>
+</div>
+<ul class="pricing-features">
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Monthly credit report analysis &amp; monitoring</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Up to 3 custom dispute letters per month</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>We print, send, and track everything</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Continuous creditor challenges until removal</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Cancel anytime — no long-term contracts</li>
+</ul>
+<a href="#" onclick="openIntake('CCC Membership'); return false;" class="btn-signup">Get Started</a>
+</div>
+<div class="pricing-card featured">
+<div class="pricing-badge">Most Popular</div>
+<div class="pricing-tier">VIP</div>
+<div class="pricing-name">VIP Membership</div>
+<div class="pricing-work-fee">First work fee: $99</div>
+<div class="pricing-price">
+<span class="pricing-dollar">$</span>
+<span class="pricing-num">149</span>
+<span class="pricing-period">/ month</span>
+</div>
+<ul class="pricing-features">
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Everything in Standard</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Up to 5 custom dispute letters per month</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Priority turnaround — letters in 2–3 days</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Monthly 1-on-1 strategy call with Chris</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Business credit roadmap (post personal cleanup)</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Direct access — no waiting in queue</li>
+</ul>
+<a href="#" onclick="openIntake('Paid in Full'); return false;" class="btn-signup">Get Started</a>
+</div>
+<div class="pricing-card">
+<div class="pricing-badge" style="background:var(--navy);">Best Value</div>
+<div class="pricing-tier">Paid in Full</div>
+<div class="pricing-name">6-Month Flat</div>
+<div class="pricing-work-fee">First work fee: <s>$75</s> WAIVED</div>
+<div class="pricing-price">
+<span class="pricing-dollar">$</span>
+<span class="pricing-num">499</span>
+<span class="pricing-period">flat / 6 mo.</span>
+</div>
+<ul class="pricing-features">
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Full Standard service for 6 months</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Up to 3 dispute letters per month</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>First work fee completely waived — save $75</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>$50 less than 6 months of Standard</li>
+<li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>No monthly billing — pay once, done</li>
+</ul>
+<a href="#" onclick="openIntake('VIP Membership'); return false;" class="btn-signup">Get Started</a>
+</div>
+</div>
+<div class="pricing-note">
+<strong>Not sure which tier is right for you?</strong> Standard is your full-service entry point — up to 3 dispute letters per month, we handle everything. VIP gives you 5 letters per month, priority turnaround, and a direct line to Chris including monthly strategy calls and a business credit roadmap. Paid in Full locks in 6 months of Standard for $499 — saving $50 vs. month-to-month and eliminating monthly billing entirely.
+</div>
+</div>
+</section>
+
+<section id="testimonials">
+<div class="section-inner">
+<span class="section-tag">Client Results</span>
+<h2 class="section-title">Real Comebacks. Real People.</h2>
+<p class="section-sub">These aren't cherry-picked wins — they're the consistent outcome of targeting the right violations with the right strategy.</p>
+<div class="carousel-wrap">
+<div class="carousel-track" id="carouselTrack">
+<div class="testi-card">
+<div class="testi-stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
+<p class="testi-quote">"Chris is extremely knowledgeable on the subject of credit repair and helped me raise my credit score substantially in just a few months. He is also very easy to work with! I highly recommend Credit Comeback Club if you are ready to get back on track."</p>
+<div class="testi-author"><div class="testi-avatar">SB</div><div><div class="testi-name">Stefani Bryant</div><div class="testi-result">70+ Points in a Few Months</div></div></div>
+</div>
+<div class="testi-card">
+<div class="testi-stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
+<p class="testi-quote">"When I started with Credit Comeback Club, my main focus was being able to finance a home one day. I started in the mid 400s. I am almost pushing 700, with endless possibilities. They made the process smooth, easy, and communication was wonderful."</p>
+<div class="testi-author"><div class="testi-avatar">AD</div><div><div class="testi-name">Ashley Dawn</div><div class="testi-result">Mid-400s → Nearly 700</div></div></div>
+</div>
+<div class="testi-card">
+<div class="testi-stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
+<p class="testi-quote">"Went from a 498 to a 641 in under 6 months. I've used two other credit repair services before and neither came close. Chris goes after the creditors directly — that's what makes the difference. Credit Comeback Club is the real deal."</p>
+<div class="testi-author"><div class="testi-avatar">RC</div><div><div class="testi-name">Robert Carter</div><div class="testi-result">498 → 641 in 6 Months</div></div></div>
+</div>
+<div class="testi-card">
+<div class="testi-stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
+<p class="testi-quote">"In less than six months, Chris helped me boost my credit score by over 150 points. If you're looking for someone who truly cares and delivers results, Chris Holland is the real deal — professional, reliable, and makes the whole process so simple!"</p>
+<div class="testi-author"><div class="testi-avatar">EH</div><div><div class="testi-name">Elizabeth Holland</div><div class="testi-result">150+ Points in 6 Months</div></div></div>
+</div>
+<div class="testi-card">
+<div class="testi-stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
+<p class="testi-quote">"What made Credit Comeback Club different was the education piece. Chris doesn't just send letters and collect a check — he explains Metro 2 compliance, what creditors are doing wrong, and why they're obligated to fix it. My score went up 110 points."</p>
+<div class="testi-author"><div class="testi-avatar">JW</div><div><div class="testi-name">Jasmine Wallace</div><div class="testi-result">110 Points — and the Knowledge Too</div></div></div>
+</div>
+<div class="testi-card">
+<div class="testi-stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
+<p class="testi-quote">"My husband and I both signed up because we're trying to buy our first home. We had a combined mess of old accounts, judgments, and errors. Chris worked both files simultaneously. We're both now over 680 and meeting with a mortgage lender next month."</p>
+<div class="testi-author"><div class="testi-avatar">DB</div><div><div class="testi-name">Darius &amp; Monique Barnes</div><div class="testi-result">Both Over 680 — Meeting Lender Next Month</div></div></div>
+</div>
+<div class="testi-card">
+<div class="testi-stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
+<p class="testi-quote">"He doesn't leave you in the dark like a lot of credit repair gurus do. I've had much success using Chris's methods, as have the clients I've referred to him. If you want someone who cares about getting you results, this is your guy."</p>
+<div class="testi-author"><div class="testi-avatar">KE</div><div><div class="testi-name">Karl Elliott</div><div class="testi-result">Referred Multiple Clients — All Successful</div></div></div>
+</div>
+<div class="testi-card">
+<div class="testi-stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
+<p class="testi-quote">"I was skeptical at first because I'd tried disputing things on my own with zero results. Chris actually explained why certain items could be challenged and showed me the process step by step. In about 4 months my score jumped over 90 points."</p>
+<div class="testi-author"><div class="testi-avatar">MT</div><div><div class="testi-name">Marcus Thompson</div><div class="testi-result">90+ Points in 4 Months</div></div></div>
+</div>
+</div>
+</div>
+<div class="carousel-controls">
+<button class="carousel-btn" id="prevBtn" aria-label="Previous">
+<svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+</button>
+<div class="carousel-dots" id="carouselDots"></div>
+<button class="carousel-btn" id="nextBtn" aria-label="Next">
+<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+</button>
+</div>
+</div>
+</section>
+
+<section id="faq">
+<div class="section-inner">
+<div style="text-align:center;margin-bottom:52px;">
+<span class="section-tag">FAQ</span>
+<h2 class="section-title">Straight Answers. No Runaround.</h2>
+</div>
+<div class="faq-list">
+<div class="faq-item">
+<button class="faq-q">How is this different from disputing with the bureaus myself?<span class="faq-icon"><svg viewBox="0 0 12 12"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg></span></button>
+<div class="faq-a">When you dispute with Experian, TransUnion, or Equifax, they simply forward your dispute to the creditor through a system called e-OSCAR. The creditor can click "verified" in seconds and your dispute dies — no real investigation required. <strong>We skip the bureaus entirely.</strong> We go directly to the data furnisher, identify specific Metro 2 format violations and FCRA §623 compliance failures in how they're reporting your account, and challenge them with legally precise letters they're obligated to respond to. It's a fundamentally different level of pressure.</div>
+</div>
+<div class="faq-item">
+<button class="faq-q">Do you guarantee results?<span class="faq-icon"><svg viewBox="0 0 12 12"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg></span></button>
+<div class="faq-a">No legitimate credit repair company can legally guarantee specific results — and any that do are lying to you. What we can tell you is that our furnisher-first methodology targets real technical violations, not generic disputes. Our clients consistently start seeing meaningful score improvements within 45 days. If there are no legitimate violations to challenge in your file, we'll tell you that upfront during your free consultation — we're not going to take your money if we can't help.</div>
+</div>
+<div class="faq-item">
+<button class="faq-q">How long does the process take?<span class="faq-icon"><svg viewBox="0 0 12 12"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg></span></button>
+<div class="faq-a">Most clients start seeing first results within 45 days — typically by round 2 of disputes. The full process runs 4–6 months depending on how many accounts are being challenged and how quickly furnishers respond. Credit repair isn't instant — creditors have legally defined response windows — but <strong>our furnisher-first approach targets the source directly</strong>, which is why we're seeing movement faster than the industry standard.</div>
+</div>
+<div class="faq-item">
+<button class="faq-q">Is credit repair legal?<span class="faq-icon"><svg viewBox="0 0 12 12"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg></span></button>
+<div class="faq-a">Completely. The Fair Credit Reporting Act (FCRA) gives every consumer the right to dispute inaccurate, incomplete, or unverifiable information on their credit report. We operate within that legal framework — specifically leveraging FCRA §623, which governs the obligations of data furnishers. <strong>Everything we do is grounded in federal law.</strong> We're not exploiting loopholes; we're holding creditors accountable to the standards they're legally required to meet.</div>
+</div>
+<div class="faq-item">
+<button class="faq-q">What's the difference between Standard and VIP?<span class="faq-icon"><svg viewBox="0 0 12 12"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg></span></button>
+<div class="faq-a">Both tiers get the full furnisher-first methodology. The difference is speed, access, and trajectory. <strong>Standard clients are in the queue</strong> — letters out in 5–7 business days. VIP clients jump the line — letters out in 2–3 business days, furnisher responses reviewed within 48 hours, and a direct monthly strategy call with Chris. Standard gets your credit fixed. <strong>VIP gets it fixed faster and sets you up for what comes after</strong> — business credit, funding, and long-term financial positioning. If you're serious about the timeline, VIP is the play.</div>
+</div>
+<div class="faq-item">
+<button class="faq-q">What do I need to get started?<span class="faq-icon"><svg viewBox="0 0 12 12"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg></span></button>
+<div class="faq-a">Just schedule a free consultation. Before the call, pull your credit reports from all three bureaus — you can get them free at <strong>AnnualCreditReport.com</strong>. During the call we'll review your file together, identify which accounts have challengeable violations, and map out the best path forward. No payment is required until after we've done the initial analysis and you've decided to move forward.</div>
+</div>
+</div>
+</div>
+</section>
+
+<section id="contact">
+<div class="section-inner">
+<div class="contact-inner">
+<span class="section-tag">Get Started</span>
+<h2 class="section-title">Ready For Your Comeback?</h2>
+<p class="section-sub" style="margin-left:auto;margin-right:auto;">No gimmicks. No false promises. Just strategic, legally sound disputes that target the actual problems in your credit file.</p>
+<div class="contact-cards">
+<a href="tel:4809139172" class="contact-card">
+<div class="contact-card-label">Call or Text</div>
+<div class="contact-card-val">480-913-9172</div>
+</a>
+<a href="mailto:creditcomebackclub@gmail.com" class="contact-card">
+<div class="contact-card-label">Email</div>
+<div class="contact-card-val">creditcomebackclub@gmail.com</div>
+</a>
+</div>
+<a href="#" onclick="openIntake('Consultation'); return false;" class="btn-cta-main">Schedule Your Free Consultation →</a>
+</div>
+</div>
+</section>
+
+<footer>
+<div class="footer-top">
+<div class="footer-brand">
+<img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="Credit Comeback Club">
+<p>Strategic credit repair grounded in FCRA §623 and Metro 2 compliance. We challenge data furnishers directly — not bureaus.</p>
+<div class="footer-contact">
+<a href="tel:4809139172">📞 480-913-9172</a>
+<a href="mailto:creditcomebackclub@gmail.com">✉ creditcomebackclub@gmail.com</a>
+</div>
+</div>
+<div class="footer-col">
+<h4>Navigate</h4>
+<a href="#why">Why Us</a>
+<a href="#method">Our Method</a>
+<a href="#pricing">Pricing</a>
+<a href="#faq">FAQ</a>
+<a href="#contact">Contact</a>
+</div>
+<div class="footer-col">
+<h4>Resources</h4>
+<a href="https://creditcomebackclub.netlify.app/freeguide" target="_blank">Free Dispute Guide</a>
+<a href="/login">Client Portal Login</a>
+<a href="https://creditcomebackclub.netlify.app/terms" target="_blank">Terms of Service</a>
+<a href="https://creditcomebackclub.netlify.app/privacy" target="_blank">Privacy Policy</a>
+</div>
+</div>
+<div class="footer-bottom">
+<p><strong style="color:rgba(255,255,255,.45);">TSR Compliance Notice:</strong> Under the Telemarketing Sales Rule (TSR), credit repair organizations may not charge or receive payment until the services have been fully performed. Credit Comeback Club complies fully with the TSR and all applicable federal and state credit repair laws. We do not charge until after your free consultation and a service agreement is executed.</p>
+<p>Credit Comeback Club, LLC provides credit repair services. Individual results vary. No specific outcome is guaranteed. Results depend on individual credit history, furnisher responses, and other factors outside our control. We operate in full compliance with the Fair Credit Reporting Act (FCRA), the Credit Repair Organizations Act (CROA), and the Telemarketing Sales Rule (TSR).</p>
+<p class="copyright">© 2026 Credit Comeback Club, LLC · Grand Junction, CO · All rights reserved.</p>
+</div>
+</footer>
+
+<!-- Intake Modal -->
+<div class="modal-overlay" id="intakeModal">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeIntake()">×</button>
+    <div id="intakeFormStep">
+      <div class="modal-title">Get Started</div>
+      <div class="modal-sub">Submit your information to create your portal account and schedule your free consultation.</div>
+      <form id="intakeForm">
+        <div class="form-group">
+          <label>Selected Tier</label>
+          <input type="text" id="intakeTier" name="tier" readonly>
+        </div>
+        <div class="form-group">
+          <label>Full Name</label>
+          <input type="text" id="intakeName" name="name" required placeholder="John Doe">
+        </div>
+        <div class="form-group">
+          <label>Email Address</label>
+          <input type="email" id="intakeEmail" name="email" required placeholder="john@example.com">
+        </div>
+        <div class="form-group">
+          <label>Phone Number</label>
+          <input type="tel" id="intakePhone" name="phone" placeholder="(555) 555-5555">
+        </div>
+        <button type="submit" class="btn-submit" id="intakeSubmitBtn">Continue to Scheduling →</button>
+      </form>
+    </div>
+    <div id="intakeSuccessStep" class="modal-success">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+      <div class="modal-title">Account Created!</div>
+      <div class="modal-sub">Check your email for your client portal link. Now, please select a time for your free consultation below.</div>
+      <!-- Calendly inline widget begin -->
+      <div class="calendly-inline-widget" data-url="https://calendly.com/creditcomebackclub/30min?month=2026-07&hide_event_type_details=1&hide_gdpr_banner=1" style="min-width:320px;height:400px;"></div>
+      <script type="text/javascript" src="https://assets.calendly.com/assets/external/widget.js" async></script>
+      <!-- Calendly inline widget end -->
+    </div>
+  </div>
+</div>
+
+<script>
+// NAV scroll
+const navbar = document.getElementById('navbar');
+window.addEventListener('scroll', () => {
+navbar.classList.toggle('scrolled', window.scrollY > 20);
+});
+
+// Hamburger
+const hamburger = document.getElementById('hamburger');
+const dropdown = document.getElementById('dropdown');
+hamburger.addEventListener('click', () => {
+hamburger.classList.toggle('open');
+dropdown.classList.toggle('open');
+});
+function closeMenu() {
+hamburger.classList.remove('open');
+dropdown.classList.remove('open');
+}
+document.addEventListener('click', (e) => {
+if (!hamburger.contains(e.target) && !dropdown.contains(e.target)) closeMenu();
+});
+
+// FAQ
+document.querySelectorAll('.faq-q').forEach(btn => {
+btn.addEventListener('click', () => {
+const item = btn.parentElement;
+const answer = item.querySelector('.faq-a');
+const isOpen = item.classList.contains('open');
+document.querySelectorAll('.faq-item').forEach(i => {
+i.classList.remove('open');
+i.querySelector('.faq-a').classList.remove('open');
+});
+if (!isOpen) {
+item.classList.add('open');
+answer.classList.add('open');
+}
+});
+});
+
+// Carousel
+const track = document.getElementById('carouselTrack');
+const dotsContainer = document.getElementById('carouselDots');
+const cards = track.querySelectorAll('.testi-card');
+let currentSlide = 0;
+let cardsPerView = 3;
+
+function getCardsPerView() {
+return window.innerWidth < 700 ? 1 : window.innerWidth < 1000 ? 2 : 3;
+}
+
+function buildDots() {
+dotsContainer.innerHTML = '';
+cardsPerView = getCardsPerView();
+const total = Math.ceil(cards.length / cardsPerView);
+for (let i = 0; i < total; i++) {
+const dot = document.createElement('div');
+dot.className = 'carousel-dot' + (i === 0 ? ' active' : '');
+dot.addEventListener('click', () => goTo(i));
+dotsContainer.appendChild(dot);
+}
+}
+
+function goTo(n) {
+cardsPerView = getCardsPerView();
+const total = Math.ceil(cards.length / cardsPerView);
+currentSlide = Math.max(0, Math.min(n, total - 1));
+const cardW = cards[0].offsetWidth + 22;
+track.style.transform = `translateX(-${currentSlide * cardsPerView * cardW}px)`;
+dotsContainer.querySelectorAll('.carousel-dot').forEach((d, i) => d.classList.toggle('active', i === currentSlide));
+}
+
+document.getElementById('prevBtn').addEventListener('click', () => goTo(currentSlide - 1));
+document.getElementById('nextBtn').addEventListener('click', () => goTo(currentSlide + 1));
+
+buildDots();
+window.addEventListener('resize', () => { buildDots(); goTo(0); });
+
+// Auto-advance
+setInterval(() => {
+cardsPerView = getCardsPerView();
+const total = Math.ceil(cards.length / cardsPerView);
+goTo((currentSlide + 1) % total);
+}, 5500);
+
+// Intake Modal Logic
+const modalOverlay = document.getElementById('intakeModal');
+const intakeFormStep = document.getElementById('intakeFormStep');
+const intakeSuccessStep = document.getElementById('intakeSuccessStep');
+const intakeForm = document.getElementById('intakeForm');
+const intakeSubmitBtn = document.getElementById('intakeSubmitBtn');
+const intakeTier = document.getElementById('intakeTier');
+
+function openIntake(tier) {
+  intakeTier.value = tier || 'Consultation';
+  intakeFormStep.style.display = 'block';
+  intakeSuccessStep.style.display = 'none';
+  intakeForm.reset();
+  intakeTier.value = tier || 'Consultation'; // Reset clears it, so set again
+  modalOverlay.classList.add('active');
+}
+
+function closeIntake() {
+  modalOverlay.classList.remove('active');
+}
+
+intakeForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  intakeSubmitBtn.disabled = true;
+  intakeSubmitBtn.textContent = 'Processing...';
+
+  const payload = {
+    name: document.getElementById('intakeName').value,
+    email: document.getElementById('intakeEmail').value,
+    phone: document.getElementById('intakePhone').value,
+    tier: document.getElementById('intakeTier').value
+  };
+
+  try {
+    const res = await fetch('/api/public-intake', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    
+    if (!res.ok) throw new Error('Failed to submit');
+    
+    // Show success / Calendly
+    intakeFormStep.style.display = 'none';
+    intakeSuccessStep.style.display = 'block';
+  } catch (err) {
+    alert('Sorry, there was an error submitting your request. Please try again.');
+    intakeSubmitBtn.disabled = false;
+    intakeSubmitBtn.textContent = 'Continue to Scheduling →';
+  }
+});
+</script>
+</body>
+</html>
+
+
+
+
