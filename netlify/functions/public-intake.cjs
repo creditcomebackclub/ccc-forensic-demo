@@ -50,8 +50,9 @@ exports.handler = async (event) => {
     });
 
     if (!insertRes.ok) {
-      console.error('Insert error:', await insertRes.text());
-      return { statusCode: 500, body: JSON.stringify({ error: 'Failed to create lead' }) };
+      const errText = await insertRes.text();
+      console.error('Insert error:', errText);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Failed to create lead: ' + errText }) };
     }
 
     const insertedData = await insertRes.json();
