@@ -211,14 +211,41 @@ export default function AffiliatePortal({ session, onSignOut }) {
             </div>
 
             {/* Refer a client CTA */}
-            <div style={{ background: '#111', border: `1px solid ${brandColor}22`, borderRadius: 8, padding: 24, marginBottom: 28, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Refer a client to Credit Comeback Club</div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Submit their info and we'll handle the rest — audit, onboarding, disputes, and updates.</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 }}>
+              <div style={{ background: '#111', border: `1px solid ${brandColor}33`, borderRadius: 8, padding: 24, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Manual Referral</div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Submit client info directly and we'll handle the onboarding.</div>
+                </div>
+                <button onClick={() => setShowReferForm(true)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: brandColor, color: '#000', border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 24, alignSelf: 'flex-start' }}>
+                  <Plus size={14} strokeWidth={2.5} /> Submit Info
+                </button>
               </div>
-              <button onClick={() => setShowReferForm(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, background: brandColor, color: '#000', border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap', flexShrink: 0, marginLeft: 24 }}>
-                <Plus size={14} strokeWidth={2.5} /> Refer Client
-              </button>
+
+              <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Your Custom Referral Link</div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Share this link. Clients who sign up will be automatically attributed to you.</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16 }}>
+                  <input 
+                    readOnly 
+                    value={`https://creditcomebackclub.com/join?ref=${affiliate.id.slice(0, 8)}`} 
+                    style={{ flex: 1, background: '#0A0A0A', border: '1px solid #2A2A2A', borderRadius: 4, padding: '8px 12px', color: '#fff', fontSize: 12, outline: 'none' }} 
+                  />
+                  <button 
+                    onClick={(e) => {
+                      navigator.clipboard.writeText(`https://creditcomebackclub.com/join?ref=${affiliate.id.slice(0, 8)}`);
+                      const btn = e.currentTarget;
+                      const orig = btn.innerText;
+                      btn.innerText = 'Copied!';
+                      setTimeout(() => btn.innerText = orig, 2000);
+                    }}
+                    style={{ background: '#2A2A2A', color: '#fff', border: 'none', borderRadius: 4, padding: '8px 16px', fontSize: 11, fontWeight: 600, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    Copy
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Recent clients */}
@@ -347,39 +374,54 @@ export default function AffiliatePortal({ session, onSignOut }) {
             </div>
 
             <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, overflow: 'hidden' }}>
-              <div style={{ padding: '14px 20px', borderBottom: '1px solid #1E1E1E' }}>
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)' }}>Per-Client Breakdown</span>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid #1E1E1E', background: '#0A0A0A' }}>
+                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)' }}>Commission Ledger</span>
               </div>
               {clients.length === 0 ? (
                 <div style={{ padding: 40, textAlign: 'center' }}>
                   <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)' }}>No referrals yet — commissions will appear here once clients are enrolled.</p>
                 </div>
               ) : (
-                clients.map(c => {
-                  const fee = c.referral_fee ? c.referral_fee * (affiliate?.commission_rate || 0.20) : null;
-                  return (
-                    <div key={c.id} style={{ padding: '14px 20px', borderBottom: '1px solid #1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{c.name}</div>
-                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>
-                          {fee ? 'Consultation fee: $' + c.referral_fee?.toFixed(2) : 'Awaiting consultation'}
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <span style={{ fontSize: 15, fontWeight: 700, color: fee ? '#fff' : 'rgba(255,255,255,0.2)' }}>
-                          {fee ? '$' + fee.toFixed(2) : '—'}
-                        </span>
-                        {c.commission_paid ? (
-                          <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0', textTransform: 'uppercase' }}>Paid</span>
-                        ) : fee ? (
-                          <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: '#FFFBEB', color: '#D97706', border: '1px solid #FDE68A', textTransform: 'uppercase' }}>Pending</span>
-                        ) : (
-                          <span style={{ fontSize: 10, padding: '3px 8px', borderRadius: 4, background: '#1A1A1A', color: 'rgba(255,255,255,0.25)', border: '1px solid #2A2A2A', textTransform: 'uppercase' }}>TBD</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #1A1A1A' }}>
+                      <th style={{ padding: '12px 20px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Client</th>
+                      <th style={{ padding: '12px 20px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Consultation Fee</th>
+                      <th style={{ padding: '12px 20px', textAlign: 'right', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Your Commission</th>
+                      <th style={{ padding: '12px 20px', textAlign: 'right', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clients.map(c => {
+                      const fee = c.referral_fee ? c.referral_fee * (affiliate?.commission_rate || 0.20) : null;
+                      return (
+                        <tr key={c.id} style={{ borderBottom: '1px solid #1A1A1A' }}>
+                          <td style={{ padding: '14px 20px' }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{c.name}</div>
+                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>Enrolled: {new Date(c.created_at).toLocaleDateString()}</div>
+                          </td>
+                          <td style={{ padding: '14px 20px', fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+                            {c.referral_fee ? '$' + c.referral_fee.toFixed(2) : 'Awaiting'}
+                          </td>
+                          <td style={{ padding: '14px 20px', textAlign: 'right' }}>
+                            <span style={{ fontSize: 14, fontWeight: 700, color: fee ? '#fff' : 'rgba(255,255,255,0.2)' }}>
+                              {fee ? '$' + fee.toFixed(2) : '—'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '14px 20px', textAlign: 'right' }}>
+                            {c.commission_paid ? (
+                              <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>Paid</span>
+                            ) : fee ? (
+                              <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#FFFBEB', color: '#D97706', border: '1px solid #FDE68A', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>Pending</span>
+                            ) : (
+                              <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#1A1A1A', color: 'rgba(255,255,255,0.25)', border: '1px solid #2A2A2A', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>TBD</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               )}
             </div>
 

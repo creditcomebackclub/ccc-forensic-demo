@@ -4,6 +4,45 @@ import ScoreMeter from './ScoreMeter';
 import { supabase } from '../../utils/supabase';
 import { writeClientSensitiveData } from '../../utils/clientSensitiveData';
 
+import { motion } from 'framer-motion';
+
+function DeletionRing({ deleted, totalDisputed }) {
+  const percentage = totalDisputed === 0 ? 0 : Math.round((deleted / totalDisputed) * 100);
+  const circumference = 2 * Math.PI * 36;
+  const strokeDashoffset = circumference - (percentage / 100) * circumference;
+
+  return (
+    <div className="flex flex-col sm:flex-row items-center gap-6 bg-slate-900 rounded-xl p-6 shadow-xl relative overflow-hidden mb-6 border border-slate-800">
+      <div className="absolute -top-10 -right-10 w-48 h-48 bg-amber-400/20 blur-[50px] rounded-full pointer-events-none" />
+      
+      <div className="relative w-24 h-24 flex items-center justify-center shrink-0">
+        <svg className="w-24 h-24 transform -rotate-90 drop-shadow-lg">
+          <circle cx="48" cy="48" r="36" stroke="rgba(255,255,255,0.05)" strokeWidth="8" fill="none" />
+          <motion.circle
+            cx="48" cy="48" r="36"
+            stroke="#FBBF24" strokeWidth="8" fill="none"
+            strokeDasharray={circumference}
+            initial={{ strokeDashoffset: circumference }}
+            animate={{ strokeDashoffset }}
+            transition={{ duration: 2, ease: "easeOut", delay: 0.2 }}
+            strokeLinecap="round"
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-xl font-bold text-amber-400 leading-none">{percentage}%</span>
+        </div>
+      </div>
+
+      <div className="flex-1 text-center sm:text-left z-10">
+        <h3 className="text-lg font-bold text-white mb-1 tracking-wide">Deletion Milestone</h3>
+        <p className="text-[13px] text-gray-400 leading-relaxed">
+          <strong className="text-white">{deleted}</strong> negative accounts have been successfully removed from your credit reports out of <strong className="text-white">{totalDisputed}</strong> total disputed items.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function OverviewTab({
   profile,
   clientMeta,
@@ -12,6 +51,7 @@ export default function OverviewTab({
   delivered,
   responded,
   deletions,
+  totalDisputes,
   latestScores,
   auditHistory,
   clientDocs,
@@ -67,8 +107,10 @@ export default function OverviewTab({
 
       <div>
         <h1 className="text-2xl font-bold text-slate-900 ccc-display">Welcome back, {firstName}.</h1>
-        <p className="text-sm text-gray-500 mt-1">Here's your credit restoration campaign at a glance.</p>
+        <p className="text-sm text-gray-500 mt-1 mb-6">Here's your credit restoration campaign at a glance.</p>
       </div>
+
+      <DeletionRing deleted={deletions.length} totalDisputed={totalDisputes || mailed.length} />
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[

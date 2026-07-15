@@ -1520,18 +1520,15 @@ function DiffResultModal({ result, onClose }) {
 }
 
 function LetterEditModal({ letter, onClose, onSaved }) {
-  const [html, setHtml] = React.useState('');
   const [saving, setSaving] = React.useState(false);
-
-  React.useEffect(() => {
-    if (letter) setHtml(letter.html || '');
-  }, [letter]);
+  const editorRef = React.useRef(null);
 
   if (!letter) return null;
 
   const handleSave = async () => {
     setSaving(true);
     try {
+      const html = editorRef.current?.innerHTML || '';
       await updateLetter(letter.id, { html });
       if (onSaved) await onSaved();
       onClose();
@@ -1543,30 +1540,39 @@ function LetterEditModal({ letter, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={onClose}>
-      <div className="bg-white border border-border rounded w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-6" onClick={onClose}>
+      <div className="bg-gray-100 border border-border rounded-lg w-full max-w-4xl h-[90vh] flex flex-col overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-white p-4 border-b border-border flex items-center justify-between shrink-0 shadow-sm z-10">
           <div>
-            <h2 className="text-[14px] font-medium text-ink">Edit Letter</h2>
+            <h2 className="text-[15px] font-bold text-ink flex items-center gap-2">
+              <Pencil size={14} className="text-gold" /> Letter Editor
+            </h2>
             <p className="text-[12px] text-ink-muted mt-0.5">{letter.furnisher} — {letter.phase}</p>
           </div>
-          <button onClick={onClose} className="text-ink-faint hover:text-ink">✕</button>
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="text-[11px] uppercase tracking-wider font-semibold text-ink-muted hover:text-ink px-3 py-2 transition-colors">Cancel</button>
+            <button onClick={handleSave} disabled={saving}
+              className="text-[11px] uppercase tracking-wider font-bold text-white bg-navy hover:bg-slate-800 transition-colors px-5 py-2 rounded shadow-sm disabled:opacity-50 flex items-center gap-2">
+              {saving ? 'Saving…' : 'Finalize & Save'}
+            </button>
+          </div>
         </div>
-        <div className="p-4 flex-1 overflow-y-auto">
-          <p className="text-[11px] text-ink-faint mb-2">Raw HTML. Edit dates, figures, or wording directly, then Save.</p>
-          <textarea
-            value={html}
-            onChange={e => setHtml(e.target.value)}
-            className="w-full h-96 border border-border rounded-sm p-3 text-[12px] font-mono focus:outline-none focus:border-navy resize-none"
-            spellCheck={false}
+        
+        <div className="p-8 flex-1 overflow-y-auto bg-gray-100 flex justify-center">
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            dangerouslySetInnerHTML={{ __html: letter.html || '' }}
+            className="bg-white w-[8.5in] min-h-[11in] shadow-xl p-[1in] focus:outline-none"
+            style={{
+              fontFamily: "Arial, sans-serif",
+              fontSize: "10pt",
+              lineHeight: "1.5",
+              color: "#000",
+              cursor: "text"
+            }}
           />
-        </div>
-        <div className="p-4 border-t border-border flex items-center justify-end gap-2 shrink-0">
-          <button onClick={onClose} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink px-3 py-2">Cancel</button>
-          <button onClick={handleSave} disabled={saving}
-            className="text-[11px] uppercase tracking-wider text-white bg-navy px-4 py-2 rounded-sm disabled:opacity-50">
-            {saving ? 'Saving…' : 'Save'}
-          </button>
         </div>
       </div>
     </div>

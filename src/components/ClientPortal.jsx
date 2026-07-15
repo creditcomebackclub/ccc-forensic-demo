@@ -293,6 +293,7 @@ export default function ClientPortal({ session, onSignOut }) {
                 delivered={delivered}
                 responded={responded}
                 deletions={deletions}
+                totalDisputes={letters.length}
                 latestScores={latestScores}
                 auditHistory={auditHistory}
                 clientDocs={clientDocs}
