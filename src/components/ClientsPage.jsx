@@ -947,12 +947,13 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             batchRemaining={lobMailerQueue.length - 1}
             onNext={() => setLobMailerQueue(prev => prev.slice(1))}
             onClose={() => setLobMailerQueue([])}
-            onSent={async (trackingStatus, statusMsg, trackingNum, expectedDeliv) => {
+            onSent={async (data) => {
               await updateLetter(currentLetter.id, {
-                mailed_date: new Date().toISOString(),
-                tracking_status: trackingStatus || 'Mailed',
-                tracking_number: trackingNum || null,
-                delivered_at: null,
+                mailedDate: data.mailedDate,
+                trackingStatus: 'Mailed',
+                trackingNumber: data.trackingNumber || null,
+                deliveredAt: null,
+                lobId: data.lobId,
               });
               load();
             }}
