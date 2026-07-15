@@ -12,6 +12,28 @@ const WINDOW_DAYS = 30;
 const VIP_RESPONSE_DAYS = 1;
 const STD_RESPONSE_DAYS = 3;
 
+window.backfillAndrew = async () => {
+  const { data: letters } = await supabase.from('letters')
+    .select('id, client_name, phase, lob_id')
+    .ilike('client_name', '%Andrew Kilpatrick%')
+    .is('lob_id', null);
+  
+  const target = letters?.find(l => l.phase?.includes('Phase 3') || l.phase === 'Phase 3');
+  if (!target) {
+    console.error("Could not find an unmailed Phase 3 letter for Andrew Kilpatrick.");
+    return;
+  }
+  
+  await updateLetter(target.id, {
+    mailedDate: new Date().toISOString(),
+    trackingStatus: 'Mailed',
+    trackingNumber: '92148902358909000042872804',
+    lobId: 'ltr_e77e4b2f18ac80f4',
+    deliveredAt: null
+  });
+  console.log("Backfill complete! Reload the page to see changes.");
+};
+
 // Brand tokens — matches the dashboard card system
 const T = {
   navy: '#1B2A4A',
