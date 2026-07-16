@@ -189,6 +189,7 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
         if (folderFiles && folderFiles.length > 0) {
           // Match folder name (letter ID) to a letter to get furnisher
           const matchedLetter = letters.find(l => l.id === folder.name);
+          const hasPhase3 = matchedLetter ? letters.some(pl => pl.furnisher === matchedLetter.furnisher && pl.phase?.startsWith('Phase 3')) : false;
           // Hide system artifacts: PDF pages converted to JPEGs for Lob
           // exhibit embedding live in the same folder but aren't uploads
           const visible = folderFiles.filter(f => !f.name.startsWith(CONVERTED_PREFIX));
@@ -199,7 +200,8 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
               furnisher: matchedLetter ? matchedLetter.furnisher : folder.name,
               phase: matchedLetter ? matchedLetter.phase : 'Phase 1',
               createdAt: batch.createdAt,
-              letter: matchedLetter || null,
+              letter: matchedLetter,
+              hasPhase3
             });
           });
         }
@@ -268,7 +270,7 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
               style={{ borderColor: T.border, color: T.muted }}>
               <Eye size={11} strokeWidth={1.75} /> View
             </button>
-            {resp.letter && (
+            {resp.letter && !resp.hasPhase3 && (
               <button onClick={() => handleAnalyze(resp)}
                 className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md"
                 style={{ background: T.navy, color: T.gold }}>

@@ -11,11 +11,20 @@ import { CONVERTED_PREFIX } from './responseFiles';
 // the clients that actually need attention instead of just the count.
 export async function getUnanalyzedResponseStats() {
   const empty = { count: 0, clientNames: new Set() };
-  const { data: letters } = await supabase
+  const { data: allLetters } = await supabase
     .from('letters')
-    .select('id, client_name')
-    .is('phase2_analyzed_at', null);
-  if (!letters || !letters.length) return empty;
+    .select('id, client_name, furnisher, phase, phase2_analyzed_at');
+  if (!allLetters || !allLetters.length) return empty;
+
+  // Only consider letters unanalyzed if they have no phase2_analyzed_at AND
+  // there isn't already a Phase 3 letter for this furnisher (which means the
+  // user manually skipped Phase 2 analysis and generated Phase 3 directly).
+  const letters = allLetters.filter(l => 
+    l.phase2_analyzed_at === null && 
+    !allLetters.some(pl => pl.client_name === l.client_name && pl.furnisher === l.furnisher && pl.phase?.startsWith('Phase 3'))
+  );
+  
+  if (!letters.length) return empty;
 
   const lettersByClient = new Map();
   for (const l of letters) {
