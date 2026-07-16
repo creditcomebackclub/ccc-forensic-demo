@@ -168,6 +168,55 @@ exports.handler = async (event) => {
     }
   }
 
+  // Onboarding Reminder Drip (Day 1, 3, 5)
+  if (action === 'send_onboarding_reminder') {
+    const { clientName, clientEmail, day } = payload;
+    if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
+    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+
+    const firstName = clientName.split(' ')[0] || clientName;
+    const configs = {
+      1: {
+        subject: 'Action Required: Finish Your CCC Onboarding',
+        body: `<p>We noticed you haven't finished your onboarding yet. We need your signed LPOA and credit monitoring credentials before we can begin your forensic audit.</p>`,
+      },
+      3: {
+        subject: 'Don\'t Lose Your Spot — Finish Onboarding',
+        body: `<p>Your consultation is coming up! It is critical that you log in and sign your LPOA and connect your credit monitoring. If your file isn't ready before the call, we will have to reschedule.</p>`,
+      },
+      5: {
+        subject: 'Final Notice: Onboarding Incomplete',
+        body: `<p>We still haven't received your onboarding documents. Please log into your portal immediately to complete this process so we can review your file.</p>`,
+      }
+    };
+
+    const config = configs[day] || configs[1];
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
+      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
+        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
+        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Onboarding Action Required</p>
+      </div>
+      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
+        <p>Hi ${firstName},</p>
+        ${config.body}
+        <div style="text-align:center;margin:32px 0;">
+          <a href="https://ccc-forensic-demo.netlify.app/login" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Access Client Portal &#8594;</a>
+        </div>
+        <p>Questions? Reply to this email or call 970-644-0063.</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
+      </div>
+    </body></html>`;
+
+    try {
+      await sendViaSendGrid(sgKey, clientEmail, config.subject, html);
+      return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+    } catch (e) {
+      return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    }
+  }
+
   // Automated campaign update emails
   if (action === 'send_campaign_update') {
     const { clientName, clientEmail, updateType, furnisher, details, daysElapsed } = payload;

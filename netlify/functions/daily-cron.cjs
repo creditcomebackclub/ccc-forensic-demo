@@ -167,40 +167,56 @@ exports.handler = async () => {
     }
   }
 
-  // --- 2. Process Lead Nurture Drips ---
+  // --- 2. Process Onboarding Reminders & Lead Nurture ---
+  let onboardingDripsCount = 0;
   if (sgKey) {
     const leadsRes = await supabaseRequest(
       '/rest/v1/clients?select=name,email,lead_created_at,lead_drips_sent&status=eq.lead',
       'GET', null, supabaseUrl, supabaseKey
     );
     const leads = Array.isArray(leadsRes.body) ? leadsRes.body : [];
-    const dripSchedule = [
-      { key: 'drip1', num: 1, minDay: 0, maxDay: 2 },
-      { key: 'drip2', num: 2, minDay: 3, maxDay: 5 },
-      { key: 'drip3', num: 3, minDay: 7, maxDay: 9 },
-      { key: 'drip4', num: 4, minDay: 10, maxDay: 12 },
-      { key: 'drip5', num: 5, minDay: 14, maxDay: 16 },
+    
+    // Day 1, 3, 5 Onboarding Reminders
+    const onboardingSchedule = [
+      { key: 'onboarding1', day: 1, targetDay: 1 },
+      { key: 'onboarding3', day: 3, targetDay: 3 },
+      { key: 'onboarding5', day: 5, targetDay: 5 },
     ];
 
     for (const lead of leads) {
       if (!lead.email || !lead.lead_created_at) continue;
+      
+      // Check if they finished onboarding
+      const profileRes = await supabaseRequest(
+        '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(lead.email) + '&select=onboarding_complete,signature_data&limit=1',
+        'GET', null, supabaseUrl, supabaseKey
+      );
+      const profile = Array.isArray(profileRes.body) && profileRes.body[0] ? profileRes.body[0] : null;
+      
+      // If they have signature_data or onboarding_complete is true, they don't need onboarding reminders.
+      // (They might need generic lead nurture, but for now we focus on the missing onboarding).
+      const isOnboarded = profile && (profile.onboarding_complete || profile.signature_data);
+
       const createdDate = lead.lead_created_at.slice(0, 10);
       const daysSince = daysBetween(createdDate, today);
       const sentDrips = lead.lead_drips_sent || [];
       let newDrips = [...sentDrips];
       let touched = false;
 
-      for (const d of dripSchedule) {
-        if (daysSince >= d.minDay && daysSince <= d.maxDay && !sentDrips.includes(d.key)) {
-          try {
-            await fetch_send('send_lead_drip', { leadName: lead.name, leadEmail: lead.email, emailNumber: d.num });
-            newDrips.push(d.key);
-            touched = true;
-            leadsDrippedCount++;
-          } catch (e) {
-            console.error('Lead drip send failed:', e.message);
+      if (!isOnboarded) {
+        // Send onboarding reminders
+        for (const d of onboardingSchedule) {
+          if (daysSince === d.targetDay && !sentDrips.includes(d.key)) {
+            try {
+              await fetch_send('send_onboarding_reminder', { clientName: lead.name, clientEmail: lead.email, day: d.day });
+              newDrips.push(d.key);
+              touched = true;
+              onboardingDripsCount++;
+            } catch (e) {
+              console.error('Onboarding drip send failed:', e.message);
+            }
+            break;
           }
-          break;
         }
       }
 
@@ -306,7 +322,7 @@ exports.handler = async () => {
 
   return {
     statusCode: 200,
-    body: JSON.stringify({ success: true, leadsDripped: leadsDrippedCount, updatesSent: clientUpdatesCount }),
+    body: JSON.stringify({ success: true, onboardingRemindersSent: onboardingDripsCount, updatesSent: clientUpdatesCount }),
   };
 };
 
