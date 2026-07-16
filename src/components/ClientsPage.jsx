@@ -37,6 +37,11 @@ function leadStage(c) {
   return (c.audits || []).length > 0 ? 'audit' : 'new';
 }
 
+function isLeadRecent(c) {
+  if (!c.leadCreatedAt) return false;
+  return new Date(c.leadCreatedAt) > new Date(Date.now() - 48 * 60 * 60 * 1000);
+}
+
 function todayISO() {
   const d = new Date();
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
@@ -582,7 +587,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   const baseFiltered = activeFilter
     ? sortedClients.filter((c) => viewTab === 'leads'
-        ? (activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6) : true)
+        ? (activeFilter === 'recent' ? isLeadRecent(c) : activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6) : true)
         : clientMatchesFilter(c, activeFilter, unanalyzedNames))
     : sortedClients;
   const q = debouncedSearch.trim().toLowerCase();
@@ -600,15 +605,19 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const filterChips = viewTab === 'clients'
     ? [
         { key: null, label: 'All', count: activeClients.length },
+        { key: 'ready', label: 'Phase 2 Ready', count: activeClients.filter((c) => clientMatchesFilter(c, 'ready')).length },
         { key: 'awaiting', label: 'Awaiting', count: activeClients.filter((c) => clientMatchesFilter(c, 'awaiting')).length },
         { key: 'escalate', label: 'To escalate', count: activeClients.filter((c) => clientMatchesFilter(c, 'escalate')).length },
         { key: 'received', label: 'Needs Phase 3', count: activeClients.filter((c) => clientMatchesFilter(c, 'received')).length },
-        { key: 'unanalyzed', label: 'Needs Analysis', count: activeClients.filter((c) => clientMatchesFilter(c, 'unanalyzed', unanalyzedNames)).length },
-        { key: 'noemail', label: 'No email', count: activeClients.filter((c) => clientMatchesFilter(c, 'noemail')).length },
-        { key: 'vip', label: 'VIP', count: activeClients.filter((c) => clientMatchesFilter(c, 'vip')).length },
+        { key: 'unanalyzed', label: 'Action Items', count: activeClients.filter((c) => unanalyzedNames.has(c.name)).length },
+        { key: 'attention', label: 'Needs attention', count: activeClients.filter((c) => c.status === 'attention').length },
+        { key: 'active', label: 'Active', count: activeClients.filter((c) => c.status === 'active').length },
+        { key: 'completed', label: 'Completed', count: activeClients.filter((c) => c.status === 'completed').length },
+        { key: 'vip', label: 'VIP / PIF', count: activeClients.filter((c) => c.isVip).length },
       ]
     : [
         { key: null, label: 'All', count: leadClients.length },
+        { key: 'recent', label: 'New (48h)', count: leadClients.filter(isLeadRecent).length },
         ...LEAD_STAGES.map((s) => ({ key: 'stage:' + s.key, label: s.label, count: leadClients.filter((c) => leadStage(c) === s.key).length })),
       ];
 
@@ -1220,6 +1229,11 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="ccc-display text-[14px] text-ink font-medium">{c.name}</div>
+            {isLeadRecent(c) && (
+              <span className="px-1.5 py-0.5 rounded-[3px] text-[9px] uppercase tracking-wider font-bold bg-red-100 text-red-700">
+                NEW
+              </span>
+            )}
             <select
               value={stage}
               disabled={savingStage || !isAdmin}
