@@ -42,7 +42,11 @@ export async function getUnanalyzedResponseStats() {
       if (!letterIds.has(folder.name)) continue;
       const { data: files } = await supabase.storage.from('responses').list(p.user_id + '/' + folder.name, { limit: 50 });
       const visible = (files || []).filter((f) => !f.name.startsWith(CONVERTED_PREFIX));
-      if (visible.length > 0) { count += 1; clientNames.add(p.full_name); } // one action item per response, not per page
+      if (visible.length > 0) { 
+        count += 1; 
+        clientNames.add(p.full_name); 
+        console.error(`🔴 UNANALYZED RESPONSE FOUND FOR ${p.full_name}:\n- Letter ID: ${folder.name}\n- Raw Files: ${visible.map(f => f.name).join(', ')}`);
+      }
     }
   }
   return { count, clientNames };
