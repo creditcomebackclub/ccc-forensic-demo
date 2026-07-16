@@ -76,15 +76,22 @@ exports.handler = async (event) => {
     const lead = insertedData[0]; // Prefer return=representation returns an array
 
 
-    // 2. Trigger the magic link email (using service key to bypass admin check)
+    // 3. Trigger the magic link email (using service key to bypass admin check)
     const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+    const portalUrl = `${base}/login`;
+    
     const emailRes = await fetch(base + '/.netlify/functions/send-lpoa', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${serviceKey}`
       },
-      body: JSON.stringify({ action: 'send', clientId: lead.id }),
+      body: JSON.stringify({ 
+        action: 'send', 
+        clientName: lead.name, 
+        clientEmail: lead.email, 
+        lpoaUrl: portalUrl 
+      }),
     });
 
     if (!emailRes.ok) {
