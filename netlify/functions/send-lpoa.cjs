@@ -36,7 +36,7 @@ exports.handler = async (event) => {
 
   // Auth gate: client_response_uploaded is called from the portal by a logged-in
   // client — just require any valid session. All other actions are admin-only.
-  const ADMIN_ACTIONS = ['send', 'send_audit_email', 'send_phase_notification', 'send_campaign_update', 'send_lead_drip', 'send_educational', 'affiliate_welcome', 'affiliate_new_referral'];
+  const ADMIN_ACTIONS = ['send', 'send_audit_email', 'send_phase_notification', 'send_campaign_update', 'send_lead_drip', 'send_onboarding_reminder', 'admin_new_lead', 'send_educational', 'affiliate_welcome', 'affiliate_new_referral'];
   if (ADMIN_ACTIONS.includes(action)) {
     const { requireAdmin } = require('./_requireAdmin.cjs');
     try { await requireAdmin(event); }
@@ -211,6 +211,40 @@ exports.handler = async (event) => {
 
     try {
       await sendViaSendGrid(sgKey, clientEmail, config.subject, html);
+      return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+    } catch (e) {
+      return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    }
+  }
+
+  // Admin Notification: New Lead
+  if (action === 'admin_new_lead') {
+    const { leadName, leadEmail, leadPhone, tier } = payload;
+    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    
+    const adminEmail = 'chris@cccpartners.co';
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
+      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
+        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
+        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">New Lead Alert</p>
+      </div>
+      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
+        <p><strong>You have a new lead from the website!</strong></p>
+        <ul style="line-height:1.8;">
+          <li><strong>Name:</strong> ${leadName}</li>
+          <li><strong>Email:</strong> ${leadEmail}</li>
+          <li><strong>Phone:</strong> ${leadPhone || 'Not provided'}</li>
+          <li><strong>Tier:</strong> ${tier || 'Not provided'}</li>
+        </ul>
+        <p>They have been added to your CRM and the magic link email has been sent to them.</p>
+        <div style="text-align:center;margin:32px 0;">
+          <a href="https://ccc-forensic-demo.netlify.app" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Open CRM Dashboard &#8594;</a>
+        </div>
+      </div>
+    </body></html>`;
+
+    try {
+      await sendViaSendGrid(sgKey, adminEmail, `🚨 New Lead: ${leadName}`, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };

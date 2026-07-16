@@ -98,6 +98,26 @@ exports.handler = async (event) => {
       console.error('Email trigger failed:', await emailRes.text());
     }
 
+    // 4. Trigger the Admin Notification email
+    const adminRes = await fetch(base + '/.netlify/functions/send-lpoa', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${serviceKey}`
+      },
+      body: JSON.stringify({ 
+        action: 'admin_new_lead', 
+        leadName: lead.name, 
+        leadEmail: lead.email,
+        leadPhone: lead.lead_phone,
+        tier: tier
+      }),
+    });
+
+    if (!adminRes.ok) {
+      console.error('Admin notification trigger failed:', await adminRes.text());
+    }
+
     return {
       statusCode: 200,
       headers: {
