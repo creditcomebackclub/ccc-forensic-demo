@@ -526,7 +526,7 @@ function PortalAdoption({ portal, onNavigate }) {
   );
 }
 
-function QuickActionPanel({ action, onDone, onCancel }) {
+function QuickActionPanel({ action, onDone, onCancel, onNavigate }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const [saving, setSaving] = useState(false);
@@ -563,7 +563,12 @@ function QuickActionPanel({ action, onDone, onCancel }) {
       {mode === null && (
         <div className="flex items-center gap-2 flex-wrap">
           {(action.type === 'escalate' || action.type === 'no_response') && (
-            <span className="text-[11px] text-ink-muted">Go to Clients → Analyze to generate Phase 3 letters</span>
+            <button 
+              onClick={() => onNavigate('clients', { jumpTo: action.client })}
+              className="text-[11px] uppercase tracking-wider text-navy hover:text-gold"
+            >
+              Go to Client Profile
+            </button>
           )}
           {action.type === 'respond' && action.letter.mailedDate && !action.letter.responseOutcome && (
             <>
@@ -639,7 +644,7 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart, displ
                   </div>
                 </div>
                 {activeAction?.letter?.id === a.letter?.id && (
-                  <QuickActionPanel action={a} onDone={() => { setActiveAction(null); load(); }} onCancel={() => setActiveAction(null)} />
+                  <QuickActionPanel action={a} onDone={() => { setActiveAction(null); load(); }} onCancel={() => setActiveAction(null)} onNavigate={onNavigate} />
                 )}
               </div>
             ))}
