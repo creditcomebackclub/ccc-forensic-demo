@@ -508,28 +508,38 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     }
   };
 
-  const handleSendLpoa = async (c) => {
+  const handleSendInvite = async (c) => {
     if (!c.email) { toast.error('Add client email first'); return; }
     setSendingLpoa(c.name);
     try {
-      const signingUrl = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(c.name);
       const { supabase } = await import('../utils/supabase.js');
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      const res = await fetch('/.netlify/functions/send-lpoa', {
+      const { data: { session: _cpSess } } = await supabase.auth.getSession();
+      const _cpTok = _cpSess?.access_token;
+      
+      // Provision the auth user
+      const provRes = await fetch('/.netlify/functions/provision-user', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          ...(_cpTok ? { Authorization: `Bearer ${_cpTok}` } : {}),
         },
-        body: JSON.stringify({ action: 'send', clientName: c.name, clientEmail: c.email, lpoaUrl: signingUrl }),
+        body: JSON.stringify({ email: c.email.trim().toLowerCase(), fullName: c.name.trim(), kind: 'client' }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Send failed');
-      toast.success('LPOA signing link sent to ' + c.email);
+      if (!provRes.ok) {
+        const out = await provRes.json().catch(() => ({}));
+        throw new Error(out.error || 'Could not provision client account');
+      }
+
+      // Send magic link via Supabase
+      const { error: authError } = await supabase.auth.signInWithOtp({
+        email: c.email.trim().toLowerCase(),
+        options: { emailRedirectTo: window.location.origin },
+      });
+      if (authError) throw authError;
+
+      toast.success('Portal invite link sent to ' + c.email);
     } catch (e) {
-      toast.error('Could not send LPOA: ' + e.message);
+      toast.error('Could not send invite: ' + e.message);
     } finally {
       setSendingLpoa(null);
     }
@@ -751,7 +761,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             { label: togglingVip === c.name ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip), disabled: togglingVip === c.name },
             { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
             'divider',
-            !c.lpoaSigned && { label: sendingLpoa === c.name ? 'Sending LPOA…' : 'Send LPOA for signature', onClick: () => handleSendLpoa(c), disabled: !c.email || sendingLpoa === c.name, title: !c.email ? 'Add email first' : undefined },
+            !c.lpoaSigned && { label: sendingLpoa === c.name ? 'Sending Invite…' : 'Send Portal Invite & LPOA', onClick: () => handleSendInvite(c), disabled: !c.email || sendingLpoa === c.name, title: !c.email ? 'Add email first' : undefined },
             c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
             'divider',
             { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
