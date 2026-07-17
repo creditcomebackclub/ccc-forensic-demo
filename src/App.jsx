@@ -13,6 +13,7 @@ import ClientSetupFlow from './components/ClientSetupFlow';
 import ClientPortal from './components/ClientPortal';
 import AffiliatePortal from './components/AffiliatePortal';
 import SettingsModal from './components/SettingsModal';
+import ProspectChatWidget from './components/ProspectChatWidget';
 import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit } from './utils/api';
@@ -256,6 +257,10 @@ function AffiliatesPage() {
 }
 
 export default function App() {
+  if (window.location.pathname === '/widget') {
+    return <ProspectChatWidget />;
+  }
+
   const [session, setSession] = useState(undefined);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
