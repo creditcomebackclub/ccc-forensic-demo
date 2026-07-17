@@ -55,7 +55,8 @@ export const handler = async (event) => {
       }))
     });
 
-    const reply = response.content[0].text;
+    const textBlock = response.content.find(b => b.type === 'text');
+    const reply = textBlock ? textBlock.text : '';
 
     // Check if the user might have provided contact info in the last message
     const lastUserMsg = validMessages[validMessages.length - 1];
