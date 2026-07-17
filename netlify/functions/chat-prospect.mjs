@@ -63,20 +63,24 @@ export const handler = async (event) => {
       const txt = lastUserMsg.text.toLowerCase();
       // Simple heuristic for email/phone capture
       if (txt.includes('@') || txt.match(/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/)) {
-        // Save to leads table asynchronously (fire and forget)
-        fetch(`${supabaseUrl}/rest/v1/leads`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': serviceKey,
-            'Authorization': `Bearer ${serviceKey}`,
-            'Prefer': 'return=minimal'
-          },
-          body: JSON.stringify({
-            chat_summary: `Captured info: ${lastUserMsg.text}\nFull Chat Length: ${validMessages.length}`,
-            status: 'new'
-          })
-        }).catch(err => console.error('Error saving lead:', err));
+        // Save to leads table asynchronously (await it so lambda doesn't freeze)
+        try {
+          await fetch(`${supabaseUrl}/rest/v1/leads`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': serviceKey,
+              'Authorization': `Bearer ${serviceKey}`,
+              'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({
+              chat_summary: `Captured info: ${lastUserMsg.text}\nFull Chat Length: ${validMessages.length}`,
+              status: 'new'
+            })
+          });
+        } catch (err) {
+          console.error('Error saving lead:', err);
+        }
       }
     }
 
