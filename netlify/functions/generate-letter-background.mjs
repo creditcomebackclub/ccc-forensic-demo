@@ -48,7 +48,7 @@ export const handler = async (event) => {
       // 1. Generate Letter HTML
       const msg = await client.messages.create({
         model: MODEL,
-        max_tokens: 8192,
+        max_tokens: 4096,
         system: SYSTEM,
         messages: [{ role: 'user', content: job.instructions }],
       });
