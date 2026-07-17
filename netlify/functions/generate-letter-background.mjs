@@ -62,7 +62,7 @@ export const handler = async (event) => {
       let summary = null;
       if (job.generateSummary && job.account) {
         try {
-          const summaryStream = client.messages.stream({
+          const sumMsg = await client.messages.create({
             model: MODEL,
             max_tokens: 1024,
             system: SYSTEM,
@@ -71,7 +71,6 @@ export const handler = async (event) => {
               content: `Write a 2-3 sentence plain-English summary for a non-expert client explaining what is being disputed on this account and why, based on the data below. Avoid legal jargon and statute citations — explain the core problem in everyday terms (e.g. "this account shows two things that can't both be true at the same time"). End with a brief note on what we're asking the furnisher to do. Output plain text only. No markdown, no headers, no fences, no prose before or after.\n\nAccount data:\n${JSON.stringify({ furnisher: job.account.furnisher, status: job.account.status, balance: job.account.balance, primaryViolation: job.account.primaryViolation, violations: job.account.violations }, null, 2)}`
             }]
           });
-          const sumMsg = await summaryStream.finalMessage();
           const rawSum = sumMsg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
           summary = (rawSum || '').trim();
         } catch(e) {
