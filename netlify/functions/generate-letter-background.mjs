@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
 
-const MODEL = 'claude-3-5-sonnet-20240620';
+const MODEL = 'claude-sonnet-5';
 const SYSTEM = [{ type: 'text', text: MASTER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
 export const handler = async (event) => {
