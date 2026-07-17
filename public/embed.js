@@ -42,6 +42,38 @@
   button.onmouseover = () => button.style.transform = 'scale(1.05)';
   button.onmouseout = () => button.style.transform = 'scale(1)';
 
+  // 2.5 Create a tooltip bubble
+  const tooltip = document.createElement('div');
+  tooltip.style.position = 'absolute';
+  tooltip.style.bottom = '10px';
+  tooltip.style.right = '70px'; // To the left of the button
+  tooltip.style.backgroundColor = '#fff';
+  tooltip.style.color = '#1B2A4A';
+  tooltip.style.padding = '8px 14px';
+  tooltip.style.borderRadius = '20px';
+  tooltip.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+  tooltip.style.fontSize = '14px';
+  tooltip.style.fontWeight = '500';
+  tooltip.style.whiteSpace = 'nowrap';
+  tooltip.style.cursor = 'pointer';
+  tooltip.style.transition = 'opacity 0.2s ease-in-out, transform 0.2s ease-in-out';
+  tooltip.innerText = "Questions? I'm here to help! 👋";
+  
+  const tail = document.createElement('div');
+  tail.style.position = 'absolute';
+  tail.style.right = '-6px';
+  tail.style.bottom = '14px';
+  tail.style.width = '0';
+  tail.style.height = '0';
+  tail.style.borderTop = '6px solid transparent';
+  tail.style.borderBottom = '6px solid transparent';
+  tail.style.borderLeft = '6px solid #fff';
+  tooltip.appendChild(tail);
+
+  tooltip.onclick = () => {
+    if (!isOpen) toggleChat();
+  };
+
   // 3. Create the iframe
   const iframeContainer = document.createElement('div');
   iframeContainer.style.position = 'absolute';
@@ -70,6 +102,7 @@
   iframeContainer.appendChild(iframe);
   
   container.appendChild(iframeContainer);
+  container.appendChild(tooltip);
   container.appendChild(button);
 
   // 4. Toggle Logic
@@ -78,6 +111,8 @@
   const toggleChat = () => {
     isOpen = !isOpen;
     if (isOpen) {
+      tooltip.style.opacity = '0';
+      tooltip.style.pointerEvents = 'none';
       iframeContainer.style.display = 'block';
       // Small timeout to allow display:block to apply before animating opacity
       setTimeout(() => {
