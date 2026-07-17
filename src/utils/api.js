@@ -144,8 +144,8 @@ export async function generatePersonalInfoCleanupLetter(client) {
   });
   if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
 
-  const pollRes = await pollForLetter(id);
-  return pollRes.html;
+  // Fire-and-forget: Return immediately so the UI doesn't block while the background function runs
+  return 'GENERATING...';
 }
 
 export async function generateInquiryRemovalLetter(client, inquiries) {
@@ -185,6 +185,6 @@ export async function generateInquiryRemovalLetter(client, inquiries) {
   });
   if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
 
-  const pollRes = await pollForLetter(id);
-  return pollRes.html;
+  // Fire-and-forget: Return immediately so the UI doesn't block while the background function runs
+  return 'GENERATING...';
 }

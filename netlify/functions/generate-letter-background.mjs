@@ -2,12 +2,19 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
 
-const MODEL = 'claude-sonnet-5';
+const MODEL = 'claude-3-5-sonnet-20241022'; // Fixed model name
 const SYSTEM = [{ type: 'text', text: MASTER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
 export const handler = async (event) => {
   let payload = null;
-  try { payload = JSON.parse(event.body || '{}'); } catch (e) { }
+  try {
+    let bodyText = event.body || '{}';
+    if (event.isBase64Encoded) bodyText = Buffer.from(bodyText, 'base64').toString('utf-8');
+    payload = JSON.parse(bodyText);
+  } catch (e) {
+    return { statusCode: 400, body: 'Invalid JSON payload' };
+  }
+
   if (!payload || !payload.jobs || !Array.isArray(payload.jobs)) {
     return { statusCode: 400, body: 'Valid JSON with jobs array required' };
   }
@@ -16,7 +23,10 @@ export const handler = async (event) => {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
-  if (!anthropicKey) return { statusCode: 500, body: 'ANTHROPIC_API_KEY missing' };
+  if (!supabaseUrl || !serviceKey || !anthropicKey) {
+    console.error('Missing required environment variables');
+    return { statusCode: 500, body: 'Server misconfigured' };
+  }
 
   const supabase = createClient(supabaseUrl, serviceKey);
   const client = new Anthropic({ apiKey: anthropicKey, maxRetries: 5 });
@@ -26,7 +36,7 @@ export const handler = async (event) => {
       // 1. Generate Letter HTML
       const stream = client.messages.stream({
         model: MODEL,
-        max_tokens: 16000,
+        max_tokens: 8192,
         system: SYSTEM,
         messages: [{ role: 'user', content: job.instructions }],
       });
@@ -72,4 +82,6 @@ export const handler = async (event) => {
       await supabase.from('letters').update({ html: 'ERROR: ' + e.message }).eq('id', job.id);
     }
   }
+  
+  return { statusCode: 202, body: 'Accepted' };
 };
