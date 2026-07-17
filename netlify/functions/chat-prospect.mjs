@@ -66,19 +66,32 @@ export const handler = async (event) => {
       if (txt.includes('@') || txt.match(/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/)) {
         // Save to leads table asynchronously (await it so lambda doesn't freeze)
         try {
-          await fetch(`${supabaseUrl}/rest/v1/leads`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'apikey': serviceKey,
-              'Authorization': `Bearer ${serviceKey}`,
-              'Prefer': 'return=minimal'
-            },
-            body: JSON.stringify({
-              chat_summary: `Captured info: ${lastUserMsg.text}\nFull Chat Length: ${validMessages.length}`,
-              status: 'new'
-            })
+          // Fetch admin user ID first (assuming single tenant admin for now)
+          const profileRes = await fetch(`${supabaseUrl}/rest/v1/profiles?select=id&limit=1`, {
+            headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` }
           });
+          const profileData = await profileRes.json();
+          const adminId = (profileData && profileData[0]) ? profileData[0].id : null;
+
+          if (adminId) {
+            await fetch(`${supabaseUrl}/rest/v1/clients`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'apikey': serviceKey,
+                'Authorization': `Bearer ${serviceKey}`,
+                'Prefer': 'return=minimal'
+              },
+              body: JSON.stringify({
+                user_id: adminId,
+                name: 'New Web Lead',
+                status: 'lead',
+                lead_source: 'Chat Widget',
+                lead_notes: `Captured info: ${lastUserMsg.text}\nFull Chat Length: ${validMessages.length}`,
+                lead_created_at: new Date().toISOString()
+              })
+            });
+          }
         } catch (err) {
           console.error('Error saving lead:', err);
         }
