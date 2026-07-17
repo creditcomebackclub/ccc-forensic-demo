@@ -1,4 +1,7 @@
 (function() {
+  // Prevent the widget from embedding itself inside an iframe
+  if (window.self !== window.top) return;
+
   const SCRIPT_URL = document.currentScript ? document.currentScript.src : '';
   // Default to the production URL, or derive it from the script location
   const BASE_URL = SCRIPT_URL ? new URL(SCRIPT_URL).origin : 'https://ccc-forensic-demo.netlify.app';
