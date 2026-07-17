@@ -46,14 +46,12 @@ export const handler = async (event) => {
       await supabase.from('letters').update({ html: 'DEBUG: Function started in loop' }).eq('id', job.id);
       
       // 1. Generate Letter HTML
-      const stream = client.messages.stream({
+      const msg = await client.messages.create({
         model: MODEL,
         max_tokens: 8192,
         system: SYSTEM,
         messages: [{ role: 'user', content: job.instructions }],
       });
-
-      const msg = await stream.finalMessage();
       const rawText = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
       const htmlMatch = rawText.match(/<!DOCTYPE[\s\S]*<\/html>/i) || rawText.match(/<html[\s\S]*<\/html>/i);
       const html = htmlMatch ? htmlMatch[0] : rawText;
