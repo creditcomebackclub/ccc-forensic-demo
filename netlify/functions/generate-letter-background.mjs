@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
 
 const MODEL = 'claude-3-5-sonnet-20241022'; // Fixed model name
@@ -28,11 +29,22 @@ export const handler = async (event) => {
     return { statusCode: 500, body: 'Server misconfigured' };
   }
 
-  const supabase = createClient(supabaseUrl, serviceKey);
+  const supabase = createClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false },
+    realtime: { transport: ws },
+  });
+  
+  // Debug immediately before Anthropic!
+  if (payload.jobs && payload.jobs[0]) {
+    await supabase.from('letters').update({ html: 'DEBUG: Supabase client created successfully' }).eq('id', payload.jobs[0].id);
+  }
+
   const client = new Anthropic({ apiKey: anthropicKey, maxRetries: 5 });
 
   for (const job of payload.jobs) {
     try {
+      await supabase.from('letters').update({ html: 'DEBUG: Function started in loop' }).eq('id', job.id);
+      
       // 1. Generate Letter HTML
       const stream = client.messages.stream({
         model: MODEL,
