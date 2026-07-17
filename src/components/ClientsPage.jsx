@@ -527,7 +527,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Send failed');
-      toast.error('LPOA signing link sent to ' + c.email);
+      toast.success('LPOA signing link sent to ' + c.email);
     } catch (e) {
       toast.error('Could not send LPOA: ' + e.message);
     } finally {

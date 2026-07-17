@@ -14,6 +14,7 @@ import ClientPortal from './components/ClientPortal';
 import AffiliatePortal from './components/AffiliatePortal';
 import SettingsModal from './components/SettingsModal';
 import ProspectChatWidget from './components/ProspectChatWidget';
+import { Toaster } from 'react-hot-toast';
 import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit } from './utils/api';
@@ -579,6 +580,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-bg flex">
+      <Toaster position="bottom-right" />
       <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={actionItemCount} newLeadsCount={newLeadsCount} hasUnanalyzed={unanalyzedClientNames.size > 0} />
       <main className="flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
