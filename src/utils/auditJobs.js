@@ -7,7 +7,7 @@ import { MAX_REPORT_CHARS, htmlToText } from './reportText.js';
 
 const POLL_MS = 2000;
 const QUEUE_STALL_MS = 2 * 60 * 1000;  // never picked up by the function
-const RUN_STALL_MS = 4 * 60 * 1000;    // running but no row updates
+const RUN_STALL_MS = 10 * 60 * 1000;   // running but no row updates
 const MAX_READ_FAILURES = 15;          // consecutive poll read errors
 
 // Fast local pre-check so an oversized HTML/text report fails in ~1s with the
@@ -96,7 +96,7 @@ export async function pollAuditJob(jobId, onProgress) {
       throw new Error('The audit job was never picked up by the server — check that the audit function is deployed, then try again.');
     }
     if (data.status === 'running' && age > RUN_STALL_MS) {
-      throw new Error('The audit stalled on the server (no progress for 4 minutes). Very large reports can exceed the 15-minute server limit — try Individual mode or a smaller export.');
+      throw new Error('The audit stalled on the server (no progress for 10 minutes). Very large reports can exceed the 15-minute server limit — try Individual mode or a smaller export.');
     }
 
     onProgress && onProgress({

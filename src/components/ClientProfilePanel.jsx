@@ -14,7 +14,7 @@ const T = {
   grid: '#EEF0F4',
 };
 
-function Field({ label, value, onSave, type = 'text', placeholder = '', align = 'left' }) {
+function Field({ label, value, onSave, type = 'text', placeholder = '', align = 'left', options = null }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(value || '');
 
@@ -26,16 +26,29 @@ function Field({ label, value, onSave, type = 'text', placeholder = '', align = 
   if (editing) {
     return (
       <div className="flex items-center gap-1.5">
-        <input
-          type={type}
-          value={val}
-          onChange={(e) => setVal(e.target.value)}
-          placeholder={placeholder}
-          autoFocus
-          className="flex-1 border rounded-md px-2 py-1 text-[12px] focus:outline-none focus:border-navy"
-          style={{ borderColor: T.border, minWidth: 60 }}
-          onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
-        />
+        {options ? (
+          <select
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            className="flex-1 border rounded-md px-2 py-1 text-[12px] focus:outline-none focus:border-navy bg-white"
+            style={{ borderColor: T.border, minWidth: 60 }}
+            onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
+          >
+            <option value="">Select...</option>
+            {options.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        ) : (
+          <input
+            type={type}
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            placeholder={placeholder}
+            autoFocus
+            className="flex-1 border rounded-md px-2 py-1 text-[12px] focus:outline-none focus:border-navy"
+            style={{ borderColor: T.border, minWidth: 60 }}
+            onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
+          />
+        )}
         <button onClick={save} className="text-green-600 hover:text-green-700"><Check size={13} strokeWidth={2} /></button>
         <button onClick={() => setEditing(false)} className="text-ink-faint hover:text-red-600"><X size={13} strokeWidth={2} /></button>
       </div>
@@ -289,6 +302,7 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
       <Section title="Credit Monitoring">
         <Row label="Service">
           <Field label="service" value={client.monitoringService} placeholder="Privacy Guard"
+            options={['PrivacyGuard', 'MyScoreIQ', 'Smart Credit', 'IdentityIQ', 'My Free Score Now', 'Experian']}
             onSave={(v) => save({ monitoring_service: v })} />
         </Row>
         <Row label="Login email">

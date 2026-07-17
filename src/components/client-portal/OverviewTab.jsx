@@ -183,17 +183,32 @@ export default function OverviewTab({
         {monitoringStep === 'edit' ? (
           <div className="space-y-3">
             {[
-              { key: 'service', label: 'Service', placeholder: 'e.g. PrivacyGuard, MyScoreIQ' },
+              { key: 'service', label: 'Service' },
               { key: 'email', label: 'Login Email', placeholder: 'your@email.com' },
               { key: 'password', label: 'Password', placeholder: '••••••••', type: 'password' },
               { key: 'ssnLast4', label: 'SSN Last 4 Digits', placeholder: '1234' },
             ].map(({ key, label, placeholder, type }) => (
               <div key={key}>
                 <div className="text-[10px] uppercase tracking-[0.06em] text-gray-400 mb-1 font-semibold">{label}</div>
-                <input type={type || 'text'} placeholder={placeholder}
-                  value={monitoringForm[key]}
-                  onChange={e => setMonitoringForm(p => ({ ...p, [key]: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none transition-shadow" />
+                {key === 'service' ? (
+                  <select
+                    value={monitoringForm[key]}
+                    onChange={e => setMonitoringForm(p => ({ ...p, [key]: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none transition-shadow bg-white"
+                  >
+                    <option value="">Select a provider...</option>
+                    <option value="PrivacyGuard">PrivacyGuard</option>
+                    <option value="MyScoreIQ">MyScoreIQ</option>
+                    <option value="Smart Credit">Smart Credit</option>
+                    <option value="IdentityIQ">IdentityIQ</option>
+                    <option value="My Free Score Now">My Free Score Now</option>
+                  </select>
+                ) : (
+                  <input type={type || 'text'} placeholder={placeholder}
+                    value={monitoringForm[key]}
+                    onChange={e => setMonitoringForm(p => ({ ...p, [key]: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none transition-shadow" />
+                )}
               </div>
             ))}
             <div className="flex gap-2 pt-2">
@@ -206,6 +221,7 @@ export default function OverviewTab({
                   'smart credit': 'https://www.smartcredit.com',
                   'experian': 'https://www.experian.com',
                   'identityiq': 'https://www.identityiq.com',
+                  'my free score': 'https://www.myfreescorenow.com',
                 };
                 const svcKey = (monitoringForm.service || '').toLowerCase();
                 const portalUrl = Object.entries(serviceUrls).find(([k]) => svcKey.includes(k))?.[1] || 'https://www.privacyguard.com';
@@ -260,7 +276,7 @@ export default function OverviewTab({
           <div>
             <p className="text-xs text-gray-500 mb-4 leading-relaxed">Credit monitoring lets us track your score progress. Enter your credentials below or sign up for a service.</p>
             <div className="flex gap-2 flex-wrap mb-4">
-              {[['PrivacyGuard', 'https://www.privacyguard.com'], ['MyScoreIQ', 'https://www.myscoreiq.com'], ['Smart Credit', 'https://www.smartcredit.com'], ['IdentityIQ', 'https://www.identityiq.com']].map(([name, url]) => (
+              {[['PrivacyGuard', 'https://www.privacyguard.com'], ['MyScoreIQ', 'https://www.myscoreiq.com'], ['Smart Credit', 'https://www.smartcredit.com'], ['IdentityIQ', 'https://www.identityiq.com'], ['My Free Score Now', 'https://www.myfreescorenow.com']].map(([name, url]) => (
                 <a key={name} href={url} target="_blank" rel="noopener noreferrer"
                   className="text-[11px] px-3 py-1.5 border border-gray-200 rounded-md text-slate-900 font-medium hover:bg-gray-50 transition-colors">
                   {name} →

@@ -191,9 +191,9 @@ export async function buildAuditPdfDoc(audit) {
       margin: { left: margin, right: margin },
       head: [['Creditor', 'Date', 'Bureau(s)']],
       body: inquiries.map((iq) => [
-        iq.creditor || '',
+        iq.furnisher || '',
         iq.date || '-',
-        (iq.bureau || []).join(', ') || '-',
+        (iq.bureaus || []).join(', ') || '-',
       ]),
       headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontSize: 9, fontStyle: 'bold' },
       bodyStyles: { fontSize: 9, textColor: INK },
