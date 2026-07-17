@@ -111,8 +111,7 @@
   const toggleChat = () => {
     isOpen = !isOpen;
     if (isOpen) {
-      tooltip.style.opacity = '0';
-      tooltip.style.pointerEvents = 'none';
+      tooltip.style.display = 'none';
       iframeContainer.style.display = 'block';
       // Small timeout to allow display:block to apply before animating opacity
       setTimeout(() => {

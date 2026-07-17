@@ -37,6 +37,7 @@ export default function ProspectChatWidget() {
         body: JSON.stringify({ history: newMessages })
       });
       const data = await res.json();
+      if (!res.ok || !data.reply) throw new Error(data.error || 'Bad response');
       setMessages(prev => [...prev, { role: 'assistant', text: data.reply }]);
     } catch (e) {
       console.error(e);

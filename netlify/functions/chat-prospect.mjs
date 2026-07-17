@@ -1,13 +1,9 @@
 import { Anthropic } from '@anthropic-ai/sdk';
-import { createClient } from '@supabase/supabase-js';
-
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
-
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const db = createClient(supabaseUrl, serviceKey);
 
 const SYSTEM_PROMPT = `
 You are the AI Prospect Assistant for Credit Comeback Club (CCC). 
@@ -39,14 +35,21 @@ export const handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: 'History array required' }) };
     }
 
-    const messages = history.filter(m => m.role === 'user' || m.role === 'assistant');
+    let validMessages = history.filter(m => m.role === 'user' || m.role === 'assistant');
+    while (validMessages.length > 0 && validMessages[0].role !== 'user') {
+      validMessages.shift();
+    }
+    
+    if (validMessages.length === 0) {
+      return { statusCode: 400, body: JSON.stringify({ error: 'No user messages found' }) };
+    }
 
     // Create message with Anthropic
     const response = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 500,
       system: SYSTEM_PROMPT,
-      messages: messages.map(m => ({
+      messages: validMessages.map(m => ({
         role: m.role,
         content: m.text
       }))
@@ -55,18 +58,25 @@ export const handler = async (event) => {
     const reply = response.content[0].text;
 
     // Check if the user might have provided contact info in the last message
-    const lastUserMsg = messages[messages.length - 1];
+    const lastUserMsg = validMessages[validMessages.length - 1];
     if (lastUserMsg && lastUserMsg.role === 'user') {
       const txt = lastUserMsg.text.toLowerCase();
       // Simple heuristic for email/phone capture
       if (txt.includes('@') || txt.match(/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/)) {
         // Save to leads table asynchronously (fire and forget)
-        db.from('leads').insert({
-          chat_summary: `Captured info: ${lastUserMsg.text}\nFull Chat Length: ${messages.length}`,
-          status: 'new'
-        }).then(({ error }) => {
-          if (error) console.error('Error saving lead:', error);
-        });
+        fetch(`${supabaseUrl}/rest/v1/leads`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': serviceKey,
+            'Authorization': `Bearer ${serviceKey}`,
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({
+            chat_summary: `Captured info: ${lastUserMsg.text}\nFull Chat Length: ${validMessages.length}`,
+            status: 'new'
+          })
+        }).catch(err => console.error('Error saving lead:', err));
       }
     }
 
