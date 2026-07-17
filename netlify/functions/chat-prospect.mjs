@@ -90,7 +90,7 @@ export const handler = async (event) => {
     console.error('Prospect Chat Error:', error);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Failed to process chat' })
+      body: JSON.stringify({ error: 'Failed to process chat', details: error.message, stack: error.stack })
     };
   }
 };
