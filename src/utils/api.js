@@ -7,7 +7,12 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function pollForLetter(id) {
   for (let i = 0; i < 60; i++) { // wait up to 3 minutes (60 * 3s)
     await sleep(3000);
-    const { data, error } = await supabase.from('letters').select('html,summary').eq('id', id).single();
+    const { data, error } = await supabase
+      .from('letters')
+      .select('html,summary')
+      .eq('id', id)
+      .neq('html', Math.random().toString()) // Cache buster to prevent aggressive browser caching
+      .single();
     if (error && error.code !== 'PGRST116') { // Ignore row not found, might take a second to write
       console.error(error);
     }
@@ -59,8 +64,9 @@ export async function generateLetter(account, client) {
     const fdcpaId = await saveLetter(account, client, 'GENERATING...', null, 'Phase 1 — FDCPA §1692g(b) Validation');
     const disputeId = await saveLetter(account, client, 'GENERATING...', null, 'Phase 1 — Furnisher Dispute §1681s-2(a)', '__dispute');
 
-    await fetch('/.netlify/functions/generate-letter-background', {
+    const res = await fetch('/.netlify/functions/generate-letter-background', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         jobs: [
           {
@@ -78,6 +84,7 @@ export async function generateLetter(account, client) {
         ]
       })
     });
+    if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
 
     const [fdcpaRes, disputeRes] = await Promise.all([
       pollForLetter(fdcpaId),
@@ -90,12 +97,14 @@ export async function generateLetter(account, client) {
   const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nGenerate the Phase 1 dispute letter HTML for this account.\n\nData:\n${JSON.stringify({ account, client, clientSignature: client.signatureData || null }, null, 2)}\n\nFollow the 16-step structure. If clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or any tracking/article number field or placeholder — state only "Sent via Certified Mail" with no number. Output complete HTML only. No prose. No fences.`;
   
   const id = await saveLetter(account, client, 'GENERATING...', null);
-  await fetch('/.netlify/functions/generate-letter-background', {
+  const res = await fetch('/.netlify/functions/generate-letter-background', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       jobs: [{ id, account, generateSummary: true, instructions }]
     })
   });
+  if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
 
   return await pollForLetter(id);
 }
@@ -126,15 +135,17 @@ export async function generatePersonalInfoCleanupLetter(client) {
   const syntheticAccount = { furnisher: bureau, id: 'personal-info-cleanup', type: null };
   const id = await saveLetter(syntheticAccount, client, 'GENERATING...', null, 'Personal Info Cleanup');
   
-  await fetch('/.netlify/functions/generate-letter-background', {
+  const res = await fetch('/.netlify/functions/generate-letter-background', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       jobs: [{ id, account: null, generateSummary: false, instructions }]
     })
   });
+  if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
 
-  const res = await pollForLetter(id);
-  return res.html;
+  const pollRes = await pollForLetter(id);
+  return pollRes.html;
 }
 
 export async function generateInquiryRemovalLetter(client, inquiries) {
@@ -165,13 +176,15 @@ export async function generateInquiryRemovalLetter(client, inquiries) {
   const syntheticAccount = { furnisher: bureau, id: 'inquiry-removal', type: null };
   const id = await saveLetter(syntheticAccount, client, 'GENERATING...', null, 'Inquiry Removal');
   
-  await fetch('/.netlify/functions/generate-letter-background', {
+  const res = await fetch('/.netlify/functions/generate-letter-background', {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       jobs: [{ id, account: null, generateSummary: false, instructions }]
     })
   });
+  if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
 
-  const res = await pollForLetter(id);
-  return res.html;
+  const pollRes = await pollForLetter(id);
+  return pollRes.html;
 }
