@@ -12,8 +12,8 @@ export const handler = async (event) => {
     .from('letters')
     .select('id, client_name, furnisher, phase, saved_at, html')
     .order('saved_at', { ascending: false })
-    .limit(1);
+    .limit(3);
 
   if (error) return { statusCode: 500, body: JSON.stringify(error) };
-  return { statusCode: 200, body: `HTML: ${data[0].html.substring(0, 150)}...` };
+  return { statusCode: 200, body: JSON.stringify(data.map(d => ({ ...d, html: d.html.substring(0, 150) })), null, 2) };
 };
