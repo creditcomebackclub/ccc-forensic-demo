@@ -761,7 +761,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             { label: togglingVip === c.name ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip), disabled: togglingVip === c.name },
             { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
             'divider',
-            !c.lpoaSigned && { label: sendingLpoa === c.name ? 'Sending Invite…' : 'Send Portal Invite & LPOA', onClick: () => handleSendInvite(c), disabled: !c.email || sendingLpoa === c.name, title: !c.email ? 'Add email first' : undefined },
+            !c.portalOnboarded && { label: sendingLpoa === c.name ? 'Sending Invite…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Portal Invite & LPOA'), onClick: () => handleSendInvite(c), disabled: !c.email || sendingLpoa === c.name, title: !c.email ? 'Add email first' : undefined },
             c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
             'divider',
             { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
