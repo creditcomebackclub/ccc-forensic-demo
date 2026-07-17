@@ -4,7 +4,7 @@ import ws from 'ws';
 import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
 
 const MODEL = 'claude-sonnet-5';
-const SYSTEM = [{ type: 'text', text: MASTER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
+const SYSTEM = MASTER_SYSTEM_PROMPT;
 
 export const handler = async (event) => {
   let payload = null;
