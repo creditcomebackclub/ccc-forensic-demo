@@ -530,13 +530,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         throw new Error(out.error || 'Could not provision client account');
       }
 
-      // Send magic link via Supabase
-      const { error: authError } = await supabase.auth.signInWithOtp({
-        email: c.email.trim().toLowerCase(),
-        options: { emailRedirectTo: window.location.origin },
-      });
-      if (authError) throw authError;
-
       toast.success('Portal invite link sent to ' + c.email);
     } catch (e) {
       toast.error('Could not send invite: ' + e.message);
@@ -1030,13 +1023,6 @@ function CreateClientModal({ onClose, onCreated }) {
         const out = await provRes.json().catch(() => ({}));
         throw new Error(out.error || 'Could not provision client account');
       }
-
-      // Send magic link via Supabase
-      const { error: authError } = await supabase.auth.signInWithOtp({
-        email: normEmail,
-        options: { emailRedirectTo: window.location.origin },
-      });
-      if (authError) throw authError;
 
       setSuccess(true);
       setTimeout(() => { onCreated(); }, 2000);
