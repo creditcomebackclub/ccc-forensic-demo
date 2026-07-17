@@ -2,7 +2,7 @@ export const handler = async () => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   try {
-    const res = await fetch(`${supabaseUrl}/rest/v1/profiles?select=id&limit=1`, {
+    const res = await fetch(`${supabaseUrl}/rest/v1/letters?client_name=eq.Karl%20J%20Elliott&select=id,bureau,html,created_at`, {
       headers: {
         'apikey': serviceKey,
         'Authorization': `Bearer ${serviceKey}`
