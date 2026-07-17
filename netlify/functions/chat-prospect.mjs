@@ -46,7 +46,7 @@ export const handler = async (event) => {
 
     // Create message with Anthropic
     const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-sonnet-5',
       max_tokens: 500,
       system: SYSTEM_PROMPT,
       messages: validMessages.map(m => ({
