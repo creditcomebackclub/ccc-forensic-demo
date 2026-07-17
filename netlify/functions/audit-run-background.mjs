@@ -17,7 +17,7 @@ import {
   bureauParsePrompt, mergeAuditPrompt, todayLong,
 } from '../../src/utils/auditPrompts.js';
 
-const MODEL = 'claude-sonnet-5';
+const MODEL = 'claude-3-5-sonnet-20240620';
 const SYSTEM = [{ type: 'text', text: MASTER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
 // Sonnet 5 intro pricing (per MTok) — valid through 2026-08-31
