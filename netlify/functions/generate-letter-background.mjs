@@ -54,9 +54,46 @@ export const handler = async (event) => {
       });
       const rawText = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
       const htmlMatch = rawText.match(/<!DOCTYPE[\s\S]*<\/html>/i) || rawText.match(/<html[\s\S]*<\/html>/i);
-      const html = htmlMatch ? htmlMatch[0] : rawText;
+      let html = htmlMatch ? htmlMatch[0] : rawText;
 
       if (!html || html.trim().length < 100) throw new Error('Generated letter is empty or too short');
+
+      // Inject standard letter CSS server-side to save AI tokens and prevent truncation
+      const baseCss = `
+        body { font-family: Arial, sans-serif; line-height: 1.5; margin: 1in; color: #333333; }
+        .date-line { margin-bottom: 20px; }
+        .sender-block { margin-bottom: 20px; line-height: 1.3; }
+        .recipient-block { margin-bottom: 20px; line-height: 1.3; }
+        .re-line { font-weight: bold; margin-bottom: 20px; }
+        .section-header { background-color: #1B2A4A; color: #ffffff; font-weight: bold; padding: 6px 10px; margin-top: 20px; margin-bottom: 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .id-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        .id-table td { padding: 8px 12px; border: 1px solid #E5E7EB; font-size: 13px; }
+        .id-table td.label { font-weight: bold; background-color: #F9FAFB; width: 30%; }
+        .list-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        .list-table th, .list-table td { padding: 8px 12px; border: 1px solid #E5E7EB; font-size: 13px; text-align: left; }
+        .list-table th { background-color: #1B2A4A; color: #ffffff; font-weight: bold; }
+        .demands-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        .demands-table td { padding: 8px 12px; border: 1px solid #E5E7EB; font-size: 13px; vertical-align: top; }
+        .demands-table td.demand-num { background-color: #1B2A4A; color: #ffffff; font-weight: bold; text-align: center; width: 30px; border-radius: 3px; }
+        .closing-statement { font-weight: bold; margin-top: 20px; margin-bottom: 20px; }
+        .signature-block { margin-top: 50px; }
+        .signature-block img { max-height: 60px; display: block; margin-bottom: 6px; }
+        .sig-line { margin-top: 40px; border-top: 1px solid #000; width: 250px; }
+        .printed-name { margin-top: 6px; font-weight: bold; }
+        .mail-notation { margin-top: 30px; font-style: italic; }
+        .enclosures { margin-top: 14px; }
+      `;
+
+      if (html.includes('</head>')) {
+        html = html.replace('</head>', `<style>${baseCss}</style></head>`);
+      } else if (html.includes('<head>')) {
+        html = html.replace('<head>', `<head><style>${baseCss}</style>`);
+      } else if (html.includes('<body>')) {
+        html = html.replace('<body>', `<head><style>${baseCss}</style></head><body>`);
+      } else {
+        // Fallback for raw text without tags
+        html = `<!DOCTYPE html><html><head><style>${baseCss}</style></head><body>${html}</body></html>`;
+      }
 
       // 2. Generate Summary if needed
       let summary = null;
