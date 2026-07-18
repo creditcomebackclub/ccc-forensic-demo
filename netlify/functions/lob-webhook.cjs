@@ -90,6 +90,7 @@ const statusMap = {
   'letter.certified.in_local_area': 'Out for Delivery',
   'letter.processed_for_delivery': 'Out for Delivery',
   'letter.certified.processed_for_delivery': 'Out for Delivery',
+  'letter.certified.pickup_available': 'Available for Pickup',
   'letter.delivered': 'Delivered',
   'letter.certified.delivered': 'Delivered',
   'letter.returned_to_sender': 'Returned to Sender',
@@ -125,7 +126,10 @@ exports.handler = async (event) => {
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid signature' }) };
     }
     const age = Math.abs(Date.now() - Number(timestamp));
-    if (!Number.isFinite(age) || age > 5 * 60 * 1000) {
+    // Lob retries failed webhooks with the ORIGINAL timestamp. 
+    // If we only allow 5 minutes, all retried webhooks will permanently fail.
+    // 48 hours (172,800,000 ms) is a much safer tolerance for retries.
+    if (!Number.isFinite(age) || age > 48 * 60 * 60 * 1000) {
       console.warn('Rejected Lob webhook: stale timestamp', timestamp);
       return { statusCode: 401, body: JSON.stringify({ error: 'Stale timestamp' }) };
     }
