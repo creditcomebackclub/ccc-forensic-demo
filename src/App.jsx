@@ -526,7 +526,7 @@ export default function App() {
       }} />;
     }
     if (!clientOnboarded) {
-      return <ClientSetupFlow session={session} onComplete={() => setClientOnboarded(true)} />;
+      return <ClientSetupFlow session={session} initialStep="onboarding" onComplete={() => setClientOnboarded(true)} />;
     }
     return <ClientPortal session={session} onSignOut={async () => { try { await supabase.auth.signOut(); } catch(e) {} window.location.href = '/'; }} />;
   }

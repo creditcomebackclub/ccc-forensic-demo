@@ -4,8 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, toast } from 'react-hot-toast';
 import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-react';
 
-export default function ClientSetupFlow({ session, onComplete }) {
-  const [step, setStep] = useState('password'); // password | onboarding
+export default function ClientSetupFlow({ session, onComplete, initialStep = 'password' }) {
+  const [step, setStep] = useState(initialStep); // password | onboarding
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
