@@ -428,7 +428,7 @@ function OnboardingButton({ client, onChanged }) {
 
       const { error } = await supabase.auth.signInWithOtp({
         email: normEmail,
-        options: { emailRedirectTo: window.location.origin }
+        options: { emailRedirectTo: window.location.origin + '/portal' }
       });
       if (error) throw error;
 
@@ -440,7 +440,7 @@ function OnboardingButton({ client, onChanged }) {
           action: 'send_onboarding_welcome',
           clientName: client.name,
           clientEmail: normEmail,
-          magicLink: window.location.origin,
+          magicLink: window.location.origin + '/portal',
         }),
       });
 
