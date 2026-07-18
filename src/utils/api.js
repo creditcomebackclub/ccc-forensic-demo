@@ -109,53 +109,22 @@ export async function generateLetter(account, client) {
   return await pollForLetter(id);
 }
 
-export async function generatePersonalInfoCleanupLetter(client) {
+export async function generateCombinedCleanupLetter(client, inquiries) {
   const t = today();
   const personalInfo = (client && client.personalInfo) || {};
-  const bureau = (client && client.bureau) || 'the consumer reporting agency';
-  const lpoaSigned = !!(client && client.lpoaSigned);
-  
-  let signatureData = null;
-  try {
-    const { data: cp } = await supabase.from('client_profiles').select('signature_data').eq('full_name', client.name).limit(1);
-    if (cp && cp.length > 0 && cp[0].signature_data) {
-      signatureData = cp[0].signature_data;
-    }
-    if (!signatureData) {
-      const { data: cm } = await supabase.from('clients').select('lpoa_signature_data').eq('name', client.name).limit(1);
-      if (cm && cm.length > 0 && cm[0].lpoa_signature_data?.signatureUrl) {
-        signatureData = cm[0].lpoa_signature_data.signatureUrl;
-      }
-    }
-  } catch(e) { console.warn('Could not look up signature:', e); }
-  
-  const data = JSON.stringify({ client, personalInfo, bureau, lpoaSigned, clientSignature: signatureData }, null, 2);
-  const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting a Personal Information Accuracy Dispute addressed directly to ${bureau}, NOT to any furnisher. This is a completely separate letter type from a Metro 2 tradeline dispute — it does not dispute any account, balance, or payment history. It disputes only the accuracy of identifying information in the consumer's file.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department, not a furnisher.\n2. Cite 15 U.S.C. §1681e(b) — the maximum possible accuracy standard.\n3. Explain that stale former addresses, name variants, and former employers listed in personalInfo increase mixed-file risk and do not reflect the consumer's current, accurate identity.\n4. List each specific former address, name variant, and former employer provided in the data, and demand each one be removed or updated to reflect only current, verified information.\n5. Do NOT dispute any account, balance, payment history, or inquiry in this letter. This letter concerns identity information only.\n6. Demand written confirmation of the correction within 30 days.\n7. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, no emotional appeals, statements and demands only.\n8. ALWAYS include a signature block at the bottom of the letter. Print the consumer's full name. If \`clientSignature\` is provided in the data, embed it using an <img> tag above the printed name with a style like \`max-height: 60px;\`. If \`clientSignature\` is null, simply leave a few blank lines above the printed name for a physical signature. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n9. ALWAYS include an "Enclosures:" section below the signature block. If \`lpoaSigned\` is true, list: "Limited Power of Attorney", "Government-Issued Photo ID", and "Proof of Current Address (Bank Statement)". If \`lpoaSigned\` is false, list ONLY: "Government-Issued Photo ID" and "Proof of Current Address (Bank Statement)".\n10. CRITICAL CONCISENESS RULE: Do NOT generate a separate 'STATUTORY BASIS' or 'LEGAL BASIS' table or section. Incorporate all legal citations directly inline in the brief introductory paragraphs. Do NOT generate any CSS, <style> block, or inline style attributes. Output plain HTML using these exact classes: class='id-table', class='list-table', class='demands-table', class='signature-block', class='enclosures', class='mail-notation'. This is required to prevent the API output from truncating.\n\nOutput complete HTML only. No prose. No fences.`;
-
-  const syntheticAccount = { furnisher: bureau, id: 'personal-info-cleanup', type: null };
-  const id = await saveLetter(syntheticAccount, client, 'GENERATING...', null, 'Personal Info Cleanup');
-  
-  const res = await fetch('/.netlify/functions/generate-letter-background', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jobs: [{ id, account: null, generateSummary: false, instructions }]
-    })
-  });
-  if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
-
-  // Fire-and-forget: Return immediately so the UI doesn't block while the background function runs
-  return 'GENERATING...';
-}
-
-export async function generateInquiryRemovalLetter(client, inquiries) {
-  const t = today();
-  const bureau = (client && client.bureau) || 'the consumer reporting agency';
+  const hasPersonalInfo = (personalInfo.formerAddresses || []).length > 0 ||
+                          (personalInfo.nameVariants || []).length > 0 ||
+                          (personalInfo.formerEmployers || []).length > 0;
   const eligibleInquiries = (inquiries || []).filter((i) => i.category !== 'linked_to_open_account');
+  const hasInquiries = eligibleInquiries.length > 0;
 
-  if (eligibleInquiries.length === 0) throw new Error('No eligible inquiries to dispute — all provided inquiries are linked to open accounts');
+  if (!hasPersonalInfo && !hasInquiries) {
+    throw new Error('No eligible inquiries or personal information to dispute.');
+  }
 
+  const bureau = (client && client.bureau) || 'the consumer reporting agency';
   const lpoaSigned = !!(client && client.lpoaSigned);
+  
   let signatureData = null;
   try {
     const { data: cp } = await supabase.from('client_profiles').select('signature_data').eq('full_name', client.name).limit(1);
@@ -170,11 +139,12 @@ export async function generateInquiryRemovalLetter(client, inquiries) {
     }
   } catch(e) { console.warn('Could not look up signature:', e); }
   
-  const data = JSON.stringify({ client, inquiries: eligibleInquiries, bureau, lpoaSigned, clientSignature: signatureData }, null, 2);
-  const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting an Inquiry Reinvestigation Demand addressed directly to ${bureau}, NOT to any furnisher. This letter disputes only the hard inquiries listed in the data below. It does not dispute any tradeline, account, balance, or payment history.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department.\n2. Cite 15 U.S.C. §1681i for the reinvestigation duty and 15 U.S.C. §1681b for the permissible purpose requirement every inquiry must satisfy.\n3. For each inquiry listed, state the furnisher name and date, and state that the consumer does not recognize or cannot verify a permissible purpose for this specific inquiry.\n4. Demand the bureau contact each listed subscriber to verify permissible purpose, and demand deletion of any inquiry the subscriber cannot verify within 30 days per 15 U.S.C. §1681i(a)(5)(A).\n5. Do NOT state or imply fraud or identity theft unless that is explicitly present in the provided data — the default framing is "cannot verify/does not recognize," not an accusation.\n6. Do NOT dispute any account, balance, or payment history in this letter.\n7. Demand written confirmation of the results within 30 days.\n8. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, statements and demands only.\n9. ALWAYS include a signature block at the bottom of the letter. Print the consumer's full name. If \`clientSignature\` is provided in the data, embed it using an <img> tag above the printed name with a style like \`max-height: 60px;\`. If \`clientSignature\` is null, simply leave a few blank lines above the printed name for a physical signature. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n10. ALWAYS include an "Enclosures:" section below the signature block. If \`lpoaSigned\` is true, list: "Limited Power of Attorney", "Government-Issued Photo ID", and "Proof of Current Address (Bank Statement)". If \`lpoaSigned\` is false, list ONLY: "Government-Issued Photo ID" and "Proof of Current Address (Bank Statement)".\n11. CRITICAL CONCISENESS RULE: Do NOT generate a separate 'STATUTORY OBLIGATIONS' or 'LEGAL BASIS' table or section. Incorporate all legal citations directly inline in the brief introductory paragraphs. Do NOT generate any CSS, <style> block, or inline style attributes. Output plain HTML using these exact classes: class='id-table', class='list-table', class='demands-table', class='signature-block', class='enclosures', class='mail-notation'. This is required to prevent the API output from truncating.\n\nOutput complete HTML only. No prose. No fences.`;
+  const data = JSON.stringify({ client, personalInfo: hasPersonalInfo ? personalInfo : undefined, inquiries: hasInquiries ? eligibleInquiries : undefined, bureau, lpoaSigned, clientSignature: signatureData }, null, 2);
+  
+  const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting a Personal Information & Inquiry Reinvestigation Demand addressed directly to ${bureau}, NOT to any furnisher. This letter disputes both the accuracy of identifying information in the consumer's file AND unverified hard inquiries. It does NOT dispute any tradeline, account balance, or payment history.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department.\n2. Cite 15 U.S.C. §1681e(b) for the maximum possible accuracy standard regarding the personal information (if any is provided).\n3. Cite 15 U.S.C. §1681i for the reinvestigation duty and 15 U.S.C. §1681b for the permissible purpose requirement for each inquiry listed (if any are provided).\n4. For personal info: List each specific former address, name variant, and former employer provided in the data, and demand each one be removed or updated to reflect only current, verified information.\n5. For inquiries: For each inquiry listed, state the furnisher name and date, and state that the consumer does not recognize or cannot verify a permissible purpose for this specific inquiry. Demand the bureau contact each listed subscriber to verify permissible purpose, and demand deletion of any inquiry the subscriber cannot verify within 30 days per 15 U.S.C. §1681i(a)(5)(A).\n6. Do NOT state or imply fraud or identity theft unless that is explicitly present in the provided data.\n7. Do NOT dispute any account, balance, or payment history in this letter.\n8. Demand written confirmation of the results within 30 days.\n9. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, statements and demands only.\n10. ALWAYS include a signature block at the bottom of the letter. Print the consumer's full name. If \`clientSignature\` is provided in the data, embed it using an <img> tag above the printed name with a style like \`max-height: 60px;\`. If \`clientSignature\` is null, simply leave a few blank lines above the printed name for a physical signature. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n11. ALWAYS include an "Enclosures:" section below the signature block. If \`lpoaSigned\` is true, list: "Limited Power of Attorney", "Government-Issued Photo ID", and "Proof of Current Address (Bank Statement)". If \`lpoaSigned\` is false, list ONLY: "Government-Issued Photo ID" and "Proof of Current Address (Bank Statement)".\n12. CRITICAL CONCISENESS RULE: Do NOT generate a separate 'STATUTORY OBLIGATIONS' or 'LEGAL BASIS' table or section. Incorporate all legal citations directly inline in the brief introductory paragraphs. Do NOT generate any CSS, <style> block, or inline style attributes. Output plain HTML using these exact classes: class='id-table', class='list-table', class='demands-table', class='signature-block', class='enclosures', class='mail-notation'. This is required to prevent the API output from truncating.\n\nOutput complete HTML only. No prose. No fences.`;
 
-  const syntheticAccount = { furnisher: bureau, id: 'inquiry-removal', type: null };
-  const id = await saveLetter(syntheticAccount, client, 'GENERATING...', null, 'Inquiry Removal');
+  const syntheticAccount = { furnisher: bureau, id: 'personal-info-inquiries', type: null };
+  const id = await saveLetter(syntheticAccount, client, 'GENERATING...', null, 'Personal Info & Inquiries');
   
   const res = await fetch('/.netlify/functions/generate-letter-background', {
     method: 'POST',
@@ -185,7 +155,7 @@ export async function generateInquiryRemovalLetter(client, inquiries) {
   });
   if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
 
-  // Fire-and-forget: Return immediately so the UI doesn't block while the background function runs
+  // Fire-and-forget
   return 'GENERATING...';
 }
 

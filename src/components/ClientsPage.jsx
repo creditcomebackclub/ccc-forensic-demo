@@ -819,7 +819,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           return (
             <LobMailer
               letter={currentLetter}
-              furnisherAddress={currentLetter ? ((currentLetter.phase && currentLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+              furnisherAddress={currentLetter ? ((currentLetter.phase && currentLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
               batchRemaining={lobMailerQueue.length - 1}
               onNext={() => setLobMailerQueue(prev => prev.slice(1))}
               onClose={() => setLobMailerQueue([])}
@@ -1108,7 +1108,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         return (
           <LobMailer
             letter={currentLetter}
-            furnisherAddress={currentLetter ? ((currentLetter.phase && currentLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+            furnisherAddress={currentLetter ? ((currentLetter.phase && currentLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
             batchRemaining={lobMailerQueue.length - 1}
             onNext={() => setLobMailerQueue(prev => prev.slice(1))}
             onClose={() => setLobMailerQueue([])}

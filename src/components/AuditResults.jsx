@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
-import { generatePersonalInfoCleanupLetter, generateInquiryRemovalLetter } from '../utils/api';
+import { generateCombinedCleanupLetter } from '../utils/api';
 import { buildAuditPdfDoc, auditPdfFilename, blobToBase64 } from '../utils/auditPdf';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
@@ -253,8 +253,7 @@ async function generateAuditPDF(audit) {
 
 export default function AuditResults({ audit, onGenerateLetter, onReset, onBackToClients }) {
   const [existingLetters, setExistingLetters] = React.useState(new Set());
-  const [piCleanupStatus, setPiCleanupStatus] = React.useState(null); // null | 'running' | 'done' | error string
-  const [inquiryRemovalStatus, setInquiryRemovalStatus] = React.useState(null);
+  const [cleanupStatus, setCleanupStatus] = React.useState(null); // null | 'running' | 'done' | error string
   const [selectedInquiryKeys, setSelectedInquiryKeys] = React.useState(new Set());
   const [clientEmail, setClientEmail] = React.useState(null);
   const [emailModalOpen, setEmailModalOpen] = React.useState(false);
@@ -273,41 +272,32 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
 
   const BUREAUS = ['Equifax', 'Experian', 'TransUnion'];
 
-  const runPersonalInfoCleanup = async () => {
-    setPiCleanupStatus('running');
+  const runCombinedCleanup = async () => {
+    setCleanupStatus('running');
     try {
       const personalInfo = audit.personalInfo || {};
-      const hasAnything = (personalInfo.formerAddresses || []).length > 0
+      const hasPersonalInfo = (personalInfo.formerAddresses || []).length > 0
         || (personalInfo.nameVariants || []).length > 0
         || (personalInfo.formerEmployers || []).length > 0;
-      if (!hasAnything) throw new Error('No stale personal information found on this audit.');
-      for (const bureau of BUREAUS) {
-        await generatePersonalInfoCleanupLetter({ ...audit.client, personalInfo, bureau });
-      }
-      setPiCleanupStatus('done');
-    } catch (e) {
-      setPiCleanupStatus(e.message || 'Failed');
-    }
-  };
-
-  const runInquiryRemoval = async () => {
-    setInquiryRemovalStatus('running');
-    try {
       const allInquiries = audit.inquiries || [];
+
       let anySent = false;
       for (const bureau of BUREAUS) {
         const bureauCode = bureau === 'Equifax' ? 'EQ' : bureau === 'Experian' ? 'EXP' : 'TU';
-        const eligible = allInquiries.filter((i) =>
+        const eligibleInquiries = allInquiries.filter((i) =>
           (i.bureaus || []).includes(bureauCode) && i.category !== 'linked_to_open_account' && selectedInquiryKeys.has(inqKey(i))
         );
-        if (eligible.length === 0) continue;
-        await generateInquiryRemovalLetter({ ...audit.client, bureau }, eligible);
+
+        if (!hasPersonalInfo && eligibleInquiries.length === 0) continue;
+
+        await generateCombinedCleanupLetter({ ...audit.client, personalInfo, bureau }, eligibleInquiries);
         anySent = true;
       }
-      if (!anySent) throw new Error('No eligible inquiries found — all are linked to open accounts or none exist.');
-      setInquiryRemovalStatus('done');
+
+      if (!anySent) throw new Error('No stale personal info or eligible inquiries found.');
+      setCleanupStatus('done');
     } catch (e) {
-      setInquiryRemovalStatus(e.message || 'Failed');
+      setCleanupStatus(e.message || 'Failed');
     }
   };
 
@@ -381,8 +371,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
             <Mail size={13} strokeWidth={1.75} /> Email Audit to Client
           </button>
           <Menu items={[
-            { label: piCleanupStatus === 'done' ? '✓ Personal Info Cleanup generated' : 'Generate Personal Info Cleanup', onClick: runPersonalInfoCleanup, disabled: piCleanupStatus === 'running' },
-            { label: inquiryRemovalStatus === 'done' ? '✓ Inquiry Removal generated' : 'Generate Inquiry Removal', onClick: runInquiryRemoval, disabled: inquiryRemovalStatus === 'running' },
+            { label: cleanupStatus === 'done' ? '✓ Personal Info & Inquiries generated' : 'Generate Personal Info & Inquiries Letter', onClick: runCombinedCleanup, disabled: cleanupStatus === 'running' },
             'divider',
             { label: 'New audit', onClick: onReset },
           ]} />
@@ -402,8 +391,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           <span style={{ color: T.muted }}> — {audit.accountsTargeted} accounts targeted · {audit.totalViolations} violations identified</span>
         </div>
         <div className="ml-auto text-[11px] flex items-center gap-3">
-          {genStatus(piCleanupStatus, 'Personal Info Cleanup')}
-          {genStatus(inquiryRemovalStatus, 'Inquiry Removal')}
+          {genStatus(cleanupStatus, 'Personal Info & Inquiries')}
         </div>
       </div>
 
