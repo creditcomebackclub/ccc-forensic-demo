@@ -453,7 +453,7 @@ function parseFurnisherAddress(furnisher) {
 }
 export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, forceTab, unanalyzedNames }) {
   const [clients, setClients] = useState(null);
-  const [expanded, setExpanded] = useState({});
+  const [selectedClientName, setSelectedClientName] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [analyzingLetter, setAnalyzingLetter] = useState(null);
   const [lobMailerQueue, setLobMailerQueue] = useState([]);
@@ -497,18 +497,15 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   useEffect(() => {
     if (!jumpTo || !clients) return;
-    setExpanded((prev) => ({ ...prev, [jumpTo]: true }));
-    setTimeout(() => {
-      const el = clientRefs.current[jumpTo];
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 150);
+    if (jumpTo.startsWith('lead:')) return;
+    setSelectedClientName(jumpTo);
   }, [jumpTo, clients]);
 
   useEffect(() => {
     if (initialFilter) setActiveFilter(initialFilter);
   }, [initialFilter]);
 
-  const toggle = (name) => setExpanded((prev) => ({ ...prev, [name]: !prev[name] }));
+
 
   const openLetter = (letter) => {
     if (!letter.html) {
@@ -599,6 +596,220 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         <Users size={28} className="mx-auto mb-3 text-ink-faint" strokeWidth={1.5} />
         <h2 className="ccc-display text-xl text-ink font-medium">No saved clients yet</h2>
         <p className="text-[13px] text-ink-muted mt-2">Run an audit and it will be saved here automatically.</p>
+      </div>
+    );
+  }
+
+  if (selectedClientName) {
+    const c = clients.find((c) => c.name === selectedClientName);
+    if (!c) {
+      setSelectedClientName(null);
+      return null;
+    }
+    
+    const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
+    const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
+    const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))).length;
+    const auditors = isAdmin ? [...new Set([
+      ...c.audits.map((a) => a.auditorName),
+      ...c.letters.map((l) => l.auditorName),
+    ].filter(Boolean))] : [];
+    const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting });
+    const lpoaUrl = c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl;
+    
+    const clientMenu = [
+      { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
+      'divider',
+      c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
+      { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
+    ].filter(Boolean);
+
+    return (
+      <div className="max-w-5xl mx-auto" style={{ padding: '20px 32px 32px' }}>
+        <button onClick={() => setSelectedClientName(null)} className="flex items-center gap-1.5 text-[12px] font-medium mb-6 hover:underline underline-offset-2" style={{ color: T.navy }}>
+          ← Back to Clients
+        </button>
+        
+        <div className="bg-white p-6 mb-6" style={{ borderRadius: 14, border: '1px solid ' + (c.isVip ? T.gold : T.border), boxShadow: T.cardShadow }}>
+          <div className="flex items-center gap-5 flex-wrap">
+            <Avatar name={c.name} isVip={c.isVip} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <h1 className="ccc-display text-[24px] font-medium leading-tight truncate" style={{ color: T.ink }}>{c.name}</h1>
+                {c.isVip && <Star size={16} strokeWidth={2} fill={T.gold} style={{ color: T.gold, flexShrink: 0 }} title="VIP client" />}
+                {c.lpoaSigned && (
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-green-50 text-green-700 shrink-0" title="LPOA signed">✓ LPOA</span>
+                )}
+              </div>
+              <div className="text-[13px] truncate" style={{ color: T.muted }}>
+                {c.email || <span className="text-amber-600">No email</span>}
+                {c.address && <span> · {c.address}</span>}
+                {isAdmin && auditors.length > 0 && <span style={{ color: T.faint }}> · {auditors.join(', ')}</span>}
+              </div>
+            </div>
+            
+            <div className="flex flex-col items-end gap-2 shrink-0">
+               <div className="flex items-center gap-3">
+                <StatusBadge label={primary.label} tone={primary.tone} />
+                <span className="flex items-center gap-1.5 text-[12px]" style={{ color: T.faint }} title={c.audits.length + ' audits'}>
+                  <FileText size={14} strokeWidth={1.75} />{c.audits.length}
+                </span>
+                <span className="flex items-center gap-1.5 text-[12px]" style={{ color: T.faint }} title={c.letters.length + ' letters'}>
+                  <Mail size={14} strokeWidth={1.75} />{c.letters.length}
+                </span>
+               </div>
+               
+               <div className="flex items-center gap-2 mt-2">
+                 <button onClick={() => handleVipToggle(c.name, c.isVip)} disabled={togglingVip === c.name} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md border transition-colors hover:bg-gray-50 disabled:opacity-50" style={{ borderColor: T.border, color: T.ink }}>
+                   {togglingVip === c.name ? 'Updating…' : (c.isVip ? 'Remove VIP' : 'Set as VIP')}
+                 </button>
+                 {!c.portalOnboarded && (
+                   <button onClick={() => handleSendInvite(c)} disabled={!c.email || sendingLpoa === c.name} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-50" style={{ backgroundColor: T.navy, color: T.gold }}>
+                     {sendingLpoa === c.name ? 'Sending…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Invite & LPOA')}
+                   </button>
+                 )}
+                 <Menu items={clientMenu} />
+               </div>
+            </div>
+          </div>
+          
+          {editingEmail === c.name && (
+            <div className="pt-4 mt-4 flex items-center gap-2" style={{ borderTop: '1px solid ' + T.grid }}>
+              <input type="email" value={emailVal} onChange={(e) => setEmailVal(e.target.value)}
+                className="text-[11px] border border-border rounded-sm px-2 py-1 w-56"
+                placeholder="client@email.com" autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
+              <button onClick={() => { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm">Save</button>
+              <button onClick={() => setEditingEmail(null)} className="text-[10px] text-ink-muted">Cancel</button>
+            </div>
+          )}
+
+          {confirmDelete === c.name && (
+            <div className="pt-4 mt-4 flex items-center gap-3" style={{ borderTop: '1px solid ' + T.grid }}>
+              <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
+              <button onClick={() => handleDelete(c.name)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
+              <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
+            </div>
+          )}
+        </div>
+        
+        <div className="px-1 space-y-6">
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span style={{ width: 3, height: 14, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+                <div className="text-[11px] uppercase tracking-wider font-medium" style={{ color: T.muted }}>Audits</div>
+              </div>
+              {c.audits.length >= 2 && (
+                <button onClick={async () => {
+                    setDiffLoading(c.name);
+                    try {
+                      const result = await runProgressDiff(c.name);
+                      setDiffResult({ clientName: c.name, ...result });
+                    } catch (e) {
+                      toast.error('Could not run comparison: ' + e.message);
+                    } finally {
+                      setDiffLoading(null);
+                    }
+                  }} disabled={diffLoading === c.name} className="text-[10px] uppercase tracking-wider text-navy hover:text-gold disabled:opacity-50">
+                  {diffLoading === c.name ? 'Comparing…' : 'Compare Latest Reports'}
+                </button>
+              )}
+            </div>
+            {c.audits.length === 0 && <div className="text-[12px] text-ink-muted">None</div>}
+            <div className="bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>
+              {c.audits.map((a, i) => (
+                <div key={a.id} className="flex items-center justify-between py-3 px-4 flex-wrap gap-2" style={{ borderBottom: i < c.audits.length - 1 ? '1px solid ' + T.grid : 'none' }}>
+                  <div className="text-[12.5px] text-ink">
+                    Report {a.reportDate}
+                    <span className="text-ink-muted"> · {(a.audit && a.audit.accountsTargeted) || 0} accounts · {(a.audit && a.audit.totalViolations) || 0} violations</span>
+                    {isAdmin && a.auditorName && <span className="text-[11px] text-ink-faint ml-2">· {a.auditorName}</span>}
+                    <span className="text-ink-faint text-[11px] ml-2">{fmtTime(a.savedAt)}</span>
+                  </div>
+                  <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="flex gap-2 mb-4">
+              {['Letters', 'Profile', 'Documents'].map((tab) => {
+                const isActiveTab = (activeTab[c.name] || 'Letters') === tab;
+                return (
+                  <button key={tab}
+                    onClick={() => setActiveTab((p) => ({ ...p, [c.name]: tab }))}
+                    className="rounded-full px-4 py-1.5 text-[11px] uppercase tracking-wider transition-colors"
+                    style={{
+                      background: isActiveTab ? T.navy : 'transparent',
+                      color: isActiveTab ? T.gold : T.muted,
+                      border: '1px solid ' + (isActiveTab ? T.navy : T.border),
+                      fontWeight: isActiveTab ? 600 : 400,
+                    }}>
+                    {tab}{tab === 'Letters' ? ' ' + c.letters.length : ''}
+                  </button>
+                );
+              })}
+            </div>
+
+            {(activeTab[c.name] || 'Letters') === 'Letters' && (
+              <div>
+                {c.letters.length === 0 ? (
+                  <p className="text-[12.5px] text-ink-muted py-6 text-center bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>No letters yet — run an audit to generate Phase 1 letters.</p>
+                ) : (
+                  (() => {
+                    const openAccount = (letter) => {
+                      const clientLetters = c.letters.filter((pl) => pl.accountId === letter.accountId && pl.furnisher === letter.furnisher);
+                      const latestAudit = [...c.audits].sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''))[0];
+                      const accountData = latestAudit && latestAudit.audit && latestAudit.audit.accounts
+                        ? latestAudit.audit.accounts.find((a) => a.id === letter.accountId)
+                        : null;
+                      setAccountTimeline({ accountId: letter.accountId, furnisher: letter.furnisher, letters: clientLetters, accountData, clientName: c.name });
+                    };
+                    const groups = [];
+                    const seen = new Map();
+                    for (const l of c.letters) {
+                      const key = l.furnisher || 'Other';
+                      if (!seen.has(key)) { seen.set(key, []); groups.push([key, seen.get(key)]); }
+                      seen.get(key).push(l);
+                    }
+                    return groups.map(([furnisher, letters]) => (
+                      <div key={furnisher} className="mb-3 bg-white" style={{ border: '1px solid ' + T.border, borderRadius: 12, overflow: 'visible' }}>
+                        <div className="flex items-center justify-between px-4 py-2.5"
+                          style={{ background: '#FAFBFC', borderBottom: '1px solid ' + T.grid, borderRadius: '12px 12px 0 0' }}>
+                          <button onClick={() => openAccount(letters[0])}
+                            className="flex items-center gap-1.5 text-[12.5px] font-medium hover:text-navy hover:underline underline-offset-2 decoration-dotted"
+                            style={{ color: T.ink }}
+                            title="View account history">
+                            {furnisher}
+                            <span className="text-[10px] font-normal" style={{ color: T.faint }}>{letters.length} letter{letters.length === 1 ? '' : 's'}</span>
+                          </button>
+                          <span className="text-[10px]" style={{ color: T.faint }}>history →</span>
+                        </div>
+                        <div className="px-4 py-1">
+                          {letters.map((l) => (
+                            <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
+                              hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
+                              onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={(l) => setLobMailerQueue([l])}
+                              onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount} />
+                          ))}
+                        </div>
+                      </div>
+                    ));
+                  })()
+                )}
+              </div>
+            )}
+
+            {(activeTab[c.name] || 'Letters') === 'Profile' && (
+              <ClientProfilePanel client={c} onChanged={load} onBatchMail={setLobMailerQueue} />
+            )}
+
+            {(activeTab[c.name] || 'Letters') === 'Documents' && (
+              <DocumentManager clientName={c.name} letters={c.letters || []} onChanged={load} setAnalyzingLetter={setAnalyzingLetter} />
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -736,8 +947,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
       <div className="space-y-3">
         {filteredClients.map((c) => {
-          const isOpen = !!expanded[c.name];
-
           if (c.status === 'lead') {
             return (
               <LeadCard
@@ -804,9 +1013,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             >
               {/* Row header — a div, not a button, so inner controls stay valid HTML */}
               <div className="flex items-center gap-3 px-4 py-3.5 cursor-pointer select-none" role="button"
-                onClick={() => toggle(c.name)}>
-                <ChevronRight size={15} strokeWidth={2} className="shrink-0 transition-transform"
-                  style={{ color: T.faint, transform: isOpen ? 'rotate(90deg)' : 'none' }} />
+                onClick={() => setSelectedClientName(c.name)}>
                 <Avatar name={c.name} isVip={c.isVip} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
@@ -853,130 +1060,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 </div>
               )}
 
-              {isOpen && (
-                <div className="px-4 py-4 space-y-4" style={{ borderTop: '1px solid ' + T.grid }}>
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span style={{ width: 3, height: 12, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
-                        <div className="text-[10px] uppercase tracking-wider font-medium" style={{ color: T.muted }}>Audits</div>
-                      </div>
-                      {c.audits.length >= 2 && (
-                        <button
-                          onClick={async () => {
-                            setDiffLoading(c.name);
-                            try {
-                              const result = await runProgressDiff(c.name);
-                              setDiffResult({ clientName: c.name, ...result });
-                            } catch (e) {
-                              toast.error('Could not run comparison: ' + e.message);
-                            } finally {
-                              setDiffLoading(null);
-                            }
-                          }}
-                          disabled={diffLoading === c.name}
-                          className="text-[10px] uppercase tracking-wider text-navy hover:text-gold disabled:opacity-50"
-                        >
-                          {diffLoading === c.name ? 'Comparing…' : 'Compare Latest Reports'}
-                        </button>
-                      )}
-                    </div>
-                    {c.audits.length === 0 && <div className="text-[12px] text-ink-muted">None</div>}
-                    {c.audits.map((a) => (
-                      <div key={a.id} className="flex items-center justify-between py-1.5 flex-wrap gap-2">
-                        <div className="text-[12px] text-ink">
-                          Report {a.reportDate}
-                          <span className="text-ink-muted"> · {(a.audit && a.audit.accountsTargeted) || 0} accounts · {(a.audit && a.audit.totalViolations) || 0} violations</span>
-                          {isAdmin && a.auditorName && <span className="text-[10px] text-ink-faint ml-2">· {a.auditorName}</span>}
-                          <span className="text-ink-faint text-[11px] ml-2">{fmtTime(a.savedAt)}</span>
-                        </div>
-                        <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
-                      </div>
-                    ))}
-                  </div>
 
-                  {/* Tab nav — pills with counts */}
-                  <div className="flex gap-1.5">
-                    {['Letters', 'Profile', 'Documents'].map((tab) => {
-                      const isActiveTab = (activeTab[c.name] || 'Letters') === tab;
-                      return (
-                        <button key={tab}
-                          onClick={() => setActiveTab((p) => ({ ...p, [c.name]: tab }))}
-                          className="rounded-full px-3 py-1 text-[11px] uppercase tracking-wider transition-colors"
-                          style={{
-                            background: isActiveTab ? T.navy : 'transparent',
-                            color: isActiveTab ? T.gold : T.muted,
-                            border: '1px solid ' + (isActiveTab ? T.navy : T.border),
-                            fontWeight: isActiveTab ? 600 : 400,
-                          }}>
-                          {tab}{tab === 'Letters' ? ' ' + c.letters.length : ''}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Letters tab — grouped by furnisher */}
-                  {(activeTab[c.name] || 'Letters') === 'Letters' && (
-                    <div>
-                      {c.letters.length === 0 ? (
-                        <p className="text-[12px] text-ink-muted py-4 text-center">No letters yet — run an audit to generate Phase 1 letters.</p>
-                      ) : (
-                        (() => {
-                          const openAccount = (letter) => {
-                            const clientLetters = c.letters.filter((pl) => pl.accountId === letter.accountId && pl.furnisher === letter.furnisher);
-                            const latestAudit = [...c.audits].sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''))[0];
-                            const accountData = latestAudit && latestAudit.audit && latestAudit.audit.accounts
-                              ? latestAudit.audit.accounts.find((a) => a.id === letter.accountId)
-                              : null;
-                            setAccountTimeline({ accountId: letter.accountId, furnisher: letter.furnisher, letters: clientLetters, accountData, clientName: c.name });
-                          };
-                          const groups = [];
-                          const seen = new Map();
-                          for (const l of c.letters) {
-                            const key = l.furnisher || 'Other';
-                            if (!seen.has(key)) { seen.set(key, []); groups.push([key, seen.get(key)]); }
-                            seen.get(key).push(l);
-                          }
-                          return groups.map(([furnisher, letters]) => (
-                            <div key={furnisher} className="mb-2" style={{ border: '1px solid #EBEEF3', borderRadius: 10, overflow: 'visible' }}>
-                              <div className="flex items-center justify-between px-3 py-2"
-                                style={{ background: '#FAFBFC', borderBottom: '1px solid ' + T.grid, borderRadius: '10px 10px 0 0' }}>
-                                <button onClick={() => openAccount(letters[0])}
-                                  className="flex items-center gap-1.5 text-[12px] font-medium hover:text-navy hover:underline underline-offset-2 decoration-dotted"
-                                  style={{ color: T.ink }}
-                                  title="View account history">
-                                  {furnisher}
-                                  <span className="text-[10px] font-normal" style={{ color: T.faint }}>{letters.length} letter{letters.length === 1 ? '' : 's'}</span>
-                                </button>
-                                <span className="text-[10px]" style={{ color: T.faint }}>history →</span>
-                              </div>
-                              <div className="px-3">
-                                {letters.map((l) => (
-                                  <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
-                                    hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
-                                    onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={(l) => setLobMailerQueue([l])}
-                                    onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount} />
-                                ))}
-                              </div>
-                            </div>
-                          ));
-                        })()
-                      )}
-                    </div>
-                  )}
-
-                  {/* Profile tab */}
-                  {(activeTab[c.name] || 'Letters') === 'Profile' && (
-                    <ClientProfilePanel client={c} onChanged={load} onBatchMail={setLobMailerQueue} />
-                  )}
-
-                  {/* Documents tab */}
-                  {(activeTab[c.name] || 'Letters') === 'Documents' && (
-                    <DocumentManager clientName={c.name} letters={c.letters || []} onChanged={load} setAnalyzingLetter={setAnalyzingLetter} />
-                  )}
-
-                </div>
-              )}
             </div>
           );
         })}
