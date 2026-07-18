@@ -188,3 +188,27 @@ export async function generateInquiryRemovalLetter(client, inquiries) {
   // Fire-and-forget: Return immediately so the UI doesn't block while the background function runs
   return 'GENERATING...';
 }
+
+export async function getReturnReceiptUrl(lobId) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('Not authenticated');
+
+  const res = await fetch('/.netlify/functions/get-return-receipt', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`
+    },
+    body: JSON.stringify({ lobId })
+  });
+  
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    let msg = 'Failed to fetch return receipt';
+    try { const body = await res.json(); msg = body.error || msg; } catch(e) {}
+    throw new Error(msg);
+  }
+  
+  const data = await res.json();
+  return data.return_receipt_url;
+}

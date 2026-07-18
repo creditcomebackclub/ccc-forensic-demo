@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Calendar } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { getReturnReceiptUrl } from '../../utils/api';
 
 const RESPONSE_WINDOW_DAYS = 30;
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -27,6 +29,33 @@ function responseCountdown(l) {
     return { label: 'Bureau investigation window closed — final review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
   }
   return { label: 'Response window closed — ready for escalation', tone: 'text-red-700 bg-red-50 border-red-200' };
+}
+
+function ReturnReceiptButton({ lobId }) {
+  const [loading, setLoading] = useState(false);
+
+  async function handleDownload() {
+    setLoading(true);
+    try {
+      const url = await getReturnReceiptUrl(lobId);
+      if (url) {
+        window.open(url, '_blank');
+      } else {
+        toast('USPS has not uploaded the signed receipt yet. This typically takes 24-48 hours after delivery. Please check back later.', { icon: '📬' });
+      }
+    } catch (e) {
+      toast.error(e.message || 'Failed to fetch return receipt');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <button onClick={handleDownload} disabled={loading}
+      className="ml-2 text-slate-900 font-semibold hover:text-blue-600 transition-colors disabled:opacity-50">
+      {loading ? 'Fetching...' : 'Signed Receipt ↓'}
+    </button>
+  );
 }
 
 export default function DisputesTab({
@@ -96,6 +125,9 @@ export default function DisputesTab({
                   {l.tracking_number && (
                     <a href={'https://tools.usps.com/go/TrackConfirmAction?tLabels=' + l.tracking_number} target="_blank" rel="noopener noreferrer"
                       className="ml-2 text-slate-900 font-semibold hover:text-blue-600 transition-colors">Track →</a>
+                  )}
+                  {l.tracking_status === 'Delivered' && l.lob_id && (
+                    <ReturnReceiptButton lobId={l.lob_id} />
                   )}
                 </div>
               )}
