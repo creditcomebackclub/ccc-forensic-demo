@@ -1,10 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
+import { LETTER_SYSTEM_PROMPT } from '../../src/prompts/letterPrompt.js';
 
 const MODEL = 'claude-sonnet-5';
-const SYSTEM = MASTER_SYSTEM_PROMPT;
+const SYSTEM = [{ type: 'text', text: LETTER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
 export const handler = async (event) => {
   let payload = null;

@@ -44,15 +44,31 @@ export const handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: 'No user messages found' }) };
     }
 
+    const mappedMessages = validMessages.map(m => ({
+      role: m.role,
+      content: m.text
+    }));
+
+    // Add cache breakpoint on the second-to-last user message
+    let userMsgCount = 0;
+    for (let i = mappedMessages.length - 1; i >= 0; i--) {
+      if (mappedMessages[i].role === 'user') {
+        userMsgCount++;
+        if (userMsgCount === 2) {
+          mappedMessages[i].content = [
+            { type: 'text', text: mappedMessages[i].content, cache_control: { type: 'ephemeral' } }
+          ];
+          break;
+        }
+      }
+    }
+
     // Create message with Anthropic
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-5',
       max_tokens: 500,
-      system: SYSTEM_PROMPT,
-      messages: validMessages.map(m => ({
-        role: m.role,
-        content: m.text
-      }))
+      system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+      messages: mappedMessages
     });
 
     const textBlock = response.content.find(b => b.type === 'text');

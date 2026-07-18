@@ -23,41 +23,41 @@ exports.handler = async (event) => {
       'Authorization': `Bearer ${key}`,
     };
 
+    const { createClient } = require('@supabase/supabase-js');
+    const supabase = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+
     // 1. Ensure the auth user exists and resolve its id
     let userId = null;
-    const createRes = await fetch(`${url}/auth/v1/admin/users`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        email: normEmail,
-        email_confirm: true,
-        user_metadata: fullName ? { full_name: fullName } : {},
-      }),
+    
+    // First try to find existing user via listUsers (simple approach for this scale) or by attempting to create
+    const { data: createData, error: createError } = await supabase.auth.admin.createUser({
+      email: normEmail,
+      email_confirm: true,
+      user_metadata: fullName ? { full_name: fullName } : {},
     });
-    const created = await createRes.json();
-    if (createRes.ok) {
-      userId = created.id;
-    } else {
-      userId = created.id || (created.user && created.user.id);
+
+    if (createError && createError.message.includes('already exists')) {
+      // If they exist, find them in the user list to get their ID
+      const { data: { users } } = await supabase.auth.admin.listUsers();
+      const existingUser = users.find(u => u.email === normEmail);
+      if (existingUser) userId = existingUser.id;
+    } else if (createData && createData.user) {
+      userId = createData.user.id;
     }
 
-    // If userId not found yet, it might be already created, so we resolve it from generate_link
     const redirectUrl = event.headers.origin || 'https://ccc-forensic-demo.netlify.app';
-    const linkRes = await fetch(`${url}/auth/v1/admin/generate_link`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        type: 'magiclink',
-        email: normEmail,
-        options: { redirectTo: redirectUrl }
-      }),
+    const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+      type: 'magiclink',
+      email: normEmail,
+      options: { redirectTo: redirectUrl }
     });
-    const linkData = await linkRes.json();
-    if (!linkRes.ok) {
-      throw new Error(linkData.message || linkData.error || 'Could not resolve auth user magic link');
+
+    if (linkError) {
+      throw new Error(linkError.message || 'Could not resolve auth user magic link');
     }
-    userId = userId || linkData.user.id;
-    const actionLink = linkData.properties.action_link;
+    
+    userId = userId || (linkData && linkData.user && linkData.user.id);
+    const actionLink = linkData && linkData.properties && linkData.properties.action_link;
 
     // Send the Magic Link via SendGrid (bypassing Supabase SMTP rate limit)
     const sgKey = process.env.SENDGRID_API_KEY;
