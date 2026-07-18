@@ -60,19 +60,20 @@ export const handler = async (event) => {
 
       // Inject standard letter CSS server-side to save AI tokens and prevent truncation
       const baseCss = `
-        body { font-family: Arial, sans-serif; line-height: 1.5; margin: 1in; color: #333333; }
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; line-height: 1.5; margin: 0; padding: 1in; max-width: 8.5in; color: #333333; word-wrap: break-word; }
         .date-line { margin-bottom: 20px; }
         .sender-block { margin-bottom: 20px; line-height: 1.3; }
         .recipient-block { margin-bottom: 20px; line-height: 1.3; }
         .re-line { font-weight: bold; margin-bottom: 20px; }
         .section-header { background-color: #1B2A4A; color: #ffffff; font-weight: bold; padding: 6px 10px; margin-top: 20px; margin-bottom: 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .id-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        .id-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; table-layout: fixed; word-wrap: break-word; }
         .id-table td { padding: 8px 12px; border: 1px solid #E5E7EB; font-size: 13px; }
         .id-table td.label { font-weight: bold; background-color: #F9FAFB; width: 30%; }
-        .list-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        .list-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; table-layout: fixed; word-wrap: break-word; }
         .list-table th, .list-table td { padding: 8px 12px; border: 1px solid #E5E7EB; font-size: 13px; text-align: left; }
         .list-table th { background-color: #1B2A4A; color: #ffffff; font-weight: bold; }
-        .demands-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        .demands-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; table-layout: fixed; word-wrap: break-word; }
         .demands-table td { padding: 8px 12px; border: 1px solid #E5E7EB; font-size: 13px; vertical-align: top; }
         .demands-table td.demand-num { background-color: #1B2A4A; color: #ffffff; font-weight: bold; text-align: center; width: 30px; border-radius: 3px; }
         .closing-statement { font-weight: bold; margin-top: 20px; margin-bottom: 20px; }
