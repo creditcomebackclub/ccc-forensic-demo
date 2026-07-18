@@ -3,6 +3,7 @@ import { Toaster, toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X, Send, MoreHorizontal, Search, Pencil } from 'lucide-react';
 import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage } from '../utils/storage';
+import { getReturnReceiptUrl } from '../utils/api';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
@@ -133,6 +134,33 @@ const FILTER_LABELS = {
   vip: 'VIP',
   unanalyzed: 'Needs Analysis',
 };
+
+function ReturnReceiptButton({ lobId }) {
+  const [loading, setLoading] = useState(false);
+
+  async function handleDownload() {
+    setLoading(true);
+    try {
+      const url = await getReturnReceiptUrl(lobId);
+      if (url) {
+        window.open(url, '_blank');
+      } else {
+        toast('USPS has not uploaded the signed receipt yet. This typically takes 24-48 hours after delivery. Please check back later.', { icon: '📬' });
+      }
+    } catch (e) {
+      toast.error(e.message || 'Failed to fetch return receipt');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <button onClick={handleDownload} disabled={loading}
+      className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2 disabled:opacity-50 transition-colors">
+      {loading ? 'Fetching...' : 'Signed Receipt ↓'}
+    </button>
+  );
+}
 
 function StatusBadge({ label, tone }) {
   const map = { neutral: 'bg-gray-100 text-gray-600', amber: 'bg-amber-50 text-amber-700', green: 'bg-green-50 text-green-700', red: 'bg-red-50 text-red-700' };
@@ -310,6 +338,9 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
           {l.mailedDate && <span className="text-ink-muted"> · mailed {fmt(l.mailedDate)}</span>}
           {l.trackingNumber && (
             <a href={"https://tools.usps.com/go/TrackConfirmAction?tLabels=" + l.trackingNumber} target="_blank" rel="noopener noreferrer" className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2">USPS #{l.trackingNumber.slice(-8)}</a>
+          )}
+          {l.trackingStatus === 'Delivered' && l.lobId && (
+            <ReturnReceiptButton lobId={l.lobId} />
           )}
           {l.lobId && !l.trackingNumber && (
             <span className="text-[10px] text-ink-faint ml-2">Lob: {l.lobId.slice(0, 12)}</span>
