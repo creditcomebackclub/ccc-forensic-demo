@@ -813,6 +813,39 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             )}
           </div>
         </div>
+
+        {lobMailerQueue.length > 0 && (() => {
+          const currentLetter = lobMailerQueue[0];
+          return (
+            <LobMailer
+              letter={currentLetter}
+              furnisherAddress={currentLetter ? ((currentLetter.phase && currentLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+              batchRemaining={lobMailerQueue.length - 1}
+              onNext={() => setLobMailerQueue(prev => prev.slice(1))}
+              onClose={() => setLobMailerQueue([])}
+              onSent={async (data) => {
+                await updateLetter(currentLetter.id, {
+                  mailedDate: data.mailedDate,
+                  trackingStatus: 'Mailed',
+                  trackingNumber: data.trackingNumber || null,
+                  deliveredAt: null,
+                  lobId: data.lobId,
+                });
+                load();
+              }}
+            />
+          );
+        })()}
+        {analyzingLetter && (
+          <ResponseAnalyzer
+            letter={analyzingLetter}
+            onClose={() => setAnalyzingLetter(null)}
+            onSaved={() => { setAnalyzingLetter(null); load(); }}
+          />
+        )}
+        <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />
+        <LetterEditModal letter={editingLetterHtml} onClose={() => setEditingLetterHtml(null)} onSaved={load} />
+        <DiffResultModal result={diffResult} onClose={() => setDiffResult(null)} />
       </div>
     );
   }
