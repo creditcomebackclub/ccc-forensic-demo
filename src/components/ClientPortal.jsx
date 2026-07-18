@@ -80,16 +80,22 @@ export default function ClientPortal({ session, onSignOut }) {
     const toastId = toast.loading('Uploading document...');
     try {
       const ext = file.name.split('.').pop();
-      const path = session.user.id + '/' + docType + '_' + Date.now() + '.' + ext;
-      await supabase.storage.from('client-docs').upload(path, file, { upsert: true });
+      const adminUserId = clientMeta?.user_id;
+      if (!adminUserId) throw new Error('Could not identify firm admin user id.');
+      const slug = String(profile.full_name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const internalDocType = docType === 'government_id' ? 'id' : 'address';
+      const path = adminUserId + '/' + slug + '/' + internalDocType + '.' + ext;
+
+      await supabase.storage.from('documents').upload(path, file, { upsert: true });
       await supabase.from('documents').upsert({
+        user_id: adminUserId,
         client_name: profile.full_name,
-        doc_type: docType === 'government_id' ? 'id' : 'address',
+        doc_type: internalDocType,
         file_name: file.name,
         storage_path: path,
         uploaded_at: new Date().toISOString(),
-      }, { onConflict: 'client_name,doc_type' });
-      setClientDocs(prev => ({ ...prev, [docType === 'government_id' ? 'id' : 'address']: { name: path } }));
+      }, { onConflict: 'user_id,client_name,doc_type' });
+      setClientDocs(prev => ({ ...prev, [internalDocType]: { name: path } }));
       toast.success('Document uploaded successfully!', { id: toastId });
     } catch(e) {
       console.error('Doc upload error:', e);
