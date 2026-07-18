@@ -26,6 +26,9 @@
 [functions]
   node_bundler = "esbuild"
 
+[functions."daily-cron"]
+  schedule = "0 15 * * *"
+
 [[headers]]
   for = "/*"
   [headers.values]
