@@ -153,7 +153,7 @@ export const handler = async (event) => {
     const analysis = JSON.parse(text);
 
     // Inject standard letter CSS server-side to save AI tokens and prevent truncation
-    const baseCss = \`
+    const baseCss = `
       body { font-family: Arial, sans-serif; line-height: 1.5; margin: 1in; color: #333333; }
       .date-line { margin-bottom: 20px; }
       .sender-block { margin-bottom: 20px; line-height: 1.3; }
@@ -176,20 +176,20 @@ export const handler = async (event) => {
       .printed-name { margin-top: 6px; font-weight: bold; }
       .mail-notation { margin-top: 30px; font-style: italic; }
       .enclosures { margin-top: 14px; }
-    \`;
+    `;
 
     if (analysis && analysis.letters) {
       for (const bureau of ['equifax', 'experian', 'transunion']) {
         if (analysis.letters[bureau]) {
           let html = analysis.letters[bureau];
           if (html.includes('</head>')) {
-            html = html.replace('</head>', \`<style>\${baseCss}</style></head>\`);
+            html = html.replace('</head>', `<style>${baseCss}</style></head>`);
           } else if (html.includes('<head>')) {
-            html = html.replace('<head>', \`<head><style>\${baseCss}</style>\`);
+            html = html.replace('<head>', `<head><style>${baseCss}</style>`);
           } else if (html.includes('<body>')) {
-            html = html.replace('<body>', \`<head><style>\${baseCss}</style></head><body>\`);
+            html = html.replace('<body>', `<head><style>${baseCss}</style></head><body>`);
           } else {
-            html = \`<!DOCTYPE html><html><head><style>\${baseCss}</style></head><body>\${html}</body></html>\`;
+            html = `<!DOCTYPE html><html><head><style>${baseCss}</style></head><body>${html}</body></html>`;
           }
           analysis.letters[bureau] = html;
         }
