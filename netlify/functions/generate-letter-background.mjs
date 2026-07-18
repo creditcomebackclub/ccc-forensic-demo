@@ -85,14 +85,14 @@ export const handler = async (event) => {
       `;
 
       if (html.includes('</head>')) {
-        html = html.replace('</head>', `<style>${baseCss}</style></head>`);
+        html = html.replace('</head>', `<meta charset="UTF-8"><style>${baseCss}</style></head>`);
       } else if (html.includes('<head>')) {
-        html = html.replace('<head>', `<head><style>${baseCss}</style>`);
+        html = html.replace('<head>', `<head><meta charset="UTF-8"><style>${baseCss}</style>`);
       } else if (html.includes('<body>')) {
-        html = html.replace('<body>', `<head><style>${baseCss}</style></head><body>`);
+        html = html.replace('<body>', `<head><meta charset="UTF-8"><style>${baseCss}</style></head><body>`);
       } else {
         // Fallback for raw text without tags
-        html = `<!DOCTYPE html><html><head><style>${baseCss}</style></head><body>${html}</body></html>`;
+        html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${baseCss}</style></head><body>${html}</body></html>`;
       }
 
       // 2. Generate Summary if needed

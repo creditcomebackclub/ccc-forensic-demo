@@ -183,13 +183,13 @@ export const handler = async (event) => {
         if (analysis.letters[bureau]) {
           let html = analysis.letters[bureau];
           if (html.includes('</head>')) {
-            html = html.replace('</head>', `<style>${baseCss}</style></head>`);
+            html = html.replace('</head>', `<meta charset="UTF-8"><style>${baseCss}</style></head>`);
           } else if (html.includes('<head>')) {
-            html = html.replace('<head>', `<head><style>${baseCss}</style>`);
+            html = html.replace('<head>', `<head><meta charset="UTF-8"><style>${baseCss}</style>`);
           } else if (html.includes('<body>')) {
-            html = html.replace('<body>', `<head><style>${baseCss}</style></head><body>`);
+            html = html.replace('<body>', `<head><meta charset="UTF-8"><style>${baseCss}</style></head><body>`);
           } else {
-            html = `<!DOCTYPE html><html><head><style>${baseCss}</style></head><body>${html}</body></html>`;
+            html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${baseCss}</style></head><body>${html}</body></html>`;
           }
           analysis.letters[bureau] = html;
         }
