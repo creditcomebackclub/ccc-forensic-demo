@@ -12,6 +12,9 @@ function daysBetween(aIso, bIso) {
 }
 function responseCountdown(l) {
   if (l.response_outcome === 'deleted' || l.response_outcome === 'received') return null;
+  if (l.mailed_date && !l.delivered_at) {
+    return { label: 'In Transit — 30-day window begins upon delivery', tone: 'text-gray-600 bg-gray-50 border-gray-200' };
+  }
   const clockStart = l.delivered_at ? l.delivered_at.slice(0, 10) : l.mailed_date;
   if (!clockStart) return null;
   const elapsed = daysBetween(clockStart, todayISO());

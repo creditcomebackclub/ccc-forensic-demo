@@ -76,7 +76,8 @@ function letterStatus(l) {
   if (l.responseOutcome === 'received') return { code: 'received', label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
   if (l.responseOutcome === 'no_response') return { code: 'no_response', label: 'No response confirmed', tone: 'red' };
   if (!l.mailedDate) return { code: 'not_mailed', label: 'Not mailed', tone: 'neutral' };
-  const clockStart = l.deliveredAt ? l.deliveredAt.slice(0, 10) : l.mailedDate;
+  if (!l.deliveredAt) return { code: 'in_transit', label: 'In Transit', tone: 'neutral' };
+  const clockStart = l.deliveredAt.slice(0, 10);
   const elapsed = daysBetween(clockStart, todayISO());
   const remaining = WINDOW_DAYS - elapsed;
   if (remaining > 0) return { code: 'awaiting', label: 'Awaiting · ' + remaining + 'd left', tone: 'amber' };
@@ -168,12 +169,13 @@ function StatusBadge({ label, tone }) {
 }
 
 // One pill per client — only the most urgent state, so rows stay scannable
-function primaryClientStatus(c, { ripe, needsPhase3, awaiting }) {
+function primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
   if (ripe > 0) return { label: ripe + ' to escalate', tone: 'red' };
   if (needsPhase3 > 0) return { label: needsPhase3 + ' need Phase 3', tone: 'amber' };
   const importDue = importDueInfo(c);
   if (importDue && importDue.code === 'due') return importDue;
   if (awaiting > 0) return { label: awaiting + ' awaiting', tone: 'amber' };
+  if (inTransit > 0) return { label: inTransit + ' in transit', tone: 'neutral' };
   if (importDue) return importDue;
   if (c.letters.length === 0) return { label: 'No letters yet', tone: 'neutral' };
   return { label: 'On track', tone: 'green' };
@@ -609,12 +611,13 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     
     const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
     const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
+    const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;
     const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))).length;
     const auditors = isAdmin ? [...new Set([
       ...c.audits.map((a) => a.auditorName),
       ...c.letters.map((l) => l.auditorName),
     ].filter(Boolean))] : [];
-    const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting });
+    const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
     const lpoaUrl = c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl;
     
     const clientMenu = [
@@ -981,6 +984,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
           const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
           const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
+          const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;
           const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))).length;
           const importDue = importDueInfo(c);
           const auditors = isAdmin ? [...new Set([
@@ -988,7 +992,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             ...c.letters.map((l) => l.auditorName),
           ].filter(Boolean))] : [];
 
-          const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting });
+          const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
           const lpoaUrl = c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl;
           const clientMenu = [
             { label: togglingVip === c.name ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip), disabled: togglingVip === c.name },

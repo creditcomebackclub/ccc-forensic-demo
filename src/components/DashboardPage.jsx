@@ -59,7 +59,8 @@ function letterStatus(l) {
   if (l.responseOutcome === 'received') return { code: 'received', tone: 'green' };
   if (l.responseOutcome === 'no_response') return { code: 'no_response', tone: 'red' };
   if (!l.mailedDate) return { code: 'not_mailed', tone: 'neutral' };
-  const clockStart = l.deliveredAt ? l.deliveredAt.slice(0, 10) : l.mailedDate;
+  if (!l.deliveredAt) return { code: 'in_transit', tone: 'neutral' };
+  const clockStart = l.deliveredAt.slice(0, 10);
   const elapsed = daysBetween(clockStart, todayISO());
   const remaining = WINDOW_DAYS - elapsed;
   if (remaining > 0) return { code: 'awaiting', remaining, tone: 'amber' };
