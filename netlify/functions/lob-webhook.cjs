@@ -183,10 +183,11 @@ exports.handler = async (event) => {
         headers: { 'Content-Type': 'text/plain' },
         body: `LOB_DEBUG_ERROR: Invalid signature. 
 Received Signature: ${signature}
+Secret Prefix: ${(webhookSecret || '').substring(0, 4)}...
 Hash (body only): ${crypto.createHmac('sha256', webhookSecret || '').update(rawBody || '').digest('hex')}
 Hash (timestamp.body): ${crypto.createHmac('sha256', webhookSecret || '').update((timestamp||'') + '.' + (rawBody || '')).digest('hex')}
-Hash (Hex Secret): ${crypto.createHmac('sha256', Buffer.from(webhookSecret || '', 'hex')).update((timestamp||'') + '.' + (rawBody || '')).digest('hex')}
-Hash (No CR): ${crypto.createHmac('sha256', webhookSecret || '').update((timestamp||'') + '.' + (rawBody ? rawBody.replace(/\r/g, '') : '')).digest('hex')}
+Hash (Hex Secret + timestamp.body): ${crypto.createHmac('sha256', Buffer.from(webhookSecret || '', 'hex')).update((timestamp||'') + '.' + (rawBody || '')).digest('hex')}
+Hash (Hex Secret + body only): ${crypto.createHmac('sha256', Buffer.from(webhookSecret || '', 'hex')).update(rawBody || '').digest('hex')}
 Base64 Encoded: ${event.isBase64Encoded}
 Timestamp: ${timestamp}`
       };
