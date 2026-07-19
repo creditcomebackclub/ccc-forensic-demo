@@ -137,6 +137,27 @@ exports.handler = async (event) => {
 
     if (!verifyLobSignature(rawBody, timestamp, signature, webhookSecret)) {
       console.warn('Rejected Lob webhook: bad or missing signature');
+      // Temporarily write the debug info to Supabase so we can read it, since Lob UI hides it
+      if (supabaseUrl && supabaseKey) {
+        try {
+          await fetch(`${supabaseUrl}/rest/v1/letters`, {
+            method: 'POST',
+            headers: {
+              'apikey': supabaseKey,
+              'Authorization': `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'resolution=merge-duplicates'
+            },
+            body: JSON.stringify({
+              id: 'webhook-debug',
+              client_name: 'Webhook Debug',
+              furnisher: 'System',
+              saved_at: new Date().toISOString(),
+              html: JSON.stringify(debugInfo, null, 2)
+            })
+          });
+        } catch(e) {}
+      }
       return { statusCode: 200, body: JSON.stringify({ error: 'Invalid signature', debug: debugInfo }) };
     }
     
