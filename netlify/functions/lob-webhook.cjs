@@ -160,7 +160,7 @@ exports.handler = async (event) => {
       }
       return { 
         statusCode: 200, 
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ error: 'Invalid signature', debug: debugInfo }) 
       };
     }
@@ -177,7 +177,7 @@ exports.handler = async (event) => {
       console.warn('Rejected Lob webhook: stale timestamp', timestamp);
       return { 
         statusCode: 200, 
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({ error: 'Stale timestamp', tsMs, age, dateNow: Date.now() }) 
       };
     }
