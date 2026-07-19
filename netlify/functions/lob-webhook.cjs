@@ -7,6 +7,7 @@ function verifyLobSignature(rawBody, timestamp, signature, secret) {
   if (!signature) return false;
   try {
     const signatureBuffer = Buffer.from(signature);
+    const bodyNoCR = rawBody ? rawBody.replace(/\r/g, '') : '';
     
     // Format 1: Lob's classic format (just the raw body)
     const computed1 = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
@@ -16,6 +17,14 @@ function verifyLobSignature(rawBody, timestamp, signature, secret) {
     if (timestamp) {
       const computed2 = crypto.createHmac('sha256', secret).update(timestamp + '.' + rawBody).digest('hex');
       if (crypto.timingSafeEqual(Buffer.from(computed2), signatureBuffer)) return true;
+      
+      // Experimental: Secret as Hex Buffer
+      const computedHex = crypto.createHmac('sha256', Buffer.from(secret, 'hex')).update(timestamp + '.' + rawBody).digest('hex');
+      if (crypto.timingSafeEqual(Buffer.from(computedHex), signatureBuffer)) return true;
+      
+      // Experimental: No Carriage Returns
+      const computedNoCR = crypto.createHmac('sha256', secret).update(timestamp + '.' + bodyNoCR).digest('hex');
+      if (crypto.timingSafeEqual(Buffer.from(computedNoCR), signatureBuffer)) return true;
     }
     
     return false;
@@ -174,8 +183,10 @@ exports.handler = async (event) => {
         headers: { 'Content-Type': 'text/plain' },
         body: `LOB_DEBUG_ERROR: Invalid signature. 
 Received Signature: ${signature}
-Computed Hash (body only): ${crypto.createHmac('sha256', webhookSecret || '').update(rawBody || '').digest('hex')}
-Computed Hash (with timestamp): ${debugInfo.computed_hash}
+Hash (body only): ${crypto.createHmac('sha256', webhookSecret || '').update(rawBody || '').digest('hex')}
+Hash (timestamp.body): ${crypto.createHmac('sha256', webhookSecret || '').update((timestamp||'') + '.' + (rawBody || '')).digest('hex')}
+Hash (Hex Secret): ${crypto.createHmac('sha256', Buffer.from(webhookSecret || '', 'hex')).update((timestamp||'') + '.' + (rawBody || '')).digest('hex')}
+Hash (No CR): ${crypto.createHmac('sha256', webhookSecret || '').update((timestamp||'') + '.' + (rawBody ? rawBody.replace(/\r/g, '') : '')).digest('hex')}
 Base64 Encoded: ${event.isBase64Encoded}
 Timestamp: ${timestamp}`
       };
