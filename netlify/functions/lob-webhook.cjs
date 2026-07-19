@@ -158,7 +158,11 @@ exports.handler = async (event) => {
           });
         } catch(e) {}
       }
-      return { statusCode: 200, body: JSON.stringify({ error: 'Invalid signature', debug: debugInfo }) };
+      return { 
+        statusCode: 200, 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Invalid signature', debug: debugInfo }) 
+      };
     }
     
     // Note: Lob sends timestamp as milliseconds or seconds?
@@ -171,7 +175,11 @@ exports.handler = async (event) => {
     // 48 hours (172,800,000 ms) is a much safer tolerance for retries.
     if (!Number.isFinite(age) || age > 48 * 60 * 60 * 1000) {
       console.warn('Rejected Lob webhook: stale timestamp', timestamp);
-      return { statusCode: 200, body: JSON.stringify({ error: 'Stale timestamp', tsMs, age, dateNow: Date.now() }) };
+      return { 
+        statusCode: 200, 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Stale timestamp', tsMs, age, dateNow: Date.now() }) 
+      };
     }
   }
 
