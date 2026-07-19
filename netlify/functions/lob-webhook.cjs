@@ -122,17 +122,35 @@ exports.handler = async (event) => {
   {
     const signature = event.headers['lob-signature'];
     const timestamp = event.headers['lob-signature-timestamp'];
+    
+    // Debug info computation (only used on failure to help diagnose)
+    let debugInfo = {};
+    try {
+      debugInfo = {
+        received_signature: signature,
+        computed_hash: crypto.createHmac('sha256', webhookSecret || '').update((timestamp || '') + '.' + (rawBody || '')).digest('hex'),
+        timestamp: timestamp,
+        isBase64Encoded: event.isBase64Encoded,
+        body_prefix: rawBody ? rawBody.substring(0, 50) : null
+      };
+    } catch(e) {}
+
     if (!verifyLobSignature(rawBody, timestamp, signature, webhookSecret)) {
       console.warn('Rejected Lob webhook: bad or missing signature');
-      return { statusCode: 401, body: JSON.stringify({ error: 'Invalid signature' }) };
+      return { statusCode: 401, body: JSON.stringify({ error: 'Invalid signature', debug: debugInfo }) };
     }
-    const age = Math.abs(Date.now() - Number(timestamp));
-    // Lob retries failed webhooks with the ORIGINAL timestamp. 
-    // If we only allow 5 minutes, all retried webhooks will permanently fail.
+    
+    // Note: Lob sends timestamp as milliseconds or seconds?
+    // Let's compute age depending on its magnitude. If timestamp is in seconds, it will be ~1.7 billion.
+    // If it's in milliseconds, it will be ~1.7 trillion.
+    const tsNum = Number(timestamp);
+    const tsMs = tsNum < 20000000000 ? tsNum * 1000 : tsNum;
+    
+    const age = Math.abs(Date.now() - tsMs);
     // 48 hours (172,800,000 ms) is a much safer tolerance for retries.
     if (!Number.isFinite(age) || age > 48 * 60 * 60 * 1000) {
       console.warn('Rejected Lob webhook: stale timestamp', timestamp);
-      return { statusCode: 401, body: JSON.stringify({ error: 'Stale timestamp' }) };
+      return { statusCode: 401, body: JSON.stringify({ error: 'Stale timestamp', tsMs, age, dateNow: Date.now() }) };
     }
   }
 
