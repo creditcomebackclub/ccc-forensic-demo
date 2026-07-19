@@ -4,10 +4,21 @@ const crypto = require('crypto');
 // Lob signs webhooks with HMAC-SHA256 over `${timestamp}.${rawBody}` using the
 // webhook's secret; the hex digest arrives in the Lob-Signature header.
 function verifyLobSignature(rawBody, timestamp, signature, secret) {
-  if (!signature || !timestamp) return false;
+  if (!signature) return false;
   try {
-    const computed = crypto.createHmac('sha256', secret).update(timestamp + '.' + rawBody).digest('hex');
-    return crypto.timingSafeEqual(Buffer.from(computed), Buffer.from(signature));
+    const signatureBuffer = Buffer.from(signature);
+    
+    // Format 1: Lob's classic format (just the raw body)
+    const computed1 = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+    if (crypto.timingSafeEqual(Buffer.from(computed1), signatureBuffer)) return true;
+    
+    // Format 2: Stripe-style format (timestamp.body)
+    if (timestamp) {
+      const computed2 = crypto.createHmac('sha256', secret).update(timestamp + '.' + rawBody).digest('hex');
+      if (crypto.timingSafeEqual(Buffer.from(computed2), signatureBuffer)) return true;
+    }
+    
+    return false;
   } catch (e) {
     return false;
   }
@@ -163,7 +174,8 @@ exports.handler = async (event) => {
         headers: { 'Content-Type': 'text/plain' },
         body: `LOB_DEBUG_ERROR: Invalid signature. 
 Received Signature: ${signature}
-Computed Hash: ${debugInfo.computed_hash}
+Computed Hash (body only): ${crypto.createHmac('sha256', webhookSecret || '').update(rawBody || '').digest('hex')}
+Computed Hash (with timestamp): ${debugInfo.computed_hash}
 Base64 Encoded: ${event.isBase64Encoded}
 Timestamp: ${timestamp}`
       };
