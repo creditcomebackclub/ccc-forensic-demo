@@ -161,7 +161,11 @@ exports.handler = async (event) => {
       return { 
         statusCode: 200, 
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ error: 'Invalid signature', debug: debugInfo }) 
+        body: `LOB_DEBUG_ERROR: Invalid signature. 
+Received Signature: ${signature}
+Computed Hash: ${debugInfo.computed_hash}
+Base64 Encoded: ${event.isBase64Encoded}
+Timestamp: ${timestamp}`
       };
     }
     
@@ -178,7 +182,9 @@ exports.handler = async (event) => {
       return { 
         statusCode: 200, 
         headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ error: 'Stale timestamp', tsMs, age, dateNow: Date.now() }) 
+        body: `LOB_DEBUG_ERROR: Stale timestamp. 
+Timestamp: ${timestamp}
+Age (ms): ${age}` 
       };
     }
   }
