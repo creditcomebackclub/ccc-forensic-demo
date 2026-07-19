@@ -105,7 +105,7 @@ exports.handler = async (event) => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const sendgridKey = process.env.SENDGRID_API_KEY;
-  const webhookSecret = process.env.LOB_WEBHOOK_SECRET;
+  const webhookSecret = process.env.LOB_WEBHOOK_SECRET ? process.env.LOB_WEBHOOK_SECRET.trim() : null;
 
   if (!supabaseUrl || !supabaseKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Supabase not configured' }) };
@@ -137,7 +137,7 @@ exports.handler = async (event) => {
 
     if (!verifyLobSignature(rawBody, timestamp, signature, webhookSecret)) {
       console.warn('Rejected Lob webhook: bad or missing signature');
-      return { statusCode: 401, body: JSON.stringify({ error: 'Invalid signature', debug: debugInfo }) };
+      return { statusCode: 200, body: JSON.stringify({ error: 'Invalid signature', debug: debugInfo }) };
     }
     
     // Note: Lob sends timestamp as milliseconds or seconds?
@@ -150,7 +150,7 @@ exports.handler = async (event) => {
     // 48 hours (172,800,000 ms) is a much safer tolerance for retries.
     if (!Number.isFinite(age) || age > 48 * 60 * 60 * 1000) {
       console.warn('Rejected Lob webhook: stale timestamp', timestamp);
-      return { statusCode: 401, body: JSON.stringify({ error: 'Stale timestamp', tsMs, age, dateNow: Date.now() }) };
+      return { statusCode: 200, body: JSON.stringify({ error: 'Stale timestamp', tsMs, age, dateNow: Date.now() }) };
     }
   }
 
