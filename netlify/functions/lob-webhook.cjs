@@ -118,10 +118,11 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ error: 'Webhook not configured' }) };
   }
 
+  const rawBody = event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body;
   {
     const signature = event.headers['lob-signature'];
     const timestamp = event.headers['lob-signature-timestamp'];
-    if (!verifyLobSignature(event.body, timestamp, signature, webhookSecret)) {
+    if (!verifyLobSignature(rawBody, timestamp, signature, webhookSecret)) {
       console.warn('Rejected Lob webhook: bad or missing signature');
       return { statusCode: 401, body: JSON.stringify({ error: 'Invalid signature' }) };
     }
@@ -135,11 +136,8 @@ exports.handler = async (event) => {
     }
   }
 
-  {
-  }
-
   let payload;
-  try { payload = JSON.parse(event.body); }
+  try { payload = JSON.parse(rawBody); }
   catch (e) { return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
 
   const eventType = payload.event_type && payload.event_type.id;
