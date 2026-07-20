@@ -46,7 +46,9 @@ exports.handler = async (event) => {
       userId = createData.user.id;
     }
 
-    const redirectUrl = event.headers.origin || 'https://ccc-forensic-demo.netlify.app';
+    const origin = event.headers.origin || 'https://ccc-forensic-demo.netlify.app';
+    const redirectUrl = `${origin}/login`;
+    
     const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
       type: 'magiclink',
       email: normEmail,
