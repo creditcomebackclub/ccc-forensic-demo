@@ -81,7 +81,7 @@ function AffiliatesPage() {
 
       // Send magic link
       await supabase.auth.signInWithOtp({ email: normEmail, options: {
-        emailRedirectTo: window.location.origin,
+        emailRedirectTo: window.location.origin + '/login',
         data: { role: 'affiliate' }
       }});
 
