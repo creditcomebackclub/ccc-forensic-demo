@@ -62,6 +62,12 @@ export default function ClientSetupFlow({ session, onComplete, initialStep = 'pa
               {loading ? 'Setting up…' : 'Create Password'}
               {!loading && <ChevronRight size={16} strokeWidth={2.5} />}
             </button>
+            <div className="pt-3 text-center">
+              <button onClick={() => supabase.auth.signOut()} 
+                className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors uppercase tracking-widest">
+                Cancel & Sign Out
+              </button>
+            </div>
           </div>
         </motion.div>
       </div>
