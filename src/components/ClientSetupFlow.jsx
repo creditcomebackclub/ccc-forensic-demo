@@ -88,8 +88,27 @@ function ClientOnboardingModal({ session, onComplete }) {
   const [signature, setSignature] = useState(null);
   const [loading, setLoading] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [hasAudit, setHasAudit] = useState(false);
   const canvasRef = React.useRef(null);
   const isDrawing = React.useRef(false);
+
+  React.useEffect(() => {
+    async function checkAudit() {
+      try {
+        const { data, error } = await supabase
+          .from('audits')
+          .select('id')
+          .eq('user_id', session.user.id)
+          .limit(1);
+        if (!error && data && data.length > 0) {
+          setHasAudit(true);
+        }
+      } catch (e) {
+        console.error('Failed to check audits:', e);
+      }
+    }
+    checkAudit();
+  }, [session]);
 
   const startDraw = (e) => {
     isDrawing.current = true;
@@ -505,18 +524,32 @@ function ClientOnboardingModal({ session, onComplete }) {
                   <h2 className="text-xl font-bold text-slate-900">Enrollment Complete!</h2>
                   
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-left max-w-sm mx-auto shadow-sm">
-                    <h3 className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center gap-2">
-                      <span className="bg-amber-200 text-amber-900 w-5 h-5 rounded-full flex items-center justify-center text-[10px]">1</span>
-                      Next Step: Your Credit Report
-                    </h3>
-                    <p className="text-sm text-amber-900/80 leading-relaxed">
-                      To begin your forensic audit, we need your credit report. Please log into the client portal now to upload your initial 3-bureau report or provide your SmartCredit credentials so we can pull it for you.
-                    </p>
+                    {hasAudit ? (
+                      <>
+                        <h3 className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center gap-2">
+                          <span className="bg-amber-200 text-amber-900 w-5 h-5 rounded-full flex items-center justify-center text-[10px]">1</span>
+                          Audit Complete
+                        </h3>
+                        <p className="text-sm text-amber-900/80 leading-relaxed">
+                          Your initial forensic audit has already been completed! Please log into the client portal now to view your full results, negative accounts identified, and dispute tracking.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center gap-2">
+                          <span className="bg-amber-200 text-amber-900 w-5 h-5 rounded-full flex items-center justify-center text-[10px]">1</span>
+                          Next Step: Your Credit Report
+                        </h3>
+                        <p className="text-sm text-amber-900/80 leading-relaxed">
+                          To begin your forensic audit, we need your credit report. Please log into the client portal now to upload your initial 3-bureau report or provide your SmartCredit credentials so we can pull it for you.
+                        </p>
+                      </>
+                    )}
                   </div>
 
                   <button onClick={() => onComplete({ signatureUrl: signature })}
                     className="w-full py-4 mt-4 text-sm font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 bg-slate-900 text-amber-400 hover:bg-slate-800">
-                    Go to Portal to Upload Report
+                    {hasAudit ? 'Enter Client Portal' : 'Go to Portal to Upload Report'}
                     <ChevronRight size={18} strokeWidth={2.5} />
                   </button>
                 </div>
