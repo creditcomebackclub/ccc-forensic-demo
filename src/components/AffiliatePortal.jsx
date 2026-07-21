@@ -5,6 +5,7 @@ import { LogOut, Users, DollarSign, TrendingUp, Plus, CheckCircle, Clock, AlertC
 export default function AffiliatePortal({ session, onSignOut }) {
   const [affiliate, setAffiliate] = useState(null);
   const [clients, setClients] = useState([]);
+  const [profiles, setProfiles] = useState([]);
   const [letters, setLetters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -44,11 +45,19 @@ export default function AffiliatePortal({ session, onSignOut }) {
         // Load letters for those clients
         if (clientData && clientData.length > 0) {
           const names = clientData.map(c => c.name);
+          const emails = clientData.map(c => c.email);
+
           const { data: letterData } = await supabase
             .from('letters')
             .select('client_name, furnisher, phase, mailed_date, tracking_status, delivered_at, response_outcome, saved_at')
             .in('client_name', names);
           setLetters(letterData || []);
+
+          const { data: profileData } = await supabase
+            .from('client_profiles')
+            .select('email, full_name, starting_scores, current')
+            .in('email', emails);
+          setProfiles(profileData || []);
         }
       }
     } catch (e) {
@@ -102,6 +111,39 @@ export default function AffiliatePortal({ session, onSignOut }) {
     } finally {
       setReferLoading(false);
     }
+  };
+
+  const handleExportCSV = () => {
+    const headers = ['Client Name', 'Email', 'Phone', 'Date Referred', 'Status', 'Commissions Paid', 'Score Increase'];
+    const rows = clients.map(c => {
+      const status = getClientStatus(c.name).label;
+      const profile = profiles.find(p => p.email === c.email);
+      let scoreIncrease = 'N/A';
+      if (profile && profile.starting_scores && profile.current) {
+        const start = Math.round((profile.starting_scores.equifax + profile.starting_scores.experian + profile.starting_scores.transunion) / 3);
+        const current = Math.round((profile.current.equifax + profile.current.experian + profile.current.transunion) / 3);
+        if (current > start) scoreIncrease = `+${current - start} pts`;
+      }
+      return [
+        `"${c.name}"`,
+        `"${c.email}"`,
+        `"${c.phone || ''}"`,
+        `"${new Date(c.created_at).toLocaleDateString()}"`,
+        `"${status}"`,
+        `"${c.commission_paid ? 'Yes' : 'No'}"`,
+        `"${scoreIncrease}"`
+      ].join(',');
+    });
+    
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `Referrals_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const getClientStatus = (clientName) => {
@@ -268,15 +310,29 @@ export default function AffiliatePortal({ session, onSignOut }) {
                 clients.slice(0, 5).map(c => {
                   const status = getClientStatus(c.name);
                   const style = toneStyles[status.tone];
+                  
+                  const profile = profiles.find(p => p.email === c.email);
+                  let scoreIncrease = null;
+                  if (profile && profile.starting_scores && profile.current) {
+                    const start = Math.round((profile.starting_scores.equifax + profile.starting_scores.experian + profile.starting_scores.transunion) / 3);
+                    const current = Math.round((profile.current.equifax + profile.current.experian + profile.current.transunion) / 3);
+                    if (current > start) scoreIncrease = `+${current - start} pts`;
+                  }
+
                   return (
                     <div key={c.id} style={{ padding: '14px 20px', borderBottom: '1px solid #1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{c.name}</div>
                         <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>{c.email}</div>
                       </div>
-                      <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 4, background: style.bg, color: style.color, border: `1px solid ${style.border}`, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>
-                        {status.label}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        {scoreIncrease && (
+                          <span style={{ fontSize: 11, color: brandColor, fontWeight: 700 }}>{scoreIncrease}</span>
+                        )}
+                        <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 4, background: style.bg, color: style.color, border: `1px solid ${style.border}`, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>
+                          {status.label}
+                        </span>
+                      </div>
                     </div>
                   );
                 })
@@ -293,9 +349,14 @@ export default function AffiliatePortal({ session, onSignOut }) {
                 <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Your Referred Clients</h2>
                 <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>{clients.length} client{clients.length !== 1 ? 's' : ''} total</p>
               </div>
-              <button onClick={() => setShowReferForm(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, background: accentColor, color: '#000', border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <Plus size={14} strokeWidth={2.5} /> Refer Client
-              </button>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button onClick={handleExportCSV} disabled={clients.length === 0} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#111', color: '#fff', border: '1px solid #2A2A2A', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: clients.length === 0 ? 'not-allowed' : 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: clients.length === 0 ? 0.5 : 1 }}>
+                  Export CSV
+                </button>
+                <button onClick={() => setShowReferForm(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, background: accentColor, color: '#000', border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  <Plus size={14} strokeWidth={2.5} /> Refer Client
+                </button>
+              </div>
             </div>
 
             {clients.length === 0 ? (
@@ -312,6 +373,14 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   const mailed = clientLetters.filter(l => l.mailed_date).length;
                   const delivered = clientLetters.filter(l => l.tracking_status === 'Delivered').length;
                   const deleted = clientLetters.filter(l => l.response_outcome === 'deleted').length;
+
+                  const profile = profiles.find(p => p.email === c.email);
+                  let scoreIncrease = 'N/A';
+                  if (profile && profile.starting_scores && profile.current) {
+                    const start = Math.round((profile.starting_scores.equifax + profile.starting_scores.experian + profile.starting_scores.transunion) / 3);
+                    const current = Math.round((profile.current.equifax + profile.current.experian + profile.current.transunion) / 3);
+                    if (current > start) scoreIncrease = `+${current - start} pts`;
+                  }
 
                   return (
                     <div key={c.id} style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 20 }}>
@@ -330,9 +399,10 @@ export default function AffiliatePortal({ session, onSignOut }) {
                           { label: 'Letters Sent', value: mailed },
                           { label: 'Delivered', value: delivered },
                           { label: 'Deletions', value: deleted },
+                          { label: 'Score Increase', value: scoreIncrease },
                         ].map(({ label, value }) => (
                           <div key={label}>
-                            <div style={{ fontSize: 18, fontWeight: 700, color: value > 0 ? brandColor : 'rgba(255,255,255,0.3)' }}>{value}</div>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: value > 0 || String(value).startsWith('+') ? brandColor : 'rgba(255,255,255,0.3)' }}>{value}</div>
                             <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>{label}</div>
                           </div>
                         ))}

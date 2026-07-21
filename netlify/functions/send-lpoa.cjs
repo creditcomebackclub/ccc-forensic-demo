@@ -217,6 +217,40 @@ exports.handler = async (event) => {
     }
   }
 
+  // 35-Day Report Refresh Reminder
+  if (action === 'send_report_refresh') {
+    const { clientName, clientEmail } = payload;
+    if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
+    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+
+    const firstName = clientName.split(' ')[0] || clientName;
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
+      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
+        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
+        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Action Required: New Credit Report Due</p>
+      </div>
+      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
+        <p>Hi ${firstName},</p>
+        <p>It's been 35 days since your last credit report audit! To keep your dispute campaign moving forward and check for any deleted negative items, we need you to upload your newest credit report.</p>
+        <p>Please log into your SmartCredit or IdentityIQ account, download your new 3-bureau report, and upload it directly into your client portal.</p>
+        <div style="text-align:center;margin:32px 0;">
+          <a href="https://ccc-forensic-demo.netlify.app/login" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Open Client Portal to Upload &#8594;</a>
+        </div>
+        <p>If you're having trouble downloading your report, you can also update your credentials in the portal and we will pull it for you.</p>
+        <p>Questions? Reply to this email or call 970-644-0063.</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
+      </div>
+    </body></html>`;
+
+    try {
+      await sendViaSendGrid(sgKey, clientEmail, 'Action Required: Upload your new credit report', html);
+      return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+    } catch (e) {
+      return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    }
+  }
+
   // Admin Notification: New Lead
   if (action === 'admin_new_lead') {
     const { leadName, leadEmail, leadPhone, tier } = payload;

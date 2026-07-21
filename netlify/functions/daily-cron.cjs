@@ -167,6 +167,59 @@ exports.handler = async () => {
     }
   }
 
+  // --- 1.5 Process 35-Day Report Reminders ---
+  let reportRefreshDripsCount = 0;
+  if (sgKey) {
+    try {
+      const auditsRes = await supabaseRequest('/rest/v1/audits?select=id,client_name,user_id,saved_at,report_date', 'GET', null, supabaseUrl, supabaseKey);
+      const audits = Array.isArray(auditsRes.body) ? auditsRes.body : [];
+      
+      // Group audits by client_name (or user_id) to find the LATEST audit for each client
+      const latestAudits = new Map();
+      for (const a of audits) {
+        const dateStr = a.saved_at || a.report_date;
+        if (!dateStr) continue;
+        const currentLatest = latestAudits.get(a.client_name);
+        if (!currentLatest || dateStr > (currentLatest.saved_at || currentLatest.report_date)) {
+          latestAudits.set(a.client_name, a);
+        }
+      }
+
+      for (const [clientName, audit] of latestAudits.entries()) {
+        const dateStr = audit.saved_at || audit.report_date;
+        const daysElapsed = daysBetween(dateStr.slice(0, 10), today);
+        
+        if (daysElapsed === 35) {
+          // Check if we already sent a reminder for this specific audit ID to prevent duplicate emails
+          // We'll store it in the client's lead_drips_sent array with a unique prefix
+          const clientsRes = await supabaseRequest(`/rest/v1/clients?name=eq.${encodeURIComponent(clientName)}&select=email,lead_drips_sent`, 'GET', null, supabaseUrl, supabaseKey);
+          const clientRow = Array.isArray(clientsRes.body) && clientsRes.body[0] ? clientsRes.body[0] : null;
+          
+          if (clientRow && clientRow.email) {
+            const sentDrips = clientRow.lead_drips_sent || [];
+            const dripKey = `report35_${audit.id}`;
+            
+            if (!sentDrips.includes(dripKey)) {
+              try {
+                await fetch_send('send_report_refresh', { clientName, clientEmail: clientRow.email });
+                const newDrips = [...sentDrips, dripKey];
+                await supabaseRequest(
+                  `/rest/v1/clients?name=eq.${encodeURIComponent(clientName)}`,
+                  'PATCH', { lead_drips_sent: newDrips }, supabaseUrl, supabaseKey
+                );
+                reportRefreshDripsCount++;
+              } catch (e) {
+                console.error('Report refresh email failed:', e);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to process 35-day report reminders:', e);
+    }
+  }
+
   // --- 2. Process Onboarding Reminders & Lead Nurture ---
   let onboardingDripsCount = 0;
   if (sgKey) {

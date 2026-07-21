@@ -261,8 +261,8 @@ function ClientOnboardingModal({ session, onComplete }) {
         }).eq('name', cp.full_name);
       }
 
-      toast.success('Enrollment Complete! Entering Portal...', { id: toastId });
-      setTimeout(() => onComplete({ signatureUrl: sigUrl }), 1500);
+      toast.success('Agreements signed securely!', { id: toastId });
+      setStep(5);
     } catch (e) {
       console.error('[Enrollment] handleComplete failed:', e);
       toast.error(e.message || 'Could not complete setup', { id: toastId });
@@ -274,7 +274,8 @@ function ClientOnboardingModal({ session, onComplete }) {
     { title: 'Government ID', icon: <UserCheck size={16} /> },
     { title: 'Proof of Address', icon: <FileText size={16} /> },
     { title: 'Your Signature', icon: <PenTool size={16} /> },
-    { title: 'Review & Sign', icon: <Check size={16} /> }
+    { title: 'Review & Sign', icon: <Check size={16} /> },
+    { title: 'Success', icon: <Check size={16} /> }
   ];
 
   return (
@@ -492,6 +493,32 @@ function ClientOnboardingModal({ session, onComplete }) {
                       {!loading && <Check size={16} strokeWidth={2.5} />}
                     </button>
                   </div>
+                </div>
+              )}
+
+              {/* Step 5 - Success */}
+              {step === 5 && (
+                <div className="space-y-6 text-center">
+                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2 text-green-600">
+                    <Check size={32} strokeWidth={3} />
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-900">Enrollment Complete!</h2>
+                  
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-left max-w-sm mx-auto shadow-sm">
+                    <h3 className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center gap-2">
+                      <span className="bg-amber-200 text-amber-900 w-5 h-5 rounded-full flex items-center justify-center text-[10px]">1</span>
+                      Next Step: Your Credit Report
+                    </h3>
+                    <p className="text-sm text-amber-900/80 leading-relaxed">
+                      To begin your forensic audit, we need your credit report. Please log into the client portal now to upload your initial 3-bureau report or provide your SmartCredit credentials so we can pull it for you.
+                    </p>
+                  </div>
+
+                  <button onClick={() => onComplete({ signatureUrl: signature })}
+                    className="w-full py-4 mt-4 text-sm font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 bg-slate-900 text-amber-400 hover:bg-slate-800">
+                    Go to Portal to Upload Report
+                    <ChevronRight size={18} strokeWidth={2.5} />
+                  </button>
                 </div>
               )}
             </motion.div>
