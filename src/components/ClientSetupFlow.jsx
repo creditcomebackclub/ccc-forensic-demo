@@ -160,24 +160,34 @@ function ClientOnboardingModal({ session, onComplete }) {
     setLoading(true);
     const toastId = toast.loading('Finalizing your enrollment...');
     const userId = session.user.id;
+    const userEmail = session.user.email;
+
+    // Helper to label errors with the step that failed
+    const labeled = async (label, fn) => {
+      try { return await fn(); }
+      catch (e) { throw new Error(`${label}: ${e.message || e}`); }
+    };
+
     try {
       let sigUrl = null;
       if (signature) {
-        sigUrl = await uploadSignature(signature, `${userId}/signature.png`);
+        sigUrl = await labeled('Upload signature', () => uploadSignature(signature, `${userId}/signature.png`));
       }
-      if (idFile) await uploadFile(idFile, `${userId}/id.${idFile.name.split('.').pop()}`);
-      if (addressFile) await uploadFile(addressFile, `${userId}/address.${addressFile.name.split('.').pop()}`);
+      if (idFile) await labeled('Upload ID', () => uploadFile(idFile, `${userId}/id.${idFile.name.split('.').pop()}`));
+      if (addressFile) await labeled('Upload address doc', () => uploadFile(addressFile, `${userId}/address.${addressFile.name.split('.').pop()}`));
 
-      const userEmail = session.user.email;
-      await supabase.from('client_profiles').update({
-        signature_data: sigUrl,
-        signature_signed_at: new Date().toISOString(),
-        agreement_signed_at: new Date().toISOString(),
-        onboarding_complete: true,
-        user_id: userId,
-      }).eq('email', userEmail);
+      // Always mark onboarding complete in DB — do this even if subsequent steps fail
+      await labeled('Save enrollment record', () =>
+        supabase.from('client_profiles').update({
+          signature_data: sigUrl,
+          signature_signed_at: new Date().toISOString(),
+          agreement_signed_at: new Date().toISOString(),
+          onboarding_complete: true,
+          user_id: userId,
+        }).eq('email', userEmail)
+      );
 
-      const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('email', session.user.email).single();
+      const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('email', userEmail).single();
       const signedAt = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
       const clientFullName = (cp && cp.full_name) || session.user.email;
 
@@ -227,15 +237,20 @@ function ClientOnboardingModal({ session, onComplete }) {
 
       const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });
       const lpoaFile = new File([lpoaBlob], 'lpoa-signed.html', { type: 'text/html' });
-      const { error: lpoaErr } = await supabase.storage.from('client-docs').upload(userId + '/lpoa-signed.html', lpoaFile, { upsert: true });
+      // LPOA upload — non-fatal if storage fails (enrollment is already marked complete above)
       let lpoaUrl = null;
-      if (!lpoaErr) {
-        const { data: lpoaData } = supabase.storage.from('client-docs').getPublicUrl(userId + '/lpoa-signed.html');
-        lpoaUrl = lpoaData.publicUrl;
+      try {
+        const { error: lpoaErr } = await supabase.storage.from('client-docs').upload(userId + '/lpoa-signed.html', lpoaFile, { upsert: true });
+        if (!lpoaErr) {
+          const { data: lpoaData } = supabase.storage.from('client-docs').getPublicUrl(userId + '/lpoa-signed.html');
+          lpoaUrl = lpoaData.publicUrl;
+        }
+      } catch (lpoaUploadErr) {
+        console.warn('LPOA upload failed (non-fatal):', lpoaUploadErr);
       }
 
       if (lpoaUrl) {
-        await supabase.from('client_profiles').update({ lpoa_url: lpoaUrl }).eq('email', session.user.email);
+        await supabase.from('client_profiles').update({ lpoa_url: lpoaUrl }).eq('email', userEmail);
       }
 
       if (cp) {
@@ -249,6 +264,7 @@ function ClientOnboardingModal({ session, onComplete }) {
       toast.success('Enrollment Complete! Entering Portal...', { id: toastId });
       setTimeout(() => onComplete({ signatureUrl: sigUrl }), 1500);
     } catch (e) {
+      console.error('[Enrollment] handleComplete failed:', e);
       toast.error(e.message || 'Could not complete setup', { id: toastId });
       setLoading(false);
     }
