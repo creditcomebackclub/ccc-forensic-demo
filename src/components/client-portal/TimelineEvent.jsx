@@ -1,10 +1,15 @@
 import React, { useState } from 'react';
 
-function ReturnReceiptButton({ lobId, accessToken }) {
+function ReturnReceiptButton({ lobId, accessToken, returnReceiptUrl }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   async function handleFetch() {
+    if (returnReceiptUrl) {
+      window.open(returnReceiptUrl, '_blank');
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -23,27 +28,27 @@ function ReturnReceiptButton({ lobId, accessToken }) {
       }
       window.open(data.return_receipt_url, '_blank');
     } catch (e) {
-      setError('Could not fetch receipt.');
+      setError('Failed to fetch return receipt.');
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <span className="inline-flex flex-col items-start gap-0.5">
-      <button
+    <div className="mt-2.5">
+      <button 
         onClick={handleFetch}
         disabled={loading}
-        className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 underline underline-offset-2 transition-colors disabled:opacity-50"
+        className="text-[11px] font-semibold text-slate-900 hover:text-blue-600 uppercase tracking-wider disabled:opacity-50 transition-colors inline-flex items-center gap-1.5"
       >
-        {loading ? 'Fetching…' : '📋 View Signed Receipt'}
+        <span className="text-[14px]">🖋️</span> {loading ? 'Fetching...' : 'View USPS Signed Receipt'}
       </button>
-      {error && <span className="text-[10px] text-amber-600">{error}</span>}
-    </span>
+      {error && <div className="text-[10px] text-red-600 font-medium mt-1">{error}</div>}
+    </div>
   );
 }
 
-export default function TimelineEvent({ icon, title, subtitle, date, tone, lobId, trackingNumber, accessToken, responseUrl }) {
+export default function TimelineEvent({ icon, title, subtitle, date, tone, lobId, trackingNumber, accessToken, responseUrl, returnReceiptUrl }) {
   const tones = {
     default: 'bg-gray-50 border-gray-200 text-gray-700',
     green: 'bg-green-50 border-green-200 text-green-700',
@@ -77,7 +82,7 @@ export default function TimelineEvent({ icon, title, subtitle, date, tone, lobId
               🔍 USPS Tracking #{trackingNumber.slice(-8)}
             </a>
             {lobId && (
-              <ReturnReceiptButton lobId={lobId} accessToken={accessToken} />
+              <ReturnReceiptButton lobId={lobId} accessToken={accessToken} returnReceiptUrl={returnReceiptUrl} />
             )}
           </div>
         )}

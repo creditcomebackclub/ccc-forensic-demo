@@ -255,6 +255,8 @@ function normalizeLetter(l) {
     trackingNumber: l.tracking_number,
     trackingStatus: l.tracking_status,
     deliveredAt: l.delivered_at,
+    returnReceiptUrl: l.return_receipt_url,
+    responseFileUrl: l.response_file_url,
   };
 }
 

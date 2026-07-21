@@ -85,24 +85,17 @@ function letterStatus(l) {
 }
 
 function importDueInfo(c) {
-  const phase1Letters = c.letters.filter((l) => l.mailedDate && !l.phase?.startsWith('Phase 3'));
-  if (phase1Letters.length === 0) return null;
+  if (!c.audits || c.audits.length === 0) return null;
+  // storage.js returns audits sorted descending by savedAt, so c.audits[0] is the latest
+  const latestAudit = c.audits[0];
+  const latestAuditDate = latestAudit.savedAt || latestAudit.reportDate;
+  if (!latestAuditDate) return null;
 
-  let latestClockStart = null;
-  for (const l of phase1Letters) {
-    const clockStart = l.deliveredAt ? l.deliveredAt.slice(0, 10) : l.mailedDate;
-    if (!latestClockStart || clockStart > latestClockStart) latestClockStart = clockStart;
-  }
-  if (!latestClockStart) return null;
+  const elapsed = daysBetween(latestAuditDate.slice(0, 10), todayISO());
+  const remaining = 35 - elapsed;
 
-  const elapsed = daysBetween(latestClockStart, todayISO());
-  const remaining = WINDOW_DAYS - elapsed;
-
-  const allAccounted = phase1Letters.every((l) => l.responseOutcome === 'received' || l.responseOutcome === 'no_response');
-  if (allAccounted) return null;
-
-  if (remaining > 0) return { code: 'pending', label: 'Import in ' + remaining + 'd', tone: 'neutral' };
-  return { code: 'due', label: 'Import due', tone: 'red' };
+  if (remaining > 0) return { code: 'pending', label: 'Report due in ' + remaining + 'd', tone: 'neutral' };
+  return { code: 'due', label: 'Upload 35-Day Report', tone: 'amber' };
 }
 
 function clientMatchesFilter(c, filter, unanalyzedNames) {
@@ -136,10 +129,15 @@ const FILTER_LABELS = {
   unanalyzed: 'Needs Analysis',
 };
 
-function ReturnReceiptButton({ lobId }) {
+function ReturnReceiptButton({ lobId, returnReceiptUrl }) {
   const [loading, setLoading] = useState(false);
 
   async function handleDownload() {
+    if (returnReceiptUrl) {
+      window.open(returnReceiptUrl, '_blank');
+      return;
+    }
+
     setLoading(true);
     try {
       const url = await getReturnReceiptUrl(lobId);
@@ -170,13 +168,20 @@ function StatusBadge({ label, tone }) {
 
 // One pill per client — only the most urgent state, so rows stay scannable
 function primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
+  const clientUploaded = c.letters.some(l => l.responseOutcome === 'received' && l.responseFileUrl);
+  if (clientUploaded) return { label: 'Response Uploaded', tone: 'green' };
+
   if (ripe > 0) return { label: ripe + ' to escalate', tone: 'red' };
   if (needsPhase3 > 0) return { label: needsPhase3 + ' need Phase 3', tone: 'amber' };
+  
   const importDue = importDueInfo(c);
   if (importDue && importDue.code === 'due') return importDue;
+  
   if (awaiting > 0) return { label: awaiting + ' awaiting', tone: 'amber' };
   if (inTransit > 0) return { label: inTransit + ' in transit', tone: 'neutral' };
+  
   if (importDue) return importDue;
+  
   if (c.letters.length === 0) return { label: 'No letters yet', tone: 'neutral' };
   return { label: 'On track', tone: 'green' };
 }
@@ -342,10 +347,13 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
             <a href={"https://tools.usps.com/go/TrackConfirmAction?tLabels=" + l.trackingNumber} target="_blank" rel="noopener noreferrer" className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2">USPS #{l.trackingNumber.slice(-8)}</a>
           )}
           {l.trackingStatus === 'Delivered' && l.lobId && (
-            <ReturnReceiptButton lobId={l.lobId} />
+            <ReturnReceiptButton lobId={l.lobId} returnReceiptUrl={l.returnReceiptUrl} />
           )}
           {l.lobId && !l.trackingNumber && (
             <span className="text-[10px] text-ink-faint ml-2">Lob: {l.lobId.slice(0, 12)}</span>
+          )}
+          {l.responseFileUrl && (
+            <a href={l.responseFileUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] uppercase tracking-wider text-green-700 hover:text-green-800 ml-2 font-medium">📄 View Client Upload</a>
           )}
           {l.trackingStatus && (
             <span className={'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm ml-1 ' + (l.trackingStatus === 'Delivered' ? 'bg-green-50 text-green-700' : l.trackingStatus.includes('Returned') ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700')}>

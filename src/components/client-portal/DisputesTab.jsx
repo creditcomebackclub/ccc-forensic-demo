@@ -34,10 +34,15 @@ function responseCountdown(l) {
   return { label: 'Response window closed — ready for escalation', tone: 'text-red-700 bg-red-50 border-red-200' };
 }
 
-function ReturnReceiptButton({ lobId }) {
+function ReturnReceiptButton({ lobId, returnReceiptUrl }) {
   const [loading, setLoading] = useState(false);
 
   async function handleDownload() {
+    if (returnReceiptUrl) {
+      window.open(returnReceiptUrl, '_blank');
+      return;
+    }
+
     setLoading(true);
     try {
       const url = await getReturnReceiptUrl(lobId);
@@ -130,7 +135,7 @@ export default function DisputesTab({
                       className="ml-2 text-slate-900 font-semibold hover:text-blue-600 transition-colors">Track →</a>
                   )}
                   {l.tracking_status === 'Delivered' && l.lob_id && (
-                    <ReturnReceiptButton lobId={l.lob_id} />
+                    <ReturnReceiptButton lobId={l.lob_id} returnReceiptUrl={l.return_receipt_url} />
                   )}
                 </div>
               )}
