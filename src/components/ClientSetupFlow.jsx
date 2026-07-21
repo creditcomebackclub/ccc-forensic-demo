@@ -458,21 +458,18 @@ function ClientOnboardingModal({ session, onComplete }) {
                       <span className="text-xs uppercase tracking-[0.1em] text-amber-400 font-bold">Client Service Agreement</span>
                     </div>
                     <div className="p-5 max-h-48 overflow-y-auto text-xs text-gray-600 space-y-3 custom-scrollbar">
-                      <p><strong className="text-slate-900">Services:</strong> Credit Comeback Club ("CCC") will perform a forensic Metro 2 and FCRA audit of your credit reports and prepare direct furnisher dispute letters on your behalf.</p>
-                      <p><strong className="text-slate-900">Fee Schedule (Pay-Per-Delete):</strong></p>
+                      <p><strong className="text-slate-900">Services:</strong> Credit Comeback Club ("CCC") will analyze your Equifax, Experian, and TransUnion reports, identify inaccurate or unverifiable items, and prepare/submit direct furnisher dispute letters on your behalf.</p>
+                      <p><strong className="text-slate-900">Fee Schedule:</strong></p>
                       <ul className="pl-4 space-y-1 text-gray-500">
-                        <li>• First Work Fee: $49 (due after audit delivery)</li>
-                        <li>• Type A deletion: $125 per bureau</li>
-                        <li>• Type B deletion: $75 per bureau</li>
-                        <li>• Type C deletion: $150 per bureau</li>
-                        <li>• Public Record deletion: $175 per bureau</li>
-                        <li>• No deletion = no charge.</li>
+                        <li>• <strong className="text-slate-700">Standard Plan:</strong> $79/mo (Up to 3 letters/mo). $75 one-time First Work Fee.</li>
+                        <li>• <strong className="text-slate-700">VIP Plan:</strong> $149/mo (Up to 5 letters/mo, priority, strategy call). $99 one-time First Work Fee.</li>
+                        <li>• <strong className="text-slate-700">Paid in Full:</strong> $499 flat for 6 months of Standard service (First Work Fee waived).</li>
                       </ul>
-                      <p><strong className="text-slate-900">Credit Monitoring:</strong> ScoreFusion monitoring at $16/month is the client's direct responsibility.</p>
-                      <p><strong className="text-slate-900">No Guarantee:</strong> CCC makes no guarantee of specific outcomes. Results vary by credit profile and creditor response.</p>
-                      <p><strong className="text-slate-900">Prohibited Practices:</strong> CCC does not dispute accurate information or create new credit identities.</p>
-                      <p><strong className="text-slate-900">CROA Compliance:</strong> This agreement complies with the Credit Repair Organizations Act (15 U.S.C. §1679 et seq.). You have the right to cancel within 3 business days of signing.</p>
-                      <p><strong className="text-slate-900">Contact:</strong> 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063</p>
+                      <p><strong className="text-slate-900">Billing:</strong> First Work Fee is due at enrollment before dispute work commences. Monthly fees are billed in advance on the anniversary of enrollment.</p>
+                      <p><strong className="text-slate-900">No Guarantee:</strong> CCC makes no guarantee of specific outcomes. Results depend on individual credit profiles and creditor responses.</p>
+                      <p><strong className="text-slate-900">Prohibited Practices:</strong> CCC does not provide legal advice, dispute accurate/verifiable information, or create new credit identities.</p>
+                      <p><strong className="text-slate-900">CROA Compliance & Cancellation:</strong> This agreement complies with the Credit Repair Organizations Act. No advance fees are charged for work not yet performed. You have the right to cancel without penalty within 3 business days of signing.</p>
+                      <p><strong className="text-slate-900">Contact:</strong> info@creditcomebackclub.com | 480-913-9172 | Grand Junction, CO 81501</p>
                     </div>
                   </div>
 
