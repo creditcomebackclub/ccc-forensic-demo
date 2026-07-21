@@ -424,13 +424,35 @@ export default function App() {
 
       if (cp) {
         setIsClient(true);
-        setClientOnboarded(cp.onboarding_complete === true);
+
+        // Also check clients table — lpoa_signed=true means they went through the
+        // admin/manual LPOA flow and are fully onboarded even if onboarding_complete
+        // was never flipped on client_profiles (e.g. Chris signed on their behalf).
+        let lpoaSigned = false;
+        try {
+          const _clr = await fetch(_url + '/rest/v1/clients?email=eq.' + encodeURIComponent(email) + '&select=lpoa_signed&limit=1', { headers: _hdrs });
+          const _cld = await _clr.json();
+          lpoaSigned = Array.isArray(_cld) && _cld.length > 0 && _cld[0].lpoa_signed === true;
+        } catch (_e) { /* non-fatal */ }
+
+        const effectivelyOnboarded = cp.onboarding_complete === true || lpoaSigned;
+
+        // Auto-heal: if LPOA is signed but onboarding_complete is not yet set, fix it now
+        if (lpoaSigned && !cp.onboarding_complete) {
+          fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email), {
+            method: 'PATCH',
+            headers: { ..._hdrs, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+            body: JSON.stringify({ onboarding_complete: true }),
+          }).catch(e => console.warn('Auto-heal onboarding_complete failed:', e));
+        }
+
+        setClientOnboarded(effectivelyOnboarded);
         // Only require password setup if they haven't completed onboarding
         // and haven't set a password yet — avoids loop for existing clients
         const passwordSet = session.user.user_metadata?.password_set;
         const fromRecovery = _event === 'PASSWORD_RECOVERY';
-        // Require password setup only if: explicitly recovering password, OR first-ever login (no password set and onboarding not complete)
-        const needsSetup = fromRecovery || (!passwordSet && !cp.onboarding_complete);
+        // Require password setup only if: explicitly recovering password, OR first-ever login (no password set and not effectively onboarded)
+        const needsSetup = fromRecovery || (!passwordSet && !effectivelyOnboarded);
         setNeedsPasswordSetup(needsSetup);
         if (!cp.user_id) {
           const wireRes = await fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email), {
