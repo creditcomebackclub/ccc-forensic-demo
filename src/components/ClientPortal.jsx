@@ -154,6 +154,17 @@ export default function ClientPortal({ session, onSignOut }) {
       const basePath = session.user.id + '/' + letter.id;
       const paths = await uploadResponseBatch(supabase, basePath, files);
 
+      // Get the public URL of the first uploaded page so the portal can display it
+      const { data: urlData } = supabase.storage.from('client-docs').getPublicUrl(paths[0]);
+      const responseFileUrl = urlData?.publicUrl || null;
+
+      // Save the URL and mark the letter as responded
+      await supabase.from('letters').update({
+        response_outcome: 'received',
+        response_date: new Date().toISOString().slice(0, 10),
+        ...(responseFileUrl ? { response_file_url: responseFileUrl } : {}),
+      }).eq('id', letter.id);
+
       await fetch('/.netlify/functions/send-lpoa', {
         method: 'POST',
         headers: {
@@ -174,6 +185,7 @@ export default function ClientPortal({ session, onSignOut }) {
       setUploadSuccess(letter.id);
       toast.success('Response submitted to Credit Comeback Club!', { id: toastId });
       setTimeout(() => setUploadSuccess(null), 4000);
+      loadData();
     } catch (e) {
       console.error('Upload error:', e);
       setSubmitError(prev => ({ ...prev, [letter.id]: 'Upload failed: ' + (e.message || e) }));
