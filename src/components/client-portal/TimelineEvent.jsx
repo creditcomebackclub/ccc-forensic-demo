@@ -43,7 +43,7 @@ function ReturnReceiptButton({ lobId, accessToken }) {
   );
 }
 
-export default function TimelineEvent({ icon, title, subtitle, date, tone, lobId, trackingNumber, accessToken }) {
+export default function TimelineEvent({ icon, title, subtitle, date, tone, lobId, trackingNumber, accessToken, responseUrl }) {
   const tones = {
     default: 'bg-gray-50 border-gray-200 text-gray-700',
     green: 'bg-green-50 border-green-200 text-green-700',
@@ -79,6 +79,20 @@ export default function TimelineEvent({ icon, title, subtitle, date, tone, lobId
             {lobId && (
               <ReturnReceiptButton lobId={lobId} accessToken={accessToken} />
             )}
+          </div>
+        )}
+
+        {/* View Creditor Response — shown when a response document is on file */}
+        {responseUrl && (
+          <div className="mt-1.5">
+            <a
+              href={responseUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 underline underline-offset-2 transition-colors"
+            >
+              📄 View Creditor Response
+            </a>
           </div>
         )}
       </div>

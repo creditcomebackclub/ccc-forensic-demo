@@ -231,9 +231,9 @@ export default function ClientPortal({ session, onSignOut }) {
     if (l.tracking_status === 'Returned to Sender') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '↩️', title: 'Returned to Sender — ' + l.furnisher, subtitle: 'Letter returned — address may need to be verified', tone: 'red' });
     if (l.tracking_status === 'Available for Pickup') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '🏢', title: 'Available for Pickup — ' + l.furnisher, subtitle: 'Awaiting pickup at post office', tone: 'gold' });
 
-    if (l.response_outcome === 'received') timeline.push({ date: l.response_date, icon: '📬', title: 'Response received — ' + l.furnisher, tone: 'gold' });
+    if (l.response_outcome === 'received') timeline.push({ date: l.response_date, icon: '📬', title: 'Response received — ' + l.furnisher, tone: 'gold', responseUrl: l.response_file_url || null });
     if (l.response_outcome === 'no_response') timeline.push({ date: l.response_date || l.mailed_date, icon: '⚠️', title: 'No response — Phase 3 escalation triggered', subtitle: l.furnisher, tone: 'red' });
-    if (l.response_outcome === 'deleted') timeline.push({ date: l.response_date, icon: '🏆', title: 'DELETED — ' + l.furnisher, subtitle: 'Account removed from your credit report', tone: 'green' });
+    if (l.response_outcome === 'deleted') timeline.push({ date: l.response_date, icon: '🏆', title: 'DELETED — ' + l.furnisher, subtitle: 'Account removed from your credit report', tone: 'green', responseUrl: l.response_file_url || null });
   });
 
   if (clientMeta?.created_at) timeline.push({ date: clientMeta.created_at, icon: '👋', title: 'Enrolled in Credit Comeback Club', tone: 'blue' });

@@ -61,8 +61,11 @@ const PERSONAL_INFO = {
     formerAddresses: { type: 'array', items: { type: 'string' } },
     nameVariants: { type: 'array', items: { type: 'string' } },
     formerEmployers: { type: 'array', items: { type: 'string' } },
+    dateOfBirth: NULLABLE_STRING,
+    phone: NULLABLE_STRING,
+    currentAddress: NULLABLE_STRING,
   },
-  required: ['formerAddresses', 'nameVariants', 'formerEmployers'],
+  required: ['formerAddresses', 'nameVariants', 'formerEmployers', 'dateOfBirth', 'phone', 'currentAddress'],
 };
 
 const INQUIRY = {

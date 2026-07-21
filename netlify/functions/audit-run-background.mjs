@@ -160,7 +160,7 @@ export const handler = async (event) => {
       const scores = audit.scores || (audit.client && audit.client.scores);
       if (clientName && scores) {
         const { data: existing } = await db.from('clients')
-          .select('score_eq_start,score_exp_start,score_tu_start')
+          .select('score_eq_start,score_exp_start,score_tu_start,date_of_birth,phone')
           .eq('name', clientName).eq('user_id', userId).limit(1);
         const hasScores = existing && existing.length > 0 && (existing[0].score_eq_start || existing[0].score_exp_start || existing[0].score_tu_start);
         if (!hasScores) {
@@ -178,8 +178,24 @@ export const handler = async (event) => {
             }, { onConflict: 'user_id,name' });
           }
         }
+
+        // Auto-populate DOB, phone, and address from personalInfo — only fills blanks
+        const pi = audit.personalInfo || (audit.client && audit.client.personalInfo);
+        if (pi && existing && existing.length > 0) {
+          const profilePatch = {};
+          if (pi.dateOfBirth && !existing[0].date_of_birth) profilePatch.date_of_birth = pi.dateOfBirth;
+          if (pi.phone && !existing[0].phone) profilePatch.phone = pi.phone;
+          // currentAddress in personalInfo is the "listed address on report" — only use as address fallback
+          const reportCurrentAddress = pi.currentAddress || clientAddress;
+          if (reportCurrentAddress && !existing[0].address) profilePatch.address = reportCurrentAddress;
+
+          if (Object.keys(profilePatch).length > 0) {
+            await db.from('clients').update(profilePatch).eq('user_id', userId).eq('name', clientName);
+            console.log('[audit] auto-populated profile fields:', Object.keys(profilePatch).join(', '));
+          }
+        }
       }
-    } catch (e) { console.warn('score auto-populate failed:', e.message); }
+    } catch (e) { console.warn('score/profile auto-populate failed:', e.message); }
 
     const { error } = await db.from('audits').upsert({
       id: slug(clientName) + '__' + reportDate,

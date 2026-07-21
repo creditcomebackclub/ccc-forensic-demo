@@ -117,6 +117,15 @@ const statusMap = {
   'letter.certified.returned_to_sender': 'Returned to Sender',
 };
 
+// Return-receipt events — these carry the USPS signature scan URL.
+// We save it permanently to the letters row so the portal can serve it
+// instantly without hitting the Lob API on every page load.
+const RETURN_RECEIPT_EVENTS = new Set([
+  'letter.certified.return_receipt',
+  'letter.return_receipt',
+]);
+
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
@@ -209,6 +218,32 @@ Age (ms): ${age}`
   if (!eventType || !lobId) {
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'missing event_type or lob_id' }) };
   }
+
+  // ── Return-receipt: USPS signed green-card scan is now available ─────────
+  if (RETURN_RECEIPT_EVENTS.has(eventType)) {
+    // The scan URL lives at body.return_receipt_url in Lob's payload
+    const receiptUrl = lobLetter && (lobLetter.return_receipt_url || (lobLetter.thumbnails && lobLetter.thumbnails[0] && lobLetter.thumbnails[0].large));
+    if (!receiptUrl) {
+      console.warn('return_receipt event received but no URL found in payload for lob_id', lobId);
+      return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'no receipt url in payload' }) };
+    }
+
+    // Save to the letters row — match by lob_id, fall back to metadata letter_id
+    let rcptRes = await supabaseRequest(
+      '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId),
+      'PATCH', { return_receipt_url: receiptUrl }, supabaseUrl, supabaseKey
+    );
+    if (Array.isArray(rcptRes.body) && rcptRes.body.length === 0 && metaLetterId) {
+      rcptRes = await supabaseRequest(
+        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId),
+        'PATCH', { return_receipt_url: receiptUrl, lob_id: lobId }, supabaseUrl, supabaseKey
+      );
+    }
+
+    console.log('Saved return_receipt_url for lob_id:', lobId, '→', receiptUrl.slice(0, 60) + '…');
+    return { statusCode: 200, body: JSON.stringify({ received: true, lobId, event: 'return_receipt', saved: true }) };
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   const trackingStatus = statusMap[eventType];
   if (!trackingStatus) {
