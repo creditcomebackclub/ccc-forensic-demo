@@ -75,35 +75,60 @@ export default function OverviewTab({
   ];
   const allDone = checks.every(c => c.done);
 
+  // Doc upload button — shown for both missing and already-uploaded docs (for replacements)
+  function DocUploadButton({ docType, done }) {
+    const isUploading = uploadingDoc === docType;
+    return (
+      <label className={`text-[11px] px-3 py-1.5 rounded transition-colors font-semibold cursor-pointer whitespace-nowrap shrink-0 border
+        ${done
+          ? 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50 hover:text-slate-900'
+          : 'bg-slate-900 text-amber-400 border-transparent hover:bg-slate-800'}
+        ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+        {isUploading ? 'Uploading…' : done ? 'Replace →' : 'Upload →'}
+        <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+          onChange={e => { if (e.target.files[0]) handleUploadDoc(docType, e.target.files[0]); }} />
+      </label>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-      {!allDone && (
-        <div className="bg-amber-50/50 backdrop-blur-sm border border-amber-200/50 rounded-xl p-5 shadow-sm">
-          <div className="text-xs font-bold text-amber-800 mb-4 uppercase tracking-[0.06em]">⚡ Action Required — Complete Your Setup</div>
-          <div className="flex flex-col gap-3">
-            {checks.map(({ key, label, done, docType }) => (
-              <div key={key} className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">{done ? '✅' : '⭕'}</span>
-                  <span className={`text-xs ${done ? 'text-gray-500 line-through' : 'text-slate-800 font-semibold'}`}>{label}</span>
-                </div>
-                {!done && docType && (
-                  <label className={`text-[11px] px-3 py-1.5 bg-slate-900 text-amber-400 rounded hover:bg-slate-800 transition-colors font-semibold cursor-pointer whitespace-nowrap shrink-0 ${uploadingDoc === docType ? 'opacity-50 pointer-events-none' : ''}`}>
-                    {uploadingDoc === docType ? 'Uploading…' : 'Upload →'}
-                    <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-                      onChange={e => { if (e.target.files[0]) handleUploadDoc(docType, e.target.files[0]); }} />
-                  </label>
-                )}
-                {!done && !docType && key === 'monitoring' && (
-                  <button onClick={() => setMonitoringStep('edit')} className="text-[11px] px-3 py-1.5 bg-slate-900 text-amber-400 rounded hover:bg-slate-800 transition-colors font-semibold whitespace-nowrap shrink-0">
-                    Set Up →
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
+      {/* Setup checklist — always shown so clients can replace docs even after completion */}
+      <div className={`backdrop-blur-sm border rounded-xl p-5 shadow-sm ${allDone ? 'bg-white/60 border-gray-100' : 'bg-amber-50/50 border-amber-200/50'}`}>
+        <div className={`text-xs font-bold mb-4 uppercase tracking-[0.06em] ${allDone ? 'text-gray-500' : 'text-amber-800'}`}>
+          {allDone ? '✓ Setup Complete — Documents on File' : '⚡ Action Required — Complete Your Setup'}
         </div>
-      )}
+        <div className="flex flex-col gap-3">
+          {checks.map(({ key, label, done, docType }) => (
+            <div key={key} className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm shrink-0">{done ? '✅' : '⭕'}</span>
+                <div className="min-w-0">
+                  <span className={`text-xs block ${done ? 'text-gray-500' : 'text-slate-800 font-semibold'}`}>{label}</span>
+                  {done && docType === 'government_id' && clientDocs.id?.uploaded_at && (
+                    <span className="text-[10px] text-gray-400">
+                      Uploaded {new Date(clientDocs.id.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  )}
+                  {done && docType === 'proof_of_address' && clientDocs.address?.uploaded_at && (
+                    <span className="text-[10px] text-gray-400">
+                      Uploaded {new Date(clientDocs.address.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {docType && docType !== null && (
+                <DocUploadButton docType={docType} done={done} />
+              )}
+              {!done && !docType && key === 'monitoring' && (
+                <button onClick={() => setMonitoringStep('edit')} className="text-[11px] px-3 py-1.5 bg-slate-900 text-amber-400 rounded hover:bg-slate-800 transition-colors font-semibold whitespace-nowrap shrink-0">
+                  Set Up →
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
 
       <div>
         <h1 className="text-2xl font-bold text-slate-900 ccc-display">Welcome back, {firstName}.</h1>

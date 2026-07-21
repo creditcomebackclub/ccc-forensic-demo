@@ -219,7 +219,17 @@ export default function ClientPortal({ session, onSignOut }) {
   letters.forEach(l => {
     if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: 'Dispute letter prepared — ' + l.furnisher, subtitle: l.phase, tone: 'blue' });
     if (l.mailed_date) timeline.push({ date: l.mailed_date, icon: '✉️', title: 'Letter mailed via certified mail — ' + l.furnisher, subtitle: l.tracking_number ? 'USPS #' + l.tracking_number.slice(-8) : null, tone: 'default' });
-    if (l.tracking_status === 'Delivered') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '✅', title: 'Delivered — ' + l.furnisher, subtitle: '30-day response window started', tone: 'green' });
+
+    // Granular in-transit milestones from Lob webhook
+    if (l.tracking_status === 'In Transit' && l.mailed_date)
+      timeline.push({ date: l.mailed_date, icon: '🚚', title: 'In Transit — ' + l.furnisher, subtitle: l.tracking_number ? 'USPS #' + l.tracking_number.slice(-8) : null, tone: 'default' });
+    if (l.tracking_status === 'Out for Delivery' && l.mailed_date)
+      timeline.push({ date: l.mailed_date, icon: '📬', title: 'Out for Delivery — ' + l.furnisher, subtitle: 'Expected delivery today', tone: 'gold' });
+
+    if (l.tracking_status === 'Delivered') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '✅', title: 'Delivered — ' + l.furnisher, subtitle: '30-day response window started', tone: 'green', lobId: l.lob_id, trackingNumber: l.tracking_number });
+    if (l.tracking_status === 'Returned to Sender') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '↩️', title: 'Returned to Sender — ' + l.furnisher, subtitle: 'Letter returned — address may need to be verified', tone: 'red' });
+    if (l.tracking_status === 'Available for Pickup') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '🏢', title: 'Available for Pickup — ' + l.furnisher, subtitle: 'Awaiting pickup at post office', tone: 'gold' });
+
     if (l.response_outcome === 'received') timeline.push({ date: l.response_date, icon: '📬', title: 'Response received — ' + l.furnisher, tone: 'gold' });
     if (l.response_outcome === 'no_response') timeline.push({ date: l.response_date || l.mailed_date, icon: '⚠️', title: 'No response — Phase 3 escalation triggered', subtitle: l.furnisher, tone: 'red' });
     if (l.response_outcome === 'deleted') timeline.push({ date: l.response_date, icon: '🏆', title: 'DELETED — ' + l.furnisher, subtitle: 'Account removed from your credit report', tone: 'green' });
@@ -335,7 +345,7 @@ export default function ClientPortal({ session, onSignOut }) {
             )}
             
             {activeTab === 'timeline' && (
-              <TimelineTab timeline={timeline} />
+              <TimelineTab timeline={timeline} letters={letters} accessToken={session?.access_token} />
             )}
             
             {activeTab === 'vip' && isVip && (
