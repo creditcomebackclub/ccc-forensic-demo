@@ -1,9 +1,6 @@
 import React from 'react';
-import { ExternalLink, TrendingUp, Shield } from 'lucide-react';
+import { TrendingUp, Shield } from 'lucide-react';
 import ScoreMeter from './ScoreMeter';
-import { supabase } from '../../utils/supabase';
-import { writeClientSensitiveData } from '../../utils/clientSensitiveData';
-
 import { motion } from 'framer-motion';
 
 function DeletionRing({ deleted, totalDisputed }) {
@@ -54,82 +51,9 @@ export default function OverviewTab({
   totalDisputes,
   latestScores,
   auditHistory,
-  clientDocs,
-  uploadingDoc,
-  handleUploadDoc,
-  monitoringStep,
-  setMonitoringStep,
-  monitoringForm,
-  setMonitoringForm,
-  monitoringSaving,
-  setMonitoringSaving,
-  monitoringError,
-  setMonitoringError,
-  loadData
 }) {
-  const checks = [
-    { key: 'lpoa', label: 'Authorization Signed (LPOA)', done: clientMeta?.lpoa_signed, action: null },
-    { key: 'id', label: 'Government-Issued Photo ID', done: !!clientDocs.id, docType: 'government_id' },
-    { key: 'address', label: 'Proof of Current Address', done: !!clientDocs.address, docType: 'proof_of_address' },
-    { key: 'monitoring', label: 'Credit Monitoring (Recommended)', done: clientMeta?.monitoring_enrolled || clientMeta?.monitoring_not_required, docType: null },
-  ];
-  const allDone = checks.every(c => c.done);
-
-  // Doc upload button — shown for both missing and already-uploaded docs (for replacements)
-  function DocUploadButton({ docType, done }) {
-    const isUploading = uploadingDoc === docType;
-    return (
-      <label className={`text-[11px] px-3 py-1.5 rounded transition-colors font-semibold cursor-pointer whitespace-nowrap shrink-0 border
-        ${done
-          ? 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50 hover:text-slate-900'
-          : 'bg-slate-900 text-amber-400 border-transparent hover:bg-slate-800'}
-        ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
-        {isUploading ? 'Uploading…' : done ? 'Replace →' : 'Upload →'}
-        <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-          onChange={e => { if (e.target.files[0]) handleUploadDoc(docType, e.target.files[0]); }} />
-      </label>
-    );
-  }
-
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-      {/* Setup checklist — always shown so clients can replace docs even after completion */}
-      <div className={`backdrop-blur-sm border rounded-xl p-5 shadow-sm ${allDone ? 'bg-white/60 border-gray-100' : 'bg-amber-50/50 border-amber-200/50'}`}>
-        <div className={`text-xs font-bold mb-4 uppercase tracking-[0.06em] ${allDone ? 'text-gray-500' : 'text-amber-800'}`}>
-          {allDone ? '✓ Setup Complete — Documents on File' : '⚡ Action Required — Complete Your Setup'}
-        </div>
-        <div className="flex flex-col gap-3">
-          {checks.map(({ key, label, done, docType }) => (
-            <div key={key} className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-sm shrink-0">{done ? '✅' : '⭕'}</span>
-                <div className="min-w-0">
-                  <span className={`text-xs block ${done ? 'text-gray-500' : 'text-slate-800 font-semibold'}`}>{label}</span>
-                  {done && docType === 'government_id' && clientDocs.id?.uploaded_at && (
-                    <span className="text-[10px] text-gray-400">
-                      Uploaded {new Date(clientDocs.id.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </span>
-                  )}
-                  {done && docType === 'proof_of_address' && clientDocs.address?.uploaded_at && (
-                    <span className="text-[10px] text-gray-400">
-                      Uploaded {new Date(clientDocs.address.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </span>
-                  )}
-                </div>
-              </div>
-              {docType && docType !== null && (
-                <DocUploadButton docType={docType} done={done} />
-              )}
-              {!done && !docType && key === 'monitoring' && (
-                <button onClick={() => setMonitoringStep('edit')} className="text-[11px] px-3 py-1.5 bg-slate-900 text-amber-400 rounded hover:bg-slate-800 transition-colors font-semibold whitespace-nowrap shrink-0">
-                  Set Up →
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
       <div>
         <h1 className="text-2xl font-bold text-slate-900 ccc-display">Welcome back, {firstName}.</h1>
         <p className="text-sm text-gray-500 mt-1 mb-6">Here's your credit restoration campaign at a glance.</p>
@@ -194,126 +118,6 @@ export default function OverviewTab({
           <div className="text-xs text-gray-500 mt-0.5">Credit Comeback Club is authorized to dispute on your behalf{profile?.agreement_signed_at ? ' since ' + new Date(profile.agreement_signed_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''}</div>
         </div>
         <span className="text-[10px] px-2 py-1 rounded bg-green-50 text-green-700 border border-green-200 uppercase tracking-[0.06em] font-semibold">Active</span>
-      </div>
-
-      <div className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <span className="text-[11px] font-bold uppercase tracking-[0.06em] text-slate-900">Credit Monitoring</span>
-          {clientMeta?.monitoring_enrolled
-            ? <span className="text-[10px] px-2.5 py-1 rounded bg-green-50 text-green-700 border border-green-200 font-semibold">✓ Enrolled</span>
-            : <span className="text-[10px] px-2.5 py-1 rounded bg-amber-50 text-amber-700 border border-amber-200 font-semibold">Action Required</span>
-          }
-        </div>
-        
-        {monitoringStep === 'edit' ? (
-          <div className="space-y-3">
-            {[
-              { key: 'service', label: 'Service' },
-              { key: 'email', label: 'Login Email', placeholder: 'your@email.com' },
-              { key: 'password', label: 'Password', placeholder: '••••••••', type: 'password' },
-              { key: 'ssnLast4', label: 'SSN Last 4 Digits', placeholder: '1234' },
-            ].map(({ key, label, placeholder, type }) => (
-              <div key={key}>
-                <div className="text-[10px] uppercase tracking-[0.06em] text-gray-400 mb-1 font-semibold">{label}</div>
-                {key === 'service' ? (
-                  <select
-                    value={monitoringForm[key]}
-                    onChange={e => setMonitoringForm(p => ({ ...p, [key]: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none transition-shadow bg-white"
-                  >
-                    <option value="">Select a provider...</option>
-                    <option value="PrivacyGuard">PrivacyGuard</option>
-                    <option value="MyScoreIQ">MyScoreIQ</option>
-                    <option value="Smart Credit">Smart Credit</option>
-                    <option value="IdentityIQ">IdentityIQ</option>
-                    <option value="My Free Score Now">My Free Score Now</option>
-                  </select>
-                ) : (
-                  <input type={type || 'text'} placeholder={placeholder}
-                    value={monitoringForm[key]}
-                    onChange={e => setMonitoringForm(p => ({ ...p, [key]: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-amber-400 focus:border-amber-400 outline-none transition-shadow" />
-                )}
-              </div>
-            ))}
-            <div className="flex gap-2 pt-2">
-              <button disabled={monitoringSaving} onClick={async () => {
-                setMonitoringSaving(true);
-                setMonitoringError('');
-                const serviceUrls = {
-                  'privacyguard': 'https://www.privacyguard.com',
-                  'myscoreiq': 'https://www.myscoreiq.com',
-                  'smart credit': 'https://www.smartcredit.com',
-                  'experian': 'https://www.experian.com',
-                  'identityiq': 'https://www.identityiq.com',
-                  'my free score': 'https://www.myfreescorenow.com',
-                };
-                const svcKey = (monitoringForm.service || '').toLowerCase();
-                const portalUrl = Object.entries(serviceUrls).find(([k]) => svcKey.includes(k))?.[1] || 'https://www.privacyguard.com';
-                
-                try {
-                  await supabase.from('clients').update({
-                    monitoring_service: monitoringForm.service,
-                    monitoring_email: monitoringForm.email,
-                    monitoring_enrolled: true,
-                    monitoring_portal_url: portalUrl,
-                  }).eq('name', profile.full_name);
-                  
-                  const sensitive = {};
-                  if (monitoringForm.password) sensitive.monitoringPassword = monitoringForm.password;
-                  if (monitoringForm.ssnLast4) sensitive.ssnLast4 = monitoringForm.ssnLast4;
-                  
-                  if (Object.keys(sensitive).length > 0) {
-                    await writeClientSensitiveData(profile.full_name, sensitive);
-                  }
-                  
-                  setMonitoringStep('view');
-                  loadData();
-                } catch (e) {
-                  setMonitoringError('Your service/email were saved, but your password/SSN could not be saved securely. Please try again.');
-                } finally {
-                  setMonitoringSaving(false);
-                }
-              }} className="text-xs px-4 py-2 bg-slate-900 text-amber-400 rounded hover:bg-slate-800 font-semibold transition-colors disabled:opacity-50">
-                {monitoringSaving ? 'Saving…' : 'Save Credentials'}
-              </button>
-              <button onClick={() => { setMonitoringStep('view'); setMonitoringError(''); }} className="text-xs px-4 py-2 bg-white border border-gray-200 text-gray-500 rounded hover:bg-gray-50 transition-colors font-medium">
-                Cancel
-              </button>
-            </div>
-            {monitoringError && (
-              <div className="text-[11px] text-red-600 mt-2 bg-red-50 p-2 rounded">{monitoringError}</div>
-            )}
-          </div>
-        ) : clientMeta?.monitoring_enrolled ? (
-          <div>
-            <a href={clientMeta.monitoring_portal_url || 'https://www.privacyguard.com'} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-900 hover:text-blue-600 transition-colors">
-              <ExternalLink size={14} strokeWidth={2} />
-              Access {clientMeta.monitoring_service || 'Privacy Guard'} →
-            </a>
-            <button onClick={() => { setMonitoringForm({ service: clientMeta.monitoring_service || '', email: clientMeta.monitoring_email || '', password: '', ssnLast4: '' }); setMonitoringStep('edit'); }}
-              className="block mt-3 text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2 transition-colors">
-              Update credentials
-            </button>
-          </div>
-        ) : (
-          <div>
-            <p className="text-xs text-gray-500 mb-4 leading-relaxed">Credit monitoring lets us track your score progress. Enter your credentials below or sign up for a service.</p>
-            <div className="flex gap-2 flex-wrap mb-4">
-              {[['PrivacyGuard', 'https://www.privacyguard.com'], ['MyScoreIQ', 'https://www.myscoreiq.com'], ['Smart Credit', 'https://www.smartcredit.com'], ['IdentityIQ', 'https://www.identityiq.com'], ['My Free Score Now', 'https://www.myfreescorenow.com']].map(([name, url]) => (
-                <a key={name} href={url} target="_blank" rel="noopener noreferrer"
-                  className="text-[11px] px-3 py-1.5 border border-gray-200 rounded-md text-slate-900 font-medium hover:bg-gray-50 transition-colors">
-                  {name} →
-                </a>
-              ))}
-            </div>
-            <button onClick={() => setMonitoringStep('edit')}
-              className="text-xs px-4 py-2 bg-slate-900 text-amber-400 rounded-md font-semibold hover:bg-slate-800 transition-colors">
-              Enter My Credentials
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import OverviewTab from './client-portal/OverviewTab';
 import DisputesTab from './client-portal/DisputesTab';
 import TimelineTab from './client-portal/TimelineTab';
+import DocumentsTab from './client-portal/DocumentsTab';
 import VipTab from './client-portal/VipTab';
 import ConciergeChat from './client-portal/ConciergeChat';
 
@@ -242,10 +243,13 @@ export default function ClientPortal({ session, onSignOut }) {
 
   timeline.sort((a, b) => new Date(b.date) - new Date(a.date));
 
+  const docsComplete = !!clientDocs.id && !!clientDocs.address && clientMeta?.lpoa_signed && (clientMeta?.monitoring_enrolled || clientMeta?.monitoring_not_required);
+
   const tabs = [
     { id: 'overview', label: 'Overview' },
     { id: 'disputes', label: 'Disputes' },
     { id: 'timeline', label: 'Timeline' },
+    { id: 'documents', label: docsComplete ? '📁 Documents' : '📁 Documents ⚡' },
     ...(isVip ? [{ id: 'vip', label: '⭐ VIP' }] : []),
   ];
 
@@ -301,7 +305,7 @@ export default function ClientPortal({ session, onSignOut }) {
             transition={{ duration: 0.2 }}
           >
             {activeTab === 'overview' && (
-              <OverviewTab 
+              <OverviewTab
                 profile={profile}
                 clientMeta={clientMeta}
                 firstName={firstName}
@@ -312,6 +316,13 @@ export default function ClientPortal({ session, onSignOut }) {
                 totalDisputes={letters.length}
                 latestScores={latestScores}
                 auditHistory={auditHistory}
+              />
+            )}
+
+            {activeTab === 'documents' && (
+              <DocumentsTab
+                profile={profile}
+                clientMeta={clientMeta}
                 clientDocs={clientDocs}
                 uploadingDoc={uploadingDoc}
                 handleUploadDoc={handleUploadDoc}
