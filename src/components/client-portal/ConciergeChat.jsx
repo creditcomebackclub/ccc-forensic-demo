@@ -116,7 +116,7 @@ export default function ConciergeChat({ clientId, accessToken }) {
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && sendMessage()}
                   placeholder="Ask a question..."
-                  className="w-full bg-slate-50 border border-gray-200 rounded-full pl-4 pr-10 py-2.5 text-[13px] focus:outline-none focus:border-navy focus:ring-1 transition-all"
+                  className="w-full bg-slate-50 border border-gray-200 rounded-full pl-4 pr-10 py-2.5 text-[16px] focus:outline-none focus:border-navy focus:ring-1 transition-all"
                 />
                 <button 
                   onClick={sendMessage}

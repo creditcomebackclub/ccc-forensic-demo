@@ -86,6 +86,7 @@
   iframeContainer.style.height = '500px';
   iframeContainer.style.maxWidth = 'calc(100vw - 40px)';
   iframeContainer.style.maxHeight = 'calc(100vh - 100px)';
+  iframeContainer.style.maxHeight = 'calc(100dvh - 100px)'; // Fallback to dvh on modern mobile browsers
   iframeContainer.style.borderRadius = '16px';
   iframeContainer.style.boxShadow = '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)';
   iframeContainer.style.overflow = 'hidden';

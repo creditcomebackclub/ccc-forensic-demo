@@ -112,7 +112,7 @@ export default function ProspectChatWidget() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
               placeholder="Type your message..."
-              className="w-full bg-gray-50 border border-gray-200 rounded-full pl-4 pr-10 py-2.5 text-[13px] text-gray-800 focus:outline-none focus:border-navy focus:bg-white transition-colors"
+              className="w-full bg-gray-50 border border-gray-200 rounded-full pl-4 pr-10 py-2.5 text-[16px] text-gray-800 focus:outline-none focus:border-navy focus:bg-white transition-colors"
             />
             <button
               onClick={() => sendMessage()}
