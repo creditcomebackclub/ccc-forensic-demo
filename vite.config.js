@@ -8,6 +8,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['logo.jpg'],
+      manifestFilename: 'manifest.json',
       manifest: {
         name: 'Credit Comeback Club',
         short_name: 'CCC Works',
