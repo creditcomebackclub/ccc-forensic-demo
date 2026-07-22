@@ -7,6 +7,7 @@ import { getReturnReceiptUrl } from '../utils/api';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
+import ClientBillingPanel from './ClientBillingPanel';
 import LobMailer from './LobMailer';
 
 const WINDOW_DAYS = 30;
@@ -745,7 +746,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
           <div>
             <div className="flex gap-2 mb-4">
-              {['Letters', 'Profile', 'Documents'].map((tab) => {
+              {['Letters', 'Profile', 'Billing', 'Documents'].map((tab) => {
                 const isActiveTab = (activeTab[c.name] || 'Letters') === tab;
                 return (
                   <button key={tab}
@@ -814,6 +815,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
             {(activeTab[c.name] || 'Letters') === 'Profile' && (
               <ClientProfilePanel client={c} onChanged={load} onBatchMail={setLobMailerQueue} />
+            )}
+
+            {(activeTab[c.name] || 'Letters') === 'Billing' && (
+              <ClientBillingPanel client={c} onChanged={load} />
             )}
 
             {(activeTab[c.name] || 'Letters') === 'Documents' && (

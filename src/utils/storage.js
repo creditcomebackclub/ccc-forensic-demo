@@ -369,6 +369,11 @@ export async function adminListClients() {
       c.leadPhone = meta.lead_phone || null;
       c.leadNotes = meta.lead_notes || null;
       c.leadCreatedAt = meta.lead_created_at || null;
+      c.billingStatus = meta.billing_status || null;
+      c.billingType = meta.billing_type || null;
+      c.referredBy = meta.referred_by || null;
+      c.referralFee = meta.referral_fee || null;
+      c.commissionPaid = meta.commission_paid || false;
     } else {
       c.status = 'lead';
     }
@@ -394,6 +399,11 @@ export async function adminListClients() {
       leadNotes: row.lead_notes || null,
       leadCreatedAt: row.lead_created_at || null,
       referralSource: row.referral_source || null,
+      billingStatus: row.billing_status || null,
+      billingType: row.billing_type || null,
+      referredBy: row.referred_by || null,
+      referralFee: row.referral_fee || null,
+      commissionPaid: row.commission_paid || false,
       notes: row.notes || null,
       tags: row.tags || [],
     });
