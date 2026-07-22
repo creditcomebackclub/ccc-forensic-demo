@@ -1,24 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign, UserPlus } from 'lucide-react';
-import UploadZone from './components/UploadZone';
-import AuditProgress from './components/AuditProgress';
-import AuditResults from './components/AuditResults';
-import LetterViewer from './components/LetterViewer';
-import ClientsPage from './components/ClientsPage';
-import MethodologyPage from './components/MethodologyPage';
-import AuthPage from './components/AuthPage';
-import TeamPage from './components/TeamPage';
-import DashboardPage from './components/DashboardPage';
-import ClientSetupFlow from './components/ClientSetupFlow';
-import ClientPortal from './components/ClientPortal';
-import AffiliatePortal from './components/AffiliatePortal';
-import SettingsModal from './components/SettingsModal';
 import ProspectChatWidget from './components/ProspectChatWidget';
 import { Toaster } from 'react-hot-toast';
 import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit } from './utils/api';
 import { getUnanalyzedResponseStats } from './utils/actionItems';
+
+const UploadZone = lazy(() => import('./components/UploadZone'));
+const AuditProgress = lazy(() => import('./components/AuditProgress'));
+const AuditResults = lazy(() => import('./components/AuditResults'));
+const LetterViewer = lazy(() => import('./components/LetterViewer'));
+const ClientsPage = lazy(() => import('./components/ClientsPage'));
+const MethodologyPage = lazy(() => import('./components/MethodologyPage'));
+const AuthPage = lazy(() => import('./components/AuthPage'));
+const TeamPage = lazy(() => import('./components/TeamPage'));
+const DashboardPage = lazy(() => import('./components/DashboardPage'));
+const ClientSetupFlow = lazy(() => import('./components/ClientSetupFlow'));
+const ClientPortal = lazy(() => import('./components/ClientPortal'));
+const AffiliatePortal = lazy(() => import('./components/AffiliatePortal'));
+const SettingsModal = lazy(() => import('./components/SettingsModal'));
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
 const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
@@ -607,36 +608,44 @@ export default function App() {
       <main className="flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
-          {view === VIEW.DASHBOARD && (
-            <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} onAuditStart={handleAuditStart} displayName={displayName} />
-          )}
-          {view === VIEW.CLIENTS && (
-            <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" unanalyzedNames={unanalyzedClientNames} />
-          )}
-          {view === VIEW.LEADS && (
-            <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={null} filter={clientsContext?.filter || null} forceTab="leads" />
-          )}
-          {view === VIEW.METHODOLOGY && <MethodologyPage />}
-          {view === VIEW.TEAM && isAdmin && <TeamPage currentUserId={user.id} />}
-          {view === VIEW.AFFILIATES && isAdmin && <AffiliatesPage />}
-          {view === VIEW.AUDIT && (
-            <>
-              {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
-              {state === STATE.PROCESSING && <AuditProgress fileName={fileName} progress={auditProgress} />}
-              {state === STATE.RESULTS && auditResult && (
-                <AuditResults audit={auditResult} onGenerateLetter={handleGenerateLetter} onReset={handleReset} onBackToClients={() => setView(VIEW.CLIENTS)} />
-              )}
-              {state === STATE.ERROR && <ErrorView error={error} onReset={handleReset} />}
-            </>
-          )}
+          <Suspense fallback={
+            <div className="w-full h-full flex items-center justify-center">
+              <div className="w-8 h-8 border-4 border-navy border-t-gold rounded-full animate-spin"></div>
+            </div>
+          }>
+            {view === VIEW.DASHBOARD && (
+              <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} onAuditStart={handleAuditStart} displayName={displayName} />
+            )}
+            {view === VIEW.CLIENTS && (
+              <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" unanalyzedNames={unanalyzedClientNames} />
+            )}
+            {view === VIEW.LEADS && (
+              <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={null} filter={clientsContext?.filter || null} forceTab="leads" />
+            )}
+            {view === VIEW.METHODOLOGY && <MethodologyPage />}
+            {view === VIEW.TEAM && isAdmin && <TeamPage currentUserId={user.id} />}
+            {view === VIEW.AFFILIATES && isAdmin && <AffiliatesPage />}
+            {view === VIEW.AUDIT && (
+              <>
+                {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
+                {state === STATE.PROCESSING && <AuditProgress fileName={fileName} progress={auditProgress} />}
+                {state === STATE.RESULTS && auditResult && (
+                  <AuditResults audit={auditResult} onGenerateLetter={handleGenerateLetter} onReset={handleReset} onBackToClients={() => setView(VIEW.CLIENTS)} />
+                )}
+                {state === STATE.ERROR && <ErrorView error={error} onReset={handleReset} />}
+              </>
+            )}
+          </Suspense>
         </div>
       </main>
-      {activeLetter && auditResult && (
-        <LetterViewer account={activeLetter} client={auditResult.client} onClose={() => setActiveLetter(null)} />
-      )}
-      {showSettings && (
-        <SettingsModal onClose={() => setShowSettings(false)} displayName={displayName} email={user.email} />
-      )}
+      <Suspense fallback={null}>
+        {activeLetter && auditResult && (
+          <LetterViewer account={activeLetter} client={auditResult.client} onClose={() => setActiveLetter(null)} />
+        )}
+        {showSettings && (
+          <SettingsModal onClose={() => setShowSettings(false)} displayName={displayName} email={user.email} />
+        )}
+      </Suspense>
     </div>
   );
 }
