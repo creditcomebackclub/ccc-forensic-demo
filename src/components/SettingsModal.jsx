@@ -1,12 +1,30 @@
-import React, { useState } from 'react';
-import { X, Check, User, Save } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Check, User, Save, DollarSign, Bell, Users, ShieldAlert } from 'lucide-react';
 import { supabase } from '../utils/supabase';
+import { getSettings, saveSettings } from '../utils/settings';
 
 export default function SettingsModal({ onClose, displayName, email }) {
+  const [activeTab, setActiveTab] = useState('profile');
+  
+  // Profile state
   const [savedName, setSavedName] = useState(false);
   const [fullName, setFullName] = useState(displayName || '');
   const [savingName, setSavingName] = useState(false);
+  
+  // Global settings state
+  const [settings, setSettings] = useState(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [savedSettings, setSavedSettings] = useState(false);
+
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    async function load() {
+      const s = await getSettings();
+      setSettings(s);
+    }
+    load();
+  }, []);
 
   const handleSaveName = async () => {
     setSavingName(true);
@@ -30,61 +48,222 @@ export default function SettingsModal({ onClose, displayName, email }) {
     }
   };
 
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    setError(null);
+    try {
+      const success = await saveSettings(settings);
+      if (!success) throw new Error('Failed to save settings.');
+      setSavedSettings(true);
+      setTimeout(() => setSavedSettings(false), 2000);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const tabs = [
+    { id: 'profile', label: 'Profile', icon: User },
+    { id: 'pricing', label: 'Pricing', icon: DollarSign },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
+    { id: 'affiliates', label: 'Affiliates', icon: Users },
+    { id: 'disputes', label: 'Disputes', icon: ShieldAlert }
+  ];
+
+  if (!settings) return null;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded border border-border w-full max-w-md">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-navy rounded-t">
-          <div className="text-white text-[14px] font-medium ccc-display">Settings</div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">
-            <X size={18} strokeWidth={1.75} />
-          </button>
+      <div className="bg-white rounded border border-border w-full max-w-2xl flex overflow-hidden shadow-2xl">
+        
+        {/* Sidebar */}
+        <div className="w-48 bg-gray-50 border-r border-border flex flex-col">
+          <div className="px-5 py-4 border-b border-border">
+            <div className="text-navy text-[14px] font-bold ccc-display">Settings</div>
+          </div>
+          <div className="flex-1 py-2">
+            {tabs.map(t => {
+              const Icon = t.icon;
+              const isActive = activeTab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setActiveTab(t.id)}
+                  className={`w-full flex items-center gap-3 px-5 py-3 text-[12px] font-medium transition-colors ${
+                    isActive ? 'bg-white border-y border-border text-navy shadow-[inset_3px_0_0_#C9A84C]' : 'text-gray-500 hover:bg-gray-100 border-y border-transparent'
+                  }`}
+                >
+                  <Icon size={14} className={isActive ? 'text-gold' : 'text-gray-400'} />
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="p-6 space-y-6">
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <User size={13} strokeWidth={1.75} className="text-navy" />
-              <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Profile</div>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Display Name</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSaveName()}
-                    placeholder="Your full name"
-                    className="flex-1 border border-border rounded-sm px-3 py-2 text-[13px] text-ink focus:outline-none focus:border-navy"
-                  />
-                  <button
-                    onClick={handleSaveName}
-                    disabled={savingName}
-                    className="flex items-center gap-1.5 px-3 py-2 text-[11px] uppercase tracking-wider rounded-sm transition-colors"
-                    style={{ backgroundColor: savedName ? '#15803D' : '#1B2A4A', color: savedName ? '#FFFFFF' : '#C9A84C' }}
-                  >
-                    {savedName ? <><Check size={12} strokeWidth={2} /> Saved</> : <><Save size={12} strokeWidth={2} /> Save</>}
-                  </button>
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Email</label>
-                <div className="text-[13px] text-ink-muted px-3 py-2 border border-border rounded-sm bg-gray-50">{email}</div>
-              </div>
-            </div>
+        {/* Content */}
+        <div className="flex-1 flex flex-col h-[500px]">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+            <div className="text-[14px] font-bold text-navy">{tabs.find(t => t.id === activeTab).label} Settings</div>
+            <button onClick={onClose} className="text-gray-400 hover:text-navy">
+              <X size={18} strokeWidth={1.75} />
+            </button>
           </div>
 
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            
+            {activeTab === 'profile' && (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">Display Name</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSaveName()}
+                      placeholder="Your full name"
+                      className="flex-1 border border-border rounded-sm px-3 py-2 text-[13px] text-ink focus:outline-none focus:border-navy"
+                    />
+                    <button
+                      onClick={handleSaveName}
+                      disabled={savingName}
+                      className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-bold uppercase tracking-wider rounded-sm transition-colors"
+                      style={{ backgroundColor: savedName ? '#15803D' : '#1B2A4A', color: savedName ? '#FFFFFF' : '#C9A84C' }}
+                    >
+                      {savedName ? <><Check size={12} strokeWidth={2} /> Saved</> : <><Save size={12} strokeWidth={2} /> Save</>}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">Email Address</label>
+                  <div className="text-[13px] text-ink-muted px-3 py-2 border border-border rounded-sm bg-gray-50">{email}</div>
+                </div>
+              </div>
+            )}
 
-          {error && (
-            <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>
-          )}
-        </div>
+            {activeTab === 'pricing' && (
+              <div className="space-y-4">
+                <p className="text-[12px] text-gray-500 mb-4">
+                  These fees are dynamically injected into the client's Limited Power of Attorney (LPOA) when they sign up.
+                </p>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">First Work Fee ($)</label>
+                  <input
+                    type="number"
+                    value={settings.pricing.firstWorkFee}
+                    onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, firstWorkFee: parseInt(e.target.value) || 0 } })}
+                    className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">Charged after the initial audit is delivered.</p>
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">Monthly Service Fee ($)</label>
+                  <input
+                    type="number"
+                    value={settings.pricing.monthlyFee}
+                    onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, monthlyFee: parseInt(e.target.value) || 0 } })}
+                    className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">Charged on a recurring monthly basis for ongoing service.</p>
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">ScoreFusion Monitoring Fee ($)</label>
+                  <input
+                    type="number"
+                    value={settings.pricing.monitoringFee}
+                    onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, monitoringFee: parseInt(e.target.value) || 0 } })}
+                    className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">Estimated cost of the client's mandatory credit monitoring subscription.</p>
+                </div>
+              </div>
+            )}
 
-        <div className="px-6 py-4 border-t border-border flex justify-end">
-          <button onClick={onClose} className="px-4 py-2 text-[11px] uppercase tracking-wider rounded-sm bg-navy text-gold">
-            Done
-          </button>
+            {activeTab === 'notifications' && (
+              <div className="space-y-4">
+                <p className="text-[12px] text-gray-500 mb-4">
+                  Control which events trigger an email notification to you.
+                </p>
+                {[
+                  { key: 'emailNewLeads', label: 'New Affiliate Leads', desc: 'When an affiliate refers a new client via their portal.' },
+                  { key: 'emailClientUploads', label: 'Client Document Uploads', desc: 'When a client uploads a new document or ID.' },
+                  { key: 'emailEscalations', label: 'Action Required Escalations', desc: 'When the system flags a response that needs manual review.' }
+                ].map(opt => (
+                  <label key={opt.key} className="flex items-start gap-3 cursor-pointer p-3 border border-border rounded-sm hover:bg-gray-50 transition-colors">
+                    <div className="pt-0.5">
+                      <input
+                        type="checkbox"
+                        checked={settings.notifications[opt.key]}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          notifications: { ...settings.notifications, [opt.key]: e.target.checked }
+                        })}
+                        className="accent-navy w-4 h-4"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-bold text-navy">{opt.label}</div>
+                      <div className="text-[11px] text-gray-500">{opt.desc}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {activeTab === 'affiliates' && (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">Default Commission Rate (%)</label>
+                  <input
+                    type="number"
+                    value={settings.affiliates.defaultCommissionRate}
+                    onChange={(e) => setSettings({ ...settings, affiliates: { ...settings.affiliates, defaultCommissionRate: parseInt(e.target.value) || 0 } })}
+                    className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">This percentage will be displayed in the Affiliate Portal as their cut of the First Work Fee.</p>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'disputes' && (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">Default Aggressiveness</label>
+                  <select
+                    value={settings.disputes.defaultAggressiveness}
+                    onChange={(e) => setSettings({ ...settings, disputes: { ...settings.disputes, defaultAggressiveness: e.target.value } })}
+                    className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy bg-white"
+                  >
+                    <option value="Standard">Standard (FCRA/FDCPA compliance focus)</option>
+                    <option value="Aggressive">Aggressive (Demand immediate deletion with legal threats)</option>
+                  </select>
+                  <p className="text-[10px] text-gray-400 mt-1">The default tone used when AI generates initial dispute letters.</p>
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>
+            )}
+          </div>
+
+          <div className="px-6 py-4 border-t border-border bg-gray-50 flex justify-between items-center">
+            {activeTab !== 'profile' ? (
+              <button
+                onClick={handleSaveSettings}
+                disabled={savingSettings}
+                className="flex items-center gap-2 px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-sm transition-colors shadow-sm"
+                style={{ backgroundColor: savedSettings ? '#15803D' : '#1B2A4A', color: savedSettings ? '#FFFFFF' : '#C9A84C' }}
+              >
+                {savedSettings ? <><Check size={14} strokeWidth={2.5} /> Settings Saved</> : <><Save size={14} strokeWidth={2.5} /> Save Settings</>}
+              </button>
+            ) : <div />}
+            <button onClick={onClose} className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider rounded-sm text-gray-500 hover:text-navy hover:bg-gray-200 transition-colors">
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>

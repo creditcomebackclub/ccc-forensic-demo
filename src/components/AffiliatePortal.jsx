@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
 import { LogOut, Users, DollarSign, TrendingUp, Plus, CheckCircle, Clock, AlertCircle, ChevronRight, X } from 'lucide-react';
+import { getSettings } from '../utils/settings';
 
 export default function AffiliatePortal({ session, onSignOut }) {
   const [affiliate, setAffiliate] = useState(null);
   const [clients, setClients] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [letters, setLetters] = useState([]);
+  const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [showReferForm, setShowReferForm] = useState(false);
@@ -25,6 +27,9 @@ export default function AffiliatePortal({ session, onSignOut }) {
 
   const loadData = async () => {
     try {
+      const s = await getSettings();
+      setSettings(s);
+
       // Load affiliate profile
       const { data: aff } = await supabase
         .from('affiliates')
@@ -86,23 +91,25 @@ export default function AffiliatePortal({ session, onSignOut }) {
         commission_paid: false,
       });
       if (insertError) throw insertError;
-      // Notify Chris of new referral
-      await fetch('/.netlify/functions/send-lpoa', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
-        },
-        body: JSON.stringify({
-          action: 'affiliate_new_referral',
-          affiliateName: affiliate.name,
-          companyName: affiliate.company,
-          clientName: referForm.name.trim(),
-          clientEmail: referForm.email.trim(),
-          clientPhone: referForm.phone.trim(),
-          clientNotes: referForm.notes.trim(),
-        }),
-      });
+      // Notify Chris of new referral if setting is enabled
+      if (settings?.notifications?.emailNewLeads !== false) {
+        await fetch('/.netlify/functions/send-lpoa', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+          },
+          body: JSON.stringify({
+            action: 'affiliate_new_referral',
+            affiliateName: affiliate.name,
+            companyName: affiliate.company,
+            clientName: referForm.name.trim(),
+            clientEmail: referForm.email.trim(),
+            clientPhone: referForm.phone.trim(),
+            clientNotes: referForm.notes.trim(),
+          }),
+        });
+      }
       setReferSuccess(true);
       setReferForm({ name: '', email: '', phone: '', notes: '' });
       setTimeout(() => { setReferSuccess(false); setShowReferForm(false); loadData(); }, 2500);
@@ -432,7 +439,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
           <>
             <div style={{ marginBottom: 24 }}>
               <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Commissions</h2>
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>20% of the initial consultation fee per referred client.</p>
+              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>{settings?.affiliates?.defaultCommissionRate || 20}% of the initial consultation fee per referred client.</p>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 28 }}>

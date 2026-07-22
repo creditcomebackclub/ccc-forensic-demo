@@ -4,6 +4,7 @@ import { inferMediaType, isAnalyzable, transcodeImageToJpeg, uploadResponseBatch
 import { LogOut } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getSettings } from '../utils/settings';
 
 import OverviewTab from './client-portal/OverviewTab';
 import DisputesTab from './client-portal/DisputesTab';
@@ -22,6 +23,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const [uploadingLetter, setUploadingLetter] = useState(null);
   const [clientDocs, setClientDocs] = useState({ id: null, address: null });
   const [uploadingDoc, setUploadingDoc] = useState(null);
+  const [settings, setSettings] = useState(null);
   
   const [monitoringForm, setMonitoringForm] = useState({ service: '', email: '', password: '', ssnLast4: '' });
   const [monitoringStep, setMonitoringStep] = useState('view'); // view | edit
@@ -38,6 +40,9 @@ export default function ClientPortal({ session, onSignOut }) {
 
   const loadData = async () => {
     try {
+      const s = await getSettings();
+      setSettings(s);
+
       const { data: cpRows } = await supabase.from('client_profiles').select('*').eq('user_id', session.user.id).limit(1);
       let cp = cpRows && cpRows.length > 0 ? cpRows[0] : null;
       if (!cp) {
@@ -165,21 +170,23 @@ export default function ClientPortal({ session, onSignOut }) {
         ...(responseFileUrl ? { response_file_url: responseFileUrl } : {}),
       }).eq('id', letter.id);
 
-      await fetch('/.netlify/functions/send-lpoa', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({
-          action: 'client_response_uploaded',
-          clientName: profile.full_name,
-          furnisher: letter.furnisher,
-          phase: letter.phase,
-          storagePath: paths[0],
-          pageCount: paths.length,
-        }),
-      });
+      if (settings?.notifications?.emailClientUploads !== false) {
+        await fetch('/.netlify/functions/send-lpoa', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({
+            action: 'client_response_uploaded',
+            clientName: profile.full_name,
+            furnisher: letter.furnisher,
+            phase: letter.phase,
+            storagePath: paths[0],
+            pageCount: paths.length,
+          }),
+        });
+      }
 
       setStagedFiles(prev => ({ ...prev, [letter.id]: [] }));
       setUploadSuccess(letter.id);

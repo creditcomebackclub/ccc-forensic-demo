@@ -3,6 +3,7 @@ import { supabase } from '../utils/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, toast } from 'react-hot-toast';
 import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-react';
+import { getSettings } from '../utils/settings';
 
 export default function ClientSetupFlow({ session, onComplete, initialStep = 'password' }) {
   const [step, setStep] = useState(initialStep); // password | onboarding
@@ -89,12 +90,16 @@ function ClientOnboardingModal({ session, onComplete }) {
   const [loading, setLoading] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [hasAudit, setHasAudit] = useState(false);
+  const [settings, setSettings] = useState(null);
   const canvasRef = React.useRef(null);
   const isDrawing = React.useRef(false);
 
   React.useEffect(() => {
-    async function checkAudit() {
+    async function loadData() {
       try {
+        const s = await getSettings();
+        setSettings(s);
+
         const { data, error } = await supabase
           .from('audits')
           .select('id')
@@ -104,10 +109,10 @@ function ClientOnboardingModal({ session, onComplete }) {
           setHasAudit(true);
         }
       } catch (e) {
-        console.error('Failed to check audits:', e);
+        console.error('Failed to load onboarding data:', e);
       }
     }
-    checkAudit();
+    loadData();
   }, [session]);
 
   const startDraw = (e) => {
@@ -239,7 +244,7 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '<h2>3. Limitations</h2>'
         + '<p>This authorization does NOT grant authority to make financial decisions, access financial accounts, dispute accurate information, create a new credit identity, or settle legal claims without explicit written consent.</p>'
         + '<h2>4. Fee Structure</h2>'
-        + '<p>First Work Fee: $49 after audit delivery. Per-delete: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. ScoreFusion monitoring: $16/month (Principal responsibility). No deletion = no charge.</p>'
+        + '<p>First Work Fee: $' + (settings?.pricing?.firstWorkFee || 49) + ' after audit delivery. Monthly Service Fee: $' + (settings?.pricing?.monthlyFee || 99) + '/month for ongoing dispute services. ScoreFusion monitoring: $' + (settings?.pricing?.monitoringFee || 16) + '/month (Principal responsibility).</p>'
         + '<h2>5. No Guarantee</h2>'
         + '<p>No specific outcome is guaranteed. Results vary by credit profile and creditor response.</p>'
         + '<h2>6. Duration & Revocation</h2>'
@@ -481,9 +486,9 @@ function ClientOnboardingModal({ session, onComplete }) {
                       <p><strong className="text-slate-900">Services:</strong> Credit Comeback Club ("CCC") will analyze your Equifax, Experian, and TransUnion reports, identify inaccurate or unverifiable items, and prepare/submit direct furnisher dispute letters on your behalf.</p>
                       <p><strong className="text-slate-900">Fee Schedule:</strong></p>
                       <ul className="pl-4 space-y-1 text-gray-500">
-                        <li>• <strong className="text-slate-700">Standard Plan:</strong> $79/mo (Up to 3 letters/mo). $75 one-time First Work Fee.</li>
-                        <li>• <strong className="text-slate-700">VIP Plan:</strong> $149/mo (Up to 5 letters/mo, priority, strategy call). $99 one-time First Work Fee.</li>
-                        <li>• <strong className="text-slate-700">Paid in Full:</strong> $499 flat for 6 months of Standard service (First Work Fee waived).</li>
+                        <li>• <strong className="text-slate-700">Monthly Service:</strong> ${settings?.pricing?.monthlyFee || 99}/mo (Ongoing dispute processing and support).</li>
+                        <li>• <strong className="text-slate-700">First Work Fee:</strong> ${settings?.pricing?.firstWorkFee || 49} one-time fee due after audit delivery.</li>
+                        <li>• <strong className="text-slate-700">Credit Monitoring:</strong> ${settings?.pricing?.monitoringFee || 16}/mo (Maintained directly by client).</li>
                       </ul>
                       <p><strong className="text-slate-900">Billing:</strong> First Work Fee is due at enrollment before dispute work commences. Monthly fees are billed in advance on the anniversary of enrollment.</p>
                       <p><strong className="text-slate-900">No Guarantee:</strong> CCC makes no guarantee of specific outcomes. Results depend on individual credit profiles and creditor responses.</p>
