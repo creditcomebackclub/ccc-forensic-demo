@@ -110,20 +110,49 @@ export default function ClientBillingPanel({ client, onChanged }) {
     }
   };
 
+  const [editingTxId, setEditingTxId] = useState(null);
+
   const addTransaction = async () => {
     if (!newTx.amount) return alert('Amount is required');
-    const updatedLedger = [...ledger, {
-      id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).substring(7),
-      date: newTx.date,
-      type: newTx.type,
-      amount: parseFloat(newTx.amount),
-      description: newTx.description || (newTx.type === 'Invoice' ? 'Service Fee' : 'Payment Received'),
-      status: newTx.type === 'Payment' ? 'Paid' : newTx.status,
-      created_at: new Date().toISOString()
-    }];
+    
+    let updatedLedger;
+    if (editingTxId) {
+      updatedLedger = ledger.map(t => t.id === editingTxId ? {
+        ...t,
+        date: newTx.date,
+        type: newTx.type,
+        amount: parseFloat(newTx.amount),
+        description: newTx.description || (newTx.type === 'Invoice' ? 'Service Fee' : 'Payment Received'),
+        status: newTx.type === 'Payment' ? 'Paid' : newTx.status,
+      } : t);
+    } else {
+      updatedLedger = [...ledger, {
+        id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).substring(7),
+        date: newTx.date,
+        type: newTx.type,
+        amount: parseFloat(newTx.amount),
+        description: newTx.description || (newTx.type === 'Invoice' ? 'Service Fee' : 'Payment Received'),
+        status: newTx.type === 'Payment' ? 'Paid' : newTx.status,
+        created_at: new Date().toISOString()
+      }];
+    }
+    
     await save({ ledger: updatedLedger });
     setShowAddTx(false);
+    setEditingTxId(null);
     setNewTx({ date: new Date().toISOString().slice(0, 10), type: 'Invoice', amount: '', description: '', status: 'Due' });
+  };
+
+  const startEditTx = (tx) => {
+    setNewTx({
+      date: tx.date,
+      type: tx.type,
+      amount: tx.amount,
+      description: tx.description || '',
+      status: tx.status
+    });
+    setEditingTxId(tx.id);
+    setShowAddTx(true);
   };
 
   const deleteTransaction = async (id) => {
@@ -240,7 +269,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
       <Section title="Ledger" span2>
         <div className="flex items-center justify-between mb-2">
           <div className="text-[12px] text-ink-muted">Transaction history and open invoices.</div>
-          <button onClick={() => setShowAddTx(!showAddTx)} className="text-[11px] uppercase tracking-wider bg-navy text-gold px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity">
+          <button onClick={() => { setEditingTxId(null); setNewTx({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due' }); setShowAddTx(!showAddTx); }} className="text-[11px] uppercase tracking-wider bg-navy text-gold px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity">
             + Add Transaction
           </button>
         </div>
@@ -269,8 +298,10 @@ export default function ClientBillingPanel({ client, onChanged }) {
               </label>
             </div>
             <div className="flex justify-end gap-2 mt-1">
-              <button onClick={() => setShowAddTx(false)} className="text-[11px] uppercase tracking-wider text-muted hover:text-ink px-3 py-1">Cancel</button>
-              <button onClick={addTransaction} className="text-[11px] uppercase tracking-wider bg-navy text-white px-4 py-1 rounded hover:opacity-90">Save</button>
+              <button onClick={() => { setShowAddTx(false); setEditingTxId(null); }} className="text-[11px] uppercase tracking-wider text-muted hover:text-ink px-3 py-1">Cancel</button>
+              <button onClick={addTransaction} className="text-[11px] uppercase tracking-wider bg-navy text-white px-4 py-1 rounded hover:opacity-90">
+                {editingTxId ? 'Save Changes' : 'Save'}
+              </button>
             </div>
           </div>
         )}
@@ -319,6 +350,9 @@ export default function ClientBillingPanel({ client, onChanged }) {
                             Paid
                           </button>
                         )}
+                        <button onClick={() => startEditTx(tx)} className="text-blue-500 hover:text-blue-700" title="Edit">
+                          <Edit2 size={12} strokeWidth={3} />
+                        </button>
                         <button onClick={() => deleteTransaction(tx.id)} className="text-red-500 hover:text-red-700" title="Delete">
                           <X size={12} strokeWidth={3} />
                         </button>
