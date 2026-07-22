@@ -20,9 +20,10 @@ const ClientSetupFlow = lazy(() => import('./components/ClientSetupFlow'));
 const ClientPortal = lazy(() => import('./components/ClientPortal'));
 const AffiliatePortal = lazy(() => import('./components/AffiliatePortal'));
 const SettingsModal = lazy(() => import('./components/SettingsModal'));
+const BillingDashboardPage = lazy(() => import('./components/BillingDashboardPage'));
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
-const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
+const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', BILLING: 'billing', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
 
 function AffiliatesPage() {
   const [affiliates, setAffiliates] = React.useState([]);
@@ -625,6 +626,7 @@ export default function App() {
             {view === VIEW.METHODOLOGY && <MethodologyPage />}
             {view === VIEW.TEAM && isAdmin && <TeamPage currentUserId={user.id} />}
             {view === VIEW.AFFILIATES && isAdmin && <AffiliatesPage />}
+            {view === VIEW.BILLING && isAdmin && <BillingDashboardPage onNavigate={handleNavigate} isAdmin={isAdmin} />}
             {view === VIEW.AUDIT && (
               <>
                 {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
@@ -669,6 +671,9 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
         <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients', hasUnanalyzed ? { filter: 'unanalyzed' } : null)} badge={actionItemCount} badgeTitle="unanalyzed client response(s) — click to view" />
         <NavItem icon={UserPlus} label="Leads" active={view === 'leads'} onClick={() => onNavigate('leads', newLeadsCount > 0 ? { filter: 'recent' } : null)} badge={newLeadsCount} badgeTitle="new leads (last 48h)" />
         <NavItem icon={BookOpen} label="Methodology" active={view === 'methodology'} onClick={() => onNavigate('methodology')} />
+        {isAdmin && (
+          <NavItem icon={DollarSign} label="Billing" active={view === 'billing'} onClick={() => onNavigate('billing')} />
+        )}
         {isAdmin && (
           <NavItem icon={UserCog} label="Team" active={view === 'team'} onClick={() => onNavigate('team')} />
         )}
