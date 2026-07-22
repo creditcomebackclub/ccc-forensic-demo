@@ -94,10 +94,9 @@ export default function ClientBillingPanel({ client, onChanged }) {
 
   const ledger = Array.isArray(client.ledger) ? client.ledger : [];
   
-  // Balance is sum of all Invoices minus sum of all Payments
+  // Balance is sum of all unpaid Invoices
   const balanceDue = ledger.reduce((sum, tx) => {
-    if (tx.type === 'Payment') return sum - (parseFloat(tx.amount) || 0);
-    if (tx.type === 'Invoice') return sum + (parseFloat(tx.amount) || 0);
+    if (tx.type === 'Invoice' && tx.status !== 'Paid') return sum + (parseFloat(tx.amount) || 0);
     return sum;
   }, 0);
 
@@ -169,7 +168,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start mt-2">
       <Section title="Billing Setup">
-        <Row label="Current Balance">
+        <Row label="Amount Due">
           <div className="text-[18px] font-bold" style={{ color: balanceDue > 0 ? '#DC2626' : T.ink }}>
             ${balanceDue.toFixed(2)}
           </div>

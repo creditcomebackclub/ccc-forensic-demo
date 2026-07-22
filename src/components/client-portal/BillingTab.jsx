@@ -15,10 +15,9 @@ const T = {
 export default function BillingTab({ clientMeta }) {
   const ledger = Array.isArray(clientMeta?.ledger) ? clientMeta.ledger : [];
   
-  // Balance is sum of all Invoices minus sum of all Payments
+  // Balance is sum of all unpaid Invoices
   const balanceDue = ledger.reduce((sum, tx) => {
-    if (tx.type === 'Payment') return sum - (parseFloat(tx.amount) || 0);
-    if (tx.type === 'Invoice') return sum + (parseFloat(tx.amount) || 0);
+    if (tx.type === 'Invoice' && tx.status !== 'Paid') return sum + (parseFloat(tx.amount) || 0);
     return sum;
   }, 0);
 
@@ -28,7 +27,7 @@ export default function BillingTab({ clientMeta }) {
       {/* Balance Section */}
       <div className="bg-white rounded-xl p-6 md:p-8 flex flex-col md:flex-row items-center justify-between shadow-sm border" style={{ borderColor: T.border }}>
         <div>
-          <h2 className="text-sm uppercase tracking-wider font-bold mb-1" style={{ color: T.navy }}>Current Balance</h2>
+          <h2 className="text-sm uppercase tracking-wider font-bold mb-1" style={{ color: T.navy }}>Amount Due</h2>
           <div className="text-[32px] font-bold" style={{ color: balanceDue > 0 ? '#DC2626' : T.navy }}>
             ${balanceDue.toFixed(2)}
           </div>
