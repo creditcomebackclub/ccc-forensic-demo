@@ -113,7 +113,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
   const addTransaction = async () => {
     if (!newTx.amount) return alert('Amount is required');
     const updatedLedger = [...ledger, {
-      id: require('crypto').randomUUID ? require('crypto').randomUUID() : Math.random().toString(36).substring(7),
+      id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).substring(7),
       date: newTx.date,
       type: newTx.type,
       amount: parseFloat(newTx.amount),
