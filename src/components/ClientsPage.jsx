@@ -652,6 +652,12 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 {c.lpoaSigned && (
                   <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-green-50 text-green-700 shrink-0" title="LPOA signed">✓ LPOA</span>
                 )}
+                {c.billingStatus === 'Active' && (
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-blue-50 text-blue-700 shrink-0" title="Billing Active">Active</span>
+                )}
+                {c.billingStatus === 'Paused' && (
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-amber-50 text-amber-700 shrink-0" title="Billing Paused">Paused</span>
+                )}
               </div>
               <div className="text-[13px] truncate" style={{ color: T.muted }}>
                 {c.email || <span className="text-amber-600">No email</span>}
@@ -1071,6 +1077,12 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     {c.isVip && <Star size={12} strokeWidth={2} fill={T.gold} style={{ color: T.gold, flexShrink: 0 }} title="VIP client" />}
                     {c.lpoaSigned && (
                       <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-green-50 text-green-700 shrink-0" title="LPOA signed">✓ LPOA</span>
+                    )}
+                    {c.billingStatus === 'Active' && (
+                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-blue-50 text-blue-700 shrink-0" title="Billing Active">Active</span>
+                    )}
+                    {c.billingStatus === 'Paused' && (
+                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-amber-50 text-amber-700 shrink-0" title="Billing Paused">Paused</span>
                     )}
                   </div>
                   <div className="text-[11px] truncate" style={{ color: T.muted }}>
