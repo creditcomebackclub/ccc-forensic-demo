@@ -11,6 +11,7 @@ import DisputesTab from './client-portal/DisputesTab';
 import TimelineTab from './client-portal/TimelineTab';
 import DocumentsTab from './client-portal/DocumentsTab';
 import VipTab from './client-portal/VipTab';
+import BillingTab from './client-portal/BillingTab';
 import ConciergeChat from './client-portal/ConciergeChat';
 
 export default function ClientPortal({ session, onSignOut }) {
@@ -269,6 +270,7 @@ export default function ClientPortal({ session, onSignOut }) {
     { id: 'disputes', label: 'Disputes' },
     { id: 'timeline', label: 'Timeline' },
     { id: 'documents', label: docsComplete ? '📁 Documents' : '📁 Documents ⚡' },
+    { id: 'billing', label: '💳 Billing' },
     ...(isVip ? [{ id: 'vip', label: '⭐ VIP' }] : []),
   ];
 
@@ -376,6 +378,10 @@ export default function ClientPortal({ session, onSignOut }) {
             
             {activeTab === 'timeline' && (
               <TimelineTab timeline={timeline} letters={letters} accessToken={session?.access_token} />
+            )}
+            
+            {activeTab === 'billing' && (
+              <BillingTab clientMeta={clientMeta} />
             )}
             
             {activeTab === 'vip' && isVip && (
