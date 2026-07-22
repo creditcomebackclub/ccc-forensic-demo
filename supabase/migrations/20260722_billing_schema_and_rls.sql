@@ -17,13 +17,12 @@
 -- would also block admins.
 --
 -- Fix: a BEFORE UPDATE trigger. Service role (cron / Netlify functions,
--- where auth.uid() is null) and staff (anyone with a public.profiles row —
--- the same "staff = has a profiles row" definition used in
--- 20260714_client_profiles_rls.sql) pass through untouched. For everyone
--- else (i.e. a signed-in client), the trigger forces the protected billing/
--- financial/admin columns back to their OLD values, so a malicious PATCH is
--- silently ignored while legitimate client writes (lpoa_signed, etc.) still
--- succeed.
+-- where auth.uid() is null) and staff (profiles.role in admin/auditor) pass
+-- through untouched. For everyone else (i.e. a signed-in client — including
+-- one who has a profiles row with role='client', which handle_new_user()
+-- creates), the trigger forces the protected billing/financial/admin columns
+-- back to their OLD values, so a malicious PATCH is silently ignored while
+-- legitimate client writes (lpoa_signed, etc.) still succeed.
 
 -- 1. Formalize the billing columns.
 alter table public.clients add column if not exists billing_status     text;
@@ -50,10 +49,16 @@ begin
     return new;
   end if;
 
-  -- Staff (admin/auditor) — identified by having a public.profiles row,
-  -- matching the convention in 20260714_client_profiles_rls.sql — may edit
-  -- billing freely.
-  if exists (select 1 from public.profiles p where p.id = auth.uid()) then
+  -- Staff (admin/auditor) may edit billing freely. NOTE: the check must be on
+  -- role, not mere existence of a profiles row — handle_new_user() gives every
+  -- matched client a profiles row with role='client', so "has a profiles row"
+  -- would wrongly treat clients as staff and defeat this trigger. This matches
+  -- the role in ('admin','auditor') convention set in
+  -- 20260714_fix_handle_new_user_trigger.sql.
+  if exists (
+    select 1 from public.profiles p
+    where p.id = auth.uid() and p.role in ('admin', 'auditor')
+  ) then
     return new;
   end if;
 
