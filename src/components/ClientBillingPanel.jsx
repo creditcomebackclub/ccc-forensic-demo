@@ -162,6 +162,15 @@ export default function ClientBillingPanel({ client, onChanged }) {
             onSave={(v) => save({ billing_start_date: v })} 
           />
         </Row>
+        <Row label="Service Tier">
+          <Field 
+            label="service tier" 
+            value={client.billingTier} 
+            options={['Standard', 'VIP', 'Paid In Full']}
+            placeholder="Select tier..."
+            onSave={(v) => save({ billing_tier: v })} 
+          />
+        </Row>
         <Row label="Billing Type">
           <Field 
             label="billing type" 

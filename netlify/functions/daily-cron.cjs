@@ -292,7 +292,7 @@ exports.handler = async () => {
   // --- 4. Run Automated Billing Sweep ---
   let billingAlerts = [];
   try {
-    const clientsRes = await supabaseRequest('/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date', 'GET', null, supabaseUrl, supabaseKey);
+    const clientsRes = await supabaseRequest('/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date,billing_tier', 'GET', null, supabaseUrl, supabaseKey);
     const activeClients = Array.isArray(clientsRes.body) ? clientsRes.body : [];
     
     for (const c of activeClients) {
@@ -305,38 +305,62 @@ exports.handler = async () => {
 
       // 1. Calculate Next Invoice Date for Pre-Reminders
       if (c.billing_start_date) {
-        const lastInvoice = ledger.filter(t => t.type === 'Invoice').sort((a,b) => b.date.localeCompare(a.date))[0];
+        const invoices = ledger.filter(t => t.type === 'Invoice');
+        const lastInvoice = invoices.sort((a,b) => b.date.localeCompare(a.date))[0];
+        const invoiceCount = invoices.length;
         const lastDateStr = lastInvoice ? lastInvoice.date : c.billing_start_date;
         const daysSinceLastInvoice = Math.floor((new Date(today) - new Date(lastDateStr)) / (1000 * 60 * 60 * 24));
-        const daysUntilDue = 30 - daysSinceLastInvoice;
+        
+        const daysUntilDue = invoiceCount === 0 ? (0 - daysSinceLastInvoice) : (30 - daysSinceLastInvoice);
 
-        if (daysUntilDue === 5 && c.email && sgKey) {
-          await sendgridEmail(c.email, 'Upcoming Invoice in 5 Days', '<p>Hi ' + c.name + ',</p><p>This is a quick reminder that your monthly service fee will be due in 5 days.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
-        } else if (daysUntilDue === 3 && c.email && sgKey) {
-          await sendgridEmail(c.email, 'Upcoming Invoice in 3 Days', '<p>Hi ' + c.name + ',</p><p>Your monthly service fee will be due in 3 days. Please ensure your payment method on file is up to date.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+        if (c.billing_tier !== 'Paid In Full' || invoiceCount === 0) {
+          if (daysUntilDue === 5 && c.email && sgKey) {
+            await sendgridEmail(c.email, 'Upcoming Invoice in 5 Days', '<p>Hi ' + c.name + ',</p><p>This is a quick reminder that your service fee will be due in 5 days.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+          } else if (daysUntilDue === 3 && c.email && sgKey) {
+            await sendgridEmail(c.email, 'Upcoming Invoice in 3 Days', '<p>Hi ' + c.name + ',</p><p>Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+          }
         }
         
         // 2. Generate Invoice if due today (or overdue)
-        if (daysSinceLastInvoice >= 30) {
-          const newTx = {
-            id: require('crypto').randomUUID(),
-            date: today,
-            type: 'Invoice',
-            amount: 99.00,
-            description: 'Monthly Service Fee',
-            status: 'Due',
-            created_at: new Date().toISOString()
-          };
-          ledger.push(newTx);
-          balanceDue += 99.00;
+        const isDue = (invoiceCount === 0 && daysSinceLastInvoice >= 0) || (invoiceCount > 0 && daysSinceLastInvoice >= 30);
+        
+        if (isDue) {
+          let amount = 99.00;
+          let description = 'Monthly Service Fee';
           
-          await supabaseRequest(
-            '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
-            'PATCH', { ledger }, supabaseUrl, supabaseKey
-          );
+          if (invoiceCount === 0) {
+            if (c.billing_tier === 'Standard') { amount = 154.00; description = 'Initial Month & First Work Fee'; }
+            else if (c.billing_tier === 'VIP') { amount = 248.00; description = 'VIP Initial Month & First Work Fee'; }
+            else if (c.billing_tier === 'Paid In Full') { amount = 499.00; description = 'Paid In Full Service'; }
+            else { amount = 99.00; description = 'Initial Service Fee'; }
+          } else {
+            if (c.billing_tier === 'Standard') { amount = 79.00; description = 'Standard Monthly Service Fee'; }
+            else if (c.billing_tier === 'VIP') { amount = 149.00; description = 'VIP Monthly Service Fee'; }
+          }
 
-          if (c.email && sgKey) {
-            await sendgridEmail(c.email, 'Invoice Due Today', '<p>Hi ' + c.name + ',</p><p>Your monthly service fee of $99.00 is due today. Please log in to your client portal to remit payment.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+          if (invoiceCount > 0 && c.billing_tier === 'Paid In Full') {
+             // Do not generate recurring invoices for Paid In Full
+          } else {
+            const newTx = {
+              id: require('crypto').randomUUID(),
+              date: today,
+              type: 'Invoice',
+              amount: amount,
+              description: description,
+              status: 'Due',
+              created_at: new Date().toISOString()
+            };
+            ledger.push(newTx);
+            balanceDue += amount;
+            
+            await supabaseRequest(
+              '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
+              'PATCH', { ledger }, supabaseUrl, supabaseKey
+            );
+
+            if (c.email && sgKey) {
+              await sendgridEmail(c.email, 'Invoice Due Today', '<p>Hi ' + c.name + ',</p><p>Your service fee of $' + amount.toFixed(2) + ' is due today. Please log in to your client portal to remit payment.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+            }
           }
         }
       }

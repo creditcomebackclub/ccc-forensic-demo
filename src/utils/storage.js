@@ -319,7 +319,7 @@ export async function adminListClients() {
     // encrypted at rest in client_sensitive_data and only ever fetched
     // on-demand (decrypted server-side) via ClientProfilePanel, never as
     // part of this bulk dashboard load.
-    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,billing_status,billing_type,billing_start_date,referred_by,referral_fee,commission_paid,ledger'),
+    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger'),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
@@ -372,6 +372,7 @@ export async function adminListClients() {
       c.billingStatus = meta.billing_status || null;
       c.billingType = meta.billing_type || null;
       c.billingStartDate = meta.billing_start_date || null;
+      c.billingTier = meta.billing_tier || null;
       c.referredBy = meta.referred_by || null;
       c.referralFee = meta.referral_fee || null;
       c.commissionPaid = meta.commission_paid || false;
@@ -404,6 +405,7 @@ export async function adminListClients() {
       billingStatus: row.billing_status || null,
       billingType: row.billing_type || null,
       billingStartDate: row.billing_start_date || null,
+      billingTier: row.billing_tier || null,
       referredBy: row.referred_by || null,
       referralFee: row.referral_fee || null,
       commissionPaid: row.commission_paid || false,
