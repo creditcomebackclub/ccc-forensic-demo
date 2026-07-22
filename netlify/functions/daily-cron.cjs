@@ -292,7 +292,7 @@ exports.handler = async () => {
   // --- 4. Run Automated Billing Sweep ---
   let billingAlerts = [];
   try {
-    const clientsRes = await supabaseRequest('/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,ledger,billing_start_date', 'GET', null, supabaseUrl, supabaseKey);
+    const clientsRes = await supabaseRequest('/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date', 'GET', null, supabaseUrl, supabaseKey);
     const activeClients = Array.isArray(clientsRes.body) ? clientsRes.body : [];
     
     for (const c of activeClients) {
@@ -303,19 +303,26 @@ exports.handler = async () => {
         return sum;
       }, 0);
 
-      // Check for Monthly Invoice Auto-Generation
+      // 1. Calculate Next Invoice Date for Pre-Reminders
       if (c.billing_start_date) {
         const lastInvoice = ledger.filter(t => t.type === 'Invoice').sort((a,b) => b.date.localeCompare(a.date))[0];
         const lastDateStr = lastInvoice ? lastInvoice.date : c.billing_start_date;
         const daysSinceLastInvoice = Math.floor((new Date(today) - new Date(lastDateStr)) / (1000 * 60 * 60 * 24));
+        const daysUntilDue = 30 - daysSinceLastInvoice;
+
+        if (daysUntilDue === 5 && c.email && sgKey) {
+          await sendgridEmail(c.email, 'Upcoming Invoice in 5 Days', '<p>Hi ' + c.name + ',</p><p>This is a quick reminder that your monthly service fee will be due in 5 days.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+        } else if (daysUntilDue === 3 && c.email && sgKey) {
+          await sendgridEmail(c.email, 'Upcoming Invoice in 3 Days', '<p>Hi ' + c.name + ',</p><p>Your monthly service fee will be due in 3 days. Please ensure your payment method on file is up to date.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+        }
         
-        // If it's been at least 30 days, append a new recurring charge
+        // 2. Generate Invoice if due today (or overdue)
         if (daysSinceLastInvoice >= 30) {
           const newTx = {
             id: require('crypto').randomUUID(),
             date: today,
             type: 'Invoice',
-            amount: 99.00, // Hardcoded for demo, normally pulled from settings
+            amount: 99.00,
             description: 'Monthly Service Fee',
             status: 'Due',
             created_at: new Date().toISOString()
@@ -327,12 +334,40 @@ exports.handler = async () => {
             '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
             'PATCH', { ledger }, supabaseUrl, supabaseKey
           );
+
+          if (c.email && sgKey) {
+            await sendgridEmail(c.email, 'Invoice Due Today', '<p>Hi ' + c.name + ',</p><p>Your monthly service fee of $99.00 is due today. Please log in to your client portal to remit payment.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+          }
         }
       }
 
+      // 3. Check for PAST DUE invoices
+      const unpaidInvoices = ledger.filter(t => t.type === 'Invoice' && t.status === 'Due');
+      let isPausedNow = false;
+      
+      for (const inv of unpaidInvoices) {
+        const daysPastDue = Math.floor((new Date(today) - new Date(inv.date)) / (1000 * 60 * 60 * 24));
+        if (daysPastDue === 1 && c.email && sgKey) {
+          await sendgridEmail(c.email, 'Invoice 1 Day Past Due', '<p>Hi ' + c.name + ',</p><p>Your invoice is 1 day past due. Please submit your payment to avoid service interruption.</p>', sgKey);
+        } else if (daysPastDue === 3 && c.email && sgKey) {
+          await sendgridEmail(c.email, 'Invoice 3 Days Past Due - Urgent', '<p>Hi ' + c.name + ',</p><p>Your invoice is 3 days past due. Your service will be paused in 2 days if payment is not received.</p>', sgKey);
+        } else if (daysPastDue === 5 && !isPausedNow) {
+          if (c.email && sgKey) {
+            await sendgridEmail(c.email, 'Final Notice: Service Paused', '<p>Hi ' + c.name + ',</p><p>Your service has been paused due to non-payment. Please remit payment immediately to resume services.</p>', sgKey);
+          }
+          await supabaseRequest(
+            '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
+            'PATCH', { billing_status: 'Paused' }, supabaseUrl, supabaseKey
+          );
+          isPausedNow = true;
+          billingAlerts.push({ client: c.name, type: 'PAUSED', balance: balanceDue });
+        }
+      }
+
+
       // Simple heuristic: if balance > 0, they are overdue/due
-      if (balanceDue > 0) {
-        billingAlerts.push({ client: c.name, balance: balanceDue });
+      if (balanceDue > 0 && !isPausedNow) {
+        billingAlerts.push({ client: c.name, type: 'DUE', balance: balanceDue });
       }
     }
   } catch (e) {
@@ -417,7 +452,13 @@ exports.handler = async () => {
           <h2 style="color:#111827;font-size:14px;margin:32px 0 12px;color:#047857;">💰 Billing Alerts</h2>
           <div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:4px;padding:12px;">
             <table style="width:100%;border-collapse:collapse;">
-              ${billingAlerts.map(b => `<tr><td style="padding:6px 0;font-size:12px;border-bottom:1px solid #D1FAE5;"><strong>${b.client}</strong> is due for <strong>$${b.balance.toFixed(2)}</strong></td></tr>`).join('')}
+              ${billingAlerts.map(b => {
+                if (b.type === 'PAUSED') {
+                  return '<tr><td style="padding:6px 0;font-size:12px;border-bottom:1px solid #D1FAE5;"><strong style="color:#DC2626">PAUSED</strong> <strong>' + b.client + '</strong> (Owes <strong>$' + b.balance.toFixed(2) + '</strong>)</td></tr>';
+                } else {
+                  return '<tr><td style="padding:6px 0;font-size:12px;border-bottom:1px solid #D1FAE5;"><strong>' + b.client + '</strong> is due for <strong>$' + b.balance.toFixed(2) + '</strong></td></tr>';
+                }
+              }).join('')}
             </table>
           </div>` : ''}
           
