@@ -371,6 +371,7 @@ export async function adminListClients() {
       c.leadCreatedAt = meta.lead_created_at || null;
       c.billingStatus = meta.billing_status || null;
       c.billingType = meta.billing_type || null;
+      c.billingStartDate = meta.billing_start_date || null;
       c.referredBy = meta.referred_by || null;
       c.referralFee = meta.referral_fee || null;
       c.commissionPaid = meta.commission_paid || false;
@@ -402,6 +403,7 @@ export async function adminListClients() {
       referralSource: row.referral_source || null,
       billingStatus: row.billing_status || null,
       billingType: row.billing_type || null,
+      billingStartDate: row.billing_start_date || null,
       referredBy: row.referred_by || null,
       referralFee: row.referral_fee || null,
       commissionPaid: row.commission_paid || false,

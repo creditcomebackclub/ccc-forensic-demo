@@ -149,7 +149,17 @@ export default function ClientBillingPanel({ client, onChanged }) {
             label="billing status" 
             value={client.billingStatus} 
             options={['Active', 'Paused', 'Inactive']} 
+            placeholder="Select status..."
             onSave={(v) => save({ billing_status: v })} 
+          />
+        </Row>
+        <Row label="Billing Start Date">
+          <Field 
+            label="billing start date" 
+            value={client.billingStartDate} 
+            type="date"
+            placeholder="YYYY-MM-DD"
+            onSave={(v) => save({ billing_start_date: v })} 
           />
         </Row>
         <Row label="Billing Type">

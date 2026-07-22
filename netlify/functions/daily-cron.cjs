@@ -292,7 +292,7 @@ exports.handler = async () => {
   // --- 4. Run Automated Billing Sweep ---
   let billingAlerts = [];
   try {
-    const clientsRes = await supabaseRequest('/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,ledger', 'GET', null, supabaseUrl, supabaseKey);
+    const clientsRes = await supabaseRequest('/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,ledger,billing_start_date', 'GET', null, supabaseUrl, supabaseKey);
     const activeClients = Array.isArray(clientsRes.body) ? clientsRes.body : [];
     
     for (const c of activeClients) {
@@ -302,6 +302,33 @@ exports.handler = async () => {
         if (tx.type === 'Invoice') return sum + (parseFloat(tx.amount) || 0);
         return sum;
       }, 0);
+
+      // Check for Monthly Invoice Auto-Generation
+      if (c.billing_start_date) {
+        const lastInvoice = ledger.filter(t => t.type === 'Invoice').sort((a,b) => b.date.localeCompare(a.date))[0];
+        const lastDateStr = lastInvoice ? lastInvoice.date : c.billing_start_date;
+        const daysSinceLastInvoice = Math.floor((new Date(today) - new Date(lastDateStr)) / (1000 * 60 * 60 * 24));
+        
+        // If it's been at least 30 days, append a new recurring charge
+        if (daysSinceLastInvoice >= 30) {
+          const newTx = {
+            id: require('crypto').randomUUID(),
+            date: today,
+            type: 'Invoice',
+            amount: 99.00, // Hardcoded for demo, normally pulled from settings
+            description: 'Monthly Service Fee',
+            status: 'Due',
+            created_at: new Date().toISOString()
+          };
+          ledger.push(newTx);
+          balanceDue += 99.00;
+          
+          await supabaseRequest(
+            '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
+            'PATCH', { ledger }, supabaseUrl, supabaseKey
+          );
+        }
+      }
 
       // Simple heuristic: if balance > 0, they are overdue/due
       if (balanceDue > 0) {
