@@ -289,6 +289,29 @@ exports.handler = async () => {
   let pendingAuditsCount = 0;
   let lobDeliveriesCount = 0;
 
+  // --- 4. Run Automated Billing Sweep ---
+  let billingAlerts = [];
+  try {
+    const clientsRes = await supabaseRequest('/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,ledger', 'GET', null, supabaseUrl, supabaseKey);
+    const activeClients = Array.isArray(clientsRes.body) ? clientsRes.body : [];
+    
+    for (const c of activeClients) {
+      const ledger = Array.isArray(c.ledger) ? c.ledger : [];
+      let balanceDue = ledger.reduce((sum, tx) => {
+        if (tx.type === 'Payment') return sum - (parseFloat(tx.amount) || 0);
+        if (tx.type === 'Invoice') return sum + (parseFloat(tx.amount) || 0);
+        return sum;
+      }, 0);
+
+      // Simple heuristic: if balance > 0, they are overdue/due
+      if (balanceDue > 0) {
+        billingAlerts.push({ client: c.name, balance: balanceDue });
+      }
+    }
+  } catch (e) {
+    console.error('Failed billing sweep:', e);
+  }
+
   try {
     // Unmailed letters
     const unmailedRes = await supabaseRequest('/rest/v1/letters?mailed_date=is.null&select=id', 'GET', null, supabaseUrl, supabaseKey);
@@ -358,9 +381,17 @@ exports.handler = async () => {
           </table>
 
           ${adminDigestItems.length > 0 ? `
-          <h2 style="color:#111827;font-size:14px;margin:32px 0 12px;color:#DC2626;">Escalation Details</h2>
+          <h2 style="color:#111827;font-size:14px;margin:32px 0 12px;color:#DC2626;">🚨 Escalation Details</h2>
           <div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:4px;padding:12px;">
             <table style="width:100%;border-collapse:collapse;">${escalationRows}</table>
+          </div>` : ''}
+
+          ${billingAlerts.length > 0 ? `
+          <h2 style="color:#111827;font-size:14px;margin:32px 0 12px;color:#047857;">💰 Billing Alerts</h2>
+          <div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:4px;padding:12px;">
+            <table style="width:100%;border-collapse:collapse;">
+              ${billingAlerts.map(b => `<tr><td style="padding:6px 0;font-size:12px;border-bottom:1px solid #D1FAE5;"><strong>${b.client}</strong> is due for <strong>$${b.balance.toFixed(2)}</strong></td></tr>`).join('')}
+            </table>
           </div>` : ''}
           
           <div style="margin-top:32px;text-align:center;">

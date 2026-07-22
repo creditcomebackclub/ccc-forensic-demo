@@ -374,6 +374,7 @@ export async function adminListClients() {
       c.referredBy = meta.referred_by || null;
       c.referralFee = meta.referral_fee || null;
       c.commissionPaid = meta.commission_paid || false;
+      c.ledger = meta.ledger || [];
     } else {
       c.status = 'lead';
     }
@@ -404,6 +405,7 @@ export async function adminListClients() {
       referredBy: row.referred_by || null,
       referralFee: row.referral_fee || null,
       commissionPaid: row.commission_paid || false,
+      ledger: row.ledger || [],
       notes: row.notes || null,
       tags: row.tags || [],
     });

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
+import { supabase } from '../utils/supabase';
 import { readClientSensitiveData, writeClientSensitiveData } from '../utils/clientSensitiveData';
 import { ExternalLink, Edit2, Check, X } from 'lucide-react';
 
@@ -257,6 +258,16 @@ function ScoreTile({ label, current, start, onSaveStart }) {
 }
 
 export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
+  const [affiliates, setAffiliates] = useState([]);
+
+  useEffect(() => {
+    supabase.from('affiliates').select('name, company').then(({ data }) => {
+      if (data) {
+        setAffiliates(data.map(a => a.name + (a.company ? ` (${a.company})` : '')));
+      }
+    });
+  }, []);
+
   const save = async (fields) => {
     await updateClientProfile(client.name, fields);
     onChanged();
@@ -359,8 +370,13 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
           <Field label="enrollment date" value={client.enrollmentDate} placeholder="YYYY-MM-DD" type="date"
             onSave={(v) => save({ enrollment_date: v })} />
         </Row>
-        <Row label="Referral source">
-          <Field label="referral source" value={client.referralSource} placeholder="e.g. Facebook, referral from John"
+        <Row label="Affiliate source">
+          <Field label="affiliate source" value={client.referredBy} placeholder="Select an affiliate..."
+            options={affiliates.length > 0 ? affiliates : null}
+            onSave={(v) => save({ referred_by: v })} />
+        </Row>
+        <Row label="Other referral">
+          <Field label="referral source" value={client.referralSource} placeholder="e.g. Facebook ad, word of mouth"
             onSave={(v) => save({ referral_source: v })} />
         </Row>
         <Row label="Letters">

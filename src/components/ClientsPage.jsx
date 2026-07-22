@@ -96,7 +96,7 @@ function importDueInfo(c) {
   const remaining = 35 - elapsed;
 
   if (remaining > 0) return { code: 'pending', label: 'Report due in ' + remaining + 'd', tone: 'neutral' };
-  return { code: 'due', label: 'Upload 35-Day Report', tone: 'amber' };
+  return { code: 'due', label: 'Import due', tone: 'amber' };
 }
 
 function clientMatchesFilter(c, filter, unanalyzedNames) {
