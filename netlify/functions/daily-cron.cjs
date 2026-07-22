@@ -297,11 +297,13 @@ exports.handler = async () => {
     
     for (const c of activeClients) {
       const ledger = Array.isArray(c.ledger) ? c.ledger : [];
-      let balanceDue = ledger.reduce((sum, tx) => {
-        if (tx.type === 'Payment') return sum - (parseFloat(tx.amount) || 0);
-        if (tx.type === 'Invoice') return sum + (parseFloat(tx.amount) || 0);
+      // Amount Due = sum of unpaid invoices only, matching the UI logic in
+      // ClientBillingPanel/BillingTab (commit 3d24663). round2 avoids float drift.
+      const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+      let balanceDue = round2(ledger.reduce((sum, tx) => {
+        if (tx.type === 'Invoice' && tx.status !== 'Paid') return sum + (parseFloat(tx.amount) || 0);
         return sum;
-      }, 0);
+      }, 0));
 
       // 1. Calculate Next Invoice Date for Pre-Reminders
       if (c.billing_start_date) {
@@ -351,7 +353,7 @@ exports.handler = async () => {
               created_at: new Date().toISOString()
             };
             ledger.push(newTx);
-            balanceDue += amount;
+            balanceDue = round2(balanceDue + amount);
             
             await supabaseRequest(
               '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
