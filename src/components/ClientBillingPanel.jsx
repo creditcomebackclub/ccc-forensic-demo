@@ -88,8 +88,9 @@ function Field({ label, value, onSave, type = 'text', placeholder = '', options 
 }
 
 export default function ClientBillingPanel({ client, onChanged }) {
+  const today = new Date().toISOString().slice(0, 10);
   const [showAddTx, setShowAddTx] = useState(false);
-  const [newTx, setNewTx] = useState({ date: new Date().toISOString().slice(0, 10), type: 'Invoice', amount: '', description: '', status: 'Due' });
+  const [newTx, setNewTx] = useState({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due' });
 
   const ledger = Array.isArray(client.ledger) ? client.ledger : [];
   
