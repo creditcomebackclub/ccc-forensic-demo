@@ -26,6 +26,13 @@ const getClientTotalPaid = (c) => {
 export default function AffiliateProfilePanel({ affiliate, clients = [], onClose, onUpdate }) {
   const [editingRate, setEditingRate] = useState(false);
   const [rateVal, setRateVal] = useState(affiliate.commission_rate ? String(Math.round(affiliate.commission_rate * 100)) : '20');
+  
+  const [isEditingInfo, setIsEditingInfo] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: affiliate.name || '',
+    company: affiliate.company || '',
+    email: affiliate.email || ''
+  });
 
   const getClientCommission = (c) => {
     const tp = getClientTotalPaid(c);
@@ -60,6 +67,26 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], onClose
     onUpdate && onUpdate();
   };
 
+  const saveAffiliateInfo = async () => {
+    await supabase.from('affiliates').update({
+      name: editForm.name,
+      company: editForm.company,
+      email: editForm.email
+    }).eq('id', affiliate.id);
+    
+    // Also update all clients that reference this affiliate if we wanted to denormalize, 
+    // but the clients table uses `referred_by` UUID, so we only need to update the affiliates table!
+    
+    Object.assign(affiliate, {
+      name: editForm.name,
+      company: editForm.company,
+      email: editForm.email
+    });
+
+    setIsEditingInfo(false);
+    onUpdate && onUpdate();
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end" style={{ background: 'rgba(0,0,0,0.1)' }} onClick={onClose}>
       <div className="w-[600px] h-full bg-white shadow-2xl flex flex-col transform transition-transform" 
@@ -76,13 +103,52 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], onClose
               </div>
             )}
             <div>
-              <h2 className="text-[20px] font-bold tracking-tight" style={{ color: T.navy }}>{affiliate.name}</h2>
-              <div className="text-[12px] mt-1" style={{ color: T.muted }}>
-                {affiliate.company ? `${affiliate.company} • ` : ''}{affiliate.email}
-              </div>
+              {isEditingInfo ? (
+                <div className="flex flex-col gap-2">
+                  <input 
+                    type="text" 
+                    value={editForm.name} 
+                    onChange={e => setEditForm({...editForm, name: e.target.value})}
+                    className="text-[16px] font-bold px-2 py-1 border rounded"
+                    placeholder="Affiliate Name"
+                  />
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      value={editForm.company} 
+                      onChange={e => setEditForm({...editForm, company: e.target.value})}
+                      className="text-[12px] px-2 py-1 border rounded w-1/2"
+                      placeholder="Company"
+                    />
+                    <input 
+                      type="email" 
+                      value={editForm.email} 
+                      onChange={e => setEditForm({...editForm, email: e.target.value})}
+                      className="text-[12px] px-2 py-1 border rounded w-1/2"
+                      placeholder="Email"
+                    />
+                  </div>
+                  <div className="flex gap-2 mt-1">
+                    <button onClick={saveAffiliateInfo} className="text-[11px] bg-navy text-white px-3 py-1 rounded font-medium">Save</button>
+                    <button onClick={() => setIsEditingInfo(false)} className="text-[11px] text-muted px-3 py-1 border rounded">Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="group relative">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-[20px] font-bold tracking-tight" style={{ color: T.navy }}>{affiliate.name}</h2>
+                    <button onClick={() => setIsEditingInfo(true)} className="opacity-0 group-hover:opacity-100 text-[10px] text-navy uppercase font-bold tracking-wider hover:underline transition-opacity">
+                      Edit
+                    </button>
+                  </div>
+                  <div className="text-[12px] mt-1" style={{ color: T.muted }}>
+                    {affiliate.company ? `${affiliate.company} • ` : ''}{affiliate.email}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-md text-ink-faint hover:bg-gray-100 transition-colors">
+          <button onClick={onClose} className="p-1 rounded-md text-ink-faint hover:bg-gray-100 transition-colors self-start mt-1">
             <X size={18} />
           </button>
         </div>
