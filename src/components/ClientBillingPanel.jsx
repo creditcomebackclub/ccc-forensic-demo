@@ -167,8 +167,10 @@ function LifecycleStatusField({ status, exitReason, onSave }) {
 export default function ClientBillingPanel({ client, onChanged }) {
   const today = new Date().toISOString().slice(0, 10);
   const [showAddTx, setShowAddTx] = useState(false);
-  const [newTx, setNewTx] = useState({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due' });
+  const [newTx, setNewTx] = useState({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due', paidDate: today });
   const [affiliates, setAffiliates] = useState({});
+  const [markingPaidId, setMarkingPaidId] = useState(null);
+  const [markPaidDate, setMarkPaidDate] = useState(today);
 
   useEffect(() => {
     supabase.from('affiliates').select('id, name, company, commission_rate').then(({ data }) => {
@@ -214,7 +216,17 @@ export default function ClientBillingPanel({ client, onChanged }) {
 
   const addTransaction = async () => {
     if (!newTx.amount) return alert('Amount is required');
-    
+
+    // Backfilling history: "Paid on" is independent of "Date" (the invoice
+    // date) so a historical invoice can carry its real payment date instead
+    // of silently defaulting to today — that default is exactly what made
+    // Avg. days to pay meaningless for backfilled clients before this field
+    // existed. Payment-type rows have no separate invoice date, so their
+    // own date field doubles as the paid date.
+    const paidAt = newTx.type === 'Payment'
+      ? new Date(newTx.date + 'T12:00:00').toISOString()
+      : (newTx.status === 'Paid' ? new Date((newTx.paidDate || newTx.date) + 'T12:00:00').toISOString() : null);
+
     let updatedLedger;
     if (editingTxId) {
       updatedLedger = ledger.map(t => t.id === editingTxId ? {
@@ -224,6 +236,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
         amount: parseFloat(newTx.amount),
         description: newTx.description || (newTx.type === 'Invoice' ? 'Service Fee' : 'Payment Received'),
         status: newTx.type === 'Payment' ? 'Paid' : newTx.status,
+        paid_at: paidAt,
       } : t);
     } else {
       updatedLedger = [...ledger, {
@@ -233,14 +246,15 @@ export default function ClientBillingPanel({ client, onChanged }) {
         amount: parseFloat(newTx.amount),
         description: newTx.description || (newTx.type === 'Invoice' ? 'Service Fee' : 'Payment Received'),
         status: newTx.type === 'Payment' ? 'Paid' : newTx.status,
+        ...(paidAt ? { paid_at: paidAt } : {}),
         created_at: new Date().toISOString()
       }];
     }
-    
+
     await save({ ledger: updatedLedger });
     setShowAddTx(false);
     setEditingTxId(null);
-    setNewTx({ date: new Date().toISOString().slice(0, 10), type: 'Invoice', amount: '', description: '', status: 'Due' });
+    setNewTx({ date: new Date().toISOString().slice(0, 10), type: 'Invoice', amount: '', description: '', status: 'Due', paidDate: today });
   };
 
   const startEditTx = (tx) => {
@@ -249,7 +263,8 @@ export default function ClientBillingPanel({ client, onChanged }) {
       type: tx.type,
       amount: tx.amount,
       description: tx.description || '',
-      status: tx.status
+      status: tx.status,
+      paidDate: tx.paid_at ? tx.paid_at.slice(0, 10) : tx.date,
     });
     setEditingTxId(tx.id);
     setShowAddTx(true);
@@ -260,11 +275,15 @@ export default function ClientBillingPanel({ client, onChanged }) {
     await save({ ledger: ledger.filter(t => t.id !== id) });
   };
 
-  const markPaid = async (id) => {
+  const markPaid = async (id, paidOnDate) => {
     // Stamp paid_at so the Billing Dashboard can compute days-to-pay / DSO.
-    // Preserve any existing paid_at (idempotent re-marks).
-    const updated = ledger.map(t => t.id === id ? { ...t, status: 'Paid', paid_at: t.paid_at || new Date().toISOString() } : t);
+    // Preserve any existing paid_at (idempotent re-marks). paidOnDate lets
+    // the caller pick the real payment date instead of always "now" — see
+    // the inline date picker this opens into below.
+    const stamp = paidOnDate ? new Date(paidOnDate + 'T12:00:00').toISOString() : new Date().toISOString();
+    const updated = ledger.map(t => t.id === id ? { ...t, status: 'Paid', paid_at: t.paid_at || stamp } : t);
     await save({ ledger: updated });
+    setMarkingPaidId(null);
   };
 
   return (
@@ -418,7 +437,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
       <Section title="Ledger" span2>
         <div className="flex items-center justify-between mb-2">
           <div className="text-[12px] text-ink-muted">Transaction history and open invoices.</div>
-          <button onClick={() => { setEditingTxId(null); setNewTx({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due' }); setShowAddTx(!showAddTx); }} className="text-[11px] uppercase tracking-wider bg-navy text-gold px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity">
+          <button onClick={() => { setEditingTxId(null); setNewTx({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due', paidDate: today }); setShowAddTx(!showAddTx); }} className="text-[11px] uppercase tracking-wider bg-navy text-gold px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity">
             + Add Transaction
           </button>
         </div>
@@ -445,7 +464,27 @@ export default function ClientBillingPanel({ client, onChanged }) {
                 Description
                 <input type="text" value={newTx.description} onChange={e => setNewTx({...newTx, description: e.target.value})} placeholder={newTx.type === 'Invoice' ? "e.g. Monthly Fee" : "e.g. Credit Card"} className="border rounded px-2 py-1 text-[12px] font-normal w-full" style={{ borderColor: T.border }} />
               </label>
+              {newTx.type === 'Invoice' && (
+                <label className="flex flex-col gap-1 text-[11px] font-bold text-navy uppercase tracking-wider">
+                  Status
+                  <select value={newTx.status} onChange={e => setNewTx({...newTx, status: e.target.value})} className="border rounded px-2 py-1 text-[12px] font-normal bg-white" style={{ borderColor: T.border }}>
+                    <option value="Due">Due</option>
+                    <option value="Paid">Paid</option>
+                  </select>
+                </label>
+              )}
+              {newTx.type === 'Invoice' && newTx.status === 'Paid' && (
+                <label className="flex flex-col gap-1 text-[11px] font-bold text-navy uppercase tracking-wider">
+                  Paid on
+                  <input type="date" value={newTx.paidDate || newTx.date} onChange={e => setNewTx({...newTx, paidDate: e.target.value})} className="border rounded px-2 py-1 text-[12px] font-normal" style={{ borderColor: T.border }} />
+                </label>
+              )}
             </div>
+            {newTx.type === 'Invoice' && newTx.status === 'Paid' && (
+              <div className="text-[11px] text-faint -mt-1">
+                Backfilling history? Set "Paid on" to the real payment date — it's used for the Avg. days to pay metric, so leaving it at today's date will understate it.
+              </div>
+            )}
             <div className="flex justify-end gap-2 mt-1">
               <button onClick={() => { setShowAddTx(false); setEditingTxId(null); }} className="text-[11px] uppercase tracking-wider text-muted hover:text-ink px-3 py-1">Cancel</button>
               <button onClick={addTransaction} className="text-[11px] uppercase tracking-wider bg-navy text-white px-4 py-1 rounded hover:opacity-90">
@@ -493,11 +532,33 @@ export default function ClientBillingPanel({ client, onChanged }) {
                       )}
                     </td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <div className="flex justify-end gap-2 opacity-30 hover:opacity-100 transition-opacity">
+                      <div className="flex justify-end items-center gap-2 opacity-30 hover:opacity-100 transition-opacity">
                         {tx.type === 'Invoice' && tx.status !== 'Paid' && (
-                          <button onClick={() => markPaid(tx.id)} className="text-[10px] text-green-600 hover:underline" title="Mark as Paid">
-                            Paid
-                          </button>
+                          markingPaidId === tx.id ? (
+                            <span className="flex items-center gap-1">
+                              <input
+                                type="date"
+                                value={markPaidDate}
+                                onChange={(e) => setMarkPaidDate(e.target.value)}
+                                className="border rounded px-1 py-0.5 text-[10px]"
+                                style={{ borderColor: T.border }}
+                              />
+                              <button onClick={() => markPaid(tx.id, markPaidDate)} className="text-green-600 hover:text-green-700" title="Confirm paid on this date">
+                                <Check size={12} strokeWidth={3} />
+                              </button>
+                              <button onClick={() => setMarkingPaidId(null)} className="text-ink-faint hover:text-red-600" title="Cancel">
+                                <X size={12} strokeWidth={3} />
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => { setMarkingPaidId(tx.id); setMarkPaidDate(tx.date || today); }}
+                              className="text-[10px] text-green-600 hover:underline"
+                              title="Mark as Paid"
+                            >
+                              Paid
+                            </button>
+                          )
                         )}
                         <button onClick={() => startEditTx(tx)} className="text-blue-500 hover:text-blue-700" title="Edit">
                           <Edit2 size={12} strokeWidth={3} />
