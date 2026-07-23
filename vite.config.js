@@ -9,6 +9,16 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['logo.jpg'],
       manifestFilename: 'manifest.json',
+      workbox: {
+        // These are static marketing/legal pages served alongside the SPA,
+        // not app routes — they must always be fetched fresh. Without this,
+        // the SW's default SPA navigation fallback (any navigation not
+        // explicitly excluded gets served the cached index.html) hijacks
+        // them for any browser that already has the SW installed, showing
+        // the app shell instead of the real page.
+        navigateFallbackDenylist: [/^\/freeguide/, /^\/home/, /^\/terms/, /^\/privacy/, /^\/success/, /^\/sign-lpoa/, /^\/downloads\//],
+        globIgnores: ['**/freeguide.html', '**/home.html', '**/terms.html', '**/privacy.html', '**/success.html', '**/sign-lpoa.html', 'downloads/**'],
+      },
       manifest: {
         name: 'Credit Comeback Club',
         short_name: 'CCC Works',
