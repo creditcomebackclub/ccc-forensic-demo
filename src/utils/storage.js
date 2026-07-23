@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { diffAuditAccounts } from './diffEngine';
 
 function slug(s) {
   return String(s || 'unknown')
@@ -93,6 +94,36 @@ async function getClientMeta(userId) {
   return map;
 }
 
+// Fire-and-forget: kicks the server-side progress-narrative background
+// function (Retention Build 1b) when a client has picked up their 2nd+
+// audit. Never awaited by saveAudit() and never throws outward — a failure
+// here must not surface as an audit-save error.
+async function triggerProgressNarrative(clientName) {
+  try {
+    const userId = await getUserId();
+    const { count } = await supabase.from('audits')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('client_name', clientName);
+    if (!count || count < 2) return;
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
+
+    // Netlify background functions ACK with 202 and run detached — this
+    // fetch is not awaited by the caller (saveAudit doesn't await this
+    // function's promise), so the audit save never waits on the network
+    // round trip, let alone the narrative generation itself.
+    await fetch('/.netlify/functions/progress-narrative-background', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ clientName }),
+    });
+  } catch (e) {
+    console.warn('Could not trigger progress narrative:', e);
+  }
+}
+
 export async function saveAudit(audit) {
   // Auto-populate starting scores if not already set
   try {
@@ -148,6 +179,8 @@ export async function saveAudit(audit) {
     name: clientName,
     address: clientAddress,
   }, { onConflict: 'user_id,name', ignoreDuplicates: true });
+
+  triggerProgressNarrative(clientName); // fire-and-forget — never blocks the save
 
   return id;
 }
@@ -319,7 +352,7 @@ export async function adminListClients() {
     // encrypted at rest in client_sensitive_data and only ever fetched
     // on-demand (decrypted server-side) via ClientProfilePanel, never as
     // part of this bulk dashboard load.
-    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger'),
+    supabase.from('clients').select('name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at'),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
@@ -373,6 +406,8 @@ export async function adminListClients() {
       c.billingType = meta.billing_type || null;
       c.billingStartDate = meta.billing_start_date || null;
       c.billingTier = meta.billing_tier || null;
+      c.exitReason = meta.exit_reason || null;
+      c.statusChangedAt = meta.status_changed_at || null;
       c.referredBy = meta.referred_by || null;
       c.referralFee = meta.referral_fee || null;
       c.commissionPaid = meta.commission_paid || false;
@@ -406,6 +441,8 @@ export async function adminListClients() {
       billingType: row.billing_type || null,
       billingStartDate: row.billing_start_date || null,
       billingTier: row.billing_tier || null,
+      exitReason: row.exit_reason || null,
+      statusChangedAt: row.status_changed_at || null,
       referredBy: row.referred_by || null,
       referralFee: row.referral_fee || null,
       commissionPaid: row.commission_paid || false,
@@ -441,82 +478,6 @@ export async function createLead({ name, email, phone, source, notes }) {
     lead_created_at: new Date().toISOString(),
   });
   if (error) throw error;
-}
-
-// ---- Report Diff Engine ----
-// Match key is furnisher + masked account number, NOT the account id (acct_1, acct_2...),
-// because those ids are just sequential labels Claude assigns fresh each audit run and
-// are not stable across separate reports. Furnisher + masked account number is the only
-// data that comes straight from the credit report itself and survives across audits.
-function accountMatchKey(acct) {
-  const furnisher = (acct.furnisher || '').trim().toUpperCase();
-  const num = (acct.accountNumberMasked || '').trim();
-  return furnisher + '|' + num;
-}
-
-function diffAuditAccounts(oldAudit, newAudit) {
-  const oldAccounts = (oldAudit && oldAudit.accounts) || [];
-  const newAccounts = (newAudit && newAudit.accounts) || [];
-
-  const oldMap = new Map(oldAccounts.map((a) => [accountMatchKey(a), a]));
-  const newMap = new Map(newAccounts.map((a) => [accountMatchKey(a), a]));
-
-  const deleted = [];
-  const newlyFound = [];
-  const changed = [];
-  const unchanged = [];
-
-  for (const [key, oldAcct] of oldMap) {
-    if (!newMap.has(key)) {
-      deleted.push({
-        furnisher: oldAcct.furnisher,
-        accountNumberMasked: oldAcct.accountNumberMasked,
-        oldBalance: oldAcct.balance,
-        oldStatus: oldAcct.status,
-        primaryViolation: oldAcct.primaryViolation,
-      });
-    }
-  }
-
-  for (const [key, newAcct] of newMap) {
-    const oldAcct = oldMap.get(key);
-    if (!oldAcct) {
-      newlyFound.push({
-        furnisher: newAcct.furnisher,
-        accountNumberMasked: newAcct.accountNumberMasked,
-        balance: newAcct.balance,
-        status: newAcct.status,
-        primaryViolation: newAcct.primaryViolation,
-      });
-      continue;
-    }
-
-    const oldViolationCount = (oldAcct.violations || []).length;
-    const newViolationCount = (newAcct.violations || []).length;
-    const statusChanged = oldAcct.status !== newAcct.status;
-    const balanceChanged = oldAcct.balance !== newAcct.balance;
-    const violationsChanged = oldViolationCount !== newViolationCount;
-
-    if (statusChanged || balanceChanged || violationsChanged) {
-      changed.push({
-        furnisher: newAcct.furnisher,
-        accountNumberMasked: newAcct.accountNumberMasked,
-        oldStatus: oldAcct.status,
-        newStatus: newAcct.status,
-        oldBalance: oldAcct.balance,
-        newBalance: newAcct.balance,
-        oldViolationCount,
-        newViolationCount,
-      });
-    } else {
-      unchanged.push({
-        furnisher: newAcct.furnisher,
-        accountNumberMasked: newAcct.accountNumberMasked,
-      });
-    }
-  }
-
-  return { deleted, new: newlyFound, changed, unchanged };
 }
 
 export async function runProgressDiff(clientName) {

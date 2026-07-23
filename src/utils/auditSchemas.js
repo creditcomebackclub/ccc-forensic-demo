@@ -47,10 +47,18 @@ const ACCOUNT = {
     furnisherAddress: NULLABLE_STRING,
     batch: { type: 'integer', enum: [1, 2] },
     strategy: { type: 'string' },
+    // Added for the progress-report diff engine (Retention Build 1a) — additive
+    // only, mirrors Metro 2 fields already referenced in violations (DOFD =
+    // Field 25, disputeFlag = Field 19 compliance condition code).
+    paymentRating: NULLABLE_STRING,
+    dateOfFirstDelinquency: NULLABLE_STRING,
+    remarks: NULLABLE_STRING,
+    disputeFlag: { type: 'boolean' },
   },
   required: [
     'id', 'furnisher', 'originalCreditor', 'accountNumberMasked', 'type', 'status',
     'balance', 'bureaus', 'violations', 'primaryViolation', 'addressStatus', 'furnisherAddress', 'batch', 'strategy',
+    'paymentRating', 'dateOfFirstDelinquency', 'remarks', 'disputeFlag',
   ],
 };
 

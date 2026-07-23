@@ -1,20 +1,36 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 
+// Exported so other portal views (e.g. ProgressTab's score-delta badges) can
+// reuse the exact same score→color mapping — "one visual language" per the
+// Retention Build 1c spec, not a second color system that can drift.
+export function getScoreColor(s) {
+  if (!s) return '#9CA3AF'; // gray-400
+  if (s >= 750) return '#15803D'; // green-700
+  if (s >= 700) return '#16A34A'; // green-600
+  if (s >= 650) return '#D97706'; // amber-600
+  if (s >= 600) return '#EA580C'; // orange-600
+  return '#DC2626'; // red-600
+}
+
+// Exported so other portal views (e.g. ProgressTab's per-bureau score-delta
+// badges) render deltas with the exact same markup as ScoreMeter itself.
+export function ScoreDeltaBadge({ delta }) {
+  if (delta === null || delta === undefined) return null;
+  return (
+    <span className={`text-[11px] font-bold px-1.5 py-px rounded ${delta > 0 ? 'text-green-700 bg-green-50' : delta < 0 ? 'text-red-600 bg-red-50' : 'text-gray-500 bg-gray-50'}`}>
+      {delta > 0 ? '▲ +' : delta < 0 ? '▼ ' : ''}{delta}
+    </span>
+  );
+}
+
 export default function ScoreMeter({ label, start, current }) {
   const score = current || start || null;
   const diff = (start && current && current !== start) ? current - start : null;
   const pct = score ? Math.min(100, Math.max(0, ((score - 300) / 550) * 100)) : 0;
   const startPct = start ? Math.min(100, Math.max(0, ((start - 300) / 550) * 100)) : 0;
 
-  const getColor = (s) => {
-    if (!s) return '#9CA3AF'; // gray-400
-    if (s >= 750) return '#15803D'; // green-700
-    if (s >= 700) return '#16A34A'; // green-600
-    if (s >= 650) return '#D97706'; // amber-600
-    if (s >= 600) return '#EA580C'; // orange-600
-    return '#DC2626'; // red-600
-  };
+  const getColor = getScoreColor;
 
   const getRating = (s) => {
     if (!s) return '';
@@ -29,11 +45,7 @@ export default function ScoreMeter({ label, start, current }) {
     <div className="flex-1 min-w-[140px] bg-white p-4 rounded-xl border border-gray-100 shadow-sm transition-shadow hover:shadow-md">
       <div className="flex items-center justify-between mb-2">
         <span className="text-[10px] uppercase tracking-[0.08em] text-gray-400 font-semibold">{label}</span>
-        {diff !== null && (
-          <span className={`text-[11px] font-bold px-1.5 py-px rounded ${diff > 0 ? 'text-green-700 bg-green-50' : diff < 0 ? 'text-red-600 bg-red-50' : 'text-gray-500 bg-gray-50'}`}>
-            {diff > 0 ? '▲ +' : diff < 0 ? '▼ ' : ''}{diff}
-          </span>
-        )}
+        <ScoreDeltaBadge delta={diff} />
       </div>
 
       <div className="relative mb-2">

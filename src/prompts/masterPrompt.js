@@ -327,7 +327,11 @@ When the user message contains the marker \`<MODE>AUDIT_JSON</MODE>\`, you MUST 
       "addressStatus": "YES" | "CONFIRM" | "PENDING",
       "furnisherAddress": "full mailing address as one string, matching the format in the verified address list above (e.g. 'USALLIANCE Financial, 411 Theodore Fremd Avenue Suite 350, Rye, NY 10580-1426'), or null if no match",
       "batch": 1 | 2,
-      "strategy": "1-line strategy summary"
+      "strategy": "1-line strategy summary",
+      "paymentRating": "current payment status if the report shows one distinct from Account Status, e.g. 'Current' or '90 days late', or null",
+      "dateOfFirstDelinquency": "Field 25 DOFD as YYYY-MM-DD if reported, else null",
+      "remarks": "any remarks/comments text the bureau shows for this account, or null",
+      "disputeFlag": "true if Field 19 (Compliance Condition Code) shows the account as consumer-disputed (e.g. code XB), else false"
     }
   ],
   "violationsByType": [
