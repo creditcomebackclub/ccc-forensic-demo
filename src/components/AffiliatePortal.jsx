@@ -173,10 +173,28 @@ export default function AffiliatePortal({ session, onSignOut }) {
     neutral: { bg: '#F9FAFB', color: '#6B7280', border: '#E5E7EB' },
   };
 
-  const totalCommission = clients.reduce((sum, c) => sum + (c.referral_fee ? c.referral_fee * (affiliate?.commission_rate || 0.20) : 0), 0);
-  const paidCommission = clients.filter(c => c.commission_paid).reduce((sum, c) => sum + (c.referral_fee ? c.referral_fee * (affiliate?.commission_rate || 0.20) : 0), 0);
+  const getClientTotalPaid = (c) => {
+    if (!c.ledger) return 0;
+    const ledger = Array.isArray(c.ledger) ? c.ledger : (typeof c.ledger === 'string' ? JSON.parse(c.ledger) : []);
+    return ledger.reduce((sum, tx) => {
+      if (tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid')) {
+        return sum + (parseFloat(tx.amount) || 0);
+      }
+      return sum;
+    }, 0);
+  };
+
+  const getClientCommission = (c) => {
+    const tp = getClientTotalPaid(c);
+    const rate = c.referral_fee !== null && c.referral_fee !== undefined ? c.referral_fee : ((affiliate?.commission_rate || 0.20) * 100);
+    return tp * (rate / 100);
+  };
+
+  const totalCommission = clients.reduce((sum, c) => sum + getClientCommission(c), 0);
+  const paidCommission = clients.filter(c => c.commission_paid).reduce((sum, c) => sum + getClientCommission(c), 0);
   const pendingCommission = totalCommission - paidCommission;
   const deletions = letters.filter(l => l.response_outcome === 'deleted').length;
+  const totalRevenue = clients.reduce((sum, c) => sum + getClientTotalPaid(c), 0);
 
   if (loading) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0C0C0C' }}>
@@ -439,20 +457,26 @@ export default function AffiliatePortal({ session, onSignOut }) {
           <>
             <div style={{ marginBottom: 24 }}>
               <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Commissions</h2>
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>{settings?.affiliates?.defaultCommissionRate || 20}% of the initial consultation fee per referred client.</p>
+              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>{Math.round((affiliate?.commission_rate || 0.20) * 100)}% of the total revenue per referred client.</p>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 28 }}>
-              {[
-                { label: 'Total Earned', value: '$' + totalCommission.toFixed(2), color: '#fff' },
-                { label: 'Paid Out', value: '$' + paidCommission.toFixed(2), color: brandColor },
-                { label: 'Pending', value: '$' + pendingCommission.toFixed(2), color: '#D97706' },
-              ].map(({ label, value, color }) => (
-                <div key={label} style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
-                  <div style={{ fontSize: 28, fontWeight: 800, color, marginBottom: 6 }}>{value}</div>
-                  <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.35)' }}>{label}</div>
-                </div>
-              ))}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
+              <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
+                <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Total Revenue</div>
+                <div style={{ color: '#fff', fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${totalRevenue.toFixed(2)}</div>
+              </div>
+              <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
+                <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Total Earned</div>
+                <div style={{ color: '#fff', fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${totalCommission.toFixed(2)}</div>
+              </div>
+              <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
+                <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Paid Out</div>
+                <div style={{ color: brandColor, fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${paidCommission.toFixed(2)}</div>
+              </div>
+              <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
+                <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Pending</div>
+                <div style={{ color: '#D97706', fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${pendingCommission.toFixed(2)}</div>
+              </div>
             </div>
 
             <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, overflow: 'hidden' }}>
@@ -468,14 +492,16 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   <thead>
                     <tr style={{ borderBottom: '1px solid #1A1A1A' }}>
                       <th style={{ padding: '12px 20px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Client</th>
-                      <th style={{ padding: '12px 20px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Consultation Fee</th>
+                      <th style={{ padding: '12px 20px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Total Paid</th>
                       <th style={{ padding: '12px 20px', textAlign: 'right', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Your Commission</th>
                       <th style={{ padding: '12px 20px', textAlign: 'right', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {clients.map(c => {
-                      const fee = c.referral_fee ? c.referral_fee * (affiliate?.commission_rate || 0.20) : null;
+                      const totalPaid = getClientTotalPaid(c);
+                      const commission = getClientCommission(c);
+                      const rate = (affiliate?.commission_rate || 0.20) * 100;
                       return (
                         <tr key={c.id} style={{ borderBottom: '1px solid #1A1A1A' }}>
                           <td style={{ padding: '14px 20px' }}>
@@ -483,12 +509,15 @@ export default function AffiliatePortal({ session, onSignOut }) {
                             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>Enrolled: {new Date(c.created_at).toLocaleDateString()}</div>
                           </td>
                           <td style={{ padding: '14px 20px', fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
-                            {c.referral_fee ? '$' + c.referral_fee.toFixed(2) : 'Awaiting'}
+                            ${totalPaid.toFixed(2)}
                           </td>
                           <td style={{ padding: '14px 20px', textAlign: 'right' }}>
-                            <span style={{ fontSize: 14, fontWeight: 700, color: fee ? '#fff' : 'rgba(255,255,255,0.2)' }}>
-                              {fee ? '$' + fee.toFixed(2) : '—'}
-                            </span>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                              <span style={{ fontSize: 14, fontWeight: 700, color: commission > 0 ? '#fff' : 'rgba(255,255,255,0.2)' }}>
+                                {commission > 0 ? '$' + commission.toFixed(2) : '—'}
+                              </span>
+                              {commission > 0 && <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>@ {rate}%</span>}
+                            </div>
                           </td>
                           <td style={{ padding: '14px 20px', textAlign: 'right' }}>
                             {c.commission_paid ? (

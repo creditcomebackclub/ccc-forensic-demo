@@ -95,11 +95,14 @@ export default function ClientBillingPanel({ client, onChanged }) {
   const [affiliates, setAffiliates] = useState({});
 
   useEffect(() => {
-    supabase.from('affiliates').select('id, name, company').then(({ data }) => {
+    supabase.from('affiliates').select('id, name, company, commission_rate').then(({ data }) => {
       if (data) {
         const map = {};
         data.forEach(a => {
-          map[a.id] = a.name + (a.company ? ` (${a.company})` : '');
+          map[a.id] = {
+            name: a.name + (a.company ? ` (${a.company})` : ''),
+            rate: a.commission_rate || 0.20
+          };
         });
         setAffiliates(map);
       }
@@ -263,22 +266,35 @@ export default function ClientBillingPanel({ client, onChanged }) {
           <div className="flex items-center gap-1.5 justify-end">
             <Link size={12} className="text-navy" />
             <span className="text-[12px] font-medium" style={{ color: client.referredBy ? T.ink : T.faint }}>
-              {client.referredBy ? (affiliates[client.referredBy] || client.referredBy) : 'No affiliate linked'}
+              {client.referredBy ? (affiliates[client.referredBy]?.name || client.referredBy) : 'No affiliate linked'}
             </span>
           </div>
         </Row>
         
-        <Row label="Referral Fee ($)">
+        <Row label="Commission Override (%)">
           <Field 
-            label="referral fee" 
+            label="custom commission rate" 
             value={client.referralFee ? String(client.referralFee) : ''} 
             type="number"
-            placeholder="0.00"
+            placeholder={client.referredBy ? `Default: ${((affiliates[client.referredBy]?.rate || 0.20) * 100)}%` : 'e.g. 25'}
             onSave={(v) => save({ referral_fee: v ? parseFloat(v) : null })} 
           />
         </Row>
 
-        <Row label="Commission Status">
+        {client.referredBy && (
+          <Row label="Commission Status">
+            <div className="text-right">
+              <div className="text-[14px] font-bold text-navy">
+                ${(totalPaid * ((client.referralFee !== null && client.referralFee !== undefined ? client.referralFee : ((affiliates[client.referredBy]?.rate || 0.20) * 100)) / 100)).toFixed(2)}
+              </div>
+              <div className="text-[10px] text-ink-muted mt-0.5">
+                Total owed based on ${totalPaid.toFixed(2)} lifetime payments
+              </div>
+            </div>
+          </Row>
+        )}
+        
+        <Row label="Payment Status">
           <div className="flex items-center gap-2 justify-end mt-1">
             <button 
               onClick={() => save({ commission_paid: !client.commissionPaid, commission_paid_at: !client.commissionPaid ? new Date().toISOString() : null })}

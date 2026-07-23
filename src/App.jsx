@@ -6,6 +6,7 @@ import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit } from './utils/api';
 import { getUnanalyzedResponseStats } from './utils/actionItems';
+import AffiliateProfilePanel from './components/AffiliateProfilePanel';
 
 const UploadZone = lazy(() => import('./components/UploadZone'));
 const AuditProgress = lazy(() => import('./components/AuditProgress'));
@@ -28,18 +29,30 @@ const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS
 function AffiliatesPage() {
   const [affiliates, setAffiliates] = React.useState([]);
   const [clients, setClients] = React.useState([]);
+  const [selectedAffiliate, setSelectedAffiliate] = useState(null);
   const [loading, setLoading] = React.useState(true);
   const [showCreate, setShowCreate] = React.useState(false);
   const [form, setForm] = React.useState({ name: '', email: '', company: '', brand_name: '', brand_color: '#22C55E', brand_logo_url: '', commission_rate: '0.20' });
   const [creating, setCreating] = React.useState(false);
   const [error, setError] = React.useState(null);
 
+  const getClientTotalPaid = (c) => {
+    if (!c.ledger) return 0;
+    const ledger = Array.isArray(c.ledger) ? c.ledger : (typeof c.ledger === 'string' ? JSON.parse(c.ledger) : []);
+    return ledger.reduce((sum, tx) => {
+      if (tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid')) {
+        return sum + (parseFloat(tx.amount) || 0);
+      }
+      return sum;
+    }, 0);
+  };
+
   React.useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     const [affRes, clientRes] = await Promise.all([
       supabase.from('affiliates').select('*').order('created_at', { ascending: false }),
-      supabase.from('clients').select('name, referred_by, referral_fee, commission_paid, commission_paid_at').not('referred_by', 'is', null),
+      supabase.from('clients').select('id, name, created_at, referred_by, referral_fee, commission_paid, commission_paid_at, ledger').not('referred_by', 'is', null),
     ]);
     setAffiliates(affRes.data || []);
     setClients(clientRes.data || []);
@@ -111,19 +124,6 @@ function AffiliatesPage() {
     }
   };
 
-  const markCommissionPaid = async (clientName) => {
-    if (!window.confirm('Mark commission as paid for ' + clientName + '?')) return;
-    await supabase.from('clients').update({ commission_paid: true, commission_paid_at: new Date().toISOString() }).eq('name', clientName);
-    loadData();
-  };
-
-  const setReferralFee = async (clientName, fee) => {
-    const val = parseFloat(fee);
-    if (isNaN(val)) return;
-    await supabase.from('clients').update({ referral_fee: val }).eq('name', clientName);
-    loadData();
-  };
-
   if (loading) return <div className="p-8 text-ink-muted text-[13px]">Loading affiliates…</div>;
 
   return (
@@ -151,10 +151,22 @@ function AffiliatesPage() {
         <div className="space-y-4">
           {affiliates.map(aff => {
             const affClients = clients.filter(c => c.referred_by === aff.id);
-            const totalComm = affClients.reduce((s, c) => s + (c.referral_fee ? c.referral_fee * aff.commission_rate : 0), 0);
-            const paidComm = affClients.filter(c => c.commission_paid).reduce((s, c) => s + (c.referral_fee ? c.referral_fee * aff.commission_rate : 0), 0);
+            const totalComm = affClients.reduce((s, c) => {
+              const tp = getClientTotalPaid(c);
+              const rate = c.referral_fee !== null && c.referral_fee !== undefined ? c.referral_fee : ((aff.commission_rate || 0.20) * 100);
+              return s + (tp * (rate / 100));
+            }, 0);
+            const paidComm = affClients.filter(c => c.commission_paid).reduce((s, c) => {
+              const tp = getClientTotalPaid(c);
+              const rate = c.referral_fee !== null && c.referral_fee !== undefined ? c.referral_fee : ((aff.commission_rate || 0.20) * 100);
+              return s + (tp * (rate / 100));
+            }, 0);
             return (
-              <div key={aff.id} className="border border-border rounded bg-white">
+              <div 
+                key={aff.id} 
+                className="border border-border rounded bg-white cursor-pointer hover:shadow-sm transition-shadow"
+                onClick={() => setSelectedAffiliate(aff)}
+              >
                 <div className="p-4 border-b border-border flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     {aff.brand_logo_url && <img src={aff.brand_logo_url} alt={aff.brand_name} style={{ height: 28, objectFit: 'contain' }} />}
@@ -178,44 +190,19 @@ function AffiliatesPage() {
                     </div>
                   </div>
                 </div>
-                {affClients.length > 0 && (
-                  <div>
-                    {affClients.map(c => (
-                      <div key={c.name} className="px-4 py-3 border-b border-border last:border-b-0 flex items-center justify-between gap-3">
-                        <div className="text-[12px] text-ink font-medium">{c.name}</div>
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[11px] text-ink-muted">Fee: $</span>
-                            <input
-                              type="number"
-                              defaultValue={c.referral_fee || ''}
-                              placeholder="0.00"
-                              onBlur={e => setReferralFee(c.name, e.target.value)}
-                              className="w-20 text-[12px] border border-border rounded px-2 py-1 text-ink"
-                            />
-                          </div>
-                          <div className="text-[12px] text-ink-muted">
-                            Comm: <span className="font-medium text-ink">${c.referral_fee ? (c.referral_fee * aff.commission_rate).toFixed(2) : '—'}</span>
-                          </div>
-                          {c.commission_paid ? (
-                            <span className="flex items-center gap-1 text-[11px] text-green-700 font-medium">
-                              <CheckCircle size={12} strokeWidth={2} /> Paid {c.commission_paid_at ? new Date(c.commission_paid_at).toLocaleDateString() : ''}
-                            </span>
-                          ) : (
-                            <button onClick={() => markCommissionPaid(c.name)}
-                              className="text-[11px] uppercase tracking-wider px-2 py-1 rounded border border-border text-ink-muted hover:text-navy hover:border-navy transition-colors">
-                              Mark Paid
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             );
           })}
         </div>
+      )}
+
+      {selectedAffiliate && (
+        <AffiliateProfilePanel
+          affiliate={selectedAffiliate}
+          clients={clients.filter(c => c.referred_by === selectedAffiliate.id)}
+          onClose={() => setSelectedAffiliate(null)}
+          onUpdate={loadData}
+        />
       )}
 
       {showCreate && (
