@@ -326,6 +326,30 @@ export const handler = async (event) => {
 
     await saveAuditAs(job.user_id, audit);
 
+    // Retention Build 1b/1d — fire-and-forget, never awaited and never
+    // allowed to affect this job's success. This is the ONLY place that
+    // actually needs to trigger it: the client-side saveAudit() in
+    // src/utils/storage.js has the same trigger, but nothing in the browser
+    // calls that function anymore (the real upload flow is this background
+    // job) — so without this, progress-narrative-background.mjs would never
+    // fire in production. progress-narrative-background.mjs's own internal
+    // check no-ops if this client has fewer than 2 audits, so it's safe to
+    // call unconditionally after every save.
+    (async () => {
+      try {
+        const clientName = (audit && audit.client && audit.client.name) || null;
+        if (!clientName) return;
+        const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+        await fetch(base + '/.netlify/functions/progress-narrative-background', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + supabaseKey },
+          body: JSON.stringify({ clientName, userId: job.user_id }),
+        });
+      } catch (e) {
+        console.warn('[audit] progress-narrative trigger failed (non-fatal):', e.message);
+      }
+    })();
+
     const totals = usageLog.reduce((s, u) => ({
       input: s.input + u.input, output: s.output + u.output,
       cache_read: s.cache_read + u.cache_read, cache_write: s.cache_write + u.cache_write,

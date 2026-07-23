@@ -37,8 +37,22 @@ async function requireAuth(event) {
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !anonKey) {
     throw { statusCode: 500, body: JSON.stringify({ error: 'Supabase env vars missing' }) };
+  }
+
+  // Trusted server-to-server calls (e.g. audit-run-background.mjs triggering
+  // progress-narrative-background.mjs right after saving a new audit) present
+  // the service role key directly as the bearer token — only server code ever
+  // holds that secret, so it's safe to trust without a user JWT. There's no
+  // JWT to derive a user from in this case, so the caller must supply userId
+  // explicitly in the request body.
+  if (serviceKey && token === serviceKey) {
+    let bodyUserId = null;
+    try { bodyUserId = JSON.parse(event.body || '{}').userId || null; } catch (e) { /* fall through to the error below */ }
+    if (!bodyUserId) throw { statusCode: 400, body: JSON.stringify({ error: 'userId required when authenticating with the service role key' }) };
+    return { userId: bodyUserId, email: null, token, isSystem: true };
   }
 
   // Fetch the user using the client's token to verify it's valid
@@ -46,7 +60,7 @@ async function requireAuth(event) {
   if (userRes.status !== 200 || !userRes.body || !userRes.body.id) {
     throw { statusCode: 401, body: JSON.stringify({ error: 'Invalid or expired session' }) };
   }
-  
+
   return { userId: userRes.body.id, email: userRes.body.email, token };
 }
 
