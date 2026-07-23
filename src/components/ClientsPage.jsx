@@ -875,7 +875,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         )}
         <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />
         <LetterEditModal letter={editingLetterHtml} onClose={() => setEditingLetterHtml(null)} onSaved={load} />
-        <DiffResultModal result={diffResult} onClose={() => setDiffResult(null)} />
+        <DiffResultModal result={diffResult} onClose={() => setDiffResult(null)} onOpenAudit={onOpenAudit} />
       </div>
     );
   }
@@ -1211,7 +1211,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       {leadModal}
       <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />
       <LetterEditModal letter={editingLetterHtml} onClose={() => setEditingLetterHtml(null)} onSaved={load} />
-      <DiffResultModal result={diffResult} onClose={() => setDiffResult(null)} />
+      <DiffResultModal result={diffResult} onClose={() => setDiffResult(null)} onOpenAudit={onOpenAudit} />
     </div>
   );
 }
@@ -1680,9 +1680,28 @@ function AccountTimelineModal({ data, onClose }) {
 }
 
 
-function DiffResultModal({ result, onClose }) {
+function DiffResultModal({ result, onClose, onOpenAudit }) {
   if (!result) return null;
-  const { clientName, fromReportDate, toReportDate, diff } = result;
+  const { clientName, fromReportDate, toReportDate, diff, newerAudit } = result;
+
+  // The diff only carries a lightweight summary per account (furnisher,
+  // masked number, balance, status) — letter generation needs the full
+  // record (violations, batch, strategy, addressStatus...), which lives on
+  // newerAudit.accounts. Matched the same way the diff engine itself
+  // identifies an account within one report: furnisher + masked number.
+  const findFullAccount = (a) => (newerAudit?.accounts || []).find(
+    (fa) => fa.furnisher === a.furnisher && fa.accountNumberMasked === a.accountNumberMasked
+  ) || null;
+
+  // Reuses the existing, unmodified letter-generation flow exactly as if
+  // the account were opened normally from this audit's own results page —
+  // just skips the navigation. Never touches how a letter is generated.
+  const disputeAccount = (a) => {
+    const full = findFullAccount(a);
+    if (!full || !newerAudit || !onOpenAudit) return;
+    onOpenAudit(newerAudit, full);
+    onClose();
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={onClose}>
@@ -1717,13 +1736,20 @@ function DiffResultModal({ result, onClose }) {
               <div className="text-[10px] uppercase tracking-wider text-amber-700 font-medium mb-2">Changed ({diff.changed.length})</div>
               <div className="space-y-2">
                 {diff.changed.map((a, i) => (
-                  <div key={i} className="bg-amber-50 border border-amber-200 rounded-sm p-3">
-                    <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
-                    <div className="text-[11px] text-ink-muted mt-0.5">
-                      {a.oldStatus !== a.newStatus && <span>Status: {a.oldStatus} → {a.newStatus} · </span>}
-                      {a.oldBalance !== a.newBalance && <span>Balance: ${Number(a.oldBalance || 0).toLocaleString()} → ${Number(a.newBalance || 0).toLocaleString()} · </span>}
-                      Violations: {a.oldViolationCount} → {a.newViolationCount}
+                  <div key={i} className="bg-amber-50 border border-amber-200 rounded-sm p-3 flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
+                      <div className="text-[11px] text-ink-muted mt-0.5">
+                        {a.oldStatus !== a.newStatus && <span>Status: {a.oldStatus} → {a.newStatus} · </span>}
+                        {a.oldBalance !== a.newBalance && <span>Balance: ${Number(a.oldBalance || 0).toLocaleString()} → ${Number(a.newBalance || 0).toLocaleString()} · </span>}
+                        Violations: {a.oldViolationCount} → {a.newViolationCount}
+                      </div>
                     </div>
+                    {findFullAccount(a) && (
+                      <button onClick={() => disputeAccount(a)} className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm border border-amber-300 text-amber-700 hover:bg-amber-100 transition-colors">
+                        Generate Letter
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1735,9 +1761,16 @@ function DiffResultModal({ result, onClose }) {
               <div className="text-[10px] uppercase tracking-wider text-blue-700 font-medium mb-2">New Accounts ({diff.new.length})</div>
               <div className="space-y-2">
                 {diff.new.map((a, i) => (
-                  <div key={i} className="bg-blue-50 border border-blue-200 rounded-sm p-3">
-                    <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
-                    <div className="text-[11px] text-ink-muted mt-0.5">{a.status} · ${Number(a.balance || 0).toLocaleString()}</div>
+                  <div key={i} className="bg-blue-50 border border-blue-200 rounded-sm p-3 flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
+                      <div className="text-[11px] text-ink-muted mt-0.5">{a.status} · ${Number(a.balance || 0).toLocaleString()}</div>
+                    </div>
+                    {findFullAccount(a) && (
+                      <button onClick={() => disputeAccount(a)} className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm border border-blue-300 text-blue-700 hover:bg-blue-100 transition-colors">
+                        Generate Letter
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

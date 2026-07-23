@@ -513,7 +513,11 @@ export async function runProgressDiff(clientName) {
   });
   if (saveErr) throw saveErr;
 
-  return { id, fromReportDate: older.report_date, toReportDate: newer.report_date, diff };
+  // newerAudit rides along so callers (the Report Comparison modal's
+  // "Generate Letter" shortcut) can look up a diffed account's full record
+  // — violations, batch, strategy, etc. — without a second fetch; already
+  // in hand here since diffAuditAccounts() needed it above.
+  return { id, fromReportDate: older.report_date, toReportDate: newer.report_date, diff, newerAudit: newer.audit };
 }
 
 export async function getProgressUpdates(clientName) {

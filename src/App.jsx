@@ -581,7 +581,16 @@ export default function App() {
 
   const handleReset = () => { setView(VIEW.AUDIT); setState(STATE.IDLE); setAuditResult(null); setError(null); };
   const handleGenerateLetter = (account) => setActiveLetter(account);
-  const handleOpenSavedAudit = (audit) => { setAuditResult(audit); setState(STATE.RESULTS); setView(VIEW.AUDIT); setAuditClientName(audit && audit.client && audit.client.name || null); };
+  // autoOpenAccount: optional — used by the Report Comparison modal's
+  // "Generate Letter" shortcut to jump straight to LetterViewer for a
+  // specific account instead of just opening the audit.
+  const handleOpenSavedAudit = (audit, autoOpenAccount) => {
+    setAuditResult(audit);
+    setState(STATE.RESULTS);
+    setView(VIEW.AUDIT);
+    setAuditClientName(audit && audit.client && audit.client.name || null);
+    if (autoOpenAccount) setActiveLetter(autoOpenAccount);
+  };
   const handleSignOut = async () => { try { await supabase.auth.signOut(); } catch(e) {} window.location.href = '/'; };
 
   return (
