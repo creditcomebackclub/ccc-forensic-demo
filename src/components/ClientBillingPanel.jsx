@@ -100,6 +100,11 @@ export default function ClientBillingPanel({ client, onChanged }) {
     return sum;
   }, 0);
 
+  const totalPaid = ledger.reduce((sum, tx) => {
+    if (tx.type === 'Payment') return sum + (parseFloat(tx.amount) || 0);
+    return sum;
+  }, 0);
+
   const save = async (fields) => {
     try {
       await updateClientProfile(client.name, fields);
@@ -171,6 +176,11 @@ export default function ClientBillingPanel({ client, onChanged }) {
         <Row label="Amount Due">
           <div className="text-[18px] font-bold" style={{ color: balanceDue > 0 ? '#DC2626' : T.ink }}>
             ${balanceDue.toFixed(2)}
+          </div>
+        </Row>
+        <Row label="Total Paid (Lifetime)">
+          <div className="text-[14px] font-medium" style={{ color: totalPaid > 0 ? '#15803D' : T.faint }}>
+            ${totalPaid.toFixed(2)}
           </div>
         </Row>
         <Row label="Billing Status">
