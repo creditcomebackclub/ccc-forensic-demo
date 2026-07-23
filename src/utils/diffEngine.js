@@ -137,8 +137,22 @@ export function diffAuditAccounts(oldAudit, newAudit) {
   for (const { oldIdx, newIdx } of matches) {
     const oldAcct = oldByIdx.get(oldIdx);
     const newAcct = newByIdx.get(newIdx);
-    const oldViolationCount = (oldAcct.violations || []).length;
-    const newViolationCount = (newAcct.violations || []).length;
+    const oldViolations = (oldAcct.violations || []).map((v) => ({ field: v.field, issue: v.issue, severity: v.severity, statute: v.statute }));
+    const newViolations = (newAcct.violations || []).map((v) => ({ field: v.field, issue: v.issue, severity: v.severity, statute: v.statute }));
+    const oldViolationCount = oldViolations.length;
+    const newViolationCount = newViolations.length;
+
+    // A violation count going down does NOT necessarily mean the furnisher
+    // fixed anything — the extraction isn't perfectly deterministic between
+    // runs, so a "resolved" violation might just be one the model didn't
+    // flag this time. Field-level before/after (not just a count) is what
+    // lets a human judge whether it's a real change or extraction noise —
+    // never inferred by an LLM, computed the same way the rest of this
+    // engine is.
+    const oldFields = new Set(oldViolations.map((v) => v.field));
+    const newFields = new Set(newViolations.map((v) => v.field));
+    const violationsResolved = oldViolations.filter((v) => !newFields.has(v.field));
+    const violationsNew = newViolations.filter((v) => !oldFields.has(v.field));
 
     const fields = [
       ['balance', oldAcct.balance, newAcct.balance],
@@ -149,7 +163,9 @@ export function diffAuditAccounts(oldAudit, newAudit) {
       ['disputeFlag', !!oldAcct.disputeFlag, !!newAcct.disputeFlag],
     ];
     const fieldChanges = fields.filter(([, o, n]) => o !== n);
-    const violationsChanged = oldViolationCount !== newViolationCount;
+    // Content, not just count — two violations swapping for two different
+    // ones would otherwise show as "unchanged" since the totals match.
+    const violationsChanged = violationsResolved.length > 0 || violationsNew.length > 0;
 
     if (fieldChanges.length > 0 || violationsChanged) {
       changed.push({
@@ -158,6 +174,10 @@ export function diffAuditAccounts(oldAudit, newAudit) {
         changes: Object.fromEntries(fieldChanges.map(([k, o, n]) => [k, { old: o, new: n }])),
         oldViolationCount,
         newViolationCount,
+        oldViolations,
+        newViolations,
+        violationsResolved,
+        violationsNew,
         // Kept for callers/UI still reading the pre-1a shape.
         oldStatus: oldAcct.status,
         newStatus: newAcct.status,

@@ -734,7 +734,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     setDiffLoading(c.name);
                     try {
                       const result = await runProgressDiff(c.name);
-                      setDiffResult({ clientName: c.name, ...result });
+                      setDiffResult({ clientName: c.name, letters: c.letters, ...result });
                     } catch (e) {
                       toast.error('Could not run comparison: ' + e.message);
                     } finally {
@@ -1680,9 +1680,58 @@ function AccountTimelineModal({ data, onClose }) {
 }
 
 
+// A violation count going down never proves anything got fixed — Claude's
+// extraction isn't perfectly deterministic between audit runs, so "3 → 2"
+// could just as easily be the model not re-flagging one this time. This
+// shows exactly which violations were resolved vs newly found, so a human
+// can judge that instead of trusting a bare number.
+function ViolationDetail({ a }) {
+  const SEV_COLOR = { high: 'text-red-700', med: 'text-amber-700', low: 'text-ink-muted' };
+  const stillPresent = (a.newViolations || []).filter(
+    (v) => !(a.violationsNew || []).some((nv) => nv.field === v.field)
+  );
+  return (
+    <div className="mt-2 pt-2 border-t border-black/5 space-y-2">
+      {a.violationsResolved && a.violationsResolved.length > 0 && (
+        <div>
+          <div className="text-[9px] uppercase tracking-wider text-ink-faint font-medium mb-1">
+            No longer flagged this pull — verify before assuming resolved
+          </div>
+          {a.violationsResolved.map((v, i) => (
+            <div key={i} className="text-[11px] text-ink-muted">
+              <span className={SEV_COLOR[v.severity] || ''}>{v.field}</span> — {v.issue}
+            </div>
+          ))}
+        </div>
+      )}
+      {a.violationsNew && a.violationsNew.length > 0 && (
+        <div>
+          <div className="text-[9px] uppercase tracking-wider text-ink-faint font-medium mb-1">Newly flagged</div>
+          {a.violationsNew.map((v, i) => (
+            <div key={i} className="text-[11px] text-ink-muted">
+              <span className={SEV_COLOR[v.severity] || ''}>{v.field}</span> — {v.issue}
+            </div>
+          ))}
+        </div>
+      )}
+      {stillPresent.length > 0 && (
+        <div>
+          <div className="text-[9px] uppercase tracking-wider text-ink-faint font-medium mb-1">Still present</div>
+          {stillPresent.map((v, i) => (
+            <div key={i} className="text-[11px] text-ink-muted">
+              <span className={SEV_COLOR[v.severity] || ''}>{v.field}</span> — {v.issue}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DiffResultModal({ result, onClose, onOpenAudit }) {
+  const [expandedKey, setExpandedKey] = React.useState(null);
   if (!result) return null;
-  const { clientName, fromReportDate, toReportDate, diff, newerAudit } = result;
+  const { clientName, fromReportDate, toReportDate, diff, newerAudit, letters } = result;
 
   // The diff only carries a lightweight summary per account (furnisher,
   // masked number, balance, status) — letter generation needs the full
@@ -1693,6 +1742,18 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
     (fa) => fa.furnisher === a.furnisher && fa.accountNumberMasked === a.accountNumberMasked
   ) || null;
 
+  // Safety net for the shortcut below: match by furnisher name only (the
+  // one identifier every mailed Phase 1 letter and every diffed account
+  // both reliably carry) against any already-mailed, non-Phase-3 letter.
+  // Not perfectly precise if a client has two distinct accounts with the
+  // same furnisher, but the point is to stop an accidental re-send, not to
+  // silently allow one on a technicality.
+  const normFurnisher = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const alreadyDisputed = (furnisher) => {
+    const target = normFurnisher(furnisher);
+    return (letters || []).some((l) => l.mailedDate && !l.phase?.startsWith('Phase 3') && normFurnisher(l.furnisher) === target);
+  };
+
   // Reuses the existing, unmodified letter-generation flow exactly as if
   // the account were opened normally from this audit's own results page —
   // just skips the navigation. Never touches how a letter is generated.
@@ -1701,6 +1762,24 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
     if (!full || !newerAudit || !onOpenAudit) return;
     onOpenAudit(newerAudit, full);
     onClose();
+  };
+
+  const DisputeAction = ({ a, tone }) => {
+    const full = findFullAccount(a);
+    if (!full) return null;
+    if (alreadyDisputed(a.furnisher)) {
+      return (
+        <span className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-gray-100 text-ink-faint" title="A letter has already been mailed to this furnisher — check the Letters tab before disputing again">
+          Already Disputed
+        </span>
+      );
+    }
+    const toneClass = tone === 'amber' ? 'border-amber-300 text-amber-700 hover:bg-amber-100' : 'border-blue-300 text-blue-700 hover:bg-blue-100';
+    return (
+      <button onClick={() => disputeAccount(a)} className={`shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm border transition-colors ${toneClass}`}>
+        Generate Letter
+      </button>
+    );
   };
 
   return (
@@ -1735,23 +1814,27 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
             <div>
               <div className="text-[10px] uppercase tracking-wider text-amber-700 font-medium mb-2">Changed ({diff.changed.length})</div>
               <div className="space-y-2">
-                {diff.changed.map((a, i) => (
-                  <div key={i} className="bg-amber-50 border border-amber-200 rounded-sm p-3 flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
-                      <div className="text-[11px] text-ink-muted mt-0.5">
-                        {a.oldStatus !== a.newStatus && <span>Status: {a.oldStatus} → {a.newStatus} · </span>}
-                        {a.oldBalance !== a.newBalance && <span>Balance: ${Number(a.oldBalance || 0).toLocaleString()} → ${Number(a.newBalance || 0).toLocaleString()} · </span>}
-                        Violations: {a.oldViolationCount} → {a.newViolationCount}
+                {diff.changed.map((a, i) => {
+                  const key = 'changed-' + i;
+                  const isOpen = expandedKey === key;
+                  return (
+                    <div key={i} className="bg-amber-50 border border-amber-200 rounded-sm p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <button className="text-left flex-1" onClick={() => setExpandedKey(isOpen ? null : key)}>
+                          <div className="text-[12px] font-medium text-ink hover:underline">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
+                          <div className="text-[11px] text-ink-muted mt-0.5">
+                            {a.oldStatus !== a.newStatus && <span>Status: {a.oldStatus} → {a.newStatus} · </span>}
+                            {a.oldBalance !== a.newBalance && <span>Balance: ${Number(a.oldBalance || 0).toLocaleString()} → ${Number(a.newBalance || 0).toLocaleString()} · </span>}
+                            Violations: {a.oldViolationCount} → {a.newViolationCount}
+                            {(a.oldViolationCount !== a.newViolationCount || (a.violationsResolved || []).length > 0) && <span className="text-navy"> · view detail</span>}
+                          </div>
+                        </button>
+                        <DisputeAction a={a} tone="amber" />
                       </div>
+                      {isOpen && <ViolationDetail a={a} />}
                     </div>
-                    {findFullAccount(a) && (
-                      <button onClick={() => disputeAccount(a)} className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm border border-amber-300 text-amber-700 hover:bg-amber-100 transition-colors">
-                        Generate Letter
-                      </button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1760,19 +1843,34 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
             <div>
               <div className="text-[10px] uppercase tracking-wider text-blue-700 font-medium mb-2">New Accounts ({diff.new.length})</div>
               <div className="space-y-2">
-                {diff.new.map((a, i) => (
-                  <div key={i} className="bg-blue-50 border border-blue-200 rounded-sm p-3 flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
-                      <div className="text-[11px] text-ink-muted mt-0.5">{a.status} · ${Number(a.balance || 0).toLocaleString()}</div>
+                {diff.new.map((a, i) => {
+                  const full = findFullAccount(a);
+                  const key = 'new-' + i;
+                  const isOpen = expandedKey === key;
+                  return (
+                    <div key={i} className="bg-blue-50 border border-blue-200 rounded-sm p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <button className="text-left flex-1" onClick={() => setExpandedKey(isOpen ? null : key)} disabled={!full?.violations?.length}>
+                          <div className="text-[12px] font-medium text-ink hover:underline">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
+                          <div className="text-[11px] text-ink-muted mt-0.5">
+                            {a.status} · ${Number(a.balance || 0).toLocaleString()}
+                            {full?.violations?.length > 0 && <span className="text-navy"> · view {full.violations.length} violation{full.violations.length === 1 ? '' : 's'}</span>}
+                          </div>
+                        </button>
+                        <DisputeAction a={a} tone="blue" />
+                      </div>
+                      {isOpen && full?.violations?.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-black/5 space-y-1">
+                          {full.violations.map((v, vi) => (
+                            <div key={vi} className="text-[11px] text-ink-muted">
+                              <span className={v.severity === 'high' ? 'text-red-700' : v.severity === 'med' ? 'text-amber-700' : ''}>{v.field}</span> — {v.issue}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    {findFullAccount(a) && (
-                      <button onClick={() => disputeAccount(a)} className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm border border-blue-300 text-blue-700 hover:bg-blue-100 transition-colors">
-                        Generate Letter
-                      </button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
