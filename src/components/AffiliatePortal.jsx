@@ -30,39 +30,47 @@ export default function AffiliatePortal({ session, onSignOut }) {
       const s = await getSettings();
       setSettings(s);
 
-      // Load affiliate profile
-      const { data: aff } = await supabase
+      // Load affiliate profile by user_id OR email
+      let { data: aff } = await supabase
         .from('affiliates')
         .select('*')
         .eq('user_id', session.user.id)
         .single();
+
+      if (!aff && session.user.email) {
+        const { data: affByEmail } = await supabase
+          .from('affiliates')
+          .select('*')
+          .eq('email', session.user.email)
+          .single();
+          
+        if (affByEmail) {
+          aff = affByEmail;
+          // Auto-link the user_id for future logins
+          await supabase.from('affiliates').update({ user_id: session.user.id }).eq('id', aff.id);
+        }
+      }
+
       setAffiliate(aff);
 
       if (aff) {
-        // Load referred clients
-        const { data: clientData } = await supabase
-          .from('clients')
-          .select('*')
-          .eq('referred_by', aff.id)
-          .order('created_at', { ascending: false });
-        setClients(clientData || []);
-
-        // Load letters for those clients
-        if (clientData && clientData.length > 0) {
-          const names = clientData.map(c => c.name);
-          const emails = clientData.map(c => c.email);
-
-          const { data: letterData } = await supabase
-            .from('letters')
-            .select('client_name, furnisher, phase, mailed_date, tracking_status, delivered_at, response_outcome, saved_at')
-            .in('client_name', names);
-          setLetters(letterData || []);
-
-          const { data: profileData } = await supabase
-            .from('client_profiles')
-            .select('email, full_name, starting_scores, current')
-            .in('email', emails);
-          setProfiles(profileData || []);
+        // Fetch clients, letters, and profiles securely via endpoint to bypass RLS
+        const res = await fetch('/.netlify/functions/affiliate-portal-data', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+          },
+          body: JSON.stringify({ affiliateId: aff.id })
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          setClients(data.clients || []);
+          setLetters(data.letters || []);
+          setProfiles(data.profiles || []);
+        } else {
+          console.error('Failed to load affiliate clients', await res.text());
         }
       }
     } catch (e) {
