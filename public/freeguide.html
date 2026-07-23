@@ -257,13 +257,32 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
   section{padding:60px 18px;}
   .hero{padding:100px 18px 60px;}
 }
+/* Intake Modal */
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 9999; backdrop-filter: blur(4px); align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s; padding: 20px; }
+.modal-overlay.active { display: flex; opacity: 1; }
+.modal-box { background: #fff; border-radius: 12px; max-width: 460px; width: 100%; padding: 40px; position: relative; transform: translateY(20px); transition: transform 0.3s; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
+.modal-overlay.active .modal-box { transform: translateY(0); }
+.modal-close { position: absolute; top: 20px; right: 20px; background: none; border: none; font-size: 24px; color: #9CA3AF; cursor: pointer; line-height: 1; }
+.modal-close:hover { color: #1B2A4A; }
+.modal-title { font-size: 24px; color: #1B2A4A; margin-bottom: 8px; font-weight: 700; }
+.modal-sub { color: #6B7280; font-size: 14.5px; margin-bottom: 24px; line-height: 1.5; }
+.form-group { margin-bottom: 16px; text-align: left; }
+.form-group label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #4B5563; font-weight: 700; margin-bottom: 6px; }
+.form-group input { width: 100%; padding: 12px 16px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 15px; font-family: inherit; transition: border-color 0.2s; outline: none; }
+.form-group input:focus { border-color: #C9A84C; box-shadow: 0 0 0 3px rgba(201, 168, 76, 0.1); }
+.form-group input[readonly] { background: #F3F4F6; color: #6B7280; font-weight: 600; cursor: not-allowed; }
+.btn-submit { width: 100%; background: #C9A84C; color: #1B2A4A; border: none; padding: 14px; border-radius: 8px; font-size: 16px; font-weight: 700; cursor: pointer; transition: opacity 0.2s; margin-top: 8px; }
+.btn-submit:hover { opacity: 0.9; }
+.btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.modal-success { text-align: center; display: none; }
+.modal-success svg { width: 48px; height: 48px; color: #10B981; margin-bottom: 16px; }
 </style>
 </head>
 <body>
 
 <nav id="navbar">
   <div class="nav-right">
-    <a href="https://secure.scorexer.com" target="_blank" class="btn-portal">
+    <a href="/login" class="btn-portal">
       <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
       Club Member Login
     </a>
@@ -377,7 +396,7 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
           <li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Continuous creditor challenges until removal</li>
           <li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Cancel anytime — no long-term contracts</li>
         </ul>
-        <a href="https://pulse.scorexer.com/portal-signUp/signup.jsp?id=SmtpWlZuVk9WSEVtaEJsUUFwb3B5UT09" target="_blank" class="btn-signup">Get Started</a>
+        <a href="#" onclick="openIntake('CCC Membership'); return false;" class="btn-signup">Get Started</a>
       </div>
       <div class="pricing-card featured">
         <div class="pricing-badge">Most Popular</div>
@@ -397,7 +416,7 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
           <li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Business credit roadmap (post personal cleanup)</li>
           <li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>Direct access — no waiting in queue</li>
         </ul>
-        <a href="https://pulse.scorexer.com/portal-signUp/signup.jsp?id=SmtpWlZuVk9WSEVtaEJsUUFwb3B5UT09" target="_blank" class="btn-signup">Get Started</a>
+        <a href="#" onclick="openIntake('VIP Membership'); return false;" class="btn-signup">Get Started</a>
       </div>
       <div class="pricing-card">
         <div class="pricing-badge" style="background:var(--navy);">Best Value</div>
@@ -416,7 +435,7 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
           <li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>$50 less than 6 months of Standard</li>
           <li><span class="check"><svg viewBox="0 0 12 12"><polyline points="2,6 5,9 10,3"/></svg></span>No monthly billing — pay once, done</li>
         </ul>
-        <a href="https://pulse.scorexer.com/portal-signUp/signup.jsp?id=SmtpWlZuVk9WSEVtaEJsUUFwb3B5UT09" target="_blank" class="btn-signup">Get Started</a>
+        <a href="#" onclick="openIntake('Paid in Full'); return false;" class="btn-signup">Get Started</a>
       </div>
     </div>
   </div>
@@ -430,7 +449,7 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
       
       <div style="display:flex; justify-content:center; flex-wrap:wrap;">
         <a href="downloads/7-Metro2-Dispute-Templates.pdf" class="btn-cta-ghost" download>Download Free Guide</a>
-        <a href="https://pulse.disputeprocess.com/jsp/custom_form.jsp?tab_id=RjFaeDcvSWpqYTJidVdyRDB3WVBsdz09&add_affiliate=0&cust_type=1&company_id=RkJJOWtkS1lYQ243V0Q5d3EybmlMUT09&isLinkFromIframe=1&redirect_url=https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99" target="_blank" class="btn-cta-main">Schedule Free Consultation →</a>
+        <a href="#" onclick="openIntake('Consultation'); return false;" class="btn-cta-main">Schedule Free Consultation →</a>
       </div>
     </div>
   </div>
@@ -457,7 +476,7 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
     <div class="footer-col">
       <h4>Resources</h4>
       <a href='/freeguide'>Free Dispute Guide</a>
-      <a href="https://secure.scorexer.com" target="_blank">Client Portal Login</a>
+      <a href="/login">Client Portal Login</a>
       <a href='/terms'>Terms of Service</a>
       <a href='/privacy'>Privacy Policy</a>
     </div>
@@ -468,6 +487,45 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
     <p class="copyright">© 2026 Credit Comeback Club, LLC · Grand Junction, CO · All rights reserved.</p>
   </div>
 </footer>
+
+<!-- Intake Modal -->
+<div class="modal-overlay" id="intakeModal">
+  <div class="modal-box">
+    <button class="modal-close" onclick="closeIntake()">×</button>
+    <div id="intakeFormStep">
+      <div class="modal-title">Get Started</div>
+      <div class="modal-sub">Submit your information to create your portal account and schedule your free consultation.</div>
+      <form id="intakeForm">
+        <div class="form-group">
+          <label>Selected Tier</label>
+          <input type="text" id="intakeTier" name="tier" readonly>
+        </div>
+        <div class="form-group">
+          <label>Full Name</label>
+          <input type="text" id="intakeName" name="name" required placeholder="John Doe">
+        </div>
+        <div class="form-group">
+          <label>Email Address</label>
+          <input type="email" id="intakeEmail" name="email" required placeholder="john@example.com">
+        </div>
+        <div class="form-group">
+          <label>Phone Number</label>
+          <input type="tel" id="intakePhone" name="phone" placeholder="(555) 555-5555">
+        </div>
+        <button type="submit" class="btn-submit" id="intakeSubmitBtn">Continue to Scheduling →</button>
+      </form>
+    </div>
+    <div id="intakeSuccessStep" class="modal-success">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+      <div class="modal-title">Account Created!</div>
+      <div class="modal-sub">Check your email for your client portal link. Now, please select a time for your free consultation below.</div>
+      <!-- Calendly inline widget begin -->
+      <div class="calendly-inline-widget" data-url="https://calendly.com/creditcomebackclub/30min?month=2026-07&hide_event_type_details=1&hide_gdpr_banner=1" style="min-width:320px;height:400px;"></div>
+      <script type="text/javascript" src="https://assets.calendly.com/assets/external/widget.js" async></script>
+      <!-- Calendly inline widget end -->
+    </div>
+  </div>
+</div>
 
 <script>
 // NAV scroll
@@ -489,6 +547,58 @@ function closeMenu() {
 }
 document.addEventListener('click', (e) => {
   if (!hamburger.contains(e.target) && !dropdown.contains(e.target)) closeMenu();
+});
+
+// Intake Modal Logic
+const modalOverlay = document.getElementById('intakeModal');
+const intakeFormStep = document.getElementById('intakeFormStep');
+const intakeSuccessStep = document.getElementById('intakeSuccessStep');
+const intakeForm = document.getElementById('intakeForm');
+const intakeSubmitBtn = document.getElementById('intakeSubmitBtn');
+const intakeTier = document.getElementById('intakeTier');
+
+function openIntake(tier) {
+  intakeTier.value = tier || 'Consultation';
+  intakeFormStep.style.display = 'block';
+  intakeSuccessStep.style.display = 'none';
+  intakeForm.reset();
+  intakeTier.value = tier || 'Consultation'; // Reset clears it, so set again
+  modalOverlay.classList.add('active');
+}
+
+function closeIntake() {
+  modalOverlay.classList.remove('active');
+}
+
+intakeForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  intakeSubmitBtn.disabled = true;
+  intakeSubmitBtn.textContent = 'Processing...';
+
+  const payload = {
+    name: document.getElementById('intakeName').value,
+    email: document.getElementById('intakeEmail').value,
+    phone: document.getElementById('intakePhone').value,
+    tier: document.getElementById('intakeTier').value
+  };
+
+  try {
+    const res = await fetch('/api/public-intake', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) throw new Error('Failed to submit');
+
+    // Show success / Calendly
+    intakeFormStep.style.display = 'none';
+    intakeSuccessStep.style.display = 'block';
+  } catch (err) {
+    alert('Sorry, there was an error submitting your request. Please try again.');
+    intakeSubmitBtn.disabled = false;
+    intakeSubmitBtn.textContent = 'Continue to Scheduling →';
+  }
 });
 </script>
 </body>
