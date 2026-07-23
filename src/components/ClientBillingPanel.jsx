@@ -281,18 +281,31 @@ export default function ClientBillingPanel({ client, onChanged }) {
           />
         </Row>
 
-        {client.referredBy && (
-          <Row label="Commission Status">
-            <div className="text-right">
-              <div className="text-[14px] font-bold text-navy">
-                ${(totalPaid * ((client.referralFee !== null && client.referralFee !== undefined ? client.referralFee : ((affiliates[client.referredBy]?.rate || 0.20) * 100)) / 100)).toFixed(2)}
+        {client.referredBy && (() => {
+          const totalEarned = totalPaid * ((client.referralFee !== null && client.referralFee !== undefined ? client.referralFee : ((affiliates[client.referredBy]?.rate || 0.20) * 100)) / 100);
+          const paidOut = client.commissionPaid ? totalEarned : 0;
+          const pending = totalEarned - paidOut;
+          
+          return (
+            <Row label="Commission Status">
+              <div className="text-right flex flex-col items-end gap-1">
+                <div className="flex items-center justify-between w-32 text-[12px]">
+                  <span className="text-ink-muted">Total Earned:</span>
+                  <span className="font-bold text-ink">${totalEarned.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center justify-between w-32 text-[12px]">
+                  <span className="text-ink-muted">Paid Out:</span>
+                  <span className="font-bold text-green-700">${paidOut.toFixed(2)}</span>
+                </div>
+                <div className="w-32 h-px bg-border my-0.5"></div>
+                <div className="flex items-center justify-between w-32 text-[12px]">
+                  <span className="text-ink-muted">Pending:</span>
+                  <span className="font-bold text-amber-600">${pending.toFixed(2)}</span>
+                </div>
               </div>
-              <div className="text-[10px] text-ink-muted mt-0.5">
-                Total owed based on ${totalPaid.toFixed(2)} lifetime payments
-              </div>
-            </div>
-          </Row>
-        )}
+            </Row>
+          );
+        })()}
         
         <Row label="Payment Status">
           <div className="flex items-center gap-2 justify-end mt-1">
