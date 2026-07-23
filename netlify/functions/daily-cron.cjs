@@ -413,29 +413,38 @@ exports.handler = async () => {
       // 1. Calculate Next Invoice Date for Pre-Reminders
       if (c.billing_start_date) {
         const invoices = ledger.filter(t => t.type === 'Invoice');
-        const lastInvoice = invoices.sort((a,b) => b.date.localeCompare(a.date))[0];
-        const invoiceCount = invoices.length;
-        const lastDateStr = lastInvoice ? lastInvoice.date : c.billing_start_date;
-        const daysSinceLastInvoice = Math.floor((new Date(today) - new Date(lastDateStr)) / (1000 * 60 * 60 * 24));
-        
-        const daysUntilDue = invoiceCount === 0 ? (0 - daysSinceLastInvoice) : (30 - daysSinceLastInvoice);
+        const payments = ledger.filter(t => t.type === 'Payment');
+        // "Already billed before" must include Payment-type rows, not just
+        // Invoice rows — clients backfilled with manually-logged payment
+        // history (no Invoice rows at all) were previously treated as
+        // brand new and re-charged the one-time "Initial Month & First
+        // Work Fee" on top of months of real payments (caught 2026-07-23:
+        // Austin Mote, William Pope, Stefani Bryant all got a bogus $154
+        // invoice despite an active payment history).
+        const billingEvents = [...invoices, ...payments];
+        const hasPriorBilling = billingEvents.length > 0;
+        const lastEvent = billingEvents.sort((a, b) => b.date.localeCompare(a.date))[0];
+        const lastDateStr = lastEvent ? lastEvent.date : c.billing_start_date;
+        const daysSinceLastBilling = Math.floor((new Date(today) - new Date(lastDateStr)) / (1000 * 60 * 60 * 24));
 
-        if (c.billing_tier !== 'Paid In Full' || invoiceCount === 0) {
+        const daysUntilDue = hasPriorBilling ? (30 - daysSinceLastBilling) : (0 - daysSinceLastBilling);
+
+        if (c.billing_tier !== 'Paid In Full' || !hasPriorBilling) {
           if (daysUntilDue === 5 && c.email && sgKey) {
             await sendgridEmail(c.email, 'Upcoming Invoice in 5 Days', '<p>Hi ' + c.name + ',</p><p>This is a quick reminder that your service fee will be due in 5 days.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
           } else if (daysUntilDue === 3 && c.email && sgKey) {
             await sendgridEmail(c.email, 'Upcoming Invoice in 3 Days', '<p>Hi ' + c.name + ',</p><p>Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
           }
         }
-        
+
         // 2. Generate Invoice if due today (or overdue)
-        const isDue = (invoiceCount === 0 && daysSinceLastInvoice >= 0) || (invoiceCount > 0 && daysSinceLastInvoice >= 30);
-        
+        const isDue = (!hasPriorBilling && daysSinceLastBilling >= 0) || (hasPriorBilling && daysSinceLastBilling >= 30);
+
         if (isDue) {
           let amount = 99.00;
           let description = 'Monthly Service Fee';
-          
-          if (invoiceCount === 0) {
+
+          if (!hasPriorBilling) {
             if (c.billing_tier === 'Standard') { amount = 154.00; description = 'Initial Month & First Work Fee'; }
             else if (c.billing_tier === 'VIP') { amount = 248.00; description = 'VIP Initial Month & First Work Fee'; }
             else if (c.billing_tier === 'Paid In Full') { amount = 499.00; description = 'Paid In Full Service'; }
@@ -445,7 +454,7 @@ exports.handler = async () => {
             else if (c.billing_tier === 'VIP') { amount = 149.00; description = 'VIP Monthly Service Fee'; }
           }
 
-          if (invoiceCount > 0 && c.billing_tier === 'Paid In Full') {
+          if (hasPriorBilling && c.billing_tier === 'Paid In Full') {
              // Do not generate recurring invoices for Paid In Full
           } else {
             const newTx = {
