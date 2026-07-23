@@ -6,6 +6,7 @@ import { supabase } from './utils/supabase';
 import { getProfile } from './utils/storage';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit } from './utils/api';
 import { getUnanalyzedResponseStats } from './utils/actionItems';
+import { computeClientCommission } from './utils/affiliateCommission';
 import AffiliateProfilePanel from './components/AffiliateProfilePanel';
 
 const UploadZone = lazy(() => import('./components/UploadZone'));
@@ -30,6 +31,7 @@ const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS
 function AffiliatesPage() {
   const [affiliates, setAffiliates] = React.useState([]);
   const [clients, setClients] = React.useState([]);
+  const [commissionPayouts, setCommissionPayouts] = React.useState([]);
   const [selectedAffiliate, setSelectedAffiliate] = useState(null);
   const [loading, setLoading] = React.useState(true);
   const [showCreate, setShowCreate] = React.useState(false);
@@ -37,26 +39,17 @@ function AffiliatesPage() {
   const [creating, setCreating] = React.useState(false);
   const [error, setError] = React.useState(null);
 
-  const getClientTotalPaid = (c) => {
-    if (!c.ledger) return 0;
-    const ledger = Array.isArray(c.ledger) ? c.ledger : (typeof c.ledger === 'string' ? JSON.parse(c.ledger) : []);
-    return ledger.reduce((sum, tx) => {
-      if (tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid')) {
-        return sum + (parseFloat(tx.amount) || 0);
-      }
-      return sum;
-    }, 0);
-  };
-
   React.useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
-    const [affRes, clientRes] = await Promise.all([
+    const [affRes, clientRes, payoutsRes] = await Promise.all([
       supabase.from('affiliates').select('*').order('created_at', { ascending: false }),
       supabase.from('clients').select('id, name, created_at, referred_by, referral_fee, commission_paid, commission_paid_at, ledger').not('referred_by', 'is', null),
+      supabase.from('commission_payouts').select('client_id, covered_tx_ids, amount'),
     ]);
     setAffiliates(affRes.data || []);
     setClients(clientRes.data || []);
+    setCommissionPayouts(payoutsRes.data || []);
     setLoading(false);
   };
 
@@ -152,16 +145,13 @@ function AffiliatesPage() {
         <div className="space-y-4">
           {affiliates.map(aff => {
             const affClients = clients.filter(c => c.referred_by === aff.id);
-            const totalComm = affClients.reduce((s, c) => {
-              const tp = getClientTotalPaid(c);
-              const rate = c.referral_fee !== null && c.referral_fee !== undefined ? c.referral_fee : ((aff.commission_rate || 0.20) * 100);
-              return s + (tp * (rate / 100));
-            }, 0);
-            const paidComm = affClients.filter(c => c.commission_paid).reduce((s, c) => {
-              const tp = getClientTotalPaid(c);
-              const rate = c.referral_fee !== null && c.referral_fee !== undefined ? c.referral_fee : ((aff.commission_rate || 0.20) * 100);
-              return s + (tp * (rate / 100));
-            }, 0);
+            let paidComm = 0, pendingComm = 0;
+            for (const c of affClients) {
+              const payoutsForClient = commissionPayouts.filter(p => p.client_id === c.id);
+              const { paid, owed } = computeClientCommission(c, aff, payoutsForClient);
+              paidComm += paid;
+              pendingComm += owed;
+            }
             return (
               <div 
                 key={aff.id} 
@@ -186,7 +176,7 @@ function AffiliatesPage() {
                       <div className="text-[10px] uppercase tracking-wider text-ink-faint">Paid</div>
                     </div>
                     <div>
-                      <div className="text-[18px] font-bold" style={{ color: '#D97706' }}>${(totalComm - paidComm).toFixed(2)}</div>
+                      <div className="text-[18px] font-bold" style={{ color: '#D97706' }}>${pendingComm.toFixed(2)}</div>
                       <div className="text-[10px] uppercase tracking-wider text-ink-faint">Pending</div>
                     </div>
                   </div>
@@ -197,14 +187,18 @@ function AffiliatesPage() {
         </div>
       )}
 
-      {selectedAffiliate && (
-        <AffiliateProfilePanel
-          affiliate={selectedAffiliate}
-          clients={clients.filter(c => c.referred_by === selectedAffiliate.id)}
-          onClose={() => setSelectedAffiliate(null)}
-          onUpdate={loadData}
-        />
-      )}
+      {selectedAffiliate && (() => {
+        const affClientIds = new Set(clients.filter(c => c.referred_by === selectedAffiliate.id).map(c => c.id));
+        return (
+          <AffiliateProfilePanel
+            affiliate={selectedAffiliate}
+            clients={clients.filter(c => c.referred_by === selectedAffiliate.id)}
+            commissionPayouts={commissionPayouts.filter(p => affClientIds.has(p.client_id))}
+            onClose={() => setSelectedAffiliate(null)}
+            onUpdate={loadData}
+          />
+        );
+      })()}
 
       {showCreate && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-6" onClick={() => setShowCreate(false)}>

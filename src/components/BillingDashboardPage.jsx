@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { DollarSign, TrendingUp, TrendingDown, AlertCircle, Clock, CheckCircle, ChevronRight, Activity, Users, Layers, Repeat, UserMinus, Percent, CalendarClock, Timer, Landmark } from 'lucide-react';
 import { adminListClients } from '../utils/storage';
 import { supabase } from '../utils/supabase';
+import { computeClientCommission, commissionRate } from '../utils/affiliateCommission';
 
 const T = {
   navy: '#1B2A4A',
@@ -18,7 +19,6 @@ const T = {
 };
 
 const TIER_PRICE = { VIP: 149, Standard: 79 };
-const DEFAULT_COMMISSION_RATE = 0.20;
 
 const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const money0 = (n) => `$${Math.round(Number(n || 0)).toLocaleString()}`;
@@ -135,6 +135,7 @@ function StatLine({ label, value, tone, sub }) {
 export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   const [clients, setClients] = useState([]);
   const [affiliates, setAffiliates] = useState({});
+  const [commissionPayouts, setCommissionPayouts] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -142,12 +143,17 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
       setClients(data);
       setLoading(false);
     });
+    // Raw rows keyed by id — affiliateCommission.js reads .commission_rate
+    // directly, and .name/.company are used for display where needed.
     supabase.from('affiliates').select('id, name, company, commission_rate').then(({ data }) => {
       if (data) {
         const map = {};
-        data.forEach(a => { map[a.id] = { name: a.name + (a.company ? ` (${a.company})` : ''), rate: a.commission_rate || DEFAULT_COMMISSION_RATE }; });
+        data.forEach(a => { map[a.id] = a; });
         setAffiliates(map);
       }
+    });
+    supabase.from('commission_payouts').select('client_id, covered_tx_ids, amount').then(({ data }) => {
+      if (data) setCommissionPayouts(data);
     });
   }, []);
 
@@ -197,6 +203,12 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   const overdueAccounts = [];
   const commissionPayables = [];
 
+  const payoutsByClient = new Map();
+  for (const p of commissionPayouts) {
+    if (!payoutsByClient.has(p.client_id)) payoutsByClient.set(p.client_id, []);
+    payoutsByClient.get(p.client_id).push(p);
+  }
+
   clients.forEach(c => {
     const recurringTierValue = c.billingType === 'Automated Recurring' ? (TIER_PRICE[c.billingTier] || 0) : 0;
 
@@ -238,7 +250,6 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
 
     let clientBalance = 0;
     let hasOverdue30 = false;
-    let clientRecognized = 0;
 
     if (Array.isArray(c.ledger)) {
       c.ledger.forEach(tx => {
@@ -247,7 +258,6 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
 
         if (rec > 0) {
           lifetimeRevenue += rec;
-          clientRecognized += rec;
           const recDate = new Date(recognitionDate(tx));
           if (recDate >= thirtyDaysAgo) collected30Days += rec;
           const idx = monthIdx[ym(recognitionDate(tx))];
@@ -282,18 +292,23 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
       overdueAccounts.push({ name: c.name, balance: clientBalance, hasOverdue30, status: c.billingStatus });
     }
 
-    // Commission liability
+    // Commission liability — shared module (src/utils/affiliateCommission.js),
+    // single source of truth. This dashboard's commission math previously
+    // fed straight off a permanent commission_paid boolean recomputed
+    // against a client's entire lifetime revenue, so any client who kept
+    // paying after their commission was first marked paid had every
+    // subsequent month silently counted as already-paid too — the cash
+    // forecast below never surfaced that ongoing underpayment.
     if (c.referredBy) {
-      const rate = (c.referralFee !== null && c.referralFee !== undefined)
-        ? (parseFloat(c.referralFee) / 100)
-        : (affiliates[c.referredBy]?.rate || DEFAULT_COMMISSION_RATE);
-      const earned = clientRecognized * rate;
-      const paid = c.commissionPaid ? earned : 0;
-      const pending = earned - paid;
+      const affiliate = affiliates[c.referredBy] || null;
+      const payoutsForClient = payoutsByClient.get(c.id) || [];
+      const { earned, paid, owed } = computeClientCommission({ referral_fee: c.referralFee, ledger: c.ledger }, affiliate, payoutsForClient);
       commissionEarned += earned;
       commissionPaidOut += paid;
-      if (pending > 0.01) {
-        commissionPayables.push({ name: c.name, affiliate: affiliates[c.referredBy]?.name || 'Unknown', pending, rate });
+      if (owed > 0.01) {
+        const affLabel = affiliate ? (affiliate.name + (affiliate.company ? ' (' + affiliate.company + ')' : '')) : 'Unknown';
+        const rate = commissionRate({ referral_fee: c.referralFee }, affiliate);
+        commissionPayables.push({ name: c.name, affiliate: affLabel, pending: owed, rate });
       }
     }
   });

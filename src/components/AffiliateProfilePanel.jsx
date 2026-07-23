@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, CheckCircle, ExternalLink, Link as LinkIcon, DollarSign, TrendingUp, Users } from 'lucide-react';
+import { X, CheckCircle, ExternalLink, Link as LinkIcon, DollarSign, TrendingUp, Users, Check } from 'lucide-react';
 import { supabase } from '../utils/supabase';
+import { computeClientCommission, recognizedTotal } from '../utils/affiliateCommission';
 
 const T = {
   navy: '#1B2A4A',
@@ -12,38 +13,29 @@ const T = {
   bg: '#FAFBFC',
 };
 
-const getClientTotalPaid = (c) => {
-  if (!c.ledger) return 0;
-  const ledger = Array.isArray(c.ledger) ? c.ledger : (typeof c.ledger === 'string' ? JSON.parse(c.ledger) : []);
-  return ledger.reduce((sum, tx) => {
-    if (tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid')) {
-      return sum + (parseFloat(tx.amount) || 0);
-    }
-    return sum;
-  }, 0);
-};
-
-export default function AffiliateProfilePanel({ affiliate, clients = [], onClose, onUpdate }) {
+export default function AffiliateProfilePanel({ affiliate, clients = [], commissionPayouts = [], onClose, onUpdate }) {
   const [editingRate, setEditingRate] = useState(false);
   const [rateVal, setRateVal] = useState(affiliate.commission_rate ? String(Math.round(affiliate.commission_rate * 100)) : '20');
-  
+
   const [isEditingInfo, setIsEditingInfo] = useState(false);
   const [editForm, setEditForm] = useState({
     name: affiliate.name || '',
     company: affiliate.company || '',
     email: affiliate.email || ''
   });
+  const [payingClientId, setPayingClientId] = useState(null);
+  const [payAmount, setPayAmount] = useState('');
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
 
-  const getClientCommission = (c) => {
-    const tp = getClientTotalPaid(c);
-    const rate = c.referral_fee !== null && c.referral_fee !== undefined ? c.referral_fee : ((affiliate.commission_rate || 0.20) * 100);
-    return tp * (rate / 100);
-  };
+  const payoutsFor = (clientId) => commissionPayouts.filter((p) => p.client_id === clientId);
 
-  const totalRevenue = clients.reduce((sum, c) => sum + getClientTotalPaid(c), 0);
-  const totalCommission = clients.reduce((sum, c) => sum + getClientCommission(c), 0);
-  const paidCommission = clients.filter(c => c.commission_paid).reduce((sum, c) => sum + getClientCommission(c), 0);
-  const pendingCommission = totalCommission - paidCommission;
+  const totalRevenue = clients.reduce((sum, c) => sum + recognizedTotal(c), 0);
+  let paidCommission = 0, pendingCommission = 0;
+  for (const c of clients) {
+    const { paid, owed } = computeClientCommission(c, affiliate, payoutsFor(c.id));
+    paidCommission += paid;
+    pendingCommission += owed;
+  }
 
   const saveGlobalRate = async () => {
     let newRate = parseFloat(rateVal) / 100;
@@ -53,11 +45,24 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], onClose
     setEditingRate(false);
   };
 
-  const markCommissionPaid = async (clientName) => {
-    await supabase.from('clients').update({ 
-      commission_paid: true, 
-      commission_paid_at: new Date().toISOString() 
-    }).eq('name', clientName);
+  // Payout ledger, not a boolean — a client who keeps paying monthly keeps
+  // accruing new commission after this, since covered_tx_ids only marks
+  // what's actually been paid out so far, not "this client is done forever."
+  const payCommission = async (client) => {
+    const amount = parseFloat(payAmount);
+    if (isNaN(amount) || amount <= 0) return;
+    const { unpaidTxIds } = computeClientCommission(client, affiliate, payoutsFor(client.id));
+    const { data: { user } } = await supabase.auth.getUser();
+    await supabase.from('commission_payouts').insert({
+      affiliate_id: affiliate.id,
+      client_id: client.id,
+      client_name: client.name,
+      covered_tx_ids: unpaidTxIds,
+      amount,
+      paid_at: new Date(payDate + 'T12:00:00').toISOString(),
+      paid_by: user?.id || null,
+    });
+    setPayingClientId(null);
     onUpdate && onUpdate();
   };
 
@@ -225,14 +230,15 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], onClose
                   <tr className="bg-gray-50 border-b" style={{ borderColor: T.border }}>
                     <th className="py-2.5 px-4 text-[10px] font-bold uppercase tracking-wider" style={{ color: T.muted }}>Client</th>
                     <th className="py-2.5 px-4 text-[10px] font-bold uppercase tracking-wider" style={{ color: T.muted }}>Override %</th>
-                    <th className="py-2.5 px-4 text-[10px] font-bold uppercase tracking-wider text-right" style={{ color: T.muted }}>Rev / Comm</th>
+                    <th className="py-2.5 px-4 text-[10px] font-bold uppercase tracking-wider text-right" style={{ color: T.muted }}>Rev / Owed</th>
                     <th className="py-2.5 px-4 text-[10px] font-bold uppercase tracking-wider text-right" style={{ color: T.muted }}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {clients.map(c => {
-                    const totalPaid = getClientTotalPaid(c);
-                    const comm = getClientCommission(c);
+                    const totalPaid = recognizedTotal(c);
+                    const { owed } = computeClientCommission(c, affiliate, payoutsFor(c.id));
+                    const isPayingThis = payingClientId === c.id;
                     return (
                       <tr key={c.id} className="border-b last:border-0 hover:bg-gray-50 transition-colors" style={{ borderColor: T.border }}>
                         <td className="py-3 px-4">
@@ -242,8 +248,8 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], onClose
                           </div>
                         </td>
                         <td className="py-3 px-4">
-                          <input 
-                            type="number" 
+                          <input
+                            type="number"
                             defaultValue={c.referral_fee || ''}
                             placeholder={`${Math.round((affiliate.commission_rate || 0.20) * 100)}%`}
                             onBlur={e => setClientRateOverride(c.name, e.target.value)}
@@ -251,19 +257,43 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], onClose
                           />
                         </td>
                         <td className="py-3 px-4 text-right">
-                          <div className="text-[12px] font-medium" style={{ color: T.ink }}>${comm.toFixed(2)}</div>
-                          <div className="text-[10px]" style={{ color: T.faint }}>of ${totalPaid.toFixed(2)}</div>
+                          <div className="text-[12px] font-medium" style={{ color: owed > 0.01 ? '#D97706' : T.ink }}>${owed.toFixed(2)}</div>
+                          <div className="text-[10px]" style={{ color: T.faint }}>of ${totalPaid.toFixed(2)} paid in</div>
                         </td>
                         <td className="py-3 px-4 text-right">
-                          {c.commission_paid ? (
+                          {owed <= 0.01 ? (
                             <div className="inline-flex items-center gap-1 px-2 py-1 rounded bg-green-50 text-green-700 text-[10px] font-bold uppercase tracking-wide border border-green-100">
-                              <CheckCircle size={10} /> Paid
+                              <CheckCircle size={10} /> Paid Up
+                            </div>
+                          ) : isPayingThis ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <input
+                                type="date"
+                                value={payDate}
+                                onChange={e => setPayDate(e.target.value)}
+                                className="w-28 text-[10px] px-1 py-1 border rounded"
+                                style={{ borderColor: T.border }}
+                              />
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={payAmount}
+                                onChange={e => setPayAmount(e.target.value)}
+                                className="w-16 text-[10px] px-1 py-1 border rounded text-right"
+                                style={{ borderColor: T.border }}
+                              />
+                              <button onClick={() => payCommission(c)} className="text-green-600 hover:text-green-700" title="Confirm payout">
+                                <Check size={14} strokeWidth={3} />
+                              </button>
+                              <button onClick={() => setPayingClientId(null)} className="text-ink-faint hover:text-red-600" title="Cancel">
+                                <X size={14} strokeWidth={3} />
+                              </button>
                             </div>
                           ) : (
-                            <button 
-                              onClick={() => markCommissionPaid(c.name)}
+                            <button
+                              onClick={() => { setPayingClientId(c.id); setPayAmount(owed.toFixed(2)); setPayDate(new Date().toISOString().slice(0, 10)); }}
                               className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide border transition-colors bg-white text-amber-600 border-amber-200 hover:bg-amber-50">
-                              Mark Paid
+                              Pay ${owed.toFixed(2)}
                             </button>
                           )}
                         </td>

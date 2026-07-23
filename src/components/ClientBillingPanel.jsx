@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { Check, X, DollarSign, Edit2, Link } from 'lucide-react';
+import { computeClientCommission } from '../utils/affiliateCommission';
 
 const T = {
   navy: '#1B2A4A',
@@ -169,23 +170,27 @@ export default function ClientBillingPanel({ client, onChanged }) {
   const [showAddTx, setShowAddTx] = useState(false);
   const [newTx, setNewTx] = useState({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due', paidDate: today });
   const [affiliates, setAffiliates] = useState({});
+  const [commissionPayouts, setCommissionPayouts] = useState([]);
   const [markingPaidId, setMarkingPaidId] = useState(null);
   const [markPaidDate, setMarkPaidDate] = useState(today);
+  const [payingCommission, setPayingCommission] = useState(false);
+  const [commissionPayAmount, setCommissionPayAmount] = useState('');
+  const [commissionPayDate, setCommissionPayDate] = useState(today);
 
   useEffect(() => {
+    // Raw rows keyed by id — affiliateCommission.js reads .commission_rate
+    // directly; display name is composed where needed.
     supabase.from('affiliates').select('id, name, company, commission_rate').then(({ data }) => {
       if (data) {
         const map = {};
-        data.forEach(a => {
-          map[a.id] = {
-            name: a.name + (a.company ? ` (${a.company})` : ''),
-            rate: a.commission_rate || 0.20
-          };
-        });
+        data.forEach(a => { map[a.id] = a; });
         setAffiliates(map);
       }
     });
-  }, []);
+    supabase.from('commission_payouts').select('covered_tx_ids, amount').eq('client_id', client.id).then(({ data }) => {
+      if (data) setCommissionPayouts(data);
+    });
+  }, [client.id]);
 
   const ledger = Array.isArray(client.ledger) ? client.ledger : [];
   
@@ -379,59 +384,82 @@ export default function ClientBillingPanel({ client, onChanged }) {
           <div className="flex items-center gap-1.5 justify-end">
             <Link size={12} className="text-navy" />
             <span className="text-[12px] font-medium" style={{ color: client.referredBy ? T.ink : T.faint }}>
-              {client.referredBy ? (affiliates[client.referredBy]?.name || client.referredBy) : 'No affiliate linked'}
+              {client.referredBy ? (affiliates[client.referredBy] ? affiliates[client.referredBy].name + (affiliates[client.referredBy].company ? ` (${affiliates[client.referredBy].company})` : '') : client.referredBy) : 'No affiliate linked'}
             </span>
           </div>
         </Row>
-        
+
         <Row label="Commission Override (%)">
-          <Field 
-            label="custom commission rate" 
-            value={client.referralFee ? String(client.referralFee) : ''} 
+          <Field
+            label="custom commission rate"
+            value={client.referralFee ? String(client.referralFee) : ''}
             type="number"
-            placeholder={client.referredBy ? `Default: ${((affiliates[client.referredBy]?.rate || 0.20) * 100)}%` : 'e.g. 25'}
-            onSave={(v) => save({ referral_fee: v ? parseFloat(v) : null })} 
+            placeholder={client.referredBy ? `Default: ${Math.round((affiliates[client.referredBy]?.commission_rate || 0.20) * 100)}%` : 'e.g. 25'}
+            onSave={(v) => save({ referral_fee: v ? parseFloat(v) : null })}
           />
         </Row>
 
         {client.referredBy && (() => {
-          const totalEarned = totalPaid * ((client.referralFee !== null && client.referralFee !== undefined ? client.referralFee : ((affiliates[client.referredBy]?.rate || 0.20) * 100)) / 100);
-          const paidOut = client.commissionPaid ? totalEarned : 0;
-          const pending = totalEarned - paidOut;
-          
+          const affiliate = affiliates[client.referredBy] || null;
+          const { earned, paid, owed, unpaidTxIds } = computeClientCommission(
+            { referral_fee: client.referralFee, ledger },
+            affiliate,
+            commissionPayouts
+          );
+
+          const payCommission = async () => {
+            const amount = parseFloat(commissionPayAmount);
+            if (isNaN(amount) || amount <= 0) return;
+            const { data: { user } } = await supabase.auth.getUser();
+            await supabase.from('commission_payouts').insert({
+              affiliate_id: client.referredBy,
+              client_id: client.id,
+              client_name: client.name,
+              covered_tx_ids: unpaidTxIds,
+              amount,
+              paid_at: new Date(commissionPayDate + 'T12:00:00').toISOString(),
+              paid_by: user?.id || null,
+            });
+            setPayingCommission(false);
+            if (onChanged) onChanged();
+          };
+
           return (
             <Row label="Commission Status">
-              <div className="text-right flex flex-col items-end gap-1">
-                <div className="flex items-center justify-between w-32 text-[12px]">
+              <div className="text-right flex flex-col items-end gap-1.5">
+                <div className="flex items-center justify-between w-36 text-[12px]">
                   <span className="text-ink-muted">Total Earned:</span>
-                  <span className="font-bold text-ink">${totalEarned.toFixed(2)}</span>
+                  <span className="font-bold text-ink">${earned.toFixed(2)}</span>
                 </div>
-                <div className="flex items-center justify-between w-32 text-[12px]">
+                <div className="flex items-center justify-between w-36 text-[12px]">
                   <span className="text-ink-muted">Paid Out:</span>
-                  <span className="font-bold text-green-700">${paidOut.toFixed(2)}</span>
+                  <span className="font-bold text-green-700">${paid.toFixed(2)}</span>
                 </div>
-                <div className="w-32 h-px bg-border my-0.5"></div>
-                <div className="flex items-center justify-between w-32 text-[12px]">
-                  <span className="text-ink-muted">Pending:</span>
-                  <span className="font-bold text-amber-600">${pending.toFixed(2)}</span>
+                <div className="w-36 h-px bg-border my-0.5"></div>
+                <div className="flex items-center justify-between w-36 text-[12px]">
+                  <span className="text-ink-muted">Owed:</span>
+                  <span className="font-bold text-amber-600">${owed.toFixed(2)}</span>
                 </div>
+                {owed <= 0.01 ? (
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border bg-green-50 text-green-700 border-green-300 mt-1">✓ Paid Up</span>
+                ) : payingCommission ? (
+                  <div className="flex items-center gap-1 mt-1">
+                    <input type="date" value={commissionPayDate} onChange={e => setCommissionPayDate(e.target.value)} className="w-28 text-[10px] px-1 py-1 border rounded" style={{ borderColor: T.border }} />
+                    <input type="number" step="0.01" value={commissionPayAmount} onChange={e => setCommissionPayAmount(e.target.value)} className="w-16 text-[10px] px-1 py-1 border rounded text-right" style={{ borderColor: T.border }} />
+                    <button onClick={payCommission} className="text-green-600 hover:text-green-700" title="Confirm payout"><Check size={13} strokeWidth={3} /></button>
+                    <button onClick={() => setPayingCommission(false)} className="text-ink-faint hover:text-red-600" title="Cancel"><X size={13} strokeWidth={3} /></button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setPayingCommission(true); setCommissionPayAmount(owed.toFixed(2)); setCommissionPayDate(today); }}
+                    className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-300 mt-1 hover:bg-amber-100 transition-colors">
+                    Pay ${owed.toFixed(2)}
+                  </button>
+                )}
               </div>
             </Row>
           );
         })()}
-        
-        <Row label="Payment Status">
-          <div className="flex items-center gap-2 justify-end mt-1">
-            <button 
-              onClick={() => save({ commission_paid: !client.commissionPaid, commission_paid_at: !client.commissionPaid ? new Date().toISOString() : null })}
-              className={'text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border transition-colors ' +
-                (client.commissionPaid
-                  ? 'bg-green-50 text-green-700 border-green-300'
-                  : 'bg-amber-50 text-amber-700 border-amber-300')}>
-              {client.commissionPaid ? '✓ Paid' : '○ Unpaid'}
-            </button>
-          </div>
-        </Row>
       </Section>
 
       <Section title="Ledger" span2>

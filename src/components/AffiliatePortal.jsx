@@ -145,7 +145,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
         `"${c.phone || ''}"`,
         `"${new Date(c.created_at).toLocaleDateString()}"`,
         `"${status}"`,
-        `"${c.commission_paid ? 'Yes' : 'No'}"`,
+        `"${(c.commissionOwed || 0) <= 0.01 && (c.commissionEarned || 0) > 0 ? 'Yes' : 'No'}"`,
         `"${scoreIncrease}"`
       ].join(',');
     });
@@ -181,28 +181,15 @@ export default function AffiliatePortal({ session, onSignOut }) {
     neutral: { bg: '#F9FAFB', color: '#6B7280', border: '#E5E7EB' },
   };
 
-  const getClientTotalPaid = (c) => {
-    if (!c.ledger) return 0;
-    const ledger = Array.isArray(c.ledger) ? c.ledger : (typeof c.ledger === 'string' ? JSON.parse(c.ledger) : []);
-    return ledger.reduce((sum, tx) => {
-      if (tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid')) {
-        return sum + (parseFloat(tx.amount) || 0);
-      }
-      return sum;
-    }, 0);
-  };
-
-  const getClientCommission = (c) => {
-    const tp = getClientTotalPaid(c);
-    const rate = c.referral_fee !== null && c.referral_fee !== undefined ? c.referral_fee : ((affiliate?.commission_rate || 0.20) * 100);
-    return tp * (rate / 100);
-  };
-
-  const totalCommission = clients.reduce((sum, c) => sum + getClientCommission(c), 0);
-  const paidCommission = clients.filter(c => c.commission_paid).reduce((sum, c) => sum + getClientCommission(c), 0);
-  const pendingCommission = totalCommission - paidCommission;
+  // Commission figures arrive pre-computed from affiliate-portal-data.cjs
+  // (server-side, via the shared src/utils/affiliateCommission.js) — the
+  // raw ledger, internal notes, and other client PII never reach this
+  // browser at all, only the derived numbers actually shown below.
+  const totalCommission = clients.reduce((sum, c) => sum + (c.commissionEarned || 0), 0);
+  const paidCommission = clients.reduce((sum, c) => sum + (c.commissionPaid || 0), 0);
+  const pendingCommission = clients.reduce((sum, c) => sum + (c.commissionOwed || 0), 0);
   const deletions = letters.filter(l => l.response_outcome === 'deleted').length;
-  const totalRevenue = clients.reduce((sum, c) => sum + getClientTotalPaid(c), 0);
+  const totalRevenue = clients.reduce((sum, c) => sum + (c.totalPaid || 0), 0);
 
   if (loading) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0C0C0C' }}>
@@ -439,19 +426,13 @@ export default function AffiliatePortal({ session, onSignOut }) {
                             <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>{label}</div>
                           </div>
                         ))}
-                        {c.commission_paid && (
+                        {(c.commissionOwed || 0) <= 0.01 && (c.commissionEarned || 0) > 0 && (
                           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
                             <CheckCircle size={13} style={{ color: brandColor }} strokeWidth={2} />
                             <span style={{ fontSize: 11, color: brandColor, fontWeight: 600 }}>Commission Paid</span>
                           </div>
                         )}
                       </div>
-
-                      {c.notes && (
-                        <div style={{ marginTop: 12, padding: '8px 12px', background: '#0A0A0A', borderRadius: 4, fontSize: 11, color: 'rgba(255,255,255,0.35)', borderLeft: `2px solid ${brandColor}44` }}>
-                          {c.notes}
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -507,9 +488,10 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   </thead>
                   <tbody>
                     {clients.map(c => {
-                      const totalPaid = getClientTotalPaid(c);
-                      const commission = getClientCommission(c);
-                      const rate = (affiliate?.commission_rate || 0.20) * 100;
+                      const totalPaid = c.totalPaid || 0;
+                      const commission = c.commissionEarned || 0;
+                      const owed = c.commissionOwed || 0;
+                      const rate = c.ratePct != null ? c.ratePct : Math.round((affiliate?.commission_rate || 0.20) * 100);
                       return (
                         <tr key={c.id} style={{ borderBottom: '1px solid #1A1A1A' }}>
                           <td style={{ padding: '14px 20px' }}>
@@ -528,12 +510,12 @@ export default function AffiliatePortal({ session, onSignOut }) {
                             </div>
                           </td>
                           <td style={{ padding: '14px 20px', textAlign: 'right' }}>
-                            {c.commission_paid ? (
-                              <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>Paid</span>
-                            ) : fee ? (
-                              <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#FFFBEB', color: '#D97706', border: '1px solid #FDE68A', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>Pending</span>
-                            ) : (
+                            {commission <= 0 ? (
                               <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#1A1A1A', color: 'rgba(255,255,255,0.25)', border: '1px solid #2A2A2A', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>TBD</span>
+                            ) : owed <= 0.01 ? (
+                              <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>Paid</span>
+                            ) : (
+                              <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#FFFBEB', color: '#D97706', border: '1px solid #FDE68A', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>Pending</span>
                             )}
                           </td>
                         </tr>
@@ -545,7 +527,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
             </div>
 
             <div style={{ marginTop: 16, padding: 16, background: '#0A0A0A', borderRadius: 6, border: '1px solid #1A1A1A', fontSize: 11, color: 'rgba(255,255,255,0.3)', lineHeight: 1.6 }}>
-              Commissions are calculated at {Math.round((affiliate?.commission_rate || 0.20) * 100)}% of the initial consultation/audit fee paid by each referred client. Commissions are paid manually by Credit Comeback Club after the consultation is complete and payment is confirmed. Questions? Contact chris@cccpartners.co or call 970-644-0063.
+              Commissions are calculated at {Math.round((affiliate?.commission_rate || 0.20) * 100)}% of the First Work Fee and every ongoing monthly payment a referred client makes, for as long as they remain a client. Commissions are paid manually by Credit Comeback Club as revenue comes in. Questions? Contact chris@cccpartners.co or call 970-644-0063.
             </div>
           </>
         )}
