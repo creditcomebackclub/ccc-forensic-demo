@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
-import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign, UserPlus } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign, UserPlus, Clock } from 'lucide-react';
 import ProspectChatWidget from './components/ProspectChatWidget';
 import { Toaster } from 'react-hot-toast';
 import { supabase } from './utils/supabase';
@@ -22,9 +22,10 @@ const ClientPortal = lazy(() => import('./components/ClientPortal'));
 const AffiliatePortal = lazy(() => import('./components/AffiliatePortal'));
 const SettingsModal = lazy(() => import('./components/SettingsModal'));
 const BillingDashboardPage = lazy(() => import('./components/BillingDashboardPage'));
+const LetterTrackerPage = lazy(() => import('./components/LetterTrackerPage'));
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
-const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', BILLING: 'billing', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
+const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', BILLING: 'billing', LETTER_TRACKER: 'letter-tracker', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
 
 function AffiliatesPage() {
   const [affiliates, setAffiliates] = React.useState([]);
@@ -614,6 +615,7 @@ export default function App() {
             {view === VIEW.TEAM && isAdmin && <TeamPage currentUserId={user.id} />}
             {view === VIEW.AFFILIATES && isAdmin && <AffiliatesPage />}
             {view === VIEW.BILLING && isAdmin && <BillingDashboardPage onNavigate={handleNavigate} isAdmin={isAdmin} />}
+            {view === VIEW.LETTER_TRACKER && isAdmin && <LetterTrackerPage onNavigate={handleNavigate} isAdmin={isAdmin} />}
             {view === VIEW.AUDIT && (
               <>
                 {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
@@ -660,6 +662,9 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
         <NavItem icon={BookOpen} label="Methodology" active={view === 'methodology'} onClick={() => onNavigate('methodology')} />
         {isAdmin && (
           <NavItem icon={DollarSign} label="Billing" active={view === 'billing'} onClick={() => onNavigate('billing')} />
+        )}
+        {isAdmin && (
+          <NavItem icon={Clock} label="Letter Tracker" active={view === 'letter-tracker'} onClick={() => onNavigate('letter-tracker')} />
         )}
         {isAdmin && (
           <NavItem icon={UserCog} label="Team" active={view === 'team'} onClick={() => onNavigate('team')} />
