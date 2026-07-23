@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { getSettings } from '../utils/settings';
 
 import OverviewTab from './client-portal/OverviewTab';
+import ProgressTab from './client-portal/ProgressTab';
 import DisputesTab from './client-portal/DisputesTab';
 import TimelineTab from './client-portal/TimelineTab';
 import DocumentsTab from './client-portal/DocumentsTab';
@@ -20,6 +21,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const [letters, setLetters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [auditHistory, setAuditHistory] = useState([]);
+  const [progressUpdates, setProgressUpdates] = useState([]);
   const [activeTab, setActiveTab] = useState('overview');
   const [uploadingLetter, setUploadingLetter] = useState(null);
   const [clientDocs, setClientDocs] = useState({ id: null, address: null });
@@ -57,14 +59,16 @@ export default function ClientPortal({ session, onSignOut }) {
       }
       setProfile(cp);
       if (cp) {
-        const [lettersRes, metaRes, auditsRes] = await Promise.all([
+        const [lettersRes, metaRes, auditsRes, progressRes] = await Promise.all([
           supabase.from('letters').select('*').eq('client_name', cp.full_name).order('saved_at', { ascending: true }),
           supabase.from('clients').select('*').eq('name', cp.full_name).limit(1),
           supabase.from('audits').select('audit,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5),
+          supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).order('to_report_date', { ascending: false }),
         ]);
         setLetters(lettersRes.data || []);
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
+        setProgressUpdates(progressRes.data || []);
 
         const { data: docRows } = await supabase.from('documents').select('doc_type,file_name,uploaded_at').eq('client_name', cp.full_name);
         if (docRows) {
@@ -232,6 +236,28 @@ export default function ClientPortal({ session, onSignOut }) {
   const responded = letters.filter(l => l.response_outcome);
   const deletions = letters.filter(l => l.response_outcome === 'deleted');
   const isVip = clientMeta && clientMeta.is_vip;
+
+  // Onboarding timeline (Overview tab) — stage computed from earliest Phase 1 mail date.
+  const phase1Mailed = letters
+    .filter(l => !l.phase?.startsWith('Phase 3') && l.mailed_date)
+    .sort((a, b) => new Date(a.mailed_date) - new Date(b.mailed_date));
+  const earliestPhase1MailDate = phase1Mailed[0]?.mailed_date || null;
+  const windowCloseDate = earliestPhase1MailDate
+    ? new Date(new Date(earliestPhase1MailDate).getTime() + 30 * 86400000).toISOString()
+    : null;
+  const phase3Mailed = letters.some(l => l.phase?.startsWith('Phase 3') && l.mailed_date);
+  const firstDeletionDate = deletions
+    .map(d => d.response_date)
+    .filter(Boolean)
+    .sort((a, b) => new Date(a) - new Date(b))[0] || null;
+
+  let onboardingStage;
+  if (!earliestPhase1MailDate) onboardingStage = 1;
+  else if (firstDeletionDate) onboardingStage = 4;
+  else if (phase3Mailed || (windowCloseDate && new Date() > new Date(windowCloseDate))) onboardingStage = 3;
+  else onboardingStage = 2;
+
+  const onboardingDates = { mailDate: earliestPhase1MailDate, windowCloseDate, firstDeletionDate };
   const firstName = (profile && profile.full_name || '').split(' ')[0] || 'there';
 
   const latestScores = (auditHistory.length > 0 && auditHistory[0].audit && auditHistory[0].audit.scores) || null;
@@ -267,6 +293,7 @@ export default function ClientPortal({ session, onSignOut }) {
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
+    { id: 'progress', label: 'Progress' },
     { id: 'disputes', label: 'Disputes' },
     { id: 'timeline', label: 'Timeline' },
     { id: 'documents', label: docsComplete ? '📁 Documents' : '📁 Documents ⚡' },
@@ -337,7 +364,13 @@ export default function ClientPortal({ session, onSignOut }) {
                 totalDisputes={letters.length}
                 latestScores={latestScores}
                 auditHistory={auditHistory}
+                onboardingStage={onboardingStage}
+                onboardingDates={onboardingDates}
               />
+            )}
+
+            {activeTab === 'progress' && (
+              <ProgressTab updates={progressUpdates} />
             )}
 
             {activeTab === 'documents' && (

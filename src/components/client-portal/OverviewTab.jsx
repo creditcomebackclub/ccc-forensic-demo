@@ -1,6 +1,7 @@
 import React from 'react';
 import { TrendingUp, Shield } from 'lucide-react';
 import ScoreMeter from './ScoreMeter';
+import OnboardingTimeline from './OnboardingTimeline';
 import { motion } from 'framer-motion';
 
 function DeletionRing({ deleted, totalDisputed }) {
@@ -51,6 +52,8 @@ export default function OverviewTab({
   totalDisputes,
   latestScores,
   auditHistory,
+  onboardingStage,
+  onboardingDates,
 }) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
@@ -58,6 +61,8 @@ export default function OverviewTab({
         <h1 className="text-2xl font-bold text-slate-900 ccc-display">Welcome back, {firstName}.</h1>
         <p className="text-sm text-gray-500 mt-1 mb-6">Here's your credit restoration campaign at a glance.</p>
       </div>
+
+      <OnboardingTimeline stage={onboardingStage} dates={onboardingDates} />
 
       <DeletionRing deleted={deletions.length} totalDisputed={totalDisputes || mailed.length} />
 
