@@ -47,18 +47,22 @@ const ACCOUNT = {
     furnisherAddress: NULLABLE_STRING,
     batch: { type: 'integer', enum: [1, 2] },
     strategy: { type: 'string' },
-    // Added for the progress-report diff engine (Retention Build 1a) — additive
-    // only, mirrors Metro 2 fields already referenced in violations (DOFD =
-    // Field 25, disputeFlag = Field 19 compliance condition code).
-    paymentRating: NULLABLE_STRING,
-    dateOfFirstDelinquency: NULLABLE_STRING,
-    remarks: NULLABLE_STRING,
-    disputeFlag: { type: 'boolean' },
+    // paymentRating/dateOfFirstDelinquency/remarks/disputeFlag were added
+    // here for the Retention Build 1a diff engine, then reverted the same
+    // day: they pushed the compiled structured-output grammar over the
+    // API's hard size limit, breaking every audit run in every mode
+    // (confirmed live against the API — even the schema from before this
+    // addition fails today, so the limit itself is tighter than whatever it
+    // was tested against previously, not something these 4 fields alone
+    // caused). Restoring these needs either dropping inquiries or
+    // personalInfo from this same schema (both feed real, shipped letter
+    // types — confirmed empirically, not a guess) or a genuinely separate
+    // lighter-weight extraction pass; that's a real feature tradeoff, not
+    // reintroduced silently.
   },
   required: [
     'id', 'furnisher', 'originalCreditor', 'accountNumberMasked', 'type', 'status',
     'balance', 'bureaus', 'violations', 'primaryViolation', 'addressStatus', 'furnisherAddress', 'batch', 'strategy',
-    'paymentRating', 'dateOfFirstDelinquency', 'remarks', 'disputeFlag',
   ],
 };
 
@@ -120,25 +124,19 @@ export const AUDIT_SCHEMA = {
     accountsTargeted: { type: 'number' },
     totalViolations: { type: 'number' },
     accounts: { type: 'array', items: ACCOUNT },
-    violationsByType: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          type: { type: 'string' },
-          count: { type: 'number' },
-          statute: { type: 'string' },
-        },
-        required: ['type', 'count', 'statute'],
-      },
-    },
+    // violationsByType is NOT part of the model's structured output — it's
+    // pure duplication of data already in accounts[].violations (grouped by
+    // field, counted, with the statute). Removing it from the schema was
+    // the fix for the compiled-grammar-too-large 400 that broke every audit
+    // run; audit-run-background.mjs computes it deterministically from the
+    // parsed accounts after the fact and attaches it before saving, so the
+    // UI (AuditResults.jsx) needs no change at all.
     inquiries: { type: 'array', items: INQUIRY },
     personalInfo: PERSONAL_INFO,
   },
   required: [
     'client', 'scores', 'executiveSummary', 'accountsScanned', 'accountsTargeted',
-    'totalViolations', 'accounts', 'violationsByType', 'inquiries', 'personalInfo',
+    'totalViolations', 'accounts', 'inquiries', 'personalInfo',
   ],
 };
 

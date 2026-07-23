@@ -50,6 +50,23 @@ function parseAuditJSON(text) {
   throw new Error('Could not parse JSON from response');
 }
 
+// Groups accounts[].violations by field, counting occurrences and keeping
+// the first-seen statute for that field — same shape the model used to
+// generate directly (removed from the schema to fix the compiled-grammar
+// 400; this is deterministic and cheaper than asking the model to
+// re-derive data it already produced in accounts[].violations).
+function computeViolationsByType(accounts) {
+  const byField = new Map();
+  for (const acct of accounts || []) {
+    for (const v of acct.violations || []) {
+      if (!v.field) continue;
+      if (!byField.has(v.field)) byField.set(v.field, { type: v.field, count: 0, statute: v.statute || '' });
+      byField.get(v.field).count++;
+    }
+  }
+  return [...byField.values()];
+}
+
 export const handler = async (event) => {
   let jobId = null;
   try { jobId = JSON.parse(event.body || '{}').jobId; } catch (e) { /* handled below */ }
@@ -268,6 +285,13 @@ export const handler = async (event) => {
     }
 
     if (!audit || !audit.client) throw new Error('Audit produced no client data.');
+
+    // violationsByType is no longer part of the model's structured output
+    // (removed to fix the compiled-grammar-too-large 400 that was breaking
+    // every audit run) — it's pure duplication of accounts[].violations
+    // grouped by field and counted, so it's computed here instead. Same
+    // shape AuditResults.jsx already expects; that component needs no change.
+    audit.violationsByType = computeViolationsByType(audit.accounts);
 
     await saveAuditAs(job.user_id, audit);
 
