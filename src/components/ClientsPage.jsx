@@ -488,6 +488,11 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [sendingLpoa, setSendingLpoa] = useState(null);
   const [showCreateClient, setShowCreateClient] = useState(false);
   const [viewTab, setViewTab] = useState(forceTab || 'clients'); // 'clients' | 'leads'
+  // Retention Build 3 — lifecycle status filter. Defaults to the "working
+  // view" (Active + Paused); Graduated/Inactive are one click away rather
+  // than cluttering the default list. Composes with search/dispute-workflow
+  // chips (AND), doesn't replace them.
+  const [lifecycleSelected, setLifecycleSelected] = useState(['Active', 'Paused']);
   const [showAddLead, setShowAddLead] = useState(false);
   const [convertingLead, setConvertingLead] = useState(null);
   const clientRefs = useRef({});
@@ -656,7 +661,13 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-blue-50 text-blue-700 shrink-0" title="Billing Active">Active</span>
                 )}
                 {c.billingStatus === 'Paused' && (
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-amber-50 text-amber-700 shrink-0" title="Billing Paused">Paused</span>
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-amber-50 text-amber-700 shrink-0" title={'Billing Paused' + (c.exitReason ? ' — ' + c.exitReason : '')}>Paused</span>
+                )}
+                {c.billingStatus === 'Graduated' && (
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-green-50 text-green-700 shrink-0" title="Graduated — arc complete">Graduated</span>
+                )}
+                {c.billingStatus === 'Inactive' && (
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-red-50 text-red-700 shrink-0" title={'Inactive' + (c.exitReason ? ' — ' + c.exitReason : '')}>Inactive</span>
                 )}
               </div>
               <div className="text-[13px] truncate" style={{ color: T.muted }}>
@@ -870,7 +881,13 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   }
 
   const leadClients = clients.filter((c) => c.status === 'lead');
-  const activeClients = clients.filter((c) => c.status !== 'lead');
+  const nonLeadClients = clients.filter((c) => c.status !== 'lead');
+  // Unset billing_status (most existing demo data) counts as 'Active' for
+  // filtering — it means "never explicitly changed," not "hidden."
+  const lifecycleOf = (c) => c.billingStatus || 'Active';
+  const LIFECYCLE_STATUSES = ['Active', 'Paused', 'Graduated', 'Inactive'];
+  const lifecycleCounts = Object.fromEntries(LIFECYCLE_STATUSES.map((s) => [s, nonLeadClients.filter((c) => lifecycleOf(c) === s).length]));
+  const activeClients = nonLeadClients.filter((c) => lifecycleSelected.includes(lifecycleOf(c)));
   const tabClients = viewTab === 'leads' ? leadClients : activeClients;
 
   const stageRank = { ready: 3, audit: 2, contacted: 1, new: 0 };
@@ -965,6 +982,32 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           </button>
         </div>
       </div>
+
+      {/* Lifecycle status filter (Retention Build 3) — multi-select, composes
+          with the dispute-workflow chips and search below rather than
+          replacing them. Graduated/Inactive start deselected. */}
+      {viewTab === 'clients' && (
+        <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+          {LIFECYCLE_STATUSES.map((s) => {
+            const isOn = lifecycleSelected.includes(s);
+            const tone = { Active: '#1D4ED8', Paused: '#B45309', Graduated: '#15803D', Inactive: '#B91C1C' }[s];
+            return (
+              <button key={s}
+                onClick={() => setLifecycleSelected((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s])}
+                className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] transition-colors"
+                style={{
+                  background: isOn ? tone : '#fff',
+                  color: isOn ? '#fff' : T.muted,
+                  border: '1px solid ' + (isOn ? tone : T.border),
+                  fontWeight: isOn ? 600 : 400,
+                }}>
+                {s}
+                <span style={{ fontSize: 10, opacity: isOn ? 0.85 : 0.7, fontVariantNumeric: 'tabular-nums' }}>{lifecycleCounts[s]}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Quick-filter chips */}
       <div className="flex items-center gap-1.5 mb-4 flex-wrap">
@@ -1082,7 +1125,13 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                       <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-blue-50 text-blue-700 shrink-0" title="Billing Active">Active</span>
                     )}
                     {c.billingStatus === 'Paused' && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-amber-50 text-amber-700 shrink-0" title="Billing Paused">Paused</span>
+                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-amber-50 text-amber-700 shrink-0" title={'Billing Paused' + (c.exitReason ? ' — ' + c.exitReason : '')}>Paused</span>
+                    )}
+                    {c.billingStatus === 'Graduated' && (
+                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-green-50 text-green-700 shrink-0" title="Graduated — arc complete">Graduated</span>
+                    )}
+                    {c.billingStatus === 'Inactive' && (
+                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-red-50 text-red-700 shrink-0" title={'Inactive' + (c.exitReason ? ' — ' + c.exitReason : '')}>Inactive</span>
                     )}
                   </div>
                   <div className="text-[11px] truncate" style={{ color: T.muted }}>

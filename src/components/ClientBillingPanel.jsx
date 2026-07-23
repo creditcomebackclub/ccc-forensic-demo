@@ -88,6 +88,82 @@ function Field({ label, value, onSave, type = 'text', placeholder = '', options 
   );
 }
 
+// Retention Build 3 — lifecycle status. A dedicated field (not the generic
+// Field above) because it has cross-field validation the generic one
+// doesn't support: exit_reason is required whenever status isn't 'Active',
+// and both fields save together in one call.
+const LIFECYCLE_STATUSES = ['Active', 'Paused', 'Graduated', 'Inactive'];
+const EXIT_REASON_LABELS = {
+  graduated: 'Graduated — arc complete',
+  non_payment: 'Non-payment',
+  dissatisfied: 'Dissatisfied',
+  went_dark: 'Went dark',
+  client_paused: 'Client requested pause',
+  price: 'Price',
+  other: 'Other',
+};
+const EXIT_REASONS = Object.keys(EXIT_REASON_LABELS);
+
+function LifecycleStatusField({ status, exitReason, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(status || '');
+  const [reason, setReason] = useState(exitReason || '');
+
+  const needsReason = !!val && val !== 'Active';
+  const canSave = !!val && (!needsReason || !!reason);
+
+  const save = async () => {
+    if (!canSave) return;
+    await onSave({ billing_status: val, exit_reason: needsReason ? reason : null });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex flex-col items-end gap-1.5 w-full">
+        <div className="flex items-center gap-1.5 w-full justify-end">
+          <select
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            className="border rounded-md px-2 py-1 text-[12px] focus:outline-none focus:border-navy bg-white"
+            style={{ borderColor: T.border, minWidth: 140 }}
+          >
+            <option value="">Select...</option>
+            {LIFECYCLE_STATUSES.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+          <button onClick={save} disabled={!canSave} title={!canSave && needsReason ? 'Exit reason required' : 'Save'} className="text-green-600 hover:text-green-700 flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"><Check size={13} strokeWidth={2} /></button>
+          <button onClick={() => setEditing(false)} className="text-ink-faint hover:text-red-600 flex-shrink-0"><X size={13} strokeWidth={2} /></button>
+        </div>
+        {needsReason && (
+          <select
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            className="border rounded-md px-2 py-1 text-[12px] focus:outline-none focus:border-navy bg-white"
+            style={{ borderColor: reason ? T.border : '#F59E0B', minWidth: 200 }}
+          >
+            <option value="">Exit reason (required)...</option>
+            {EXIT_REASONS.map((r) => <option key={r} value={r}>{EXIT_REASON_LABELS[r]}</option>)}
+          </select>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 group justify-end">
+      <div className="text-right">
+        <div className="text-[12px]" style={{ color: status ? T.ink : T.faint, fontStyle: status ? 'normal' : 'italic' }}>{status || 'Not set'}</div>
+        {exitReason && <div className="text-[10px]" style={{ color: T.faint }}>{EXIT_REASON_LABELS[exitReason] || exitReason}</div>}
+      </div>
+      <button onClick={() => { setVal(status || ''); setReason(exitReason || ''); setEditing(true); }}
+        title="Edit billing status"
+        className="opacity-30 group-hover:opacity-100 text-ink-faint hover:text-navy transition-opacity">
+        <Edit2 size={11} strokeWidth={2} />
+      </button>
+    </div>
+  );
+}
+
 export default function ClientBillingPanel({ client, onChanged }) {
   const today = new Date().toISOString().slice(0, 10);
   const [showAddTx, setShowAddTx] = useState(false);
@@ -205,12 +281,10 @@ export default function ClientBillingPanel({ client, onChanged }) {
           </div>
         </Row>
         <Row label="Billing Status">
-          <Field 
-            label="billing status" 
-            value={client.billingStatus} 
-            options={['Active', 'Paused', 'Inactive']} 
-            placeholder="Select status..."
-            onSave={(v) => save({ billing_status: v })} 
+          <LifecycleStatusField
+            status={client.billingStatus}
+            exitReason={client.exitReason}
+            onSave={(fields) => save(fields)}
           />
         </Row>
         <Row label="Billing Start Date">
@@ -253,7 +327,25 @@ export default function ClientBillingPanel({ client, onChanged }) {
           <div className="mt-2 bg-amber-50 text-amber-800 text-[11px] px-3 py-2 rounded-md border border-amber-200 flex items-start gap-2">
             <DollarSign size={14} className="mt-0.5 flex-shrink-0" />
             <div>
-              <strong>Billing is paused.</strong> Services may continue but invoicing is suspended.
+              <strong>Billing is paused.</strong> File stays open — letters may still be in flight. Not counted as churn.
+            </div>
+          </div>
+        )}
+
+        {client.billingStatus === 'Graduated' && (
+          <div className="mt-2 bg-green-50 text-green-800 text-[11px] px-3 py-2 rounded-md border border-green-200 flex items-start gap-2">
+            <Check size={14} className="mt-0.5 flex-shrink-0" />
+            <div>
+              <strong>Graduated.</strong> Arc complete, exited successfully. Not counted as churn.
+            </div>
+          </div>
+        )}
+
+        {client.billingStatus === 'Inactive' && (
+          <div className="mt-2 bg-red-50 text-red-800 text-[11px] px-3 py-2 rounded-md border border-red-200 flex items-start gap-2">
+            <X size={14} className="mt-0.5 flex-shrink-0" />
+            <div>
+              <strong>Inactive.</strong> Involuntary or dissatisfied exit. Counted as churn.
             </div>
           </div>
         )}
