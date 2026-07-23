@@ -185,7 +185,9 @@ export default function ClientBillingPanel({ client, onChanged }) {
   };
 
   const markPaid = async (id) => {
-    const updated = ledger.map(t => t.id === id ? { ...t, status: 'Paid' } : t);
+    // Stamp paid_at so the Billing Dashboard can compute days-to-pay / DSO.
+    // Preserve any existing paid_at (idempotent re-marks).
+    const updated = ledger.map(t => t.id === id ? { ...t, status: 'Paid', paid_at: t.paid_at || new Date().toISOString() } : t);
     await save({ ledger: updated });
   };
 
