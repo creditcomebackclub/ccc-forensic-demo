@@ -282,6 +282,111 @@ exports.handler = async () => {
     }
   }
 
+  // --- 2.5 Paused Client Winback Sweep (Retention Build 6) ---
+  // This is a status update, not a marketing email: paused clients still
+  // have statutory deadlines running on their file whether they're paying
+  // or not. Depends on Build 5's shared in-flight-letter helper (this .cjs
+  // file can't `require()` an ES module, so it's loaded via dynamic import,
+  // which works from CommonJS) and Build 3's status_changed_at (the pause
+  // clock the 21/45-day thresholds are measured from).
+  let winbackSentCount = 0;
+  if (sgKey) {
+    try {
+      const { inFlightLettersForClient } = await import('../../src/utils/inFlightLetters.js');
+
+      const pausedRes = await supabaseRequest(
+        '/rest/v1/clients?billing_status=eq.Paused&select=name,status_changed_at,winback_notifications_sent',
+        'GET', null, supabaseUrl, supabaseKey
+      );
+      const pausedClients = Array.isArray(pausedRes.body) ? pausedRes.body : [];
+
+      // Reuse the `letters` array already fetched above (all unresolved,
+      // response_outcome is null) instead of a second per-client query.
+      const lettersByClient = new Map();
+      for (const l of letters) {
+        if (!lettersByClient.has(l.client_name)) lettersByClient.set(l.client_name, []);
+        lettersByClient.get(l.client_name).push({
+          id: l.id, furnisher: l.furnisher, phase: l.phase,
+          mailedDate: l.mailed_date, deliveredAt: l.delivered_at, responseOutcome: l.response_outcome,
+        });
+      }
+
+      for (const c of pausedClients) {
+        if (!c.status_changed_at) continue; // no pause clock to measure from — pre-Build-3 data gap
+        const pausedDate = c.status_changed_at.slice(0, 10);
+        const daysPaused = daysBetween(pausedDate, today);
+        const sentMarkers = c.winback_notifications_sent || [];
+        // Keyed by pausedDate, not just the step name, so a client who
+        // un-pauses and later pauses again (a new status_changed_at) starts
+        // the sequence fresh instead of being skipped by a stale marker.
+        const step2Marker = 'step2@' + pausedDate;
+        const step1Marker = 'step1@' + pausedDate;
+
+        let step = null;
+        if (daysPaused >= 45 && !sentMarkers.includes(step2Marker)) step = 2;
+        else if (daysPaused >= 21 && !sentMarkers.includes(step1Marker)) step = 1;
+        if (!step) continue;
+
+        const inFlight = inFlightLettersForClient(c.name, lettersByClient.get(c.name) || [], []);
+        if (inFlight.length === 0) continue; // nothing worth sending — same rule for both steps
+
+        const cpRes = await supabaseRequest(
+          '/rest/v1/client_profiles?full_name=eq.' + encodeURIComponent(c.name) + '&select=email&limit=1',
+          'GET', null, supabaseUrl, supabaseKey
+        );
+        const clientEmail = cpRes.body && cpRes.body[0] && cpRes.body[0].email;
+        if (!clientEmail) continue;
+
+        const remainLabel = (r) => r.daysRemaining === null ? 'In transit' : (r.daysRemaining <= 0 ? Math.abs(r.daysRemaining) + 'd overdue' : r.daysRemaining + 'd');
+        const rows = [...inFlight]
+          .sort((a, b) => (a.daysRemaining ?? Infinity) - (b.daysRemaining ?? Infinity))
+          .map((r) => '<tr>'
+            + '<td style="padding:6px 8px;font-size:12px;border-bottom:1px solid #E5E7EB;">' + r.furnisher + '</td>'
+            + '<td style="padding:6px 8px;font-size:12px;border-bottom:1px solid #E5E7EB;">' + (r.mailDate ? r.mailDate.slice(0, 10) : '—') + '</td>'
+            + '<td style="padding:6px 8px;font-size:12px;border-bottom:1px solid #E5E7EB;">' + (r.deadline || '—') + '</td>'
+            + '<td style="padding:6px 8px;font-size:12px;border-bottom:1px solid #E5E7EB;text-align:right;">' + remainLabel(r) + '</td>'
+            + '</tr>')
+          .join('');
+
+        const firstName = c.name.split(' ')[0] || c.name;
+        const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
+          + '<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F8F9FA;">'
+          + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:10px;">'
+          + '<div style="background:#C9A84C;border-radius:5px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;"><span style="color:#1B2A4A;font-weight:800;font-size:12px;">CC</span></div>'
+          + '<div style="color:#C9A84C;font-weight:700;font-size:14px;">Credit Comeback Club</div></div>'
+          + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:28px;border-radius:0 0 8px 8px;">'
+          + '<p style="color:#6B7280;font-size:12px;margin:0 0 4px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Status Update</p>'
+          + '<h1 style="font-size:18px;color:#1B2A4A;margin:0 0 16px;">Hi ' + firstName + ',</h1>'
+          + '<p style="font-size:13px;color:#374151;margin:0 0 16px;">Your file has ' + inFlight.length + ' dispute letter' + (inFlight.length === 1 ? '' : 's') + ' with active statutory deadlines, whether or not your account is currently billing.</p>'
+          + '<table style="width:100%;border-collapse:collapse;margin:0 0 16px;">'
+          + '<thead><tr>'
+          + '<th style="text-align:left;padding:6px 8px;font-size:11px;text-transform:uppercase;color:#6B7280;border-bottom:1px solid #E5E7EB;">Furnisher</th>'
+          + '<th style="text-align:left;padding:6px 8px;font-size:11px;text-transform:uppercase;color:#6B7280;border-bottom:1px solid #E5E7EB;">Mailed</th>'
+          + '<th style="text-align:left;padding:6px 8px;font-size:11px;text-transform:uppercase;color:#6B7280;border-bottom:1px solid #E5E7EB;">Deadline</th>'
+          + '<th style="text-align:right;padding:6px 8px;font-size:11px;text-transform:uppercase;color:#6B7280;border-bottom:1px solid #E5E7EB;">Remaining</th>'
+          + '</tr></thead><tbody>' + rows + '</tbody></table>'
+          + '<p style="font-size:13px;color:#374151;margin:0 0 20px;">Any deadline that passes without a response becomes the basis for the next round.</p>'
+          + '<div style="text-align:center;margin:0 0 20px;"><a href="https://ccc-forensic-demo.netlify.app" style="background:#1B2A4A;color:#C9A84C;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;display:inline-block;">View your portal &#8594;</a></div>'
+          + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:20px 0;">'
+          + '<p style="font-size:11px;color:#9CA3AF;margin:0;">Credit Comeback Club | creditcomebackclub.com | 970-644-0063</p>'
+          + '</div></body></html>';
+
+        try {
+          await sendgridEmail(clientEmail, 'Status on your file — ' + inFlight.length + ' letter' + (inFlight.length === 1 ? '' : 's') + ' still active', html, sgKey);
+          await supabaseRequest(
+            '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
+            'PATCH', { winback_notifications_sent: [...sentMarkers, 'step' + step + '@' + pausedDate] }, supabaseUrl, supabaseKey
+          );
+          winbackSentCount++;
+        } catch (e) {
+          console.error('Winback email failed for', c.name, e.message);
+        }
+      }
+    } catch (e) {
+      console.error('Winback sweep failed:', e);
+    }
+  }
+
   // --- 3. Gather Business Metrics for Executive Briefing ---
   let unmailedCount = 0;
   let newLeadsCount = 0;
@@ -383,7 +488,7 @@ exports.handler = async () => {
           }
           await supabaseRequest(
             '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
-            'PATCH', { billing_status: 'Paused' }, supabaseUrl, supabaseKey
+            'PATCH', { billing_status: 'Paused', exit_reason: 'non_payment' }, supabaseUrl, supabaseKey
           );
           isPausedNow = true;
           billingAlerts.push({ client: c.name, type: 'PAUSED', balance: balanceDue });
@@ -500,7 +605,7 @@ exports.handler = async () => {
 
   return {
     statusCode: 200,
-    body: JSON.stringify({ success: true, onboardingRemindersSent: onboardingDripsCount, updatesSent: clientUpdatesCount }),
+    body: JSON.stringify({ success: true, onboardingRemindersSent: onboardingDripsCount, updatesSent: clientUpdatesCount, winbackSent: winbackSentCount }),
   };
 };
 
