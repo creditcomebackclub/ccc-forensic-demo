@@ -101,7 +101,9 @@ export default function ClientBillingPanel({ client, onChanged }) {
   }, 0);
 
   const totalPaid = ledger.reduce((sum, tx) => {
-    if (tx.type === 'Payment') return sum + (parseFloat(tx.amount) || 0);
+    if (tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid')) {
+      return sum + (parseFloat(tx.amount) || 0);
+    }
     return sum;
   }, 0);
 
