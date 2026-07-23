@@ -72,6 +72,17 @@ export function trimBureau(data) {
   };
 }
 
+// Second-pass enrichment for the Retention Build 1a diff engine (see
+// ACCOUNT_ENRICHMENT_SCHEMA) — re-examines the same report(s) for 4 fields
+// per already-identified account, since they didn't fit in the main
+// AUDIT_SCHEMA call without dropping inquiries or personalInfo.
+export function accountEnrichmentPrompt(t, accounts) {
+  const accountList = (accounts || [])
+    .map((a) => `- id=${a.id}: ${a.furnisher} ${a.accountNumberMasked || ''}`.trim())
+    .join('\n');
+  return `ACCOUNT_ENRICHMENT_JSON_MODE\n\nToday is ${t}. You already extracted these accounts from the attached credit report(s):\n\n${accountList}\n\nFor EACH account id listed above, look at the attached report(s) again and extract exactly these 4 fields:\n- paymentRating: current payment status if the report shows one distinct from Account Status, e.g. 'Current' or '90 days late', or null\n- dateOfFirstDelinquency: Field 25 DOFD as YYYY-MM-DD if reported, else null\n- remarks: any remarks/comments text the bureau shows for this account, or null\n- disputeFlag: true if Field 19 (Compliance Condition Code) shows the account as consumer-disputed (e.g. code XB), else false\n\nReturn exactly one entry per account id listed above, using the EXACT same id values — do not invent accounts, do not omit any listed id. JSON only.`;
+}
+
 export function mergeAuditPrompt(t, eqData, expData, tuData) {
   return `MERGE_AUDIT_JSON_MODE\n\nToday is ${t}.\n\nMerge these three bureau reports into a unified forensic audit. Match accounts across bureaus. Identify cross-bureau violations. Classify each account A/B/C. Rank top 5 as Batch 1, rest as Batch 2. For the PDF Battle Plan, you MUST populate 'primaryViolation', 'strategy', 'addressStatus' and 'furnisherAddress' for EVERY account. Also merge all hard inquiries and personalInfo data across the bureaus.\n\nData:\n${JSON.stringify({ equifax: trimBureau(eqData), experian: trimBureau(expData), transunion: trimBureau(tuData) }, null, 2)}\n\nJSON only.`;
 }

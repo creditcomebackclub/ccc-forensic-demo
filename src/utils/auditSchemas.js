@@ -213,6 +213,36 @@ export const BUREAU_SCHEMA = {
   required: ['bureau', 'client', 'accounts', 'inquiries', 'personalInfo'],
 };
 
+// Second-pass enrichment for the Retention Build 1a diff engine — payment
+// rating/DOFD/remarks/dispute flag couldn't fit in AUDIT_SCHEMA's single
+// call without dropping inquiries or personalInfo (both feed real, shipped
+// letter types), so this runs as its own small follow-up call instead.
+// Deliberately tiny — no violations, no enums, nothing nested — so it can
+// never itself hit the compiled-grammar limit. Best-effort only: a failure
+// here must never block the audit (see audit-run-background.mjs).
+export const ACCOUNT_ENRICHMENT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    accounts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          paymentRating: NULLABLE_STRING,
+          dateOfFirstDelinquency: NULLABLE_STRING,
+          remarks: NULLABLE_STRING,
+          disputeFlag: { type: 'boolean' },
+        },
+        required: ['id', 'paymentRating', 'dateOfFirstDelinquency', 'remarks', 'disputeFlag'],
+      },
+    },
+  },
+  required: ['accounts'],
+};
+
 // Phase 2 (furnisher response) analysis — mirrors the JSON contract in
 // src/prompts/phase2Prompt.js field-for-field. Consumers: ResponseAnalyzer's
 // results UI and savePhase3Letters(). Do not add/rename fields here without

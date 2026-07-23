@@ -11,10 +11,10 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
-import { AUDIT_SCHEMA, BUREAU_SCHEMA } from '../../src/utils/auditSchemas.js';
+import { AUDIT_SCHEMA, BUREAU_SCHEMA, ACCOUNT_ENRICHMENT_SCHEMA } from '../../src/utils/auditSchemas.js';
 import {
   buildReportContent, combinedAuditPrompt, singleBureauAuditPrompt,
-  bureauParsePrompt, mergeAuditPrompt, todayLong,
+  bureauParsePrompt, mergeAuditPrompt, accountEnrichmentPrompt, todayLong,
 } from '../../src/utils/auditPrompts.js';
 
 const MODEL = 'claude-sonnet-5';
@@ -292,6 +292,37 @@ export const handler = async (event) => {
     // grouped by field and counted, so it's computed here instead. Same
     // shape AuditResults.jsx already expects; that component needs no change.
     audit.violationsByType = computeViolationsByType(audit.accounts);
+
+    // Retention Build 1a diff-engine fields (payment rating, DOFD, remarks,
+    // dispute flag) — didn't fit in AUDIT_SCHEMA's single call, so this is a
+    // second, small follow-up call scoped to just those 4 fields per
+    // already-identified account. Best-effort: any failure here is caught
+    // and swallowed — the audit above is already valid and saved regardless,
+    // exactly as if these 4 fields had never been reintroduced.
+    await progress('Enriching account details', 90)(0);
+    try {
+      const enrichmentContent = [];
+      for (const f of files) {
+        const b64 = await downloadBase64(f.path);
+        enrichmentContent.push(buildReportContent(b64, '', f.type)[0]);
+      }
+      enrichmentContent.push({ type: 'text', text: accountEnrichmentPrompt(t, audit.accounts) });
+
+      const enrichRaw = await claudeCall(enrichmentContent, {
+        schema: ACCOUNT_ENRICHMENT_SCHEMA, maxTokens: 4000, onTokens: progress('Enriching account details', 90),
+      });
+      const enrichment = parseAuditJSON(enrichRaw);
+      const byId = new Map((enrichment?.accounts || []).map((e) => [e.id, e]));
+      for (const acct of audit.accounts || []) {
+        const e = byId.get(acct.id);
+        acct.paymentRating = e ? e.paymentRating : null;
+        acct.dateOfFirstDelinquency = e ? e.dateOfFirstDelinquency : null;
+        acct.remarks = e ? e.remarks : null;
+        acct.disputeFlag = e ? !!e.disputeFlag : false;
+      }
+    } catch (e) {
+      console.warn('[audit-enrichment] failed (non-fatal, audit continues without these fields):', e.message);
+    }
 
     await saveAuditAs(job.user_id, audit);
 
