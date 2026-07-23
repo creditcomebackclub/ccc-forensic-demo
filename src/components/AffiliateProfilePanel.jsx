@@ -148,9 +148,12 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], onClose
               )}
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-md text-ink-faint hover:bg-gray-100 transition-colors self-start mt-1">
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-4 self-start mt-1">
+            <ImpersonateButton affiliate={affiliate} />
+            <button onClick={onClose} className="p-1 rounded-md text-ink-faint hover:bg-gray-100 transition-colors">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Scrollable Content */}
@@ -273,6 +276,60 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], onClose
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ImpersonateButton({ affiliate }) {
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr] = React.useState(null);
+
+  const handleImpersonate = async () => {
+    if (!affiliate.email) { setErr('No email on file.'); return; }
+    setLoading(true);
+    setErr(null);
+    
+    // Open tab synchronously to prevent popup blockers
+    const newTab = window.open('about:blank', '_blank');
+    
+    try {
+      const { data: { session: adminSess } } = await supabase.auth.getSession();
+      const adminTok = adminSess?.access_token;
+      const res = await fetch('/.netlify/functions/admin-impersonate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(adminTok ? { Authorization: `Bearer ${adminTok}` } : {}),
+        },
+        body: JSON.stringify({ email: affiliate.email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed');
+      if (!data.link) throw new Error('No link returned');
+      
+      if (newTab) {
+        newTab.location.href = data.link;
+      } else {
+        window.open(data.link, '_blank');
+      }
+    } catch (e) {
+      if (newTab) newTab.close();
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-end">
+      <button
+        onClick={handleImpersonate}
+        disabled={loading || !affiliate.email}
+        className="flex items-center gap-2 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded border border-amber-300 text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-50"
+      >
+        {loading ? 'Generating…' : '🔑 View Portal'}
+      </button>
+      {err && <div className="text-[10px] text-red-600 mt-1">{err}</div>}
     </div>
   );
 }
