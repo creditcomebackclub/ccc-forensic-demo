@@ -55,9 +55,13 @@ function progressEmailHtml({ firstName, teaser, portalUrl }) {
     + '</div></body></html>';
 }
 
+// CC'd on every progress update so Chris accumulates real client-facing
+// progress reports for marketing use, not just this one-off send.
+const ADMIN_CC_EMAIL = 'chris@cccpartners.co';
+
 async function sendProgressEmail(sgKey, to, html, subject) {
   const payload = JSON.stringify({
-    personalizations: [{ to: [{ email: to }] }],
+    personalizations: [{ to: [{ email: to }], cc: [{ email: ADMIN_CC_EMAIL }] }],
     from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
     subject,
     content: [{ type: 'text/html', value: html }],
