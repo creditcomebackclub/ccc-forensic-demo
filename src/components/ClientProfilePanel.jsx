@@ -36,7 +36,11 @@ function Field({ label, value, onSave, type = 'text', placeholder = '', align = 
             onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
           >
             <option value="">Select...</option>
-            {options.map(o => <option key={o} value={o}>{o}</option>)}
+            {options.map(o => {
+              const v = typeof o === 'object' ? o.value : o;
+              const l = typeof o === 'object' ? o.label : o;
+              return <option key={v} value={v}>{l}</option>;
+            })}
           </select>
         ) : (
           <input
@@ -56,9 +60,13 @@ function Field({ label, value, onSave, type = 'text', placeholder = '', align = 
     );
   }
 
+  const displayValue = options && typeof options[0] === 'object'
+    ? (options.find(o => o.value === value)?.label || value)
+    : value;
+
   return (
     <div className={'flex items-center gap-1.5 group ' + (align === 'right' ? 'justify-end' : '')}>
-      <span className="text-[12px]" style={{ color: value ? T.ink : T.faint, fontStyle: value ? 'normal' : 'italic' }}>{value || 'Not set'}</span>
+      <span className="text-[12px]" style={{ color: value ? T.ink : T.faint, fontStyle: value ? 'normal' : 'italic' }}>{displayValue || 'Not set'}</span>
       <button onClick={() => { setVal(value || ''); setEditing(true); }}
         title={'Edit ' + (label || 'field')}
         className="opacity-30 group-hover:opacity-100 text-ink-faint hover:text-navy transition-opacity">
@@ -261,9 +269,12 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
   const [affiliates, setAffiliates] = useState([]);
 
   useEffect(() => {
-    supabase.from('affiliates').select('name, company').then(({ data }) => {
+    supabase.from('affiliates').select('id, name, company').then(({ data }) => {
       if (data) {
-        setAffiliates(data.map(a => a.name + (a.company ? ` (${a.company})` : '')));
+        setAffiliates(data.map(a => ({
+          value: a.id,
+          label: a.name + (a.company ? ` (${a.company})` : '')
+        })));
       }
     });
   }, []);
@@ -374,10 +385,6 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
           <Field label="affiliate source" value={client.referredBy} placeholder="Select an affiliate..."
             options={affiliates.length > 0 ? affiliates : null}
             onSave={(v) => save({ referred_by: v })} />
-        </Row>
-        <Row label="Other referral">
-          <Field label="referral source" value={client.referralSource} placeholder="e.g. Facebook ad, word of mouth"
-            onSave={(v) => save({ referral_source: v })} />
         </Row>
         <Row label="Letters">
           <div className="flex items-center gap-3">

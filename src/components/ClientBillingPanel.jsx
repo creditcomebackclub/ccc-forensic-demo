@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
+import { supabase } from '../utils/supabase';
 import { Check, X, DollarSign, Edit2, Link } from 'lucide-react';
 
 const T = {
@@ -91,6 +92,19 @@ export default function ClientBillingPanel({ client, onChanged }) {
   const today = new Date().toISOString().slice(0, 10);
   const [showAddTx, setShowAddTx] = useState(false);
   const [newTx, setNewTx] = useState({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due' });
+  const [affiliates, setAffiliates] = useState({});
+
+  useEffect(() => {
+    supabase.from('affiliates').select('id, name, company').then(({ data }) => {
+      if (data) {
+        const map = {};
+        data.forEach(a => {
+          map[a.id] = a.name + (a.company ? ` (${a.company})` : '');
+        });
+        setAffiliates(map);
+      }
+    });
+  }, []);
 
   const ledger = Array.isArray(client.ledger) ? client.ledger : [];
   
@@ -249,7 +263,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
           <div className="flex items-center gap-1.5 justify-end">
             <Link size={12} className="text-navy" />
             <span className="text-[12px] font-medium" style={{ color: client.referredBy ? T.ink : T.faint }}>
-              {client.referredBy || 'No affiliate linked'}
+              {client.referredBy ? (affiliates[client.referredBy] || client.referredBy) : 'No affiliate linked'}
             </span>
           </div>
         </Row>
