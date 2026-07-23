@@ -43,31 +43,35 @@ exports.handler = async (event, context) => {
     }
 
     // 2. Fetch clients
-    const clients = await fetchWithKey(`${supabaseUrl}/rest/v1/clients?referred_by=eq.${affiliateId}`);
+    const clientsData = await fetchWithKey(`${supabaseUrl}/rest/v1/clients?referred_by=eq.${affiliateId}`);
+    const clients = Array.isArray(clientsData) ? clientsData : [];
 
     // 3. Fetch letters and profiles for these clients
     let letters = [];
     let profiles = [];
 
-    if (clients && clients.length > 0) {
-      const names = clients.map(c => c.name).filter(Boolean);
-      const emails = clients.map(c => c.email).filter(Boolean);
+    if (clients.length > 0) {
+      const formatIn = (str) => str.includes(',') ? `"${str}"` : str;
       
+      const names = clients.map(c => c.name).filter(Boolean);
       if (names.length > 0) {
-        const namesQuery = names.map(n => `"${n}"`).join(',');
-        letters = await fetchWithKey(`${supabaseUrl}/rest/v1/letters?select=client_name,furnisher,phase,mailed_date,tracking_status,delivered_at,response_outcome,saved_at&client_name=in.(${encodeURIComponent(namesQuery)})`);
+        const namesQuery = names.map(formatIn).join(',');
+        const lettersData = await fetchWithKey(`${supabaseUrl}/rest/v1/letters?select=client_name,furnisher,phase,mailed_date,tracking_status,delivered_at,response_outcome,saved_at&client_name=in.(${encodeURIComponent(namesQuery)})`);
+        if (Array.isArray(lettersData)) letters = lettersData;
       }
       
+      const emails = clients.map(c => c.email).filter(Boolean);
       if (emails.length > 0) {
-        const emailsQuery = emails.map(e => `"${e}"`).join(',');
-        profiles = await fetchWithKey(`${supabaseUrl}/rest/v1/client_profiles?select=email,full_name,starting_scores,current&email=in.(${encodeURIComponent(emailsQuery)})`);
+        const emailsQuery = emails.map(formatIn).join(',');
+        const profilesData = await fetchWithKey(`${supabaseUrl}/rest/v1/client_profiles?select=email,full_name,starting_scores,current&email=in.(${encodeURIComponent(emailsQuery)})`);
+        if (Array.isArray(profilesData)) profiles = profilesData;
       }
     }
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clients: clients || [], letters: letters || [], profiles: profiles || [] })
+      body: JSON.stringify({ clients, letters, profiles })
     };
 
   } catch (e) {
