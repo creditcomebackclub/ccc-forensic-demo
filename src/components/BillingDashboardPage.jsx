@@ -180,12 +180,14 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
 
   // Accumulators
   let totalOutstanding = 0, collected30Days = 0, mrr = 0, lifetimeRevenue = 0;
-  let activeClientsCount = 0, pausedCount = 0, inactiveCount = 0;
-  let newMrr = 0, churnedMrr = 0;
+  let activeClientsCount = 0, pausedCount = 0, graduatedCount = 0, inactiveCount = 0;
+  let newMrr = 0, pausedMrr = 0, lostMrr = 0;
   let commissionEarned = 0, commissionPaidOut = 0;
   let fwfCollected = 0, fwfOutstanding = 0;
   let payToDays = 0, payToCount = 0; // days-to-pay accumulation (needs paid_at)
-  let tenureMonthsSum = 0, tenureCount = 0;
+  let tenureMonthsSum = 0, tenureCount = 0; // active clients — in-progress, not a real lifespan measurement
+  let completedTenureMonthsSum = 0, completedTenureCount = 0; // graduated + inactive — observed full lifespan
+  let inactiveExitsInWindow90 = 0; // rolling 90-day churn numerator
 
   const tierMix = { Standard: 0, VIP: 0, 'Paid In Full': 0 };
   const aging = { '0-30': { amount: 0, count: 0 }, '31-60': { amount: 0, count: 0 }, '61-90': { amount: 0, count: 0 }, '90+': { amount: 0, count: 0 } };
@@ -208,11 +210,30 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
         tenureMonthsSum += months; tenureCount++;
       }
     } else if (c.billingStatus === 'Paused') {
+      // Recoverable, not churn — kept separate from Lost MRR (see Retention & Health panel).
       pausedCount++;
-      churnedMrr += recurringTierValue;
+      pausedMrr += recurringTierValue;
+    } else if (c.billingStatus === 'Graduated') {
+      // Completed the arc successfully — not churn. Contributes to observed
+      // full lifespan (completed tenure) same as Inactive does below.
+      graduatedCount++;
+      if (c.billingStartDate && c.statusChangedAt) {
+        const months = Math.max(0, daysBetween(new Date(c.statusChangedAt), new Date(c.billingStartDate)) / 30.44);
+        completedTenureMonthsSum += months; completedTenureCount++;
+      }
     } else if (c.billingStatus === 'Inactive') {
       inactiveCount++;
-      churnedMrr += recurringTierValue;
+      lostMrr += recurringTierValue;
+      if (c.billingStartDate && c.statusChangedAt) {
+        const months = Math.max(0, daysBetween(new Date(c.statusChangedAt), new Date(c.billingStartDate)) / 30.44);
+        completedTenureMonthsSum += months; completedTenureCount++;
+      }
+      // Rolling 90-day churn numerator — relies on Build 3's auto-stamped
+      // status_changed_at, which is why this build depends on that one.
+      if (c.statusChangedAt) {
+        const daysSinceExit = daysBetween(now, new Date(c.statusChangedAt));
+        if (daysSinceExit >= 0 && daysSinceExit <= 90) inactiveExitsInWindow90++;
+      }
     }
 
     let clientBalance = 0;
@@ -283,15 +304,34 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
 
   const arpu = activeClientsCount > 0 ? lifetimeRevenue / activeClientsCount : 0;
   const overdue30Count = overdueAccounts.filter(a => a.hasOverdue30).length;
-  const netMrrMovement = newMrr - churnedMrr;
+  // New minus LOST (not paused) — paused is recoverable, so it shouldn't
+  // drag down the movement figure the way a permanent loss should.
+  const netMrrMovement = newMrr - lostMrr;
   const totalBilled = totalOutstanding + lifetimeRevenue;
   const collectionRate = totalBilled > 0 ? (lifetimeRevenue / totalBilled) * 100 : 0;
   const commissionOwed = commissionEarned - commissionPaidOut;
   const avgDaysToPay = payToCount > 0 ? payToDays / payToCount : null;
   const avgTenure = tenureCount > 0 ? tenureMonthsSum / tenureCount : 0;
+  const avgCompletedTenure = completedTenureCount > 0 ? completedTenureMonthsSum / completedTenureCount : null;
   const avgLtv = activeClientsCount > 0 ? lifetimeRevenue / activeClientsCount : 0;
-  const activeBase = activeClientsCount + pausedCount + inactiveCount;
-  const churnRate = activeBase > 0 ? ((pausedCount + inactiveCount) / activeBase) * 100 : 0;
+
+  // Rolling 90-day churn — inactive exits in the window over active count.
+  // Exclude graduated and paused from the numerator entirely (only Inactive
+  // counts as churn). There's no historical daily-snapshot table to compute
+  // a true time-series average active count, so the denominator is simply
+  // the current active count — the "rolling 90-day" property lives entirely
+  // in the numerator's time-window filter. Deliberately NOT a fancier
+  // reconstructed average: that would let the displayed rate and the
+  // displayed "(N of M)" use different M's and disagree with each other,
+  // which is worse for operator trust than a transparent simplification.
+  const churnRate90 = activeClientsCount > 0 ? (inactiveExitsInWindow90 / activeClientsCount) * 100 : 0;
+  // Below ~20 active clients, a single exit swings the rate by several
+  // points — sampling noise, not signal. A permanently red tile at that
+  // scale trains the operator to ignore the dashboard, so suppress the
+  // danger color (not the number) under that floor.
+  const churnSampleTooSmall = activeClientsCount < 20;
+  const churnTone = churnSampleTooSmall ? undefined : (churnRate90 > 10 ? 'bad' : 'good');
+
   const tierTotal = tierMix.Standard + tierMix.VIP + tierMix['Paid In Full'];
   // 30-day forecast: recurring MRR expected to bill + already-open receivables
   const projectedInflow = mrr + totalOutstanding;
@@ -347,7 +387,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
               );
             })}
             <div className="mt-1 pt-2 border-t text-[11px] text-faint" style={{ borderColor: T.grid }}>
-              {activeClientsCount} active · {pausedCount} paused · {inactiveCount} inactive
+              {activeClientsCount} active · {pausedCount} paused · {graduatedCount} graduated · {inactiveCount} inactive
             </div>
           </div>
         </Panel>
@@ -371,10 +411,26 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
 
         <Panel title="Retention & Health" icon={UserMinus} iconColor={T.slate}>
           <div className="p-5">
-            <StatLine label="Churn rate" value={`${churnRate.toFixed(1)}%`} tone={churnRate > 10 ? 'bad' : 'good'} />
-            <StatLine label="Churned MRR (paused+inactive)" value={money(churnedMrr)} tone="warn" />
-            <StatLine label="New MRR (this month)" value={money(newMrr)} tone="good" />
-            <StatLine label="Avg. tenure" value={`${avgTenure.toFixed(1)} mo`} />
+            <StatLine
+              label="Churn rate (rolling 90d)"
+              value={`${churnRate90.toFixed(1)}%`}
+              sub={`(${inactiveExitsInWindow90} of ${activeClientsCount})`}
+              tone={churnTone}
+            />
+            <StatLine label="Paused MRR (recoverable)" value={money(pausedMrr)} tone="warn" />
+            <StatLine label="Lost MRR (inactive)" value={money(lostMrr)} tone="bad" />
+            <StatLine
+              label="Net MRR change"
+              value={`${netMrrMovement >= 0 ? '+' : '−'}${money(Math.abs(netMrrMovement))}`}
+              sub="new − lost"
+              tone={netMrrMovement >= 0 ? 'good' : 'bad'}
+            />
+            <StatLine label="Avg. tenure (active)" value={`${avgTenure.toFixed(1)} mo`} sub="in progress" />
+            <StatLine
+              label="Avg. completed tenure"
+              value={avgCompletedTenure === null ? '—' : `${avgCompletedTenure.toFixed(1)} mo`}
+              sub="graduated + inactive"
+            />
             <StatLine label="Avg. lifetime value" value={money(avgLtv)} />
             <StatLine label="Avg. days to pay" value={avgDaysToPay === null ? 'Building…' : `${avgDaysToPay.toFixed(0)} days`} />
           </div>
