@@ -1705,7 +1705,7 @@ function DiffResultModal({ result, onClose }) {
                 {diff.deleted.map((a, i) => (
                   <div key={i} className="bg-green-50 border border-green-200 rounded-sm p-3">
                     <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
-                    <div className="text-[11px] text-ink-muted mt-0.5">Was: {a.oldStatus} · ${'{'}Number(a.oldBalance || 0).toLocaleString(){'}'} past due</div>
+                    <div className="text-[11px] text-ink-muted mt-0.5">Was: {a.oldStatus} · ${Number(a.oldBalance || 0).toLocaleString()} past due</div>
                   </div>
                 ))}
               </div>
@@ -1721,7 +1721,7 @@ function DiffResultModal({ result, onClose }) {
                     <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
                     <div className="text-[11px] text-ink-muted mt-0.5">
                       {a.oldStatus !== a.newStatus && <span>Status: {a.oldStatus} → {a.newStatus} · </span>}
-                      {a.oldBalance !== a.newBalance && <span>Balance: ${'{'}Number(a.oldBalance || 0).toLocaleString(){'}'} → ${'{'}Number(a.newBalance || 0).toLocaleString(){'}'} · </span>}
+                      {a.oldBalance !== a.newBalance && <span>Balance: ${Number(a.oldBalance || 0).toLocaleString()} → ${Number(a.newBalance || 0).toLocaleString()} · </span>}
                       Violations: {a.oldViolationCount} → {a.newViolationCount}
                     </div>
                   </div>
@@ -1737,7 +1737,7 @@ function DiffResultModal({ result, onClose }) {
                 {diff.new.map((a, i) => (
                   <div key={i} className="bg-blue-50 border border-blue-200 rounded-sm p-3">
                     <div className="text-[12px] font-medium text-ink">{a.furnisher} <span className="text-ink-faint font-normal">{a.accountNumberMasked}</span></div>
-                    <div className="text-[11px] text-ink-muted mt-0.5">{a.status} · ${'{'}Number(a.balance || 0).toLocaleString(){'}'}</div>
+                    <div className="text-[11px] text-ink-muted mt-0.5">{a.status} · ${Number(a.balance || 0).toLocaleString()}</div>
                   </div>
                 ))}
               </div>
