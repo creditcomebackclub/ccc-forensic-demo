@@ -409,19 +409,26 @@ export default function ClientBillingPanel({ client, onChanged }) {
 
           const payCommission = async () => {
             const amount = parseFloat(commissionPayAmount);
-            if (isNaN(amount) || amount <= 0) return;
-            const { data: { user } } = await supabase.auth.getUser();
-            await supabase.from('commission_payouts').insert({
-              affiliate_id: client.referredBy,
-              client_id: client.id,
-              client_name: client.name,
-              covered_tx_ids: unpaidTxIds,
-              amount,
-              paid_at: new Date(commissionPayDate + 'T12:00:00').toISOString(),
-              paid_by: user?.id || null,
-            });
-            setPayingCommission(false);
-            if (onChanged) onChanged();
+            if (isNaN(amount) || amount <= 0) { alert('Enter a valid amount before confirming.'); return; }
+            if (!commissionPayDate) { alert('Pick a paid-on date before confirming.'); return; }
+            try {
+              const { data: { user } } = await supabase.auth.getUser();
+              const { error } = await supabase.from('commission_payouts').insert({
+                affiliate_id: client.referredBy,
+                client_id: client.id,
+                client_name: client.name,
+                covered_tx_ids: unpaidTxIds,
+                amount,
+                paid_at: new Date(commissionPayDate + 'T12:00:00').toISOString(),
+                paid_by: user?.id || null,
+              });
+              if (error) throw error;
+              setPayingCommission(false);
+              if (onChanged) onChanged();
+            } catch (e) {
+              console.error('Failed to record commission payout:', e);
+              alert('Could not save this payout: ' + (e.message || e));
+            }
           };
 
           return (

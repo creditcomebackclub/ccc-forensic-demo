@@ -50,20 +50,28 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
   // what's actually been paid out so far, not "this client is done forever."
   const payCommission = async (client) => {
     const amount = parseFloat(payAmount);
-    if (isNaN(amount) || amount <= 0) return;
-    const { unpaidTxIds } = computeClientCommission(client, affiliate, payoutsFor(client.id));
-    const { data: { user } } = await supabase.auth.getUser();
-    await supabase.from('commission_payouts').insert({
-      affiliate_id: affiliate.id,
-      client_id: client.id,
-      client_name: client.name,
-      covered_tx_ids: unpaidTxIds,
-      amount,
-      paid_at: new Date(payDate + 'T12:00:00').toISOString(),
-      paid_by: user?.id || null,
-    });
-    setPayingClientId(null);
-    onUpdate && onUpdate();
+    if (isNaN(amount) || amount <= 0) { alert('Enter a valid amount before confirming.'); return; }
+    if (!payDate) { alert('Pick a paid-on date before confirming.'); return; }
+    try {
+      const { unpaidTxIds } = computeClientCommission(client, affiliate, payoutsFor(client.id));
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error } = await supabase.from('commission_payouts').insert({
+        affiliate_id: affiliate.id,
+        client_id: client.id,
+        client_name: client.name,
+        covered_tx_ids: unpaidTxIds,
+        amount,
+        paid_at: new Date(payDate + 'T12:00:00').toISOString(),
+        paid_by: user?.id || null,
+      });
+      if (error) throw error;
+      setPayingClientId(null);
+      onUpdate && onUpdate();
+    } catch (e) {
+      console.error('Failed to record commission payout:', e);
+      alert('Could not save this payout: ' + (e.message || e));
+      // Leave the form open (date/amount already entered) so nothing is lost.
+    }
   };
 
   const setClientRateOverride = async (clientName, value) => {

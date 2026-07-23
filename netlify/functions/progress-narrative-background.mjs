@@ -194,7 +194,7 @@ export const handler = async (event) => {
     const anthropic = new Anthropic({ apiKey: anthropicKey, maxRetries: 5 });
     const response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 700,
+      max_tokens: 4096,
       system: [{ type: 'text', text: PROGRESS_NARRATIVE_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: JSON.stringify(narrationInput) }],
     });
