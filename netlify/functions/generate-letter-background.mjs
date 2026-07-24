@@ -2,6 +2,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { getLetterSystemPrompt } from '../../src/prompts/letterPrompt.js';
+import { validateFieldCitations, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
+
+// Provenance guard (2026-07-24): fails fast at cold start if any Metro 2
+// entry lacks a source citation, so an unsourced field number can never be
+// in play when a letter is generated.
+assertMapFullySourced();
 
 const MODEL = 'claude-sonnet-5';
 
@@ -72,6 +78,15 @@ export const handler = async (event) => {
       let html = htmlMatch ? htmlMatch[0] : rawText;
 
       if (!html || html.trim().length < 100) throw new Error('Generated letter is empty or too short');
+
+      // No unsourced or misattributed Metro 2 field number may reach a
+      // generated letter. Real letters shipped citing "Field 30 — Amount
+      // Past Due", "Field 4 — Date Opened" and "Field 19 — Compliance
+      // Condition Code"; this throws before output instead.
+      const fieldProblems = validateFieldCitations(html);
+      if (fieldProblems.length) {
+        throw new Error('Metro 2 field citation check failed: ' + fieldProblems.join(' | '));
+      }
 
       // Inject standard letter CSS server-side to save AI tokens and prevent truncation
       const baseCss = `

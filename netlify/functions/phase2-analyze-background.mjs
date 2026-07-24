@@ -16,6 +16,9 @@ import ws from 'ws';
 import { PHASE2_SYSTEM_PROMPT } from '../../src/prompts/phase2Prompt.js';
 import { PHASE2_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { inferMediaType, isAnalyzable } from '../../src/utils/responseFiles.js';
+import { validateFieldCitations, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
+
+assertMapFullySourced();
 
 const MODEL = 'claude-sonnet-5';
 const SYSTEM = [{ type: 'text', text: PHASE2_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
@@ -217,6 +220,9 @@ export const handler = async (event) => {
     // unparsed enclosure does, rather than trusting the instruction blindly.
     for (const bureau of ['equifax', 'experian', 'transunion']) {
       const html = analysis && analysis.letters && analysis.letters[bureau];
+      for (const p of validateFieldCitations(html)) {
+        blockIssues.push(`The generated ${bureau} letter has a Metro 2 field citation error: ${p}`);
+      }
       if (html && html.includes('1681s-2(a)')) {
         blockIssues.push(`The generated ${bureau} letter cites 15 U.S.C. §1681s-2(a), which must never appear in a Phase 3 CRA letter — this is the furnisher's duty, not the CRA's, and citing it here re-exposes a flank opposing counsel has already used. Rebuild this argument on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead.`);
       }

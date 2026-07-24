@@ -81,6 +81,14 @@ Scan every credit report for:
 - Missing "XB" after consumer dispute → §1681s-2(a)(3)
 - Present + inaccuracy uncorrected → §1681n willful exposure
 
+**DEBT PURCHASER / COLLECTION AGENCY CONFORMITY (Type C accounts only) — CRRG Ch. 10, "Third Party Collection Agency / Debt Purchaser / Factoring Company Reporting Guidelines":**
+These are FORMAT-level requirements, so a violation is FACIAL — it does not depend on whether the underlying debt is valid or the balance is right, which is exactly what makes it strong. Check every Type C account against all five:
+- Field 17A Account Status: only 93, 62, or DA are permitted. ANY other status is nonconforming — including 71 and the rest of the 71–84 delinquency ladder, which a purchaser may not use at all.
+- Field 8 Portfolio Type: must be "O" (Open). Anything else is nonconforming.
+- Field 9 Account Type: only 0C (Factoring Co./Debt Purchaser), 48 (Collection Agency/Attorney), or 77 (Returned Check).
+- Field 10 Date Opened: must be the date the account was placed, assigned, or purchased. Reporting the ORIGINAL CREDITOR's origination date here is a violation.
+- Field 25 FCRA Compliance/Date of First Delinquency: **this is the most important one.** The DOFD must trace to the first delinquency WITH THE ORIGINAL CREDITOR that led to placement or sale. A date derived from the purchaser's own servicing file — i.e. restarted or re-derived at acquisition — is a violation. Surface this as its own violation type and use the exact label DOFD_NOT_TRACED_TO_ORIGINAL_CREDITOR in the issue text so it can be tracked. Note this is about the date's SOURCE, not its direction — the directional rule above still applies and you still may not assert a later competing date.
+
 **K1 Segment violations:**
 - Sold account, original creditor still furnishing
 - Debt buyer reporting without disclosing original creditor
