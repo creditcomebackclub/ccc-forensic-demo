@@ -36,7 +36,7 @@ exports.handler = async (event) => {
 
   // Auth gate: client_response_uploaded is called from the portal by a logged-in
   // client — just require any valid session. All other actions are admin-only.
-  const ADMIN_ACTIONS = ['send', 'send_audit_email', 'send_phase_notification', 'send_campaign_update', 'send_lead_drip', 'send_onboarding_reminder', 'admin_new_lead', 'send_educational', 'affiliate_welcome', 'affiliate_new_referral'];
+  const ADMIN_ACTIONS = ['send', 'send_audit_email', 'send_phase_notification', 'send_campaign_update', 'send_lead_drip', 'send_onboarding_reminder', 'send_lead_nurture', 'admin_new_lead', 'send_educational', 'affiliate_welcome', 'affiliate_new_referral'];
   if (ADMIN_ACTIONS.includes(action)) {
     const { requireAdmin } = require('./_requireAdmin.cjs');
     try { await requireAdmin(event); }
@@ -177,17 +177,21 @@ exports.handler = async (event) => {
     const firstName = clientName.split(' ')[0] || clientName;
     const configs = {
       1: {
-        subject: 'Action Required: Finish Your CCC Onboarding',
-        body: `<p>We noticed you haven't finished your onboarding yet. We need your signed LPOA and credit monitoring credentials before we can begin your forensic audit.</p>`,
+        subject: 'Next Step: Finish Setting Up Your CCC Account',
+        body: `<p>Your Credit Comeback Club portal is ready. The only thing standing between you and your forensic audit is two quick steps: sign your LPOA and connect your credit monitoring so we can pull your report.</p>`,
       },
-      3: {
-        subject: 'Don\'t Lose Your Spot — Finish Onboarding',
-        body: `<p>Your consultation is coming up! It is critical that you log in and sign your LPOA and connect your credit monitoring. If your file isn't ready before the call, we will have to reschedule.</p>`,
+      2: {
+        subject: 'Quick Reminder — Your Portal Is Waiting',
+        body: `<p>Just a friendly nudge — your account is set up, but we still need your signed LPOA and monitoring credentials before your file can move forward. It takes about five minutes.</p>`,
       },
-      5: {
-        subject: 'Final Notice: Onboarding Incomplete',
-        body: `<p>We still haven't received your onboarding documents. Please log into your portal immediately to complete this process so we can review your file.</p>`,
-      }
+      4: {
+        subject: 'Don\'t Lose Momentum — Finish Onboarding',
+        body: `<p>It's been a few days since we sent your portal access. Every day this sits unfinished is a day we can't start your audit. Log in and knock out the last two steps — LPOA and monitoring — so we can get to work.</p>`,
+      },
+      7: {
+        subject: 'Final Notice: Your File Is On Hold',
+        body: `<p>We still haven't received your signed LPOA or monitoring connection, so your file is on hold. If something's in the way — a question, a technical issue, anything — just reply to this email and we'll sort it out together. Otherwise, please log in and finish these two steps so we can begin.</p>`,
+      },
     };
 
     const config = configs[day] || configs[1];
@@ -206,6 +210,115 @@ exports.handler = async (event) => {
         <p>Questions? Reply to this email or call 970-644-0063.</p>
         <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
         <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
+      </div>
+    </body></html>`;
+
+    try {
+      await sendViaSendGrid(sgKey, clientEmail, config.subject, html);
+      return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+    } catch (e) {
+      return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    }
+  }
+
+  // Pre-invite lead nurture (Track A) — for leads who submitted the intake
+  // form or were added manually but have never been sent portal access.
+  // Unlike send_onboarding_reminder (Track B), this never tells someone to
+  // "log in" or "finish signing" — they have nothing to log into yet.
+  if (action === 'send_lead_nurture') {
+    const { clientName, clientEmail, day, auditSummary } = payload;
+    if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
+    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+
+    const firstName = (clientName || '').split(' ')[0] || clientName;
+    const hasAudit = !!(auditSummary && auditSummary.totalViolations != null);
+    const v = hasAudit ? auditSummary.totalViolations : null;
+    const targeted = hasAudit ? auditSummary.accountsTargeted : null;
+    const scanned = hasAudit ? auditSummary.accountsScanned : null;
+
+    const bookBtn = (label) => `<div style="text-align:center;margin:32px 0;">
+        <a href="https://calendly.com/creditcomebackclub/30min" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">${label} &#8594;</a>
+      </div>`;
+
+    const testimonial = (quote, name, result) => `<div style="background:#F5F9FD;border-left:3px solid #C9A84C;padding:16px 20px;margin:20px 0;border-radius:0 4px 4px 0;">
+        <p style="font-style:italic;color:#333;margin:0 0 10px;font-size:14px;line-height:1.6;">"${quote}"</p>
+        <p style="margin:0;font-size:12.5px;font-weight:bold;color:#1B2A4A;">${name} <span style="font-weight:normal;color:#666;">— ${result}</span></p>
+      </div>`;
+
+    const complianceFooter = `<p style="font-size:10.5px;color:#999;line-height:1.5;">Individual results vary. No specific outcome is guaranteed and results depend on your credit history, furnisher responses, and other factors outside our control. We do not charge until after your free consultation and a service agreement is executed.</p>`;
+
+    const configs = {
+      1: {
+        subject: hasAudit ? `We're Already Reviewing Your Report, ${firstName}` : 'Thanks for Reaching Out to Credit Comeback Club',
+        body: hasAudit
+          ? `<p>Good news — our team has already started reviewing the credit report you shared. So far we've flagged ${v} potential furnisher-level issue${v === 1 ? '' : 's'} worth a closer look.</p>
+             <p>Before we go further, we'd like to walk you through exactly what we found and what your options are — no cost, no obligation.</p>`
+          : `<p>Thanks for downloading our free dispute guide and reaching out. Here's exactly what happens next: we'll review your credit report for furnisher-level reporting errors — the kind that can be legally challenged directly with the company that reported them, not just the credit bureau.</p>
+             <p>The fastest way to find out what's on your file is a free 15-minute call. No pressure, no cost.</p>`,
+      },
+      3: {
+        subject: 'Why We Go After the Furnisher, Not the Bureau',
+        body: `<p>Most people think disputing a credit report means arguing with Equifax, Experian, or TransUnion. That's rarely where the real leverage is.</p>
+             <p>Every account on your report is reported by a furnisher — a bank, collector, or lender — who is legally required to report it accurately under the Fair Credit Reporting Act. When they don't (wrong balance, wrong status, mismatched dates between bureaus), that's a direct violation we can challenge at the source.</p>
+             <p>That's the entire strategy behind our free guide, and it's what we look for on every report we review.</p>`,
+      },
+      6: {
+        subject: `${firstName}, Here's What Results Actually Look Like`,
+        body: `<p>We know it's fair to be skeptical of credit repair — there's a lot of noise in this industry. So instead of telling you, here's what a couple of real clients said:</p>
+             ${testimonial('Went from a 498 to a 641 in under 6 months. I\'ve used two other credit repair services before and neither came close. Chris goes after the creditors directly — that\'s what makes the difference.', 'Robert Carter', '498 → 641 in 6 Months')}
+             ${testimonial('What made Credit Comeback Club different was the education piece. Chris doesn\'t just send letters and collect a check — he explains what creditors are doing wrong and why they\'re obligated to fix it.', 'Jasmine Wallace', '110 Points — and the Knowledge Too')}
+             <p>If you'd like to see what your own report shows, we're happy to take a look — free of charge.</p>`,
+      },
+      10: {
+        subject: hasAudit ? `Your Report Review Is In, ${firstName}` : `${firstName}, Ready to See What's On Your Report?`,
+        body: hasAudit
+          ? `<p>Our team finished reviewing your credit report. Here's the summary:</p>
+             <ul style="line-height:1.8;">
+               <li><strong>${scanned || '—'}</strong> accounts scanned</li>
+               <li><strong>${targeted || '—'}</strong> account${targeted === 1 ? '' : 's'} identified as a dispute target</li>
+               <li><strong>${v}</strong> specific violation${v === 1 ? '' : 's'} found</li>
+             </ul>
+             <p>A "violation" here means a furnisher reported something — a balance, a status, a date — that's inaccurate or inconsistent between bureaus. Those are exactly the kind of errors we can challenge directly with the company that reported them.</p>
+             <p>We'd like to walk you through what we found and what a strategy for your specific file would look like.</p>`
+          : `<p>We haven't had a chance to look at your credit report yet — and we'd genuinely like to. Most reports we review have at least a handful of furnisher-level errors that most people never notice.</p>
+             <p>It takes 15 minutes on the phone to find out what's really on your file.</p>`,
+        cta: 'See What We Found',
+      },
+      15: {
+        subject: 'The Question Everyone Asks Before Signing Up',
+        body: `<p>The most common thing we hear from people considering credit repair is some version of: "How do I know this actually works, and how do I know I'm not wasting money?"</p>
+             <p>Fair question. Under federal law (the Telemarketing Sales Rule), credit repair companies like ours legally cannot charge you until after services are delivered. We don't get paid up front for promises — we do the work first. You can also cancel anytime, no long-term contract.</p>
+             <p>If you've been on the fence, this is usually the piece that changes people's minds. Happy to answer any other questions on a free call.</p>`,
+      },
+      21: {
+        subject: 'One More Reason to Stop Waiting',
+        body: `<p>Errors on a credit report don't fix themselves — they sit there, month after month, unless someone actually challenges them. Here's what that challenge looked like for two more clients:</p>
+             ${testimonial('In less than six months, Chris helped me boost my credit score by over 150 points. If you\'re looking for someone who truly cares and delivers results, Chris Holland is the real deal.', 'Elizabeth Holland', '150+ Points in 6 Months')}
+             ${testimonial('My husband and I both signed up because we\'re trying to buy our first home. Chris worked both files simultaneously. We\'re both now over 680 and meeting with a mortgage lender next month.', 'Darius & Monique Barnes', 'Both Over 680')}
+             <p>Every month those errors stay unchallenged is a month they can keep affecting you. Let's talk about your file.</p>`,
+      },
+      30: {
+        subject: `Last Check-In, ${firstName}`,
+        body: `<p>This is the last email in this series, so we'll keep it simple: the offer to review your credit report for free hasn't gone anywhere, and neither has our team.</p>
+             <p>If now isn't the right time, no hard feelings — reply to this email any time down the road and we'll pick up right where we left off. If you'd like to talk now, the calendar link below always has open slots.</p>`,
+      },
+    };
+
+    const config = configs[day] || configs[1];
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
+      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
+        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
+        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Strategic Credit Repair</p>
+      </div>
+      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
+        <p>Hi ${firstName},</p>
+        ${config.body}
+        ${bookBtn(config.cta || 'Book Your Free Consultation')}
+        <p>Questions? Just reply to this email or call 970-644-0063.</p>
+        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
+        ${complianceFooter}
+        <p style="font-size:11px;color:#999;margin-top:12px;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
       </div>
     </body></html>`;
 

@@ -220,35 +220,58 @@ exports.handler = async () => {
     }
   }
 
-  // --- 2. Process Onboarding Reminders & Lead Nurture ---
+  // --- 2. Lead Nurture: Track A (pre-invite) & Track B (post-invite) ---
+  // Two tracks, gated on whether client_profiles has a row for this email at
+  // all — that row is only created when staff sends a portal invite
+  // (provision-user.cjs), so its mere existence (regardless of completion)
+  // is what actually distinguishes "never invited" from "invited, hasn't
+  // finished." The old single-track logic conflated the two and sent
+  // "log in and sign your LPOA" emails to leads who'd never been given
+  // portal access at all.
+  //
+  // Both tracks use daysSince >= target (not ===) so a day the cron fails
+  // or doesn't run on doesn't permanently lose that touch — the next
+  // successful run catches up the earliest unsent-and-due stage. Only ever
+  // sends one email per lead per run, even when catching up multiple missed
+  // stages, so a long gap doesn't dump a backlog on someone at once.
   let onboardingDripsCount = 0;
+  let nurtureDripsCount = 0;
   if (sgKey) {
     const leadsRes = await supabaseRequest(
       '/rest/v1/clients?select=name,email,lead_created_at,lead_drips_sent&status=eq.lead',
       'GET', null, supabaseUrl, supabaseKey
     );
     const leads = Array.isArray(leadsRes.body) ? leadsRes.body : [];
-    
-    // Day 1, 3, 5 Onboarding Reminders
+
+    // Track B — invited, hasn't finished signing LPOA / connecting monitoring.
     const onboardingSchedule = [
-      { key: 'onboarding1', day: 1, targetDay: 1 },
-      { key: 'onboarding3', day: 3, targetDay: 3 },
-      { key: 'onboarding5', day: 5, targetDay: 5 },
+      { key: 'onboarding1', day: 1 },
+      { key: 'onboarding2', day: 2 },
+      { key: 'onboarding4', day: 4 },
+      { key: 'onboarding7', day: 7 },
+    ];
+    // Track A — never invited yet; educational/social-proof nurture.
+    const nurtureSchedule = [
+      { key: 'nurtureA_day1', day: 1 },
+      { key: 'nurtureA_day3', day: 3 },
+      { key: 'nurtureA_day6', day: 6 },
+      { key: 'nurtureA_day10', day: 10 },
+      { key: 'nurtureA_day15', day: 15 },
+      { key: 'nurtureA_day21', day: 21 },
+      { key: 'nurtureA_day30', day: 30 },
     ];
 
     for (const lead of leads) {
       if (!lead.email || !lead.lead_created_at) continue;
-      
-      // Check if they finished onboarding
+
       const profileRes = await supabaseRequest(
         '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(lead.email) + '&select=onboarding_complete,signature_data&limit=1',
         'GET', null, supabaseUrl, supabaseKey
       );
       const profile = Array.isArray(profileRes.body) && profileRes.body[0] ? profileRes.body[0] : null;
-      
-      // If they have signature_data or onboarding_complete is true, they don't need onboarding reminders.
-      // (They might need generic lead nurture, but for now we focus on the missing onboarding).
+      const wasInvited = !!profile;
       const isOnboarded = profile && (profile.onboarding_complete || profile.signature_data);
+      if (isOnboarded) continue; // fully signed up — neither track applies
 
       const createdDate = lead.lead_created_at.slice(0, 10);
       const daysSince = daysBetween(createdDate, today);
@@ -256,10 +279,9 @@ exports.handler = async () => {
       let newDrips = [...sentDrips];
       let touched = false;
 
-      if (!isOnboarded) {
-        // Send onboarding reminders
+      if (wasInvited) {
         for (const d of onboardingSchedule) {
-          if (daysSince === d.targetDay && !sentDrips.includes(d.key)) {
+          if (daysSince >= d.day && !sentDrips.includes(d.key)) {
             try {
               await fetch_send('send_onboarding_reminder', { clientName: lead.name, clientEmail: lead.email, day: d.day });
               newDrips.push(d.key);
@@ -267,6 +289,36 @@ exports.handler = async () => {
               onboardingDripsCount++;
             } catch (e) {
               console.error('Onboarding drip send failed:', e.message);
+            }
+            break;
+          }
+        }
+      } else {
+        for (const d of nurtureSchedule) {
+          if (daysSince >= d.day && !sentDrips.includes(d.key)) {
+            let auditSummary = null;
+            try {
+              const auditRes = await supabaseRequest(
+                '/rest/v1/audits?client_name=eq.' + encodeURIComponent(lead.name) + '&select=audit,saved_at,report_date&order=saved_at.desc&limit=1',
+                'GET', null, supabaseUrl, supabaseKey
+              );
+              const latest = Array.isArray(auditRes.body) && auditRes.body[0] ? auditRes.body[0].audit : null;
+              if (latest && latest.totalViolations != null) {
+                auditSummary = {
+                  totalViolations: latest.totalViolations,
+                  accountsTargeted: latest.accountsTargeted,
+                  accountsScanned: latest.accountsScanned,
+                };
+              }
+            } catch (e) { /* personalization is best-effort; fall back to generic copy */ }
+
+            try {
+              await fetch_send('send_lead_nurture', { clientName: lead.name, clientEmail: lead.email, day: d.day, auditSummary });
+              newDrips.push(d.key);
+              touched = true;
+              nurtureDripsCount++;
+            } catch (e) {
+              console.error('Lead nurture drip send failed:', e.message);
             }
             break;
           }
@@ -614,7 +666,7 @@ exports.handler = async () => {
 
   return {
     statusCode: 200,
-    body: JSON.stringify({ success: true, onboardingRemindersSent: onboardingDripsCount, updatesSent: clientUpdatesCount, winbackSent: winbackSentCount }),
+    body: JSON.stringify({ success: true, onboardingRemindersSent: onboardingDripsCount, leadNurtureSent: nurtureDripsCount, updatesSent: clientUpdatesCount, winbackSent: winbackSentCount }),
   };
 };
 
