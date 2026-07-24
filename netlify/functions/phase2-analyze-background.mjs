@@ -130,7 +130,15 @@ export const handler = async (event) => {
 
     const stream = anthropic.messages.stream({
       model: MODEL,
-      max_tokens: 32000,
+      // 64000 (matches audit-run-background). 32000 was fine while ledgers
+      // came back illegible and analyses stayed thin, but a legible enclosure
+      // produces a much richer analysis plus three full Phase 3 letters and
+      // hit the cap mid-generation (stop_reason: max_tokens). The three-letter
+      // output is itself the main cost — the schema requires equifax,
+      // experian and transunion even when the account reports to only one
+      // bureau; a future optimization is to generate only the bureaus the
+      // account is actually on.
+      max_tokens: 64000,
       system: SYSTEM,
       messages,
       output_config: { format: { type: 'json_schema', schema: PHASE2_SCHEMA } },
