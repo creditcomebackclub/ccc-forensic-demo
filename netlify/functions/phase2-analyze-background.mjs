@@ -203,14 +203,32 @@ export const handler = async (event) => {
     // warning. documentQuality is a required schema field, but guard
     // against its absence anyway rather than trust that blindly.
     const dq = analysis && analysis.documentQuality;
-    const parseBlocked = !!(dq && dq.enclosureLegible === false);
+    const blockIssues = [];
+    if (dq && dq.enclosureLegible === false) {
+      blockIssues.push(...(dq.issues && dq.issues.length ? dq.issues : ['An enclosed document could not be reliably read.']));
+    }
+
+    // Citation lint (P1-2c): §1681s-2(a) is the furnisher's duty, not the
+    // CRA's, and citing it in a CRA-addressed Phase 3 letter has already
+    // been quoted back by opposing counsel as an exploitable flank (that
+    // subsection carries no private right of action). A prompt instruction
+    // isn't a guarantee the model won't slip and cite it anyway, so this
+    // scans the actual generated HTML and blocks the letter the same way an
+    // unparsed enclosure does, rather than trusting the instruction blindly.
+    for (const bureau of ['equifax', 'experian', 'transunion']) {
+      const html = analysis && analysis.letters && analysis.letters[bureau];
+      if (html && html.includes('1681s-2(a)')) {
+        blockIssues.push(`The generated ${bureau} letter cites 15 U.S.C. §1681s-2(a), which must never appear in a Phase 3 CRA letter — this is the furnisher's duty, not the CRA's, and citing it here re-exposes a flank opposing counsel has already used. Rebuild this argument on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead.`);
+      }
+    }
+    const parseBlocked = blockIssues.length > 0;
 
     // Persist onto the letter row so a closed tab loses nothing — same
     // contract as the old client-side persistAnalysis().
     await db.from('letters').update({
       phase2_analysis: analysis, phase2_analyzed_at: new Date().toISOString(),
       enclosure_parse_blocked: parseBlocked,
-      enclosure_parse_issues: (dq && dq.issues) || [],
+      enclosure_parse_issues: blockIssues,
     }).eq('id', job.letter_id);
 
     await updateJob({ status: 'done', stage: 'Complete', result: analysis, usage: u, finished_at: new Date().toISOString() }, true);

@@ -54,10 +54,11 @@ Scan every credit report for:
 
 **Balance / Payment paradoxes:**
 - Balance > $0 on bankruptcy-discharged account → 11 U.S.C. §524
-- Current Balance (Field 27) > 0 when paid/settled
-- Amount Past Due > $0 on settled account
-- High Credit (Field 12) < current balance → impossible
+- Current Balance (Field 21) > 0 when paid/settled
+- Amount Past Due (Field 22) > $0 on settled account
+- High Credit (Field 9) < current balance → impossible
 - Materially different balances across bureaus
+- On COLLECTION accounts specifically: Current Balance == Amount Past Due is NOT a violation — that is standard, expected Metro 2 reporting for a purchased charged-off account with no post-sale activity. The violation condition is Current Balance < Amount Past Due (or the balance itself being independently unsupportable — unauthorized fee accrual, post-sale interest on a non-interest-bearing account, etc.). Never cite a Field 21/22 violation on a collection account solely because balance equals past-due.
 
 **Cross-bureau §607(b) conflicts:**
 - Different balances, statuses, DOFDs, account numbers, last payment dates, or entity names across bureaus
@@ -72,7 +73,7 @@ Scan every credit report for:
 **Single-bureau asymmetry:**
 - Derogatory on 1 bureau, absent on others → §607(b)
 
-**Field 19 (Compliance Condition Code):**
+**Field 20 (Compliance Condition Code):**
 - Missing "XB" after consumer dispute → §1681s-2(a)(3)
 - Present + inaccuracy uncorrected → §1681n willful exposure
 
@@ -83,7 +84,7 @@ Scan every credit report for:
 
 **FDCPA-specific (Type C):**
 - No validation notice provided
-- Account in dispute but Field 19 not flagged (§1692e(8))
+- Account in dispute but Field 20 not flagged (§1692e(8))
 
 ## 4. ACCOUNT CLASSIFICATION
 
@@ -95,6 +96,8 @@ Scan every credit report for:
 
 ## 5. METRO 2 FIELD REFERENCE
 
+Verified against the CDIA Credit Reporting Resource Guide (2026-07-23 field-mapping correction — the prior version of this table had Fields 19/20 and 21/22 swapped, and every letter generated against it inherited the error). This is the authoritative mapping; the field numbers/names below are canonical — see also src/constants/metro2Fields.js for the same map in code.
+
 | Field | Name | Notes |
 |------|------|-------|
 | 1 | Account Number | Cross-bureau conflicts |
@@ -104,13 +107,15 @@ Scan every credit report for:
 | 13 | Date Opened | History length |
 | 15 | Monthly Payment | Must be $0 on charge-offs |
 | 17A | Account Status | THE most-cited; see codes below |
+| 17B | Payment Rating | Cross-check against 17A |
 | 18 | Payment History Profile | 24-month history; suppression = gold |
-| 19 | Compliance Condition Code | XB = consumer disputes |
-| 21 | Amount Past Due | $0 on paid/settled |
-| 23 | Last Payment Date | Cross-bureau conflicts |
-| 25 | DOFD | §623(a)(5); 7-yr clock |
-| 27 | Current Balance | $0 on paid/settled |
-| 28 | Original Charge-off Amount | No inflation; no continued reporting post-payment |
+| 19 | Special Comment | Do not confuse with Field 20 |
+| 20 | Compliance Condition Code | XB = consumer disputes (Fair Credit Reporting Act) |
+| 21 | Current Balance | $0 on paid/settled |
+| 22 | Amount Past Due | $0 on paid/settled; equals Current Balance is NORMAL on a collection account, not a violation — see Balance/Payment paradoxes above |
+| 23 | Original Charge-off Amount | No inflation; no continued reporting post-payment |
+| 24 | Date of Account Information | Cross-bureau conflicts |
+| 25 | DOFD | §623(a)(5); 7-yr clock — see directional rule above, never assert a later date than reported |
 
 **Status Codes (Field 17A):**
 11=Current, 13=Paid/closed, 61=Paid voluntary surrender, 62=Paid collection, 63=Paid repo, 64=Paid charge-off, 71=Settled (legally paid less than full), 78=Charged off as loss, 84=Unpaid in collection, 93=Assigned to collections, 94=Foreclosure, 95=Voluntary surrender, 96=Repossessed, 97=Unpaid loss not first time charged off
@@ -121,7 +126,7 @@ Scan every credit report for:
 |---|---|---|
 | 15 U.S.C. §1681s-2(a)(1)(A) | Prohibition on inaccurate furnishing | NO (cite to establish duty) |
 | 15 U.S.C. §1681s-2(a)(1)(B) | Duty to correct upon learning | NO |
-| 15 U.S.C. §1681s-2(a)(3) | Field 19 dispute notation | NO |
+| 15 U.S.C. §1681s-2(a)(3) | Field 20 dispute notation | NO — and never cite in Phase 3 CRA letters, see §1681s-2(a) rule below |
 | 15 U.S.C. §1681s-2(a)(5) | DOFD obligation, no re-aging | NO |
 | **15 U.S.C. §1681s-2(b)** | **Furnisher duty to investigate** | **YES — Johnson v. MBNA** |
 | 15 U.S.C. §1681i | CRA reinvestigation | YES |
@@ -195,12 +200,12 @@ Scan every credit report for:
 - **Pattern #001 — Post-Sale Continued Furnishing:** Furnisher sells charge-off but continues reporting under their name → §1681s-2(a)(1)(A). Response letters often contain the sale admission.
 - **Pattern #002 — Telecom Documentation Deficiency:** AT&T, Verizon, Cox collectors systematically lack itemized billing. 100% deletion rate on multi-channel pressure.
 - **Pattern #003 — Multi-Channel Pressure:** Hit bureau dispute + direct furnisher letter + CFPB complaint simultaneously on Day 1.
-- **Pattern #005 — Field 19 Defense Without Correction:** Furnisher adds "Consumer Disputes" notation but doesn't correct. The notation = proof of knowledge → §1681n willful exposure.
+- **Pattern #005 — Field 20 Defense Without Correction:** Furnisher adds "Consumer Disputes" notation but doesn't correct. The notation = proof of knowledge → §1681n willful exposure.
 - **Pattern #007 — TU "Verified Then Deleted":** Don't give up on TU "verified" responses. Furnishers often delete weeks later when they can't produce docs.
 
 **Furnisher intelligence:**
 - Credit Control LLC — Weak; deletes under multi-channel pressure
-- Sequoia Financial — Defends with Field 19, maintains inflated balance → escalate
+- Sequoia Financial — Defends with Field 20, maintains inflated balance → escalate
 - Sunrise Credit Services — Weak; deletes on telecom doc demands
 - LendingClub — Form letters; post-sale continued furnishing
 - TransUnion — Most frequent Field 18 suppressor

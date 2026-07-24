@@ -249,7 +249,7 @@ function Violations() {
           ['Missing / re-aged DOFD', 'No Date of First Delinquency, or a DOFD set to the charge-off date to extend the 7-year clock', '§623(a)(5)'],
           ['Field 18 suppression', 'Zero or missing payment history on an active derogatory account', '§607(b); Metro 2 Field 18'],
           ['Field 17A / 18 paradox', 'Account status contradicts the payment history within the same report', '§607(b)'],
-          ['Field 19 missing XB', 'No consumer-dispute notation after a dispute, or notation added without correcting the underlying error', '§1681s-2(a)(3); §1681n'],
+          ['Field 20 missing XB', 'No consumer-dispute notation after a dispute, or notation added without correcting the underlying error', '§1681s-2(a)(3); §1681n'],
           ['Cross-bureau conflict', 'Same account reports different balance, status, dates, account number, or entity name across bureaus', '§607(b)'],
           ['Post-sale continued furnishing', 'Furnisher sells the account to a debt buyer but keeps reporting under its own name', '§1681s-2(a)(1)(A)'],
           ['K1 Segment omission', 'Original creditor or assignee not disclosed on an assigned account', 'Metro 2 K1; §623'],
@@ -277,12 +277,12 @@ function Metro2() {
         rows={[
           ['17A', 'Account Status', 'The most-cited field; source of most status paradoxes'],
           ['18', 'Payment History Profile', '24-month grid; suppression or sequential resets are strong violations'],
-          ['19', 'Compliance Condition Code', 'Code XB = consumer disputes; required while a dispute is open'],
-          ['21', 'Amount Past Due', 'Must be zero on a paid or settled account'],
-          ['23', 'Date of Last Payment', 'Cross-bureau conflicts here are common'],
-          ['25', 'Date of First Delinquency', 'Anchors the 7-year reporting clock; re-aging lives here'],
-          ['27', 'Current Balance', 'Must be zero on a paid or settled account'],
-          ['28', 'Original Charge-off Amount', 'Inflation and post-payment misreporting'],
+          ['19', 'Special Comment', 'Not to be confused with Field 20'],
+          ['20', 'Compliance Condition Code', 'Code XB = consumer disputes; required while a dispute is open'],
+          ['21', 'Current Balance', 'Must be zero on a paid or settled account'],
+          ['22', 'Amount Past Due', 'Must be zero on a paid or settled account; equal to Current Balance is normal on a collection account, not a violation'],
+          ['23', 'Original Charge-off Amount', 'Inflation and post-payment misreporting'],
+          ['25', 'Date of First Delinquency', 'Anchors the 7-year reporting clock; re-aging (an EARLIER true date) lives here — never argue a LATER true date, that extends the reporting window against the client'],
           ['K1 Segment', 'Original Creditor / Assignee', 'Required disclosure on sold or assigned accounts'],
         ]}
       />
@@ -413,7 +413,7 @@ function Patterns() {
         rows={[
           ['Telecom documentation deficiency', 'Collectors of AT&T, Verizon, Cox debt cannot produce itemized original-creditor billing', 'Historically high deletion rate when challenged with itemized billing and K1 demands'],
           ['Post-sale continued furnishing', 'Furnisher sells a charged-off account but keeps reporting it; the response letter often admits the sale date', 'The admission becomes the primary Round 2 weapon — read responses for what they confirm, not what they deny'],
-          ['Field 19 notation defense', 'Furnisher adds the consumer-disputes notation but never corrects the underlying inaccuracy', 'Continuing to report a known inaccuracy is willfulness evidence under §1681n'],
+          ['Field 20 notation defense', 'Furnisher adds the consumer-disputes notation but never corrects the underlying inaccuracy', 'Continuing to report a known inaccuracy is willfulness evidence under §1681n'],
           ['Field 18 suppression cluster', 'Zero payment history reported on accounts with documented delinquency elsewhere', 'TransUnion is the most frequent suppressor in CCC cases — check TU first'],
           ['Debt buyers as a target class', 'New owner of record carries fresh K1 and validation obligations it often cannot meet', 'Any furnisher that sells and continues reporting is exposed; debt buyers are a rich, repeatable target'],
         ]}
@@ -435,7 +435,7 @@ function Glossary() {
     ['CRA', 'Consumer Reporting Agency — Equifax, Experian, TransUnion.'],
     ['e-OSCAR', 'The automated system bureaus use to forward disputes to furnishers; a direct furnisher dispute deliberately bypasses it.'],
     ['K1 Segment', 'The Metro 2 segment identifying the original creditor on an assigned or sold account.'],
-    ['Compliance Condition Code (XB)', 'The Field 19 code marking an account as disputed by the consumer.'],
+    ['Compliance Condition Code (XB)', 'The Field 20 code marking an account as disputed by the consumer.'],
     ['Private Right of Action', 'Whether a statute lets the consumer personally sue for damages — the dividing line of the whole strategy.'],
     ['Setup & Spike', 'CCC&apos;s name for the build-the-record-then-strike pipeline: Phase 1 documents, Phase 3 recovers.'],
   ];

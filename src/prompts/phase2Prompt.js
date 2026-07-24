@@ -34,17 +34,21 @@ ANALYSIS REQUIREMENTS:
 6. Generate three bureau-specific Phase 3 CRA letters (Equifax, Experian, TransUnion)
 
 PHASE 3 LETTER REQUIREMENTS — CONTENT:
-- Opens with the RE line: "RE: Formal Dispute and Demand for Reinvestigation — 15 U.S.C. §1681s-2(b) and §1681i | Furnisher: [NAME] | Account No. [MASKED]"
-- Establishes the CRA-triggered reinvestigation duty under 15 U.S.C. 1681s-2(b)
+- Opens with the RE line: "RE: Formal Dispute and Demand for Reinvestigation — 15 U.S.C. §1681i | Furnisher: [NAME] | Account No. [MASKED]" — §1681i ONLY in the RE line. §1681s-2(b) is the FURNISHER's duty, not the CRA's, and this letter is addressed to a CRA — it belongs in the body (see next bullet), never the RE line.
+- Correctly separates the CRA's own duties from the furnisher's duties, which only attach later. Use this exact framing (adapt to the specific furnisher/facts, but keep the statutory sequence intact): "Upon receipt of this dispute, [Bureau] is obligated under 15 U.S.C. §1681i(a)(1)(A) to conduct a reasonable reinvestigation and under §1681i(a)(2) to provide notice of the dispute to the furnisher within five business days. Upon receipt of that notice, the furnisher's independent duties under 15 U.S.C. §1681s-2(b) attach." Never state or imply that §1681s-2(b) itself obligates the CRA to forward anything — that forwarding duty is §1681i(a)(2); §1681s-2(b) is what the furnisher owes only after that notice lands.
 - States that a direct furnisher dispute was sent (Exhibit A) and received an inadequate response (Exhibit B) — except for NON_RESPONSE, where it states the furnisher received the dispute (Exhibit A) and failed to respond at all (see enclosures rule below)
 - REBUILDS THE FULL VIOLATION STACK with added weight. For each original violation:
-  (a) Restate the specific Metro 2 field violation from Phase 1
+  (a) Restate the specific Metro 2 field violation from Phase 1 — but NEVER restate a §1681s-2(a) citation verbatim (see hard rule below). If the original Phase 1 violation was framed under §1681s-2(a) (this includes any Field 20/XB compliance-condition-code dispute-notation violation), reframe it here through §1681s-2(b) materiality instead, citing Seamans v. Temple University, 744 F.3d 853 (3d Cir. 2014) — a furnisher's failure to flag/maintain the disputed-status notation once on notice is itself a §1681s-2(b) violation with a private right of action. Same underlying fact pattern, different (correct, non-exposed) statutory hook.
   (b) State exactly how the furnisher failed to address it (quote or paraphrase their response)
   (c) Explain why their non-response/inadequate response makes this violation STRONGER, not weaker
   (d) If the furnisher made any admissions, weaponize them here
 - Cites Johnson v. MBNA for the inadequate investigation standard
+- Demands correction or deletion, framed as verify-or-delete under 15 U.S.C. §1681i(a)(5)(A): "If [Furnisher] cannot verify [specific field] with original-source documentation, §1681i(a)(5)(A) requires deletion or modification of that item." A CRA forwards disputes — it does not run discovery and cannot be directed to compel document production from a furnisher, so never phrase a demand as directing the bureau to make the furnisher produce something. The chain-of-title/ownership-mismatch issue (if present in the Phase 1 record) is a real, strong argument — keep it, but frame it as a K2 Segment / §1692g(a)(5) accuracy defect (the furnisher reporting a name that does not match the entity named in the actual executed agreement), not as a demand for the CRA to compel production.
+- NEVER include a demand for proof of state collection-agency licensure. Licensure is not a Metro 2 accuracy issue and is not within §1681i's scope — it does not belong in a CRA letter at all, and state licensing requirements vary enough that a generic demand is often simply wrong for that state.
 - Demands correction or deletion within 30 days
 - Cites 15 U.S.C. 1681n for willful noncompliance — $100 to $1,000 per violation plus punitive damages
+
+HARD RULE — CITATION LINT: Phase 3 CRA letters must NEVER contain the string "1681s-2(a)" anywhere, in any subsection — (a), (a)(1), (a)(3), (a)(5), all of it. This letter is addressed to a bureau; §1681s-2(a) is the furnisher's duty and citing it here has already been quoted back by opposing counsel once as an exploitable flank (that subsection carries no private right of action, per §1681s-2(c)(1), and the furnisher's counsel will point that out). Every argument that would otherwise cite §1681s-2(a) must be rebuilt on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead — same underlying facts, no exposed flank.
 
 PHASE 3 LETTER REQUIREMENTS — DEVASTATING CLOSING:
 Before the signature block, you MUST include ONE devastating sentence that frames the furnisher's inadequate response as the strongest evidence against them. Examples:

@@ -310,10 +310,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           {letter.enclosureParseBlocked && (
             <div className="mb-4 p-3 rounded border-2 border-red-500 bg-red-50">
               <div className="text-[12px] font-bold text-red-800 uppercase tracking-wider mb-1">
-                Enclosure Unparsed — Manual Reconciliation Required
+                Blocked — Manual Review Required
               </div>
               <div className="text-[12px] text-red-700 mb-2">
-                This letter's Phase 2 analysis could not reliably read an enclosed document (reversed/mirrored scan, misaligned rows, or an inconsistent date sequence). It may assert facts that are unverified or wrong. Sending is blocked until the enclosure is re-uploaded with a clean scan and re-analyzed.
+                Phase 2 analysis flagged a problem with this letter — either an enclosed document that couldn't be reliably read (reversed/mirrored scan, misaligned rows, inconsistent dates), or a citation-lint failure in the generated letter text. It may assert facts that are unverified, wrong, or legally exposed. Sending is blocked until this is resolved and re-analyzed (re-upload a clean enclosure scan if that's the issue).
               </div>
               {letter.enclosureParseIssues && letter.enclosureParseIssues.length > 0 && (
                 <ul className="text-[11px] text-red-700 list-disc pl-4 space-y-0.5">

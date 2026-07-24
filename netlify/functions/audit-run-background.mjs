@@ -90,6 +90,54 @@ export function parseLooseDate(text) {
   return null;
 }
 
+// Extracts all dollar amounts appearing in a string, as numbers.
+function extractDollarAmounts(text) {
+  if (!text) return [];
+  const matches = String(text).matchAll(/\$\s?([\d,]+(?:\.\d{2})?)/g);
+  return [...matches].map((m) => parseFloat(m[1].replace(/,/g, '')));
+}
+
+// P2-1 (2026-07-23 defect report): on a purchased charged-off account
+// (Type C — third-party collector) with no post-sale activity, Current
+// Balance (Field 21) equal to Amount Past Due (Field 22) is standard,
+// expected Metro 2 reporting, not a violation — the violation condition is
+// strictly Current Balance < Amount Past Due. A real letter cited this as a
+// violation when the furnisher's own explanation (standard for collection
+// accounts) was correct. Best-effort: only acts when exactly two distinct
+// dollar amounts can be extracted from the violation's own text and they
+// are equal — anything ambiguous is left alone rather than risk suppressing
+// a legitimate violation phrased differently (same conservative approach as
+// the DOFD guard above).
+export function applyCollectionBalanceGuard(accounts) {
+  const suppressed = [];
+  for (const acct of accounts || []) {
+    if (acct.type !== 'C') continue; // Type C = third-party collector, this app's closest match to "COLLECTION"
+    const kept = [];
+    for (const v of acct.violations || []) {
+      const isBalanceField = /\bfield\s*2[12]\b|current balance|amount past due/i.test(v.field || '');
+      if (isBalanceField) {
+        // Only the reported state, never shouldReport — shouldReport
+        // describes the demanded correction (often a deliberately different
+        // number) and would corrupt an "are the reported amounts equal"
+        // check if pooled in.
+        let amounts = extractDollarAmounts(v.currentlyReports);
+        if (amounts.length < 2) amounts = extractDollarAmounts(`${v.currentlyReports || ''} ${v.issue || ''}`);
+        const unique = [...new Set(amounts)];
+        if (amounts.length >= 2 && unique.length === 1) {
+          suppressed.push({
+            accountId: acct.id, furnisher: acct.furnisher, field: v.field, amount: unique[0],
+            reason: 'Current Balance equals Amount Past Due on a collection account — standard Metro 2 reporting for a purchased charged-off account, not a violation. Field 21/22 count suppressed.',
+          });
+          continue;
+        }
+      }
+      kept.push(v);
+    }
+    acct.violations = kept;
+  }
+  return suppressed;
+}
+
 // P0-2 (2026-07-23 defect report): the forensic play on DOFD is almost
 // always "the true date is EARLIER than reported" (re-aging forward to
 // extend the 7-year §1681c(c)(1) reporting clock). Arguing the true date is
@@ -366,6 +414,12 @@ export const handler = async (event) => {
       console.warn('[dofd-guard] suppressed adverse-direction DOFD violation(s):', JSON.stringify(dofdSuppressions));
       audit.dofdGuardSuppressions = dofdSuppressions;
       audit.totalViolations = Math.max(0, (audit.totalViolations || 0) - dofdSuppressions.length);
+    }
+    const balanceSuppressions = applyCollectionBalanceGuard(audit.accounts);
+    if (balanceSuppressions.length) {
+      console.warn('[balance-guard] suppressed collection-account balance==past-due violation(s):', JSON.stringify(balanceSuppressions));
+      audit.collectionBalanceGuardSuppressions = balanceSuppressions;
+      audit.totalViolations = Math.max(0, (audit.totalViolations || 0) - balanceSuppressions.length);
     }
 
     // violationsByType is no longer part of the model's structured output
