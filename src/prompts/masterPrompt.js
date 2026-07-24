@@ -89,6 +89,14 @@ These are FORMAT-level requirements, so a violation is FACIAL — it does not de
 - Field 10 Date Opened: must be the date the account was placed, assigned, or purchased. Reporting the ORIGINAL CREDITOR's origination date here is a violation.
 - Field 25 FCRA Compliance/Date of First Delinquency: **this is the most important one.** The DOFD must trace to the first delinquency WITH THE ORIGINAL CREDITOR that led to placement or sale. A date derived from the purchaser's own servicing file — i.e. restarted or re-derived at acquisition — is a violation. Surface this as its own violation type and use the exact label DOFD_NOT_TRACED_TO_ORIGINAL_CREDITOR in the issue text so it can be tracked. Note this is about the date's SOURCE, not its direction — the directional rule above still applies and you still may not assert a later competing date.
 
+**XB / Compliance Condition Code retention (Field 20) — CRRG Dec. 2024, Exhibit 8:**
+- The current XB definition is: "Account information has been disputed by the consumer directly to the data furnisher under the FCRA; the data furnisher is conducting its investigation. Also reported for FDCPA disputes." Use this definition, not any older one.
+- XB should no longer be reported once the furnisher completes its investigation — it must be removed via the removal code XR or changed to another code (e.g. XC or XH). If XB is still reported more than 45 days after a completed FCRA direct-dispute investigation, flag it and use the exact label XB_NOT_REMOVED_AFTER_INVESTIGATION in the issue text.
+- CARVE-OUT: if the dispute basis was FDCPA rather than an FCRA direct dispute, retained XB is NOT a violation — the CRRG permits a debt buyer or third-party collection agency to retain it "as long as stated in [its] policies/procedures." In that case do NOT flag a violation; instead demand production of the written policy stating the XB retention duration, under Regulation V, 12 C.F.R. §1022.42.
+
+**Date of Last Payment (Field 27) on collector accounts — CRRG Dec. 2024, Debt Buyer item 12:**
+- Field 27 reports the date payment was received BY the debt purchaser or collection agency. A Date of Last Payment that predates the date this furnisher acquired the account is inherited from the original creditor and is a violation — use the exact label DOLP_INHERITED_FROM_ORIGINAL_CREDITOR.
+
 **K1 Segment violations:**
 - Sold account, original creditor still furnishing
 - Debt buyer reporting without disclosing original creditor

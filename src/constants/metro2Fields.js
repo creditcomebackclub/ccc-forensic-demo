@@ -1,243 +1,289 @@
-// Authoritative Metro 2 Base Segment field map.
+// Authoritative Metro 2 field map, Compliance Condition Codes, and the
+// debt-buyer / collection-agency conformity rules.
 //
-// ─── REFERENCE VINTAGE — READ BEFORE TRUSTING ANY NAME OR CODE ───────────
-// The reference copy backing every citation in this file is the **2003 CDIA
-// Credit Reporting Resource Guide**, filed as an exhibit in Case
-// 1:05-cv-00599-SLR (11/08/2007). Consequences:
-//   • Base Segment field NUMBERING (1-46) has been stable since 2003, so
-//     field-number citations here remain valid against current editions.
-//   • Field NAMES, STATUS CODES, and COMPLIANCE CONDITION CODE values HAVE
-//     CHANGED across editions. Field 24 is the live example — it is
-//     "Billing Date" in this edition and was renamed in later ones.
-// A current CRRG should replace this reference. Until it does, treat names
-// and codes as edition-specific and re-verify before relying on them in
-// correspondence that a furnisher's counsel will read.
+// ─── STANDING RULE ───────────────────────────────────────────────────────
+// Never write a Metro 2 field number, name, or code value from memory. Cite
+// the source file, edition, and page/position — or flag it and stop. Every
+// entry below carries `source` + `edition`; entries that could not be tied
+// to a cited page carry `verification_status` saying so explicitly rather
+// than borrowing authority from a neighbouring citation.
 //
-// ─── PROVENANCE RULE (standing constraint, 2026-07-24) ───────────────────
-// No Metro 2 field number, field name, or status/comment code may be
-// written here from memory or recall. Every entry carries a `source`
-// citation and a `verified` date. Unsourced entries are a build error, not
-// a judgment call — assertSourced() throws, and validateFieldCitations() is
-// wired into both letter-generation paths so an unsourced or unknown field
-// number cannot reach a generated letter.
+// ─── TWO EDITIONS ARE IN PLAY. WHERE THEY CONFLICT, Dec. 2024 WINS. ──────
+//   • CRRG_2003_FULL_CourtExhibit_05cv599.pdf — complete: all fields,
+//     exhibits, modules. Backs the Base Segment positions below.
+//   • CRRG_2024Dec_Excerpt_Exhibit8_DebtBuyerModule.pdf — Exhibit 8 plus
+//     Debt Buyer module items 10–13 only. Backs the Compliance Condition
+//     Code definitions and Fields 20/21/22/27.
+// Base Segment field NUMBERING (1-46) has been stable since 2003, so
+// 2003-sourced numbers hold. NAMES and CODE VALUES have changed — Field 24
+// is "Billing Date" in 2003 and was renamed "Date of Account Information"
+// later; the XB definition changed materially. Do not "modernize" a name
+// while citing the 2003 edition.
 //
-// Why this file exists: the corpus these prompts were originally authored
-// from had Field 19 mislabeled as Compliance Condition Code (it is Special
-// Comment; CCC is Field 20) and Field 21 mislabeled as Amount Past Due (it
-// is Current Balance; APD is Field 22). Every letter generated against it
-// inherited the error and a furnisher's counsel caught it. A first
-// correction pass fixed those two but was itself still wrong on eight more
-// entries, because that pass was also done from recall. Those eight were
-// subsequently checked against the CRRG and confirmed — but "correct output
-// from an unverified process is luck, not a fix," which is what the
-// provenance rule above exists to prevent recurring.
+// Why this file exists: the corpus these prompts were authored from had
+// Field 19 mislabeled as Compliance Condition Code (it is Special Comment;
+// CCC is Field 20) and Field 21 as Amount Past Due (it is Current Balance).
+// Letters shipped with the error and a furnisher's counsel quoted it back.
+// The first correction pass was itself done from recall and was wrong on
+// eight more entries. Correct output from an unverified process is luck,
+// not a fix — hence the rule at the top.
 //
-// VERIFICATION STATUS: field numbers and names below were verified against
-// the CRRG (426 Base Segment, character format) on 2026-07-24. Character
-// POSITIONS are recorded only where the CRRG position was cited directly;
-// every other entry says so explicitly rather than importing a position
-// from a secondary source and presenting it as CRRG-verified.
+// NOTE (outside this repo): the same Field 19 = Compliance Condition Code
+// error also lives in Holland_Dispute_Letters_.docx in project knowledge.
+// Chris fixes that separately; until then, any AI drafting prompts against
+// that corpus will try to reintroduce it.
 
-const CRRG = 'CRRG 2003 ed. (Case 1:05-cv-00599-SLR exhibit), 426 Base Segment, character format';
-const CRRG_NAME_ONLY = `${CRRG} (field number + name verified; character position not independently verified)`;
-const VERIFIED = '2026-07-24';
+const B2003 = (pos) => `CRRG 2003 426 Base, pos. ${pos}`;
 
 export const METRO2_FIELDS = {
-  CONSUMER_ACCOUNT_NUMBER:   { num: '7',   name: 'Consumer Account Number',                    source: CRRG_NAME_ONLY, verified: VERIFIED },
-  PORTFOLIO_TYPE:            { num: '8',   name: 'Portfolio Type',                             source: CRRG_NAME_ONLY, verified: VERIFIED },
-  ACCOUNT_TYPE:              { num: '9',   name: 'Account Type',                               source: CRRG_NAME_ONLY, verified: VERIFIED },
-  DATE_OPENED:               { num: '10',  name: 'Date Opened',                                source: CRRG_NAME_ONLY, verified: VERIFIED },
-  CREDIT_LIMIT:              { num: '11',  name: 'Credit Limit',                               source: CRRG_NAME_ONLY, verified: VERIFIED },
-  HIGHEST_CREDIT:            { num: '12',  name: 'Highest Credit or Original Loan Amount',     source: CRRG_NAME_ONLY, verified: VERIFIED },
-  TERMS_DURATION:            { num: '13',  name: 'Terms Duration',                             source: CRRG_NAME_ONLY, verified: VERIFIED },
-  TERMS_FREQUENCY:           { num: '14',  name: 'Terms Frequency',                            source: CRRG_NAME_ONLY, verified: VERIFIED },
-  SCHEDULED_MONTHLY_PAYMENT: { num: '15',  name: 'Scheduled Monthly Payment Amount',           source: CRRG_NAME_ONLY, verified: VERIFIED },
-  ACTUAL_PAYMENT:            { num: '16',  name: 'Actual Payment Amount',                      source: CRRG_NAME_ONLY, verified: VERIFIED },
-  ACCOUNT_STATUS:            { num: '17A', name: 'Account Status',                             source: CRRG_NAME_ONLY, verified: VERIFIED },
-  PAYMENT_RATING:            { num: '17B', name: 'Payment Rating',                             source: CRRG_NAME_ONLY, verified: VERIFIED },
-  PAYMENT_HISTORY_PROFILE:   { num: '18',  name: 'Payment History Profile',                    source: CRRG_NAME_ONLY, verified: VERIFIED },
-  SPECIAL_COMMENT:           { num: '19',  name: 'Special Comment',                            source: CRRG_NAME_ONLY, verified: VERIFIED },
-  // The one entry with a directly-cited CRRG character position.
-  COMPLIANCE_CONDITION_CODE: { num: '20',  name: 'Compliance Condition Code',                  source: `${CRRG}, pos. 153-154`, verified: VERIFIED },
-  CURRENT_BALANCE:           { num: '21',  name: 'Current Balance',                            source: CRRG_NAME_ONLY, verified: VERIFIED },
-  AMOUNT_PAST_DUE:           { num: '22',  name: 'Amount Past Due',                            source: CRRG_NAME_ONLY, verified: VERIFIED },
-  ORIGINAL_CHARGE_OFF_AMT:   { num: '23',  name: 'Original Charge-off Amount',                 source: CRRG_NAME_ONLY, verified: VERIFIED },
-  // Edition-sensitive: "Billing Date" in the 2003 edition; renamed to
-  // "Date of Account Information" in later CRRG editions. Do not silently
-  // "correct" this to the newer name — it must match the reference edition
-  // being cited, or the citation is wrong for that edition.
-  BILLING_DATE:              { num: '24',  name: 'Billing Date',                               source: CRRG_NAME_ONLY, verified: VERIFIED },
-  DATE_FIRST_DELINQUENCY:    { num: '25',  name: 'FCRA Compliance/Date of First Delinquency',  source: CRRG_NAME_ONLY, verified: VERIFIED },
-  DATE_CLOSED:               { num: '26',  name: 'Date Closed',                                source: CRRG_NAME_ONLY, verified: VERIFIED },
-  DATE_LAST_PAYMENT:         { num: '27',  name: 'Date of Last Payment',                       source: CRRG_NAME_ONLY, verified: VERIFIED },
+  CONSUMER_ACCOUNT_NUMBER:   { num: '7',   name: 'Consumer Account Number',                        source: B2003('43-72'),   edition: '2003' },
+  PORTFOLIO_TYPE:            { num: '8',   name: 'Portfolio Type',                                 source: B2003('73'),      edition: '2003' },
+  ACCOUNT_TYPE:              { num: '9',   name: 'Account Type',                                   source: B2003('74-75'),   edition: '2003' },
+  DATE_OPENED:               { num: '10',  name: 'Date Opened',                                    source: B2003('76-83'),   edition: '2003' },
+  CREDIT_LIMIT:              { num: '11',  name: 'Credit Limit',                                   source: B2003('84-92'),   edition: '2003' },
+  HIGHEST_CREDIT:            { num: '12',  name: 'Highest Credit or Original Loan Amount',         source: B2003('93-101'),  edition: '2003' },
+  TERMS_DURATION:            { num: '13',  name: 'Terms Duration',                                 source: B2003('102-104'), edition: '2003' },
+
+  // ── Fields 14–16 are NOT in the supplied map, but Field 15 is actively
+  // cited by masterPrompt.js (charge-off reporting a scheduled monthly
+  // payment — a core violation type). Removing them would make
+  // validateFieldCitations() block every letter using that violation, and
+  // asserting positions I cannot cite would break the standing rule. So
+  // they stay, explicitly flagged as unconfirmed. Resolve by reading these
+  // three off CRRG_2003_FULL_CourtExhibit_05cv599.pdf and replacing the
+  // source/verification_status.
+  TERMS_FREQUENCY:           { num: '14',  name: 'Terms Frequency',                                source: 'NOT CITED — pending CRRG 2003 confirmation', edition: '2003', verification_status: 'PENDING_SOURCE_CITATION' },
+  SCHEDULED_MONTHLY_PAYMENT: { num: '15',  name: 'Scheduled Monthly Payment Amount',               source: 'NOT CITED — pending CRRG 2003 confirmation', edition: '2003', verification_status: 'PENDING_SOURCE_CITATION' },
+  ACTUAL_PAYMENT:            { num: '16',  name: 'Actual Payment Amount',                          source: 'NOT CITED — pending CRRG 2003 confirmation', edition: '2003', verification_status: 'PENDING_SOURCE_CITATION' },
+
+  ACCOUNT_STATUS:            { num: '17A', name: 'Account Status',                                 source: B2003('124-125'), edition: '2003' },
+  PAYMENT_RATING:            { num: '17B', name: 'Payment Rating',                                 source: B2003('126'),     edition: '2003' },
+  PAYMENT_HISTORY_PROFILE:   { num: '18',  name: 'Payment History Profile',                        source: B2003('127-150'), edition: '2003' },
+  SPECIAL_COMMENT:           { num: '19',  name: 'Special Comment',                                source: B2003('151-152'), edition: '2003' },
+  COMPLIANCE_CONDITION_CODE: { num: '20',  name: 'Compliance Condition Code',                      source: 'CRRG Dec. 2024, Exhibit 8, p. 5-32',  edition: '2024' },
+  CURRENT_BALANCE:           { num: '21',  name: 'Current Balance',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024' },
+  AMOUNT_PAST_DUE:           { num: '22',  name: 'Amount Past Due',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024' },
+  ORIGINAL_CHARGE_OFF_AMT:   { num: '23',  name: 'Original Charge-off Amount',                     source: B2003('173-181'), edition: '2003' },
+  // Renamed "Date of Account Information" in later editions — keep the 2003
+  // name while citing the 2003 edition.
+  BILLING_DATE:              { num: '24',  name: 'Billing Date',                                   source: B2003('182-189'), edition: '2003' },
+  DATE_FIRST_DELINQUENCY:    { num: '25',  name: 'FCRA Compliance/Date of First Delinquency',      source: B2003('190-197'), edition: '2003' },
+  DATE_CLOSED:               { num: '26',  name: 'Date Closed',                                    source: B2003('198-205'), edition: '2003' },
+  DATE_OF_LAST_PAYMENT:      { num: '27',  name: 'Date of Last Payment',                           source: 'CRRG Dec. 2024, Debt Buyer item 12',  edition: '2024' },
 };
 
-// Account Status (Field 17A) codes. Same provenance rule, same edition
-// caveat — status code MEANINGS have changed across CRRG editions.
-// 71-84 are TIME-BASED DELINQUENCY STAGES: a balance on one of these is
-// normal and is never a violation by itself. The prior corpus read 71 as
-// "Settled", which turned every 30-days-late account into a fabricated
-// violation.
+// ─── Compliance Condition Codes (Field 20) ───────────────────────────────
+// XA/XB/XC/XH/XR carry the Dec. 2024 definitions, which supersede 2003.
+// The 2003 XB definition was materially different and is not used.
+// XD–XG and XJ are absent from the Dec. 2024 excerpt, so they retain 2003
+// definitions and are tagged accordingly.
+const CCC_2024 = 'CRRG Dec. 2024, Exhibit 8, p. 5-32';
+export const COMPLIANCE_CONDITION_CODES = {
+  XA: { meaning: "Account closed at consumer's request", source: CCC_2024, edition: '2024' },
+  XB: { meaning: 'Account information has been disputed by the consumer directly to the data furnisher under the FCRA; the data furnisher is conducting its investigation. Also reported for FDCPA disputes.', source: CCC_2024, edition: '2024' },
+  XC: { meaning: "FCRA direct dispute investigation completed — consumer disagrees with the results of the data furnisher's investigation.", source: CCC_2024, edition: '2024' },
+  XH: { meaning: 'Account previously in dispute; the data furnisher has completed its investigation. (FDCPA disputes and FCRA direct disputes)', source: CCC_2024, edition: '2024' },
+  XR: { meaning: 'Removes the most recently reported Compliance Condition Code', source: CCC_2024, edition: '2024' },
+  XD: { meaning: 'Not present in the Dec. 2024 excerpt — 2003 definition retained', source: 'CRRG 2003 (definition not re-verified)', edition: '2003', verification_status: 'PENDING_CURRENT_EDITION' },
+  XE: { meaning: 'Not present in the Dec. 2024 excerpt — 2003 definition retained', source: 'CRRG 2003 (definition not re-verified)', edition: '2003', verification_status: 'PENDING_CURRENT_EDITION' },
+  XF: { meaning: 'Not present in the Dec. 2024 excerpt — 2003 definition retained', source: 'CRRG 2003 (definition not re-verified)', edition: '2003', verification_status: 'PENDING_CURRENT_EDITION' },
+  XG: { meaning: 'Not present in the Dec. 2024 excerpt — 2003 definition retained', source: 'CRRG 2003 (definition not re-verified)', edition: '2003', verification_status: 'PENDING_CURRENT_EDITION' },
+  XJ: { meaning: 'Not present in the Dec. 2024 excerpt — 2003 definition retained', source: 'CRRG 2003 (definition not re-verified)', edition: '2003', verification_status: 'PENDING_CURRENT_EDITION' },
+};
+
+// Account Status (Field 17A). 71–84 are TIME-BASED DELINQUENCY STAGES: a
+// balance on one is normal and never a violation by itself. The prior
+// corpus read 71 as "Settled", which turned every 30-days-late account into
+// a fabricated violation.
+const ST = { source: 'CRRG 2003 426 Base, pos. 124-125 (Account Status code table)', edition: '2003' };
 export const METRO2_STATUS_CODES = {
-  '05': { meaning: 'Account transferred',                                 source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '11': { meaning: 'Current account (0-29 days past due)',                source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '13': { meaning: 'Paid or closed account / zero balance',               source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '61': { meaning: 'Paid in full, was a voluntary surrender',             source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '62': { meaning: 'Paid in full, was a collection account',              source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '63': { meaning: 'Paid in full, was a repossession',                    source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '64': { meaning: 'Paid in full, was a charge-off',                      source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '65': { meaning: 'Paid in full, a foreclosure was started',             source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '71': { meaning: '30-59 days past the due date',                        source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '78': { meaning: '60-89 days past the due date',                        source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '80': { meaning: '90-119 days past the due date',                       source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '82': { meaning: '120-149 days past the due date',                      source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '83': { meaning: '150-179 days past the due date',                      source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '84': { meaning: '180 or more days past the due date',                  source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '88': { meaning: 'Claim filed with government for insured portion',     source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '89': { meaning: 'Deed received in lieu of foreclosure',                source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '93': { meaning: 'Account assigned to internal or external collections', source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '94': { meaning: 'Foreclosure completed',                               source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '95': { meaning: 'Voluntary surrender',                                 source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '96': { meaning: 'Merchandise repossessed',                             source: CRRG_NAME_ONLY, verified: VERIFIED },
-  '97': { meaning: 'Unpaid balance reported as a loss (charge-off)',      source: CRRG_NAME_ONLY, verified: VERIFIED },
-  'DA': { meaning: 'Delete entire account (non-fraud)',                   source: CRRG_NAME_ONLY, verified: VERIFIED },
-  'DF': { meaning: 'Delete entire account (confirmed fraud)',             source: CRRG_NAME_ONLY, verified: VERIFIED },
+  '05': { meaning: 'Account transferred', ...ST },
+  '11': { meaning: 'Current account (0-29 days past due)', ...ST },
+  '13': { meaning: 'Paid or closed account / zero balance', ...ST },
+  '61': { meaning: 'Paid in full, was a voluntary surrender', ...ST },
+  '62': { meaning: 'Paid in full, was a collection account', ...ST },
+  '63': { meaning: 'Paid in full, was a repossession', ...ST },
+  '64': { meaning: 'Paid in full, was a charge-off', ...ST },
+  '65': { meaning: 'Paid in full, a foreclosure was started', ...ST },
+  '71': { meaning: '30-59 days past the due date', ...ST },
+  '78': { meaning: '60-89 days past the due date', ...ST },
+  '80': { meaning: '90-119 days past the due date', ...ST },
+  '82': { meaning: '120-149 days past the due date', ...ST },
+  '83': { meaning: '150-179 days past the due date', ...ST },
+  '84': { meaning: '180 or more days past the due date', ...ST },
+  '88': { meaning: 'Claim filed with government for insured portion', ...ST },
+  '89': { meaning: 'Deed received in lieu of foreclosure', ...ST },
+  '93': { meaning: 'Account assigned to internal or external collections', ...ST },
+  '94': { meaning: 'Foreclosure completed', ...ST },
+  '95': { meaning: 'Voluntary surrender', ...ST },
+  '96': { meaning: 'Merchandise repossessed', ...ST },
+  '97': { meaning: 'Unpaid balance reported as a loss (charge-off)', ...ST },
+  'DA': { meaning: 'Delete entire account (non-fraud)', ...ST },
+  'DF': { meaning: 'Delete entire account (confirmed fraud)', ...ST },
 };
 
-// ─── Debt purchaser / collection agency conformity ────────────────────────
-// Source: CRRG Ch. 10, "Third Party Collection Agency / Debt Purchaser /
-// Factoring Company Reporting Guidelines." These are FORMAT-level
-// requirements, so a violation here is facial — it does not depend on
-// whether the underlying debt is valid, which is what makes it strong.
+export const COLLECTOR_CLASSES = ['DEBT_PURCHASER', 'COLLECTION_AGENCY', 'DEBT_COLLECTOR'];
+const isCollector = (c) => COLLECTOR_CLASSES.includes(c);
+
+// ─── §5 — XB demand gating in Phase 3 ────────────────────────────────────
+// CRRG Dec. 2024 Exhibit 8: Compliance Condition Codes "should not be
+// reported in response to a consumer dispute investigation request from the
+// consumer reporting agencies, EXCEPT where a data furnisher uses a
+// Compliance Condition Code to satisfy its FDCPA obligation to communicate
+// that a debt is disputed." So an XB demand only belongs in a Phase 3 CRA
+// letter when the furnisher is a debt collector.
+export function xbDemandForPhase3({ furnisherClass, phase1Date } = {}) {
+  if (!isCollector(furnisherClass)) return { render: false, reason: 'Furnisher is not a debt collector — per CRRG Dec. 2024 Exhibit 8, Compliance Condition Codes should not be reported in response to a CRA dispute investigation request, so an XB demand does not belong in a Phase 3 CRA letter. Suppressed.' };
+  return {
+    render: true,
+    text: `Compliance Condition Code XB is triggered by the consumer's direct dispute to the furnisher dated ${phase1Date || '[PHASE_1_DATE]'}, not by this reinvestigation request. The furnisher is a debt collector and uses the code to satisfy its obligation under 15 U.S.C. §1692e(8) to communicate that the debt is disputed.`,
+    source: CCC_2024,
+  };
+}
+
+// ─── §6 — XB_NOT_REMOVED_AFTER_INVESTIGATION ─────────────────────────────
+// CRRG Dec. 2024: "Code XB should no longer be reported after the
+// investigation is completed; the XB should be removed by reporting the
+// removal code or changed to another code." Carve-out: for FDCPA disputes
+// XB may remain "as long as stated in the Debt Buyer's or Third Party
+// Collection Agency's policies/procedures" — so an FDCPA-basis dispute does
+// NOT fire a violation; it produces a policy-production demand instead.
+export const XB_NOT_REMOVED = 'XB_NOT_REMOVED_AFTER_INVESTIGATION';
+export function validateXbRetention({ ccc, investigationCompleted, daysSinceCompletion, disputeBasis } = {}) {
+  if (String(ccc || '').toUpperCase() !== 'XB') return null;
+  if (disputeBasis === 'FDCPA') {
+    return {
+      type: 'XB_RETENTION_POLICY_DEMAND',
+      isViolation: false,
+      field: `Field ${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.num} (${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.name})`,
+      demand: 'Produce the written policy or procedure stating the duration for which Compliance Condition Code XB is retained on FDCPA-disputed accounts, as required to substantiate continued reporting of the code under Regulation V, 12 C.F.R. §1022.42.',
+      statute: '12 C.F.R. §1022.42 (Reg V); ' + CCC_2024,
+    };
+  }
+  if (disputeBasis === 'FCRA_DIRECT' && investigationCompleted && Number(daysSinceCompletion) > 45) {
+    return {
+      type: XB_NOT_REMOVED,
+      isViolation: true,
+      field: `Field ${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.num} (${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.name})`,
+      issue: `Compliance Condition Code XB remains reported ${daysSinceCompletion} days after the furnisher completed its investigation. Per the CRRG, XB should no longer be reported once the investigation is complete — it must be removed via the removal code (XR) or changed to another code.`,
+      statute: CCC_2024,
+    };
+  }
+  return null;
+}
+
+// ─── §6 — DOLP_INHERITED_FROM_ORIGINAL_CREDITOR ──────────────────────────
+// Debt Buyer item 12: Date of Last Payment is the date payment was received
+// BY the debt buyer or collection agency. A DOLP predating the purchase is
+// inherited from the original creditor.
+export const DOLP_INHERITED = 'DOLP_INHERITED_FROM_ORIGINAL_CREDITOR';
+export function validateDateOfLastPayment({ furnisherClass, dateOfLastPayment, accountPurchaseDate } = {}) {
+  if (!isCollector(furnisherClass)) return null;
+  if (!dateOfLastPayment || !accountPurchaseDate) return null;
+  const dolp = new Date(dateOfLastPayment), buy = new Date(accountPurchaseDate);
+  if (isNaN(dolp) || isNaN(buy) || dolp >= buy) return null;
+  return {
+    type: DOLP_INHERITED,
+    isViolation: true,
+    field: `Field ${METRO2_FIELDS.DATE_OF_LAST_PAYMENT.num} (${METRO2_FIELDS.DATE_OF_LAST_PAYMENT.name})`,
+    found: String(dateOfLastPayment),
+    issue: `Date of Last Payment (${dateOfLastPayment}) predates the date this furnisher acquired the account (${accountPurchaseDate}). Per the CRRG Debt Buyer module, Field 27 reports the date payment was received BY the debt buyer or collection agency — a date before acquisition is inherited from the original creditor and is not a payment this furnisher received.`,
+    statute: 'CRRG Dec. 2024, Debt Buyer item 12',
+  };
+}
+
+// ─── §7 — Debt-buyer / collection-agency conformity ──────────────────────
+// CRRG 2003 Debt Buyer module items 1–9. Active, but every rule is tagged
+// PENDING_CURRENT_EDITION because the Dec. 2024 excerpt only covers items
+// 10–13 — these five have not been re-verified against the current edition.
 export const DEBT_PURCHASER_RULES = {
   permittedAccountStatus: ['93', '62', 'DA'],
   permittedPortfolioType: ['O'],
-  permittedAccountType: ['0C', '48', '77'],
+  permittedAccountType: ['48', '77', '0C'],
   accountTypeMeanings: { '0C': 'Factoring Co./Debt Purchaser', '48': 'Collection Agency/Attorney', '77': 'Returned Check' },
-  source: 'CRRG 2003 ed. Ch. 10 — Third Party Collection Agency / Debt Purchaser / Factoring Company Reporting Guidelines',
-  verified: VERIFIED,
+  source: 'CRRG 2003 Debt Buyer module, items 1-9',
+  edition: '2003',
+  verification_status: 'PENDING_CURRENT_EDITION',
 };
 
 export const DOFD_NOT_TRACED = 'DOFD_NOT_TRACED_TO_ORIGINAL_CREDITOR';
 
-// Fires only for furnisherClass DEBT_PURCHASER | COLLECTION_AGENCY.
-// Each argument is optional — a check is skipped when its value wasn't
-// extracted, so a missing field never fabricates a violation. Returns a
-// list of {type, field, found, expected, issue, statute}.
 export function validateDebtPurchaserConformity({
-  furnisherClass,
-  accountStatus,
-  portfolioType,
-  accountType,
-  dateOpened,
-  originalCreditorOriginationDate,
-  dofd,
-  dofdSource,
+  furnisherClass, accountStatus, portfolioType, accountType,
+  dateOpened, originalCreditorOriginationDate, dofd, dofdSource,
 } = {}) {
   const out = [];
-  if (furnisherClass !== 'DEBT_PURCHASER' && furnisherClass !== 'COLLECTION_AGENCY') return out;
+  if (!isCollector(furnisherClass)) return out;
   const R = DEBT_PURCHASER_RULES;
+  const tag = { statute: R.source, edition: R.edition, verification_status: R.verification_status };
 
   if (accountStatus && !R.permittedAccountStatus.includes(String(accountStatus).toUpperCase())) {
-    out.push({
-      type: 'DEBT_PURCHASER_STATUS_NONCONFORMING',
-      field: `Field ${METRO2_FIELDS.ACCOUNT_STATUS.num} (${METRO2_FIELDS.ACCOUNT_STATUS.name})`,
-      found: String(accountStatus),
-      expected: R.permittedAccountStatus.join(', '),
-      issue: `A debt purchaser or collection agency may report Account Status ${R.permittedAccountStatus.join(', ')} only. Status ${accountStatus} is not permitted for this furnisher class under the CRRG collection-agency guidelines.`,
-      statute: R.source,
-    });
+    out.push({ type: 'DEBT_PURCHASER_STATUS_NONCONFORMING', field: `Field ${METRO2_FIELDS.ACCOUNT_STATUS.num} (${METRO2_FIELDS.ACCOUNT_STATUS.name})`, found: String(accountStatus), expected: R.permittedAccountStatus.join(', '),
+      issue: `A debt purchaser or collection agency may report Account Status ${R.permittedAccountStatus.join(', ')} only. Status ${accountStatus} is not permitted for this furnisher class.`, ...tag });
   }
-
   if (portfolioType && !R.permittedPortfolioType.includes(String(portfolioType).toUpperCase())) {
-    out.push({
-      type: 'DEBT_PURCHASER_PORTFOLIO_TYPE_NONCONFORMING',
-      field: `Field ${METRO2_FIELDS.PORTFOLIO_TYPE.num} (${METRO2_FIELDS.PORTFOLIO_TYPE.name})`,
-      found: String(portfolioType),
-      expected: 'O (Open)',
-      issue: `A debt purchaser or collection agency must report Portfolio Type "O" (Open). "${portfolioType}" is nonconforming.`,
-      statute: R.source,
-    });
+    out.push({ type: 'DEBT_PURCHASER_PORTFOLIO_TYPE_NONCONFORMING', field: `Field ${METRO2_FIELDS.PORTFOLIO_TYPE.num} (${METRO2_FIELDS.PORTFOLIO_TYPE.name})`, found: String(portfolioType), expected: 'O (Open)',
+      issue: `A debt purchaser or collection agency must report Portfolio Type "O" (Open). "${portfolioType}" is nonconforming.`, ...tag });
   }
-
   if (accountType && !R.permittedAccountType.includes(String(accountType).toUpperCase())) {
     const allowed = R.permittedAccountType.map((c) => `${c} (${R.accountTypeMeanings[c]})`).join(', ');
-    out.push({
-      type: 'DEBT_PURCHASER_ACCOUNT_TYPE_NONCONFORMING',
-      field: `Field ${METRO2_FIELDS.ACCOUNT_TYPE.num} (${METRO2_FIELDS.ACCOUNT_TYPE.name})`,
-      found: String(accountType),
-      expected: allowed,
-      issue: `A debt purchaser or collection agency must report Account Type ${allowed}. "${accountType}" is nonconforming.`,
-      statute: R.source,
-    });
+    out.push({ type: 'DEBT_PURCHASER_ACCOUNT_TYPE_NONCONFORMING', field: `Field ${METRO2_FIELDS.ACCOUNT_TYPE.num} (${METRO2_FIELDS.ACCOUNT_TYPE.name})`, found: String(accountType), expected: allowed,
+      issue: `A debt purchaser or collection agency must report Account Type ${allowed}. "${accountType}" is nonconforming.`, ...tag });
   }
-
-  // Date Opened must be the placement/assignment/purchase date, not the
-  // original creditor's origination date.
   if (dateOpened && originalCreditorOriginationDate && String(dateOpened) === String(originalCreditorOriginationDate)) {
-    out.push({
-      type: 'DEBT_PURCHASER_DATE_OPENED_IS_ORIGINATION',
-      field: `Field ${METRO2_FIELDS.DATE_OPENED.num} (${METRO2_FIELDS.DATE_OPENED.name})`,
-      found: String(dateOpened),
-      expected: 'Date the account was placed, assigned, or purchased',
-      issue: `Date Opened reports the original creditor's origination date (${dateOpened}). For a debt purchaser or collection agency, Field 10 must report the date the account was placed, assigned, or purchased — not the original account's opening date.`,
-      statute: R.source,
-    });
+    out.push({ type: 'DEBT_PURCHASER_DATE_OPENED_IS_ORIGINATION', field: `Field ${METRO2_FIELDS.DATE_OPENED.num} (${METRO2_FIELDS.DATE_OPENED.name})`, found: String(dateOpened), expected: 'Date placed, assigned, or purchased',
+      issue: `Date Opened reports the original creditor's origination date (${dateOpened}). For a debt purchaser or collection agency, Field 10 must report the date the account was placed, assigned, or purchased.`, ...tag });
   }
-
-  // The one that matters most: DOFD must trace to the ORIGINAL CREDITOR's
-  // records, not anything derived from the purchaser's own servicing file.
   if (dofd && dofdSource && String(dofdSource).toUpperCase() !== 'ORIGINAL_CREDITOR') {
-    out.push({
-      type: DOFD_NOT_TRACED,
-      field: `Field ${METRO2_FIELDS.DATE_FIRST_DELINQUENCY.num} (${METRO2_FIELDS.DATE_FIRST_DELINQUENCY.name})`,
-      found: `${dofd} (derived from: ${dofdSource})`,
-      expected: "First delinquency with the ORIGINAL CREDITOR that led to placement or sale",
-      issue: `The reported Date of First Delinquency is derived from the purchaser's own servicing file rather than the original creditor's records. The CRRG is explicit that DOFD must trace to the first delinquency with the original creditor that led to the account being placed or sold — a purchaser cannot restart or re-derive this date from its own acquisition.`,
-      statute: R.source,
-    });
+    out.push({ type: DOFD_NOT_TRACED, field: `Field ${METRO2_FIELDS.DATE_FIRST_DELINQUENCY.num} (${METRO2_FIELDS.DATE_FIRST_DELINQUENCY.name})`, found: `${dofd} (derived from: ${dofdSource})`, expected: 'First delinquency with the ORIGINAL CREDITOR that led to placement or sale',
+      issue: `The reported Date of First Delinquency is derived from the purchaser's own servicing file rather than the original creditor's records. DOFD must trace to the first delinquency with the original creditor that led to placement or sale — a purchaser cannot restart or re-derive this date at acquisition.`, ...tag });
   }
-
   return out;
 }
 
-// Throws if a field is referenced without a populated source/verified pair.
-// Converts "someone added a field from memory" from a silent judgment call
-// into a hard failure.
+// ─── §8 — rebuttal for "balance equals past due is standard" ─────────────
+export const BALANCE_EQUALS_PAST_DUE_REBUTTAL =
+  "The Credit Reporting Resource Guide's Debt Buyer/Third Party Collection Agency module contains no provision requiring or authorizing Amount Past Due to equal Current Balance on a collection account. Item 11 addresses only the inclusion of fees and interest and the requirement that both figures decrease as payments are applied. The furnisher's assertion that its reporting is \"consistent with Metro 2 standards\" cites no field-guide provision because none exists.";
+
+// ─── Enforcement ─────────────────────────────────────────────────────────
 export function assertSourced(key) {
   const f = METRO2_FIELDS[key];
   if (!f) throw new Error(`Metro 2 field "${key}" is not in the verified field map.`);
-  if (!f.source || !f.verified) {
-    throw new Error(`Metro 2 field "${key}" (Field ${f.num}) has no source citation — unsourced Metro 2 field numbers may not reach a generated letter.`);
-  }
+  if (!f.source || !f.edition) throw new Error(`Metro 2 field "${key}" (Field ${f.num}) has no source citation — unsourced Metro 2 field numbers may not reach a generated letter.`);
   return f;
 }
 
-// Fails loudly at import time if any entry lacks provenance, so an unsourced
-// addition can never sit dormant waiting to reach a letter.
 export function assertMapFullySourced() {
   const bad = [];
-  for (const [k, v] of Object.entries(METRO2_FIELDS)) if (!v.source || !v.verified) bad.push(`METRO2_FIELDS.${k}`);
-  for (const [k, v] of Object.entries(METRO2_STATUS_CODES)) if (!v.source || !v.verified) bad.push(`METRO2_STATUS_CODES['${k}']`);
-  if (bad.length) throw new Error('Unsourced Metro 2 entries (every entry needs source + verified): ' + bad.join(', '));
+  for (const [k, v] of Object.entries(METRO2_FIELDS)) if (!v.source || !v.edition) bad.push(`METRO2_FIELDS.${k}`);
+  for (const [k, v] of Object.entries(COMPLIANCE_CONDITION_CODES)) if (!v.source || !v.edition) bad.push(`COMPLIANCE_CONDITION_CODES.${k}`);
+  for (const [k, v] of Object.entries(METRO2_STATUS_CODES)) if (!v.source || !v.edition) bad.push(`METRO2_STATUS_CODES['${k}']`);
+  if (bad.length) throw new Error('Unsourced Metro 2 entries (every entry needs source + edition): ' + bad.join(', '));
   return true;
 }
 
-const VALID_NUMS = new Set(Object.values(METRO2_FIELDS).map((f) => f.num.toUpperCase()));
+// Entries active but not yet tied to a cited page — surfaced so they can be
+// resolved rather than quietly trusted.
+export function pendingVerification() {
+  const out = [];
+  for (const [k, v] of Object.entries(METRO2_FIELDS)) if (v.verification_status) out.push(`METRO2_FIELDS.${k} (Field ${v.num}) — ${v.verification_status}`);
+  for (const [k, v] of Object.entries(COMPLIANCE_CONDITION_CODES)) if (v.verification_status) out.push(`CCC.${k} — ${v.verification_status}`);
+  if (DEBT_PURCHASER_RULES.verification_status) out.push(`DEBT_PURCHASER_RULES — ${DEBT_PURCHASER_RULES.verification_status}`);
+  return out;
+}
 
+const VALID_NUMS = new Set(Object.values(METRO2_FIELDS).map((f) => f.num.toUpperCase()));
 const NAME_TOKENS = Object.values(METRO2_FIELDS).map((f) => ({
-  num: f.num.toUpperCase(),
-  name: f.name,
+  num: f.num.toUpperCase(), name: f.name,
   head: f.name.toLowerCase().replace(/[^a-z ]/g, '').split(' ')[0],
 }));
 
-// Scans generated letter HTML for "Field N" citations and returns problems.
-// Catches the two failure modes seen in real production letters: a field
-// number that does not exist in the Base Segment at all (real letters cited
-// "Field 30 — Amount Past Due", "Field 4 — Date Opened", "Field 6 — Account
-// Status"), and a real number paired with another field's name (real letters
-// cited "Field 19 — Compliance Condition Code" and "Field 17A — Current
-// Balance").
+// Scans generated letter HTML for "Field N" citations. Catches the three
+// failure modes seen in real shipped letters: a field number absent from
+// the Base Segment ("Field 30 — Amount Past Due", "Field 4 — Date Opened"),
+// a valid number paired with another field's name ("Field 19 — Compliance
+// Condition Code", "Field 17A — Current Balance"), and CCC VALUES cited
+// under Field 19 ("Field 19 — XB/XC"), which name-matching cannot catch.
 export function validateFieldCitations(html) {
   if (!html) return [];
   const text = String(html).replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ');
@@ -250,49 +296,32 @@ export function validateFieldCitations(html) {
 
     if (!VALID_NUMS.has(num)) {
       const key = 'unknown:' + num;
-      if (!seen.has(key)) {
-        seen.add(key);
-        problems.push(`Cites "Field ${num}"${label ? ` — ${label}` : ''}, which is not a Metro 2 Base Segment field number in the verified map.`);
-      }
+      if (!seen.has(key)) { seen.add(key); problems.push(`Cites "Field ${num}"${label ? ` — ${label}` : ''}, which is not a Metro 2 Base Segment field number in the verified map.`); }
       continue;
     }
     if (!label) continue;
 
-    // Value-level check FIRST — it must run before the generic-label guard
-    // below, because "XB/XC" reduces to a 4-char token and would otherwise
-    // be skipped as prose. XA/XB/XC/XD/XE/XF/XG/XH/XJ/XR are Compliance
-    // Condition Code VALUES and live in Field 20. A real letter cited
-    // "Field 19 — XB/XC 'Dispute Resolved'", which the name-matching rule
-    // cannot catch because "XB/XC" is not a field name. This is the exact
-    // defect the original report called out, so it gets its own rule.
+    // Must run before the generic-label guard: "XB/XC" reduces to a 4-char
+    // token and would otherwise be skipped as prose.
     if (num === '19' && /\bX[ABCDEFGHJR]\b/.test(label)) {
       const key = 'ccc-value-on-19';
-      if (!seen.has(key)) {
-        seen.add(key);
-        problems.push(`Cites "Field 19 — ${label}", but XA/XB/XC-style codes are Compliance Condition Code values, which live in Field ${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.num} (${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.name}). Field 19 is ${METRO2_FIELDS.SPECIAL_COMMENT.name}.`);
-      }
+      if (!seen.has(key)) { seen.add(key); problems.push(`Cites "Field 19 — ${label}", but XA/XB/XC-style codes are Compliance Condition Code values, which live in Field ${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.num} (${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.name}). Field 19 is ${METRO2_FIELDS.SPECIAL_COMMENT.name}.`); }
       continue;
     }
 
     const labelHead = label.toLowerCase().replace(/[^a-z ]/g, '').split(' ')[0];
-    if (labelHead.length <= 4) continue; // too generic to judge ("date", "the", prose)
-
+    if (labelHead.length <= 4) continue;
     const actual = NAME_TOKENS.find((t) => t.num === num);
-    if (actual && labelHead === actual.head) continue; // correct label
-
+    if (actual && labelHead === actual.head) continue;
     const claimsAnother = NAME_TOKENS.find((t) => t.num !== num && t.head === labelHead && t.head.length > 4);
     if (actual && claimsAnother) {
       const key = 'mislabel:' + num + ':' + claimsAnother.num;
-      if (!seen.has(key)) {
-        seen.add(key);
-        problems.push(`Cites "Field ${num} — ${label}", but Field ${num} is ${actual.name}; "${claimsAnother.name}" is Field ${claimsAnother.num}.`);
-      }
+      if (!seen.has(key)) { seen.add(key); problems.push(`Cites "Field ${num} — ${label}", but Field ${num} is ${actual.name}; "${claimsAnother.name}" is Field ${claimsAnother.num}.`); }
     }
   }
   return problems;
 }
 
-// "Field 25 (FCRA Compliance/Date of First Delinquency)" style.
 export function formatMetro2Field(key) {
   const f = assertSourced(key);
   return `Field ${f.num} (${f.name})`;
