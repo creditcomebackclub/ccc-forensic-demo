@@ -924,6 +924,20 @@ const referralRef = new URLSearchParams(window.location.search).get('ref');
 if (referralRef && /^[0-9a-f]{6,36}$/i.test(referralRef.trim())) {
   const banner = document.getElementById('referralBanner');
   if (banner) banner.style.display = 'inline-block';
+
+  // Best-effort branding: look up the affiliate's display name so the
+  // banner can read "{Partner} × Credit Comeback Club" instead of the
+  // generic fallback above. Never blocks page load or the intake form —
+  // an ambiguous/unmatched ref or a failed fetch just leaves the generic
+  // banner in place, same as it always has.
+  fetch('/api/public-affiliate-lookup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ref: referralRef })
+  }).then((r) => r.json()).then((data) => {
+    const label = data && data.affiliate && (data.affiliate.company || data.affiliate.name);
+    if (label && banner) banner.textContent = label + ' × Credit Comeback Club';
+  }).catch(() => {});
 }
 
 // Intake Modal Logic
