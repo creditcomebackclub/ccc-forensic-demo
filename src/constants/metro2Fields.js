@@ -36,30 +36,22 @@
 const B2003 = (pos) => `CRRG 2003 426 Base, pos. ${pos}`;
 
 export const METRO2_FIELDS = {
-  CONSUMER_ACCOUNT_NUMBER:   { num: '7',   name: 'Consumer Account Number',                        source: B2003('43-72'),   edition: '2003' },
-  PORTFOLIO_TYPE:            { num: '8',   name: 'Portfolio Type',                                 source: B2003('73'),      edition: '2003' },
-  ACCOUNT_TYPE:              { num: '9',   name: 'Account Type',                                   source: B2003('74-75'),   edition: '2003' },
-  DATE_OPENED:               { num: '10',  name: 'Date Opened',                                    source: B2003('76-83'),   edition: '2003' },
-  CREDIT_LIMIT:              { num: '11',  name: 'Credit Limit',                                   source: B2003('84-92'),   edition: '2003' },
-  HIGHEST_CREDIT:            { num: '12',  name: 'Highest Credit or Original Loan Amount',         source: B2003('93-101'),  edition: '2003' },
-  TERMS_DURATION:            { num: '13',  name: 'Terms Duration',                                 source: B2003('102-104'), edition: '2003' },
+  CONSUMER_ACCOUNT_NUMBER:   { num: '7',   name: 'Consumer Account Number',                        source: B2003('43-72'),   edition: '2003' }, // packed 37-66
+  PORTFOLIO_TYPE:            { num: '8',   name: 'Portfolio Type',                                 source: B2003('73'),      edition: '2003' }, // packed 67
+  ACCOUNT_TYPE:              { num: '9',   name: 'Account Type',                                   source: B2003('74-75'),   edition: '2003' }, // packed 68-69
+  DATE_OPENED:               { num: '10',  name: 'Date Opened',                                    source: B2003('76-83'),   edition: '2003' }, // packed 70-74
+  CREDIT_LIMIT:              { num: '11',  name: 'Credit Limit',                                   source: B2003('84-92'),   edition: '2003' }, // packed 75-79
+  HIGHEST_CREDIT:            { num: '12',  name: 'Highest Credit or Original Loan Amount',         source: B2003('93-101'),  edition: '2003' }, // packed 80-84
+  TERMS_DURATION:            { num: '13',  name: 'Terms Duration',                                 source: B2003('102-104'), edition: '2003' }, // packed 85-87
 
-  // ── Fields 14–16 are NOT in the supplied map, but Field 15 is actively
-  // cited by masterPrompt.js (charge-off reporting a scheduled monthly
-  // payment — a core violation type). Removing them would make
-  // validateFieldCitations() block every letter using that violation, and
-  // asserting positions I cannot cite would break the standing rule. So
-  // they stay, explicitly flagged as unconfirmed. Resolve by reading these
-  // three off CRRG_2003_FULL_CourtExhibit_05cv599.pdf and replacing the
-  // source/verification_status.
-  TERMS_FREQUENCY:           { num: '14',  name: 'Terms Frequency',                                source: 'NOT CITED — pending CRRG 2003 confirmation', edition: '2003', verification_status: 'PENDING_SOURCE_CITATION' },
-  SCHEDULED_MONTHLY_PAYMENT: { num: '15',  name: 'Scheduled Monthly Payment Amount',               source: 'NOT CITED — pending CRRG 2003 confirmation', edition: '2003', verification_status: 'PENDING_SOURCE_CITATION' },
-  ACTUAL_PAYMENT:            { num: '16',  name: 'Actual Payment Amount',                          source: 'NOT CITED — pending CRRG 2003 confirmation', edition: '2003', verification_status: 'PENDING_SOURCE_CITATION' },
+  TERMS_FREQUENCY:           { num: '14',  name: 'Terms Frequency',                                source: B2003('105'),     edition: '2003' }, // packed 88
+  SCHEDULED_MONTHLY_PMT:     { num: '15',  name: 'Scheduled Monthly Payment Amount',               source: B2003('106-114'), edition: '2003' }, // packed 89-93
+  ACTUAL_PAYMENT_AMOUNT:     { num: '16',  name: 'Actual Payment Amount',                          source: B2003('115-123'), edition: '2003' }, // packed 94-98
 
-  ACCOUNT_STATUS:            { num: '17A', name: 'Account Status',                                 source: B2003('124-125'), edition: '2003' },
-  PAYMENT_RATING:            { num: '17B', name: 'Payment Rating',                                 source: B2003('126'),     edition: '2003' },
-  PAYMENT_HISTORY_PROFILE:   { num: '18',  name: 'Payment History Profile',                        source: B2003('127-150'), edition: '2003' },
-  SPECIAL_COMMENT:           { num: '19',  name: 'Special Comment',                                source: B2003('151-152'), edition: '2003' },
+  ACCOUNT_STATUS:            { num: '17A', name: 'Account Status',                                 source: B2003('124-125'), edition: '2003' }, // packed 99-100
+  PAYMENT_RATING:            { num: '17B', name: 'Payment Rating',                                 source: B2003('126'),     edition: '2003' }, // packed 101
+  PAYMENT_HISTORY_PROFILE:   { num: '18',  name: 'Payment History Profile',                        source: B2003('127-150'), edition: '2003' }, // packed 102-125
+  SPECIAL_COMMENT:           { num: '19',  name: 'Special Comment',                                source: B2003('151-152'), edition: '2003' }, // packed 126-127
   COMPLIANCE_CONDITION_CODE: { num: '20',  name: 'Compliance Condition Code',                      source: 'CRRG Dec. 2024, Exhibit 8, p. 5-32',  edition: '2024' },
   CURRENT_BALANCE:           { num: '21',  name: 'Current Balance',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024' },
   AMOUNT_PAST_DUE:           { num: '22',  name: 'Amount Past Due',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024' },
@@ -241,6 +233,51 @@ export function validateDebtPurchaserConformity({
   return out;
 }
 
+// ─── §7 — Field 15 split rule ────────────────────────────────────────────
+// The prior framing ("charge-off + a scheduled monthly payment = paradox")
+// was status-driven. The CRRG's basis is PORTFOLIO-driven: Field 15 is zero
+// fill for Open, minimum-due for Revolving/Line of Credit, and the regular
+// monthly payment for Installment/Mortgage. Collection and debt-buyer
+// accounts are Portfolio Type 'O', so the real, fully-sourced rule is the
+// Open-portfolio one. The status-97 version is deliberately DEMOTED to a
+// flag: an Installment tradeline at charge-off still carries a contractual
+// monthly payment and the CRRG does not direct furnishers to zero it —
+// asserting that in a letter as a Metro 2 violation would be overclaiming.
+export const SCHEDULED_PAYMENT_ON_OPEN = 'SCHEDULED_PAYMENT_ON_OPEN_PORTFOLIO';
+export function validateScheduledPayment({ portfolioType, accountStatus, scheduledMonthlyPayment } = {}) {
+  if (scheduledMonthlyPayment === undefined || scheduledMonthlyPayment === null || scheduledMonthlyPayment === '') return null;
+  const amt = Number(scheduledMonthlyPayment);
+  if (Number.isNaN(amt) || amt === 0) return null;
+  const pt = String(portfolioType || '').toUpperCase();
+
+  if (pt === 'O') {
+    return {
+      type: SCHEDULED_PAYMENT_ON_OPEN,
+      isViolation: true,
+      field: `Field ${METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.num} (${METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.name})`,
+      found: String(scheduledMonthlyPayment),
+      expected: 'Zero fill',
+      issue: `Portfolio Type is "O" (Open), for which the CRRG specifies Field 15 must be zero filled. A scheduled monthly payment of ${scheduledMonthlyPayment} is nonconforming. Collection and debt-buyer accounts are Portfolio Type O.`,
+      statute: 'CRRG 2003 426 Base, Field 15 definition, p. 4-10',
+      edition: '2003',
+    };
+  }
+
+  if (String(accountStatus) === '97' && (pt === 'I' || pt === 'M')) {
+    return {
+      type: SCHEDULED_PAYMENT_ON_OPEN,
+      isViolation: false,
+      flagOnly: true,
+      field: `Field ${METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.num} (${METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.name})`,
+      found: String(scheduledMonthlyPayment),
+      issue: `Charged-off ${pt === 'I' ? 'Installment' : 'Mortgage'} account still reports a scheduled monthly payment. Flagged for review only — the CRRG does not direct furnishers to zero Field 15 on a charged-off Installment/Mortgage tradeline, which retains a contractual monthly payment. Do NOT assert this as a Metro 2 violation in a letter.`,
+      verification_status: 'PENDING_CURRENT_EDITION',
+      edition: '2003',
+    };
+  }
+  return null;
+}
+
 // ─── §8 — rebuttal for "balance equals past due is standard" ─────────────
 export const BALANCE_EQUALS_PAST_DUE_REBUTTAL =
   "The Credit Reporting Resource Guide's Debt Buyer/Third Party Collection Agency module contains no provision requiring or authorizing Amount Past Due to equal Current Balance on a collection account. Item 11 addresses only the inclusion of fees and interest and the requirement that both figures decrease as payments are applied. The furnisher's assertion that its reporting is \"consistent with Metro 2 standards\" cites no field-guide provision because none exists.";
@@ -269,6 +306,7 @@ export function pendingVerification() {
   for (const [k, v] of Object.entries(METRO2_FIELDS)) if (v.verification_status) out.push(`METRO2_FIELDS.${k} (Field ${v.num}) — ${v.verification_status}`);
   for (const [k, v] of Object.entries(COMPLIANCE_CONDITION_CODES)) if (v.verification_status) out.push(`CCC.${k} — ${v.verification_status}`);
   if (DEBT_PURCHASER_RULES.verification_status) out.push(`DEBT_PURCHASER_RULES — ${DEBT_PURCHASER_RULES.verification_status}`);
+  out.push('validateScheduledPayment() status-97 Installment/Mortgage branch — PENDING_CURRENT_EDITION (flag-only, never asserted as a violation)');
   return out;
 }
 

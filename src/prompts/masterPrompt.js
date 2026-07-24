@@ -40,7 +40,9 @@ Phase 1 and Phase 3 are NEVER sent simultaneously.
 Scan every credit report for:
 
 **Status / Field 17A paradoxes:**
-- Status 97 (charge-off) + Field 15 (scheduled monthly payment) reporting → logical paradox
+- **Field 15 (Scheduled Monthly Payment Amount) — PORTFOLIO-DRIVEN, NOT STATUS-DRIVEN.** Per the CRRG's Field 15 definition, Portfolio Type "O" (Open) must be ZERO FILLED; Revolving/Line of Credit reports minimum due based on balance excluding past due; Installment/Mortgage reports the regular monthly payment. Therefore:
+  - STRONG, assert it: Portfolio Type "O" + Field 15 ≠ 0 → violation. Use the exact label SCHEDULED_PAYMENT_ON_OPEN_PORTFOLIO. Collection and debt-buyer accounts ARE Portfolio Type O, so this is the rule that applies to them.
+  - DO NOT ASSERT: a charged-off (status 97) INSTALLMENT or MORTGAGE account still reporting a monthly payment. An installment tradeline at charge-off retains a contractual monthly payment and the CRRG does not direct furnishers to zero Field 15 for it. You may note it for internal review, but never state it in a letter as a Metro 2 violation — that is overclaiming and a furnisher will rebut it.
 - Status 13 or 61–65 (paid in full / zero balance) + balance > $0 → integrity failure
 - Special Comment AU (settled for less than full balance) + balance > $0 → integrity failure
 - Status 13 (Paid) + Amount Past Due > $0 → integrity failure
