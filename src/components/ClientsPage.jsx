@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X, Send, MoreHorizontal, Search, Pencil } from 'lucide-react';
-import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage } from '../utils/storage';
+import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage, markLeadViewed } from '../utils/storage';
 import { getReturnReceiptUrl } from '../utils/api';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
@@ -462,7 +462,7 @@ function parseFurnisherAddress(furnisher) {
   }
   return null;
 }
-export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, forceTab, unanalyzedNames }) {
+export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, forceTab, unanalyzedNames, onLeadsChanged }) {
   const [clients, setClients] = useState(null);
   const [selectedClientName, setSelectedClientName] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -904,7 +904,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   const baseFiltered = activeFilter
     ? sortedClients.filter((c) => viewTab === 'leads'
-        ? (activeFilter === 'recent' ? isLeadRecent(c) : activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6) : true)
+        ? (activeFilter === 'unviewed' ? !c.leadViewedAt : activeFilter === 'recent' ? isLeadRecent(c) : activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6) : true)
         : clientMatchesFilter(c, activeFilter, unanalyzedNames))
     : sortedClients;
   const q = debouncedSearch.trim().toLowerCase();
@@ -934,6 +934,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       ]
     : [
         { key: null, label: 'All', count: leadClients.length },
+        { key: 'unviewed', label: 'Unviewed', count: leadClients.filter((c) => !c.leadViewedAt).length },
         { key: 'recent', label: 'New (48h)', count: leadClients.filter(isLeadRecent).length },
         ...LEAD_STAGES.map((s) => ({ key: 'stage:' + s.key, label: s.label, count: leadClients.filter((c) => leadStage(c) === s.key).length })),
       ];
@@ -1052,6 +1053,16 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 c={c}
                 isAdmin={isAdmin}
                 onOpenAudit={onOpenAudit}
+                onViewed={async () => {
+                  if (c.leadViewedAt) return;
+                  try {
+                    await markLeadViewed(c.name);
+                    c.leadViewedAt = new Date().toISOString(); // avoid re-firing before the next full reload
+                    if (onLeadsChanged) onLeadsChanged();
+                  } catch (e) {
+                    console.error('Could not mark lead viewed:', e.message);
+                  }
+                }}
                 onConvert={async () => {
                   setConvertingLead(c.name);
                   try {
@@ -1383,7 +1394,7 @@ function AddLeadModal({ onClose, onCreated }) {
   );
 }
 
-function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, onChanged }) {
+function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, onChanged, onViewed }) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [editing, setEditing] = React.useState(false);
   const [emailVal, setEmailVal] = React.useState(c.email || '');
@@ -1443,7 +1454,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
     <div className="bg-white" style={{ borderRadius: 14, border: '1px solid ' + T.border, boxShadow: T.cardShadow }}>
       <div className="flex items-center gap-3 px-4 py-3.5">
         {hasAudits && (
-          <button onClick={() => setIsOpen(!isOpen)} className="shrink-0" title={isOpen ? 'Collapse' : 'View audits'}>
+          <button onClick={() => { if (!isOpen && onViewed) onViewed(); setIsOpen(!isOpen); }} className="shrink-0" title={isOpen ? 'Collapse' : 'View audits'}>
             <ChevronRight size={15} strokeWidth={2} className="transition-transform" style={{ color: T.faint, transform: isOpen ? 'rotate(90deg)' : 'none' }} />
           </button>
         )}

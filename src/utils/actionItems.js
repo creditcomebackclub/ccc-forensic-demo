@@ -66,11 +66,10 @@ export async function countUnanalyzedResponses() {
 }
 
 export async function getNewLeadsCount() {
-  const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
   const { count } = await supabase
     .from('clients')
     .select('id', { count: 'exact', head: true })
     .eq('status', 'lead')
-    .gte('lead_created_at', fortyEightHoursAgo);
+    .is('lead_viewed_at', null);
   return count || 0;
 }

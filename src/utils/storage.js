@@ -74,6 +74,19 @@ export async function updateLeadStage(clientName, stage, existingTags) {
   if (error) throw error;
 }
 
+// Clears the sidebar's "new leads" badge for this one lead — stamped the
+// moment staff open its card, not on any timer, so the badge behaves like a
+// real notification instead of decaying on a 48h clock.
+export async function markLeadViewed(clientName) {
+  const userId = await getUserId();
+  const { error } = await supabase.from('clients').upsert({
+    user_id: userId,
+    name: clientName,
+    lead_viewed_at: new Date().toISOString(),
+  }, { onConflict: 'user_id,name' });
+  if (error) throw error;
+}
+
 export async function toggleVip(clientName, isVip) {
   const userId = await getUserId();
   const { error } = await supabase.from('clients').upsert({
@@ -352,7 +365,7 @@ export async function adminListClients() {
     // encrypted at rest in client_sensitive_data and only ever fetched
     // on-demand (decrypted server-side) via ClientProfilePanel, never as
     // part of this bulk dashboard load.
-    supabase.from('clients').select('id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at'),
+    supabase.from('clients').select('id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at'),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
@@ -403,6 +416,7 @@ export async function adminListClients() {
       c.leadPhone = meta.lead_phone || null;
       c.leadNotes = meta.lead_notes || null;
       c.leadCreatedAt = meta.lead_created_at || null;
+      c.leadViewedAt = meta.lead_viewed_at || null;
       c.billingStatus = meta.billing_status || null;
       c.billingType = meta.billing_type || null;
       c.billingStartDate = meta.billing_start_date || null;
@@ -438,6 +452,7 @@ export async function adminListClients() {
       leadPhone: row.lead_phone || null,
       leadNotes: row.lead_notes || null,
       leadCreatedAt: row.lead_created_at || null,
+      leadViewedAt: row.lead_viewed_at || null,
       referralSource: row.referral_source || null,
       billingStatus: row.billing_status || null,
       billingType: row.billing_type || null,
