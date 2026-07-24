@@ -226,8 +226,18 @@ export const handler = async (event) => {
     });
     if (error) throw new Error('Audit ran but could not be saved: ' + error.message);
 
+    // status: 'lead' here is a no-op for any row that already exists
+    // (ignoreDuplicates means ON CONFLICT DO NOTHING) — it only ever applies
+    // to a genuinely new row. Without it, a brand-new client whose audit
+    // came back with no extractable score on any bureau (the score-populate
+    // block above is the only other place that stamps 'lead', and it's
+    // gated on having at least one score) would fall through to this insert
+    // with no status at all, silently defaulting to the table's own column
+    // default — which is 'active', not 'lead'. Whether someone shows up
+    // under Leads or Clients must never depend on whether the model could
+    // read a score off their report.
     await db.from('clients').upsert({
-      user_id: userId, name: clientName, address: clientAddress,
+      user_id: userId, name: clientName, address: clientAddress, status: 'lead',
     }, { onConflict: 'user_id,name', ignoreDuplicates: true });
   }
 
