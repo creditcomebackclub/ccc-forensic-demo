@@ -586,7 +586,7 @@ function QuickActionPanel({ action, onDone, onCancel, onNavigate }) {
   );
 }
 
-export default function DashboardPage({ isAdmin, onNavigate, onAuditStart, displayName }) {
+export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
   const [dash, setDash] = useState(null);
   const [activeAction, setActiveAction] = useState(null);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
@@ -824,13 +824,11 @@ export default function DashboardPage({ isAdmin, onNavigate, onAuditStart, displ
             style={{ background: '#fff', border: '2px dashed ' + T.border, borderRadius: 14 }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = T.navy; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; }}
-            onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f && onAuditStart) onAuditStart(f); }}
-            onDragOver={(e) => e.preventDefault()}
             onClick={() => onNavigate('audit')}
           >
             <Upload size={18} className="mx-auto mb-2 text-ink-faint" strokeWidth={1.5} />
-            <div className="text-[12px] text-ink font-medium mb-0.5">Quick Audit</div>
-            <div className="text-[11px] text-ink-muted">Drop a report or click to go to the audit page</div>
+            <div className="text-[12px] text-ink font-medium mb-0.5">New Audit</div>
+            <div className="text-[11px] text-ink-muted">Click to go to the audit upload page</div>
           </div>
         </div>
       </div>

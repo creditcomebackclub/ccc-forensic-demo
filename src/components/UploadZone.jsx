@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Upload, FileText, X, ChevronDown, ChevronUp, Info } from 'lucide-react';
+import ClientPicker from './ClientPicker';
 
 // Brand tokens — matches the dashboard / clients card system
 const T = {
@@ -66,11 +67,13 @@ export default function UploadZone({ onAuditStart }) {
   const [selectedBureau, setSelectedBureau] = useState('Equifax');
   const [files, setFiles] = useState({});
   const [showInfo, setShowInfo] = useState(false);
+  const [clientSelection, setClientSelection] = useState(null);
 
   const setFile = (key, file) => setFiles((p) => ({ ...p, [key]: file }));
   const clearFile = (key) => setFiles((p) => { const n = { ...p }; delete n[key]; return n; });
 
   const canSubmit = () => {
+    if (!clientSelection) return false;
     if (mode === 'combined') return !!files.combined;
     if (mode === 'individual') return !!(files.Equifax && files.Experian && files.TransUnion);
     if (mode === 'single') return !!files[selectedBureau];
@@ -79,9 +82,9 @@ export default function UploadZone({ onAuditStart }) {
 
   const handleSubmit = () => {
     if (!canSubmit()) return;
-    if (mode === 'combined') onAuditStart({ mode: 'combined', file: files.combined });
-    else if (mode === 'individual') onAuditStart({ mode: 'individual', files: { equifax: files.Equifax, experian: files.Experian, transunion: files.TransUnion } });
-    else if (mode === 'single') onAuditStart({ mode: 'single', file: files[selectedBureau], bureau: selectedBureau });
+    if (mode === 'combined') onAuditStart({ mode: 'combined', file: files.combined, clientSelection });
+    else if (mode === 'individual') onAuditStart({ mode: 'individual', files: { equifax: files.Equifax, experian: files.Experian, transunion: files.TransUnion }, clientSelection });
+    else if (mode === 'single') onAuditStart({ mode: 'single', file: files[selectedBureau], bureau: selectedBureau, clientSelection });
   };
 
   return (
@@ -94,6 +97,8 @@ export default function UploadZone({ onAuditStart }) {
           <p className="text-[11px]" style={{ color: T.muted }}>Upload a report → run the Setup &amp; Spike Phase 1 pipeline</p>
         </div>
       </div>
+
+      <ClientPicker value={clientSelection} onChange={setClientSelection} />
 
       <div className="space-y-2 mb-6">
         {MODES.map((m) => {
@@ -181,9 +186,13 @@ export default function UploadZone({ onAuditStart }) {
       <button onClick={handleSubmit} disabled={!canSubmit()}
         className="w-full py-3 text-[13px] uppercase tracking-wider rounded-lg transition-colors font-medium"
         style={{ backgroundColor: canSubmit() ? T.navy : '#B5BBC9', color: canSubmit() ? T.gold : '#FFFFFF' }}>
-        {mode === 'combined' && 'Run Forensic Audit'}
-        {mode === 'individual' && (canSubmit() ? 'Run 3-Bureau Forensic Audit (~2–4 min)' : 'Upload all 3 bureau reports to continue')}
-        {mode === 'single' && 'Run Single Bureau Audit'}
+        {!clientSelection
+          ? 'Select a client to continue'
+          : <>
+              {mode === 'combined' && 'Run Forensic Audit'}
+              {mode === 'individual' && (canSubmit() ? 'Run 3-Bureau Forensic Audit (~2–4 min)' : 'Upload all 3 bureau reports to continue')}
+              {mode === 'single' && 'Run Single Bureau Audit'}
+            </>}
       </button>
     </div>
   );

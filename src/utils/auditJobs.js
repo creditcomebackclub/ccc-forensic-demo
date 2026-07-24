@@ -25,7 +25,7 @@ async function preflightSize(file) {
   }
 }
 
-export async function runAuditJob({ mode, files }, onProgress) {
+export async function runAuditJob({ mode, files, clientSelection }, onProgress) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not signed in.');
 
@@ -45,6 +45,8 @@ export async function runAuditJob({ mode, files }, onProgress) {
 
   const { error: insErr } = await supabase.from('audit_jobs').insert({
     id: jobId, user_id: user.id, mode, files: fileMeta,
+    selected_client_id: clientSelection?.type === 'existing' ? clientSelection.id : null,
+    selected_client_is_new: clientSelection?.type === 'new',
   });
   if (insErr) throw new Error('Could not create audit job: ' + insErr.message);
 

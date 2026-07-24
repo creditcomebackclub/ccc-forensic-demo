@@ -34,11 +34,11 @@ const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day:
 // and polls the database until the Netlify background function completes it.
 // ---------------------------------------------------------------------------
 
-export async function runAudit(file, onProgress) {
-  return runAuditJob({ mode: 'combined', files: [{ file }] }, onProgress);
+export async function runAudit(file, onProgress, clientSelection) {
+  return runAuditJob({ mode: 'combined', files: [{ file }], clientSelection }, onProgress);
 }
 
-export async function runTripleBureauAudit(files, onProgress) {
+export async function runTripleBureauAudit(files, onProgress, clientSelection) {
   return runAuditJob({
     mode: 'individual',
     files: [
@@ -46,11 +46,12 @@ export async function runTripleBureauAudit(files, onProgress) {
       { file: files.experian, bureau: 'Experian' },
       { file: files.transunion, bureau: 'TransUnion' },
     ],
+    clientSelection,
   }, onProgress);
 }
 
-export async function runSingleBureauAudit(file, bureau, onProgress) {
-  return runAuditJob({ mode: 'single', files: [{ file, bureau }] }, onProgress);
+export async function runSingleBureauAudit(file, bureau, onProgress, clientSelection) {
+  return runAuditJob({ mode: 'single', files: [{ file, bureau }], clientSelection }, onProgress);
 }
 
 export async function generateLetter(account, client) {

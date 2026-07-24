@@ -575,13 +575,13 @@ export default function App() {
       if (!payload.mode || payload.mode === 'combined') {
         const file = payload.file || payload;
         setFileName(file.name || 'report.pdf');
-        res = await runAudit(file, setAuditProgress);
+        res = await runAudit(file, setAuditProgress, payload.clientSelection);
       } else if (payload.mode === 'individual') {
         setFileName('3-Bureau Individual Audit');
-        res = await runTripleBureauAudit(payload.files, setAuditProgress);
+        res = await runTripleBureauAudit(payload.files, setAuditProgress, payload.clientSelection);
       } else if (payload.mode === 'single') {
         setFileName(payload.bureau + ' Single Bureau Audit');
-        res = await runSingleBureauAudit(payload.file, payload.bureau, setAuditProgress);
+        res = await runSingleBureauAudit(payload.file, payload.bureau, setAuditProgress, payload.clientSelection);
       }
       setAuditResult(res.audit);
       setState(STATE.RESULTS);
@@ -619,7 +619,7 @@ export default function App() {
             </div>
           }>
             {view === VIEW.DASHBOARD && (
-              <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} onAuditStart={handleAuditStart} displayName={displayName} />
+              <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} displayName={displayName} />
             )}
             {view === VIEW.CLIENTS && (
               <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" unanalyzedNames={unanalyzedClientNames} />

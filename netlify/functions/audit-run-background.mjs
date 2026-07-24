@@ -280,12 +280,41 @@ export const handler = async (event) => {
   // Mirrors client-side saveAudit(): starting-score auto-populate, audits
   // upsert (same slug__date id), and the lead-row upsert — attributed to the
   // job's user so the audit lands in their records even if the tab closed.
-  async function saveAuditAs(userId, audit) {
+  async function saveAuditAs(userId, audit, job) {
     let clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
     const clientAddress = (audit && audit.client && audit.client.address) || null;
     const reportDate = (audit && audit.client && audit.client.reportDate) || todayISO();
 
-    // Case-insensitive canonical-name resolution. The model extracts a name
+    // Explicit staff attribution (added after the Cameron May incident below)
+    // is authoritative: staff picked this client on the upload screen BEFORE
+    // the audit ran, so there's no ambiguity left to resolve — look up that
+    // client's exact stored name and use it directly, skipping the
+    // heuristic entirely. If staff explicitly chose "new lead", also skip
+    // the heuristic in the other direction: they've already confirmed this
+    // isn't an existing client, so don't second-guess that with a fuzzy
+    // name match.
+    let explicitlyAttributed = false;
+    if (job && job.selected_client_id) {
+      try {
+        const { data: picked } = await db.from('clients')
+          .select('name').eq('id', job.selected_client_id).eq('user_id', userId).limit(1);
+        if (picked && picked.length === 1) {
+          if (picked[0].name !== clientName) {
+            console.log('[audit] using staff-selected client: "' + clientName + '" -> "' + picked[0].name + '"');
+          }
+          clientName = picked[0].name;
+          explicitlyAttributed = true;
+        } else {
+          console.warn('[audit] selected_client_id ' + job.selected_client_id + ' not found for this user — falling back to name-matching heuristic');
+        }
+      } catch (e) { console.warn('[audit] selected-client lookup failed (non-fatal), falling back to name-matching heuristic:', e.message); }
+    } else if (job && job.selected_client_is_new) {
+      explicitlyAttributed = true;
+    }
+
+    // Case-insensitive canonical-name resolution (fallback path — only runs
+    // when staff did not make an explicit selection above, e.g. any job
+    // created before this feature shipped). The model extracts a name
     // verbatim off whatever the credit report shows (often ALL CAPS in the
     // personal-info section), which can differ in case from how the client
     // was originally onboarded. Every lookup below this point matches on
@@ -303,7 +332,7 @@ export const handler = async (event) => {
     // share a name under this account), left for a human exactly like the
     // account-identity system's own ambiguous-match rule; the audit still
     // saves, just under the name as extracted.
-    try {
+    if (!explicitlyAttributed) try {
       const escaped = clientName.replace(/[%_\\]/g, '\\$&');
       const { data: nameMatches } = await db.from('clients')
         .select('name').eq('user_id', userId).ilike('name', escaped);
@@ -532,7 +561,7 @@ export const handler = async (event) => {
       console.warn('[audit-enrichment] failed (non-fatal, audit continues without these fields):', e.message);
     }
 
-    await saveAuditAs(job.user_id, audit);
+    await saveAuditAs(job.user_id, audit, job);
 
     // Retention Build 1b/1d — fire-and-forget, never awaited and never
     // allowed to affect this job's success. This is the ONLY place that
