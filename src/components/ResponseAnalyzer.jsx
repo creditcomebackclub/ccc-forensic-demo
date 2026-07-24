@@ -53,10 +53,19 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
     // Strip any Exhibit C references — only A and B are physically attached
     html = html.replace(/\n?Exhibit C[^\n]*/gi, '').replace(/;?\s*Exhibit C[^;\n]*/gi, '');
 
-    // Inject signature image if available — replace the ___ signature line placeholder
+    // Inject signature image if available — replace ONLY the ___ underscore
+    // run, never the rest of the line. The previous pattern was
+    // /_{3,}[^\n]*/ , and when the model emitted the signature block on a
+    // single line (which the prompt's own conciseness rule encourages) that
+    // [^\n]* swallowed the printed name, "Consumer — All Rights Reserved",
+    // the certified-mail notation, the enclosures list, and </body></html>
+    // — producing letters that ended mid-signature-block with no closing
+    // tags. Six real letters were generated this way and three were mailed.
+    // Whether a letter survived depended entirely on where the model
+    // happened to place a newline.
     if (signatureData) {
       const sigHtml = '<img src="' + signatureData + '" style="max-height:60px;max-width:220px;display:block;" />';
-      html = html.replace(/_{3,}[^\n]*/, sigHtml);
+      html = html.replace(/_{3,}/, sigHtml);
     }
 
     // If the model output plain text instead of HTML (fallback safety), wrap it
