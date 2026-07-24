@@ -450,6 +450,8 @@ export const handler = async (event) => {
     await db.from('clients').upsert({
       user_id: userId, name: clientName, address: clientAddress, status: 'lead',
     }, { onConflict: 'user_id,name', ignoreDuplicates: true });
+
+    return clientName;
   }
 
   const filePaths = (job.files || []).map((f) => f.path);
@@ -561,7 +563,7 @@ export const handler = async (event) => {
       console.warn('[audit-enrichment] failed (non-fatal, audit continues without these fields):', e.message);
     }
 
-    await saveAuditAs(job.user_id, audit, job);
+    const savedClientName = await saveAuditAs(job.user_id, audit, job);
 
     // Retention Build 1b/1d — fire-and-forget, never awaited and never
     // allowed to affect this job's success. This is the ONLY place that
@@ -572,14 +574,20 @@ export const handler = async (event) => {
     // fire in production. progress-narrative-background.mjs's own internal
     // check no-ops if this client has fewer than 2 audits, so it's safe to
     // call unconditionally after every save.
+    //
+    // Uses the name saveAuditAs actually saved under (canonicalized/staff-
+    // selected), not audit.client.name — the two can differ (case mismatch,
+    // explicit client selection) and a mismatch here means this fetch queries
+    // `audits`/`progress_updates` for a client_name that was never written,
+    // silently no-op'ing the narrative for every subsequent audit.
     (async () => {
       try {
-        const clientName = (audit && audit.client && audit.client.name) || null;
+        const clientName = savedClientName || (audit && audit.client && audit.client.name) || null;
         if (!clientName) return;
         const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
         await fetch(base + '/.netlify/functions/progress-narrative-background', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + supabaseKey },
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + serviceKey },
           body: JSON.stringify({ clientName, userId: job.user_id }),
         });
       } catch (e) {

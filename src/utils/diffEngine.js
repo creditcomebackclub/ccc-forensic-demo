@@ -29,8 +29,24 @@ export function normalizeFurnisher(name) {
 // Last 4 digits of the masked account number — the one piece of account
 // identity that comes straight from the bureau and doesn't vary in format
 // between pulls, unlike furnisher name formatting.
+//
+// Strip any parenthetical annotation first — e.g. "****663XXX (BAN 1)",
+// which the audit model appends to disambiguate two same-furnisher
+// tradelines that would otherwise render identically. Digits inside that
+// annotation ("1" in "(BAN 1)") are a disambiguator index, not part of the
+// bureau's masked account number, but a naive digit-strip over the whole
+// string picks them up anyway. That fabricates a "last 4" out of leftover
+// mask digits + the label number, which can coincidentally fail to collide
+// with anything on the other side of a diff and get the account wrongly
+// counted as deleted/new instead of routed to `unmatched` where genuinely
+// ambiguous accounts belong. Confirmed live: two America First Credit Union
+// entries masked "****663XXX (BAN 1)"/"****690XXX (BAN 2)" — only 3 real
+// mask digits each, no usable last-4 — produced fake 4-digit keys ("6631"/
+// "6902") purely from the "(BAN n)" suffix and were reported as confident
+// deletions with zero dispute activity behind them.
 export function lastFour(masked) {
-  const digits = (masked || '').replace(/[^0-9]/g, '');
+  const withoutAnnotation = (masked || '').replace(/\([^)]*\)/g, '');
+  const digits = withoutAnnotation.replace(/[^0-9]/g, '');
   return digits.length >= 4 ? digits.slice(-4) : null;
 }
 

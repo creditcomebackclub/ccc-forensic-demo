@@ -535,6 +535,14 @@ export async function runProgressDiff(clientName) {
   });
   if (saveErr) throw saveErr;
 
+  // The client's own portal reads this same progress_updates row (Progress
+  // tab) — without this, a staff-triggered "Compare Latest Reports" run
+  // saves a diff with no narrative ever generated for it, and the client
+  // sees the raw account-level diff with no plain-language summary,
+  // indefinitely (this manual path was the only way into progress_updates
+  // that never called this trigger).
+  triggerProgressNarrative(clientName); // fire-and-forget — never blocks the comparison UI
+
   // newerAudit rides along so callers (the Report Comparison modal's
   // "Generate Letter" shortcut) can look up a diffed account's full record
   // — violations, batch, strategy, etc. — without a second fetch; already
