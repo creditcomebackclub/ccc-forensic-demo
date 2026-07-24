@@ -238,7 +238,7 @@ exports.handler = async () => {
   let nurtureDripsCount = 0;
   if (sgKey) {
     const leadsRes = await supabaseRequest(
-      '/rest/v1/clients?select=name,email,lead_created_at,lead_drips_sent&status=eq.lead',
+      '/rest/v1/clients?select=name,email,lead_created_at,lead_drips_sent,tags&status=eq.lead',
       'GET', null, supabaseUrl, supabaseKey
     );
     const leads = Array.isArray(leadsRes.body) ? leadsRes.body : [];
@@ -293,6 +293,13 @@ exports.handler = async () => {
             break;
           }
         }
+      } else if ((lead.tags || []).includes('lead-stage:ready')) {
+        // "Ready to convert" is staff manually flagging that a human has
+        // taken over this lead personally — automated nurture stops so a
+        // generic drip email never lands mid-conversation with someone
+        // Chris (or Alex) is actively closing. Track B is untouched by
+        // stage on purpose: it's a concrete pending action (sign the LPOA),
+        // not persuasion, so it should keep reminding regardless.
       } else {
         for (const d of nurtureSchedule) {
           if (daysSince >= d.day && !sentDrips.includes(d.key)) {
