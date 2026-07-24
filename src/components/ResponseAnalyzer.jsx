@@ -3,6 +3,7 @@ import { X, Upload, FileText, AlertCircle, CheckCircle, Zap } from 'lucide-react
 import { supabase } from '../utils/supabase';
 import { runPhase2Job } from '../utils/phase2Jobs';
 import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED_TYPE_MESSAGE, uploadResponseBatch, validateBatch } from '../utils/responseFiles';
+import { normalizeFurnisher, lastFour } from '../utils/diffEngine';
 
 async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
   const { data: { user } } = await supabase.auth.getUser();
@@ -11,7 +12,18 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
   const today = new Date().toISOString().slice(0, 10);
   const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 
-  // Look up which bureaus this account actually reports on
+  // Look up which bureaus this account actually reports on, so Phase 3
+  // letters are only generated for bureaus that actually carry the tradeline
+  // — a CRA can't reinvestigate a tradeline it doesn't have.
+  //
+  // MUST NOT key on account_id: acct_N ids are POSITIONAL and get reassigned
+  // on every audit run, so a Phase 1 letter's stored id (e.g. acct_8) rarely
+  // matches the same account in a later audit (now acct_2). That silently
+  // fell back to "all three bureaus" and generated letters for bureaus the
+  // account isn't on — confirmed on Align Balance (Experian-only, but three
+  // letters were made). Match on stable identity instead: furnisher name,
+  // narrowed by masked last-4 only when a client has multiple accounts from
+  // the same furnisher.
   let activeBureaus = ['equifax', 'experian', 'transunion']; // fallback to all three
   try {
     const { data: audits } = await supabase
@@ -22,11 +34,31 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
       .limit(1);
     if (audits && audits.length > 0) {
       const accounts = audits[0].audit?.accounts || [];
-      const account = accounts.find(a => a.id === accountId || a.accountNumberMasked === accountId);
-      console.log('Bureau lookup — accountId:', accountId, 'accounts:', accounts.map(a => a.id), 'matched:', account?.id, 'bureaus:', account?.bureaus);
+      // NEVER match on a.id: acct_N is positional and a Phase 1 letter's
+      // stored id points at whatever account occupied that slot in a PRIOR
+      // audit — in a re-run it silently resolves to a DIFFERENT account and
+      // its (wrong) bureau set. Match on stable identity only.
+      // 1) masked account number, if the letter happened to store one.
+      let account = accountId ? accounts.find(a => a.accountNumberMasked && a.accountNumberMasked === accountId) : null;
+      // 2) furnisher name (stable across audit runs) — the primary path,
+      //    since Phase 1 letters store the positional id, not the masked no.
+      if (!account) {
+        const byFurnisher = accounts.filter(a => normalizeFurnisher(a.furnisher) === normalizeFurnisher(furnisher));
+        if (byFurnisher.length === 1) {
+          account = byFurnisher[0];
+        } else if (byFurnisher.length > 1) {
+          // Multiple accounts from the same furnisher — only disambiguate on
+          // a real last-4; otherwise leave null and let the all-three
+          // fallback stand rather than guess a bureau set.
+          const l4 = lastFour(accountId);
+          if (l4) account = byFurnisher.find(a => lastFour(a.accountNumberMasked) === l4) || null;
+        }
+      }
+      console.log('Bureau lookup — accountId:', accountId, 'furnisher:', furnisher, 'matched:', account?.id, 'bureaus:', account?.bureaus);
       if (account && account.bureaus && account.bureaus.length > 0) {
         const bureauMap = { 'EQ': 'equifax', 'EXP': 'experian', 'TU': 'transunion' };
-        activeBureaus = account.bureaus.map(b => bureauMap[b]).filter(Boolean);
+        const mapped = account.bureaus.map(b => bureauMap[b]).filter(Boolean);
+        if (mapped.length > 0) activeBureaus = mapped;
         console.log('Active bureaus set to:', activeBureaus);
       }
     }
