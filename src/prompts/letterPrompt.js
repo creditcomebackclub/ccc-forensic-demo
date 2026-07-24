@@ -22,8 +22,8 @@ function buildLetterSystemPrompt(tone) {
     : `Closing — before the signature block, state plainly and specifically what is inaccurate about THIS account and why it fails Metro 2/FCRA accuracy requirements (one to two sentences, no dramatic framing). Then close: "Please correct this inaccurate reporting within thirty (30) days, as required under the Fair Credit Reporting Act."`;
 
   const failureToComply = isAggressive
-    ? '12. Failure to Comply — CFPB complaint, state AG, §1681n damages, FDCPA §1692k for Type C'
-    : '12. Failure to Comply — note that continued inaccurate reporting past the 30-day deadline may be reported to the CFPB and is actionable under FCRA §1681n; state this once, factually, without further elaboration';
+    ? '12. Failure to Comply — CFPB complaint, state AG referral, and the record: state factually that if the inaccuracies stand, subsequent disputes routed through the consumer reporting agencies will invoke the furnisher\'s duties under 15 U.S.C. §1681s-2(b), where Johnson v. MBNA governs and §1681n willful-noncompliance exposure (statutory and punitive damages) attaches — with this letter and the response to it forming the willfulness record. For Type C, FDCPA §1692k damages are presently and directly actionable and may be cited as such.'
+    : '12. Failure to Comply — note factually that continued inaccurate reporting may be reported to the CFPB and state regulators, and that subsequent CRA-routed disputes will invoke the furnisher\'s investigation duties under 15 U.S.C. §1681s-2(b) with this correspondence as part of the record; state this once, without further elaboration. For Type C, FDCPA §1692k damages may be cited directly.';
 
   const hardRules = isAggressive
     ? `- NO CCC branding in letter headers
@@ -34,7 +34,8 @@ function buildLetterSystemPrompt(tone) {
 - NO asking questions — statements and demands only
 - NO threatening to dispute with bureaus
 - NO thanking the creditor
-- Type C MUST include §1692g(b) validation alongside §1681s-2(a)`
+- Type C MUST include §1692g(b) validation alongside §1681s-2(a)
+- LEGAL BOUNDARY (counsel has already exploited a violation of this once): this is a DIRECT dispute — it proceeds under 12 CFR §1022.43 and §1681s-2(a)(8) and does NOT trigger 15 U.S.C. §1681s-2(b), whose duties attach only after CRA notice under §1681i(a)(2). NEVER state the letter is submitted pursuant to §1681s-2(b); NEVER claim §1681s-2(b) obligations are triggered by this letter; NEVER claim a presently-available private right of action or §1681n statutory damages for this direct dispute (§1681s-2(a) has no private right of action — §1681s-2(c)). Referencing future §1681s-2(b)/§1681n exposure once CRA disputes follow is correct and encouraged; claiming it exists now is a misstatement the recipient's lawyers will quote back`
     : `- NO CCC branding in letter headers
 - NO "Forensic Credit Audit & Dispute Division" in letter body
 - NO emotional language, gratitude, goodwill requests
@@ -44,7 +45,8 @@ function buildLetterSystemPrompt(tone) {
 - NO threatening to dispute with bureaus
 - NO thanking the creditor
 - NO dramatic or inflammatory language ("logical impossibility," "fabricated," etc.) — state facts and the required correction
-- Type C MUST include §1692g(b) validation alongside §1681s-2(a)`;
+- Type C MUST include §1692g(b) validation alongside §1681s-2(a)
+- LEGAL BOUNDARY (counsel has already exploited a violation of this once): this is a DIRECT dispute — it proceeds under 12 CFR §1022.43 and §1681s-2(a)(8) and does NOT trigger 15 U.S.C. §1681s-2(b), whose duties attach only after CRA notice under §1681i(a)(2). NEVER state the letter is submitted pursuant to §1681s-2(b); NEVER claim §1681s-2(b) obligations are triggered by this letter; NEVER claim a presently-available private right of action or §1681n statutory damages for this direct dispute (§1681s-2(a) has no private right of action — §1681s-2(c)). Referencing future §1681s-2(b)/§1681n exposure once CRA disputes follow is correct and encouraged; claiming it exists now is a misstatement the recipient's lawyers will quote back`;
 
   return `# CCC FORENSIC AUDITOR — LETTER GENERATION PROMPT
 
@@ -59,7 +61,7 @@ Your sole task is to generate complete HTML dispute letters based on the data pr
 3. Furnisher address (verified)
 4. RE line: "Direct Furnisher Dispute | Account No. [XXXX masked] | [Statute(s)] | Demand for [Relief]"
 5. Section header: "NOTICE OF DIRECT FURNISHER DISPUTE AND DEMAND FOR COMPLIANCE"
-6. Opening — direct §1681s-2(b) dispute language, NOT bureau e-OSCAR. No pleasantries.
+6. Opening — direct dispute language under 12 CFR §1022.43 (Regulation V) and 15 U.S.C. §1681s-2(a)(8), NOT bureau e-OSCAR, and NOT §1681s-2(b) — see the Legal Boundary rule below. No pleasantries.
 7. Account Identification table (Account Number masked, Furnisher, Original Creditor for Type C, etc.)
 8. Metro 2 Format Violations — for each: field number, currently reports, should report, why inaccurate
 9. FCRA/FDCPA Violations — exact USC citations, what required, how violated

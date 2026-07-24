@@ -244,7 +244,7 @@ function Violations() {
         headers={['Violation', 'What It Is', 'Hook']}
         rows={[
           ['Status 97 + Field 15 paradox', 'Charge-off status reporting an active monthly payment obligation', 'Metro 2; §1681s-2(a)(1)(A)'],
-          ['Status 71 + balance', 'Account marked Settled while still reporting a balance over zero', '§1681s-2(a)(1)(A)'],
+          ['Paid status + balance', 'Account with a paid-in-full status (13, 61\u201365) or a settled Special Comment (AU) still reporting a balance over zero', '§1681s-2(a)(1)(A)'],
           ['Status 13 + past due', 'Account marked Paid while still reporting an amount past due', 'Metro 2 integrity failure'],
           ['Missing / re-aged DOFD', 'No Date of First Delinquency, or a DOFD set to the charge-off date to extend the 7-year clock', '§623(a)(5)'],
           ['Field 18 suppression', 'Zero or missing payment history on an active derogatory account', '§607(b); Metro 2 Field 18'],
@@ -290,14 +290,17 @@ function Metro2() {
       <Table
         headers={['Code', 'Meaning']}
         rows={[
-          ['11', 'Current — account in good standing'],
+          ['11', 'Current — account in good standing (0–29 days past due)'],
           ['13', 'Paid, closed, zero balance'],
-          ['71', 'Settled — paid less than full balance'],
-          ['78', 'Charged off as a loss'],
-          ['84', 'Unpaid, in collection'],
+          ['61–65', 'Paid in full, was: voluntary surrender / collection / repossession / charge-off / foreclosure started'],
+          ['71', '30–59 days past the due date'],
+          ['78', '60–89 days past the due date'],
+          ['80 / 82 / 83', '90–119 / 120–149 / 150–179 days past the due date'],
+          ['84', '180 or more days past the due date'],
           ['93', 'Assigned to internal or external collections'],
+          ['95', 'Voluntary surrender'],
           ['96', 'Merchandise repossessed'],
-          ['97', 'Unpaid balance reported as a loss; not first time charged off'],
+          ['97', 'Unpaid balance reported as a loss (charge-off)'],
         ]}
       />
       <Note>
@@ -364,7 +367,7 @@ function Letters() {
       </ul>
       <Sub>Letter Anatomy</Sub>
       <p className="text-[13px] text-ink leading-relaxed mb-2 max-w-3xl">
-        Date and addresses, RE line, a notice header stating this is a direct §1681s-2(b) dispute and not a
+        Date and addresses, RE line, a notice header stating this is a direct dispute under 12 CFR §1022.43 and §1681s-2(a)(8) and not a
         bureau-forwarded e-OSCAR dispute, an account identification table, a Metro 2 violations table (field, what it
         reports, what it should report, why), the FCRA and FDCPA violations, the furnisher&apos;s legal obligations,
         numbered required corrections, a failure-to-comply section citing CFPB, state AG, and §1681n exposure, the

@@ -91,7 +91,7 @@ export const handler = async (event) => {
         role: 'user',
         content: [{
           type: 'text',
-          text: `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\nLetter mailed: ${mailed}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER (no response was received within 30 days):\n${letter.html}\n\nThe furnisher failed to respond within the 30-day statutory window. This is an automatic 15 U.S.C. 1681s-2(b) violation. Classify this as NON_RESPONSE and generate three Phase 3 CRA letters citing the failure to respond.`,
+          text: `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\nLetter mailed: ${mailed}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER (no response was received within 30 days):\n${letter.html}\n\nThe furnisher failed to respond to the direct dispute within 30 days. IMPORTANT LEGAL FRAMING: this non-response is a failure of the furnisher's direct-dispute investigation duties under 12 CFR §1022.43(e) — it is NOT itself a §1681s-2(b) violation, because §1681s-2(b) duties only attach after the furnisher receives CRA notice under §1681i(a)(2), which is exactly what these Phase 3 letters now initiate. Frame it correctly: the documented non-response is powerful Johnson v. MBNA evidence of what this furnisher's "investigation" looks like, and once the bureau forwards this dispute, the furnisher's §1681s-2(b) duties attach against that record. Classify this as NON_RESPONSE and generate three Phase 3 CRA letters on that framing.`,
         }],
       }];
     } else {
