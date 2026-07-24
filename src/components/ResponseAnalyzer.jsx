@@ -5,7 +5,7 @@ import { runPhase2Job } from '../utils/phase2Jobs';
 import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED_TYPE_MESSAGE, uploadResponseBatch, validateBatch } from '../utils/responseFiles';
 import { normalizeFurnisher, lastFour } from '../utils/diffEngine';
 
-async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
+async function savePhase3Letters(analysis, clientName, furnisher, accountId, clientAccountId) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
 
@@ -45,10 +45,17 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
     const accounts = (audits && audits.length > 0) ? (audits[0].audit?.accounts || []) : [];
     if (accounts.length === 0) {
       resolutionError = 'no audit on file for this client';
+    } else if (clientAccountId) {
+      // PRIMARY, stable path: the persistent tradeline UUID. The latest
+      // audit's accounts carry clientAccountId (injected at ingest), so this
+      // resolves the same real tradeline regardless of positional-id churn or
+      // furnisher-name drift.
+      account = accounts.find(a => a.clientAccountId && a.clientAccountId === clientAccountId) || null;
+      if (!account) resolutionError = `the linked account identity is not present in the latest audit (the tradeline may have dropped off the report, or needs re-linking)`;
     } else {
-      // Never match on a.id (positional). Masked account number first (stable
-      // when present), then furnisher name, narrowed by last-4 for
-      // multi-tradeline furnishers.
+      // Legacy fallback for letters created before persistent identities
+      // existed. Never match on a.id (positional). Masked number first, then
+      // furnisher name narrowed by last-4.
       account = accountId ? accounts.find(a => a.accountNumberMasked && a.accountNumberMasked === accountId) : null;
       if (!account) {
         const byFurnisher = accounts.filter(a => normalizeFurnisher(a.furnisher) === normalizeFurnisher(furnisher));
@@ -301,7 +308,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
     if (!analysis) return;
     setSaving(true);
     try {
-      await savePhase3Letters(analysis, letter.clientName, letter.furnisher, letter.accountId || '');
+      await savePhase3Letters(analysis, letter.clientName, letter.furnisher, letter.accountId || '', letter.clientAccountId || null);
       setSaved(true);
       setTimeout(() => { onSaved(); onClose(); }, 1500);
     } catch (e) {

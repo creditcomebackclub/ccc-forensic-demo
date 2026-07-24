@@ -12,6 +12,8 @@ import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
 import { AUDIT_SCHEMA, BUREAU_SCHEMA, ACCOUNT_ENRICHMENT_SCHEMA } from '../../src/utils/auditSchemas.js';
+import { resolveAuditIdentities } from '../../src/utils/accountIdentity.js';
+import { randomUUID } from 'crypto';
 import {
   buildReportContent, combinedAuditPrompt, singleBureauAuditPrompt,
   bureauParsePrompt, mergeAuditPrompt, accountEnrichmentPrompt, todayLong,
@@ -323,6 +325,46 @@ export const handler = async (event) => {
         }
       }
     } catch (e) { console.warn('score/profile auto-populate failed:', e.message); }
+
+    // Persistent account identity: assign each tradeline a stable UUID
+    // (client_accounts) that survives audit re-runs, so letters/bureau-gating
+    // never key on the positional acct_N id. Best-effort — a failure here
+    // must never block the audit save; accounts simply won't carry a
+    // clientAccountId and Phase 3 falls back to (and blocks on) furnisher
+    // matching.
+    try {
+      const { data: existingIds } = await db.from('client_accounts')
+        .select('id,norm_furnisher,original_creditor,account_last4')
+        .eq('user_id', userId).eq('client_name', clientName);
+      const existing = existingIds || [];
+      const accounts = (audit && audit.accounts) || [];
+      const { assignments, creates, enriches, reviews } = resolveAuditIdentities(accounts, existing, randomUUID);
+
+      if (creates.length) {
+        const rows = creates.map((c) => ({
+          id: c.id, user_id: userId, client_name: clientName,
+          norm_furnisher: c.norm_furnisher, display_furnisher: c.display_furnisher,
+          original_creditor: c.original_creditor, account_last4: c.account_last4,
+        }));
+        const { error: cErr } = await db.from('client_accounts').insert(rows);
+        if (cErr) throw cErr;
+      }
+      for (const en of enriches) {
+        await db.from('client_accounts').update({ account_last4: en.account_last4, updated_at: new Date().toISOString() }).eq('id', en.id);
+      }
+      // Flag any identity involved in a collision for manual review; accounts
+      // left unassigned (null) simply carry no clientAccountId and will block
+      // at Phase 3 rather than misroute.
+      for (const rv of reviews) {
+        if (rv.identityId) {
+          await db.from('client_accounts').update({ needs_review: true, review_reason: rv.reason, updated_at: new Date().toISOString() }).eq('id', rv.identityId);
+        }
+      }
+      if (reviews.length) console.warn('[identity] ' + reviews.length + ' account(s) flagged for review:', JSON.stringify(reviews));
+
+      // Inject the resolved UUID onto each account in the stored audit JSON.
+      for (const acct of accounts) acct.clientAccountId = assignments.get(acct.id) || null;
+    } catch (e) { console.warn('[identity] resolution failed (non-fatal):', e.message); }
 
     const { error } = await db.from('audits').upsert({
       id: slug(clientName) + '__' + reportDate,

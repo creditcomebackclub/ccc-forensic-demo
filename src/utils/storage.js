@@ -214,6 +214,10 @@ export async function saveLetter(account, client, html, summary, phase, idSuffix
     client_name: clientName,
     furnisher,
     account_id: accountId,
+    // Persistent tradeline UUID (client_accounts) injected into the audit
+    // account at ingest — stable across audit re-runs, unlike account_id
+    // (positional). Phase 3 bureau gating resolves through this.
+    client_account_id: (account && account.clientAccountId) || null,
     phase: phase || 'Phase 1',
     type: (account && account.type) || null,
     saved_at: new Date().toISOString(),
@@ -305,6 +309,7 @@ function normalizeLetter(l) {
     responseFileUrl: l.response_file_url,
     enclosureParseBlocked: l.enclosure_parse_blocked || false,
     enclosureParseIssues: l.enclosure_parse_issues || [],
+    clientAccountId: l.client_account_id || null,
   };
 }
 

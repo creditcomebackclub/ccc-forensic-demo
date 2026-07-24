@@ -38,7 +38,7 @@ export function lastFour(masked) {
 // Deliberately simple (no external dep) — good enough to tell "WELLS FARGO"
 // from "WELLS FARGO BANK" (should match) apart from "WELLS FARGO" vs
 // "SYNCHRONY BANK" (should not).
-function nameSimilarity(a, b) {
+export function nameSimilarity(a, b) {
   if (!a || !b) return 0;
   if (a === b) return 1;
   const ta = new Set(a.split(' ').filter(Boolean));
