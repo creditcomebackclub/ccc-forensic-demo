@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, toast } from 'react-hot-toast';
 import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-react';
 import { getSettings } from '../utils/settings';
+import { getTierPricing, describeTierFee } from '../utils/pricing';
 
 export default function ClientSetupFlow({ session, onComplete, initialStep = 'password' }) {
   const [step, setStep] = useState(initialStep); // password | onboarding
@@ -91,6 +92,8 @@ function ClientOnboardingModal({ session, onComplete }) {
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [hasAudit, setHasAudit] = useState(false);
   const [settings, setSettings] = useState(null);
+  const [billingTier, setBillingTier] = useState(null);
+  const [monitoringService, setMonitoringService] = useState('Privacy Guard');
   const canvasRef = React.useRef(null);
   const isDrawing = React.useRef(false);
 
@@ -108,12 +111,39 @@ function ClientOnboardingModal({ session, onComplete }) {
         if (!error && data && data.length > 0) {
           setHasAudit(true);
         }
+
+        // Real fee schedule for the LPOA/agreement depends on which service
+        // tier this client was actually assigned (set separately in the
+        // Billing panel) — never a single flat number, since Standard/VIP/
+        // Paid In Full have genuinely different real fees.
+        const { data: cpRows } = await supabase.from('client_profiles').select('full_name').eq('email', session.user.email).limit(1);
+        const fullName = cpRows && cpRows[0] && cpRows[0].full_name;
+        if (fullName) {
+          const { data: clientRows } = await supabase.from('clients').select('billing_tier,monitoring_service').eq('name', fullName).limit(1);
+          const clientRow = clientRows && clientRows[0];
+          if (clientRow) {
+            setBillingTier(clientRow.billing_tier || null);
+            setMonitoringService(clientRow.monitoring_service || 'Privacy Guard');
+          }
+        }
       } catch (e) {
         console.error('Failed to load onboarding data:', e);
       }
     }
     loadData();
   }, [session]);
+
+  // Real fee-schedule text for whichever tier this client was actually
+  // assigned. If staff hasn't set a tier yet, show all three rather than
+  // guessing a number that might not match — never state a single fee as
+  // fact unless it's actually the client's real assigned tier.
+  const tierPricing = settings ? getTierPricing(settings) : null;
+  const feeScheduleLine = tierPricing
+    ? (billingTier && tierPricing[billingTier]
+        ? `${billingTier} Plan: ${describeTierFee(billingTier, tierPricing)}`
+        : Object.keys(tierPricing).map((t) => `${t}: ${describeTierFee(t, tierPricing)}`).join(' '))
+    : '';
+  const monitoringFeeAmount = settings?.pricing?.monitoringFee ?? 16;
 
   const startDraw = (e) => {
     isDrawing.current = true;
@@ -244,7 +274,7 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '<h2>3. Limitations</h2>'
         + '<p>This authorization does NOT grant authority to make financial decisions, access financial accounts, dispute accurate information, create a new credit identity, or settle legal claims without explicit written consent.</p>'
         + '<h2>4. Fee Structure</h2>'
-        + '<p>First Work Fee: $' + (settings?.pricing?.firstWorkFee || 49) + ' after audit delivery. Monthly Service Fee: $' + (settings?.pricing?.monthlyFee || 99) + '/month for ongoing dispute services. ScoreFusion monitoring: $' + (settings?.pricing?.monitoringFee || 16) + '/month (Principal responsibility).</p>'
+        + '<p>' + feeScheduleLine + ' Credit monitoring (' + monitoringService + '): approx. $' + monitoringFeeAmount + '/month (Principal responsibility).</p>'
         + '<h2>5. No Guarantee</h2>'
         + '<p>No specific outcome is guaranteed. Results vary by credit profile and creditor response.</p>'
         + '<h2>6. Duration & Revocation</h2>'
@@ -486,9 +516,8 @@ function ClientOnboardingModal({ session, onComplete }) {
                       <p><strong className="text-slate-900">Services:</strong> Credit Comeback Club ("CCC") will analyze your Equifax, Experian, and TransUnion reports, identify inaccurate or unverifiable items, and prepare/submit direct furnisher dispute letters on your behalf.</p>
                       <p><strong className="text-slate-900">Fee Schedule:</strong></p>
                       <ul className="pl-4 space-y-1 text-gray-500">
-                        <li>• <strong className="text-slate-700">Monthly Service:</strong> ${settings?.pricing?.monthlyFee || 99}/mo (Ongoing dispute processing and support).</li>
-                        <li>• <strong className="text-slate-700">First Work Fee:</strong> ${settings?.pricing?.firstWorkFee || 49} one-time fee due after audit delivery.</li>
-                        <li>• <strong className="text-slate-700">Credit Monitoring:</strong> ${settings?.pricing?.monitoringFee || 16}/mo (Maintained directly by client).</li>
+                        <li>• {feeScheduleLine}</li>
+                        <li>• <strong className="text-slate-700">Credit Monitoring ({monitoringService}):</strong> approx. ${monitoringFeeAmount}/mo (Maintained directly by client).</li>
                       </ul>
                       <p><strong className="text-slate-900">Billing:</strong> First Work Fee is due at enrollment before dispute work commences. Monthly fees are billed in advance on the anniversary of enrollment.</p>
                       <p><strong className="text-slate-900">No Guarantee:</strong> CCC makes no guarantee of specific outcomes. Results depend on individual credit profiles and creditor responses.</p>

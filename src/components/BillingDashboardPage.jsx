@@ -3,6 +3,7 @@ import { DollarSign, TrendingUp, TrendingDown, AlertCircle, Clock, CheckCircle, 
 import { adminListClients } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { computeClientCommission, commissionRate } from '../utils/affiliateCommission';
+import { DEFAULT_TIER_PRICING } from '../utils/pricing';
 
 const T = {
   navy: '#1B2A4A',
@@ -18,7 +19,12 @@ const T = {
   slate: '#64748B',
 };
 
-const TIER_PRICE = { VIP: 149, Standard: 79 };
+// Shared with the LPOA/Settings pricing (utils/pricing.js) so this MRR
+// forecast can't silently drift from the real advertised tier prices.
+// Reads only the hardcoded defaults, not Settings' live per-tier overrides
+// — if those are ever changed, update here too or wire this page to fetch
+// settings.json the same way ClientSetupFlow does.
+const TIER_PRICE = { VIP: DEFAULT_TIER_PRICING.VIP.monthlyFee, Standard: DEFAULT_TIER_PRICING.Standard.monthlyFee };
 
 const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const money0 = (n) => `$${Math.round(Number(n || 0)).toLocaleString()}`;

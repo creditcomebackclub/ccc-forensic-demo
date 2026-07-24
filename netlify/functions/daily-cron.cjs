@@ -89,6 +89,24 @@ exports.handler = async () => {
   let leadsDrippedCount = 0;
   let clientUpdatesCount = 0;
 
+  // "Action Required Escalations" in Settings > Notifications previously had
+  // no effect anywhere — the daily digest below always includes escalations
+  // regardless. Fetched once here to gate a real, immediate alert (see
+  // admin30 handling in section 1) instead of just the once-a-day digest.
+  let emailEscalationsEnabled = true;
+  try {
+    const settingsRes = await new Promise((resolve, reject) => {
+      const u = new URL(supabaseUrl + '/storage/v1/object/client-docs/admin/settings.json');
+      https.get(u, { headers: { apikey: supabaseKey, Authorization: 'Bearer ' + supabaseKey } }, (res) => {
+        let raw = ''; res.on('data', (c) => raw += c); res.on('end', () => resolve({ status: res.statusCode, body: raw }));
+      }).on('error', reject);
+    });
+    if (settingsRes.status === 200) {
+      const parsed = JSON.parse(settingsRes.body);
+      if (parsed?.notifications?.emailEscalations === false) emailEscalationsEnabled = false;
+    }
+  } catch (e) { /* default to enabled if settings can't be read */ }
+
   async function fetch_send(action, payload) {
     const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
     const res = await fetch(base + '/.netlify/functions/send-lpoa', {
@@ -157,6 +175,25 @@ exports.handler = async () => {
         deliveredOrMailed: letter.delivered_at ? 'delivered ' + clockStart : 'mailed ' + clockStart + ' (no delivery)',
       });
       newSent.push('admin30'); touched = true;
+
+      if (sgKey && emailEscalationsEnabled) {
+        try {
+          await sendgridEmail(
+            ADMIN_EMAIL,
+            'Escalation Ready: ' + letter.client_name + ' / ' + letter.furnisher,
+            `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+              <div style="background:#1B2A4A;padding:20px 28px;border-radius:4px 4px 0 0;">
+                <h2 style="color:#C9A84C;margin:0;font-size:18px;">Escalation Ready for Review</h2>
+              </div>
+              <div style="border:1px solid #ddd;border-top:none;padding:20px 28px;border-radius:0 0 4px 4px;">
+                <p><strong>${letter.client_name}</strong> — ${letter.furnisher} (${letter.phase || 'Phase 1'})</p>
+                <p>${daysElapsed} days since ${letter.delivered_at ? 'delivery' : 'mailing (not yet marked delivered)'} with no furnisher response. This has crossed the 30-day FCRA response window and is ready for the next round of action.</p>
+              </div>
+            </div>`,
+            sgKey
+          );
+        } catch (e) { console.error('Escalation alert email failed:', e.message); }
+      }
     }
 
     if (touched) {

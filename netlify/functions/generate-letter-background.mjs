@@ -1,10 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { LETTER_SYSTEM_PROMPT } from '../../src/prompts/letterPrompt.js';
+import { getLetterSystemPrompt } from '../../src/prompts/letterPrompt.js';
 
 const MODEL = 'claude-sonnet-5';
-const SYSTEM = [{ type: 'text', text: LETTER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
 export const handler = async (event) => {
   let payload = null;
@@ -33,11 +32,27 @@ export const handler = async (event) => {
     auth: { persistSession: false },
     realtime: { transport: ws },
   });
-  
+
   // Debug immediately before Anthropic!
   if (payload.jobs && payload.jobs[0]) {
     await supabase.from('letters').update({ html: 'DEBUG: Supabase client created successfully' }).eq('id', payload.jobs[0].id);
   }
+
+  // Settings' "Default Aggressiveness" previously had zero effect on letter
+  // generation — the API call always used one hardcoded prompt regardless
+  // of what was selected. Fetch the real setting and pick the matching
+  // prompt variant (letterPrompt.js) so it actually changes the letter.
+  let aggressiveness = 'Aggressive';
+  try {
+    const { data: settingsFile } = await supabase.storage.from('client-docs').download('admin/settings.json');
+    if (settingsFile) {
+      const parsed = JSON.parse(await settingsFile.text());
+      if (parsed?.disputes?.defaultAggressiveness) aggressiveness = parsed.disputes.defaultAggressiveness;
+    }
+  } catch (e) {
+    console.warn('Could not load dispute aggressiveness setting, defaulting to Aggressive:', e.message);
+  }
+  const SYSTEM = [{ type: 'text', text: getLetterSystemPrompt(aggressiveness), cache_control: { type: 'ephemeral' } }];
 
   const client = new Anthropic({ apiKey: anthropicKey, maxRetries: 5 });
 

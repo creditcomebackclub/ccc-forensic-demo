@@ -144,39 +144,65 @@ export default function SettingsModal({ onClose, displayName, email }) {
             )}
 
             {activeTab === 'pricing' && (
-              <div className="space-y-4">
-                <p className="text-[12px] text-gray-500 mb-4">
-                  These fees are dynamically injected into the client's Limited Power of Attorney (LPOA) when they sign up.
+              <div className="space-y-5">
+                <p className="text-[12px] text-gray-500">
+                  These fees are dynamically injected into a client's Limited Power of Attorney based on their assigned Service Tier — set per-client in the Billing panel, not here. Each tier's real fee schedule is below.
                 </p>
+                {Object.entries(settings.pricing.tiers).map(([tierName, tier]) => (
+                  <div key={tierName} className="border border-border rounded-sm p-3.5 space-y-3">
+                    <div className="text-[12px] font-bold text-navy">{tierName}</div>
+                    {tierName === 'Paid In Full' ? (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">Flat Fee ($)</label>
+                          <input
+                            type="number"
+                            value={tier.flatFee}
+                            onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, tiers: { ...settings.pricing.tiers, [tierName]: { ...tier, flatFee: parseInt(e.target.value) || 0 } } } })}
+                            className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">For (months)</label>
+                          <input
+                            type="number"
+                            value={tier.flatMonths}
+                            onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, tiers: { ...settings.pricing.tiers, [tierName]: { ...tier, flatMonths: parseInt(e.target.value) || 0 } } } })}
+                            className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">Monthly Fee ($)</label>
+                        <input
+                          type="number"
+                          value={tier.monthlyFee}
+                          onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, tiers: { ...settings.pricing.tiers, [tierName]: { ...tier, monthlyFee: parseInt(e.target.value) || 0 } } } })}
+                          className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                        />
+                      </div>
+                    )}
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">First Work Fee ($)</label>
+                      <input
+                        type="number"
+                        value={tier.firstWorkFee}
+                        onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, tiers: { ...settings.pricing.tiers, [tierName]: { ...tier, firstWorkFee: parseInt(e.target.value) || 0 } } } })}
+                        className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                      />
+                    </div>
+                  </div>
+                ))}
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">First Work Fee ($)</label>
-                  <input
-                    type="number"
-                    value={settings.pricing.firstWorkFee}
-                    onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, firstWorkFee: parseInt(e.target.value) || 0 } })}
-                    className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1">Charged after the initial audit is delivered.</p>
-                </div>
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">Monthly Service Fee ($)</label>
-                  <input
-                    type="number"
-                    value={settings.pricing.monthlyFee}
-                    onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, monthlyFee: parseInt(e.target.value) || 0 } })}
-                    className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1">Charged on a recurring monthly basis for ongoing service.</p>
-                </div>
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">ScoreFusion Monitoring Fee ($)</label>
+                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">Credit Monitoring Fee (est., $)</label>
                   <input
                     type="number"
                     value={settings.pricing.monitoringFee}
                     onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, monitoringFee: parseInt(e.target.value) || 0 } })}
                     className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
                   />
-                  <p className="text-[10px] text-gray-400 mt-1">Estimated cost of the client's mandatory credit monitoring subscription.</p>
+                  <p className="text-[10px] text-gray-400 mt-1">Estimated cost regardless of which monitoring service (PrivacyGuard, IdentityIQ, etc.) a client actually uses — the LPOA names their specific service, only this estimate is shared.</p>
                 </div>
               </div>
             )}

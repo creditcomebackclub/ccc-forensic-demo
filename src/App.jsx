@@ -7,6 +7,7 @@ import { getProfile } from './utils/storage';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit } from './utils/api';
 import { getUnanalyzedResponseStats } from './utils/actionItems';
 import { computeClientCommission } from './utils/affiliateCommission';
+import { getSettings } from './utils/settings';
 import AffiliateProfilePanel from './components/AffiliateProfilePanel';
 
 const UploadZone = lazy(() => import('./components/UploadZone'));
@@ -38,8 +39,20 @@ function AffiliatesPage() {
   const [form, setForm] = React.useState({ name: '', email: '', company: '', brand_name: '', brand_color: '#22C55E', brand_logo_url: '', commission_rate: '0.20' });
   const [creating, setCreating] = React.useState(false);
   const [error, setError] = React.useState(null);
+  // Settings' "Default Commission Rate" previously only displayed itself —
+  // nothing that creates an affiliate ever read it, so it was cosmetic.
+  // Wired here as the actual default for new affiliates' rate field.
+  const [defaultCommissionRate, setDefaultCommissionRate] = React.useState('0.20');
 
-  React.useEffect(() => { loadData(); }, []);
+  React.useEffect(() => {
+    loadData();
+    getSettings().then((s) => {
+      const pct = s?.affiliates?.defaultCommissionRate ?? 20;
+      const decimal = (pct / 100).toFixed(2);
+      setDefaultCommissionRate(decimal);
+      setForm((f) => ({ ...f, commission_rate: decimal }));
+    }).catch(() => {});
+  }, []);
 
   const loadData = async () => {
     const [affRes, clientRes, payoutsRes] = await Promise.all([
@@ -108,7 +121,7 @@ function AffiliatesPage() {
       });
 
       setShowCreate(false);
-      setForm({ name: '', email: '', company: '', brand_name: '', brand_color: '#22C55E', brand_logo_url: '', commission_rate: '0.20' });
+      setForm({ name: '', email: '', company: '', brand_name: '', brand_color: '#22C55E', brand_logo_url: '', commission_rate: defaultCommissionRate });
       loadData();
       alert('Affiliate created and magic link sent to ' + form.email);
     } catch(e) {

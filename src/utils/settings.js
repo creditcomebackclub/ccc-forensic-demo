@@ -1,10 +1,13 @@
 import { supabase } from './supabase';
+import { DEFAULT_TIER_PRICING } from './pricing';
 
 const DEFAULT_SETTINGS = {
   pricing: {
-    firstWorkFee: 49,
-    monthlyFee: 99,
-    monitoringFee: 16
+    // Real pricing is tiered — see utils/pricing.js. Kept here (rather than
+    // only as a hardcoded default) so admins can adjust fees from Settings
+    // without a code change.
+    tiers: DEFAULT_TIER_PRICING,
+    monitoringFee: 16, // estimate shown regardless of which monitoring service a client uses
   },
   notifications: {
     emailNewLeads: true,
@@ -15,7 +18,11 @@ const DEFAULT_SETTINGS = {
     defaultCommissionRate: 20
   },
   disputes: {
-    defaultAggressiveness: 'Standard'
+    // Matches the letter style CCC has always actually sent (the only
+    // prompt that existed before this setting had any real effect) — not
+    // "Standard," so wiring this setting up for real doesn't silently
+    // soften every future letter for anyone who's never touched Settings.
+    defaultAggressiveness: 'Aggressive'
   }
 };
 
