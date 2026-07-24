@@ -73,6 +73,40 @@ exports.handler = async (event) => {
 
     if (action === 'send_letter') {
       const { toAddress, fromAddress, remoteUrl, description, idempotencyKey, metadata } = payload;
+
+      // Parse-confidence hard block (2026-07-23 defect report, P0-1):
+      // checked server-side against the DB row, not just the client UI, so
+      // a letter phase2-analyze-background.mjs flagged as built on an
+      // unreadable enclosure can never reach Lob regardless of how the
+      // request got here.
+      const letterId = metadata && metadata.letter_id;
+      if (letterId) {
+        const supabaseUrl = process.env.VITE_SUPABASE_URL;
+        const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (supabaseUrl && serviceKey) {
+          const checkRes = await new Promise((resolve, reject) => {
+            const u = new URL(supabaseUrl + '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId) + '&select=enclosure_parse_blocked,enclosure_parse_issues');
+            https.get(u, { headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey } }, (res) => {
+              let raw = ''; res.on('data', (c) => raw += c); res.on('end', () => resolve({ status: res.statusCode, body: raw }));
+            }).on('error', reject);
+          });
+          if (checkRes.status === 200) {
+            const rows = JSON.parse(checkRes.body);
+            const row = rows && rows[0];
+            if (row && row.enclosure_parse_blocked) {
+              return {
+                statusCode: 422,
+                body: JSON.stringify({
+                  error: 'ENCLOSURE UNPARSED — MANUAL RECONCILIATION REQUIRED',
+                  issues: row.enclosure_parse_issues || [],
+                  blocked: true,
+                }),
+              };
+            }
+          }
+        }
+      }
+
       const letterPayload = {
         description: description || 'CCC Dispute Letter',
         to: {

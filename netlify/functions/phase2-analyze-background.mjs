@@ -196,10 +196,21 @@ export const handler = async (event) => {
       }
     }
 
+    // Parse-confidence gate (2026-07-23 defect report, P0-1): if the model's
+    // own document-quality self-assessment says an enclosure couldn't be
+    // reliably read, block this letter from Lob regardless of what the
+    // generated HTML says — enforced server-side in lob.cjs, not just a UI
+    // warning. documentQuality is a required schema field, but guard
+    // against its absence anyway rather than trust that blindly.
+    const dq = analysis && analysis.documentQuality;
+    const parseBlocked = !!(dq && dq.enclosureLegible === false);
+
     // Persist onto the letter row so a closed tab loses nothing — same
     // contract as the old client-side persistAnalysis().
     await db.from('letters').update({
       phase2_analysis: analysis, phase2_analyzed_at: new Date().toISOString(),
+      enclosure_parse_blocked: parseBlocked,
+      enclosure_parse_issues: (dq && dq.issues) || [],
     }).eq('id', job.letter_id);
 
     await updateJob({ status: 'done', stage: 'Complete', result: analysis, usage: u, finished_at: new Date().toISOString() }, true);

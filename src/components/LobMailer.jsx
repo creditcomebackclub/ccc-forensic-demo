@@ -89,6 +89,14 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
   };
 
   const handleSend = async () => {
+    // Client-side guard mirrors the real, server-side block in lob.cjs
+    // (which checks the DB row directly and cannot be bypassed) — this one
+    // just avoids a wasted round-trip and gives an immediate, specific
+    // error instead of a generic Lob failure.
+    if (letter.enclosureParseBlocked) {
+      setError('ENCLOSURE UNPARSED — MANUAL RECONCILIATION REQUIRED. This letter cannot be sent until the enclosure is re-uploaded and re-analyzed.');
+      return;
+    }
     setSending(true);
     setError(null);
     try {
@@ -299,6 +307,21 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         </div>
 
         <div className="flex-1 overflow-auto p-6">
+          {letter.enclosureParseBlocked && (
+            <div className="mb-4 p-3 rounded border-2 border-red-500 bg-red-50">
+              <div className="text-[12px] font-bold text-red-800 uppercase tracking-wider mb-1">
+                Enclosure Unparsed — Manual Reconciliation Required
+              </div>
+              <div className="text-[12px] text-red-700 mb-2">
+                This letter's Phase 2 analysis could not reliably read an enclosed document (reversed/mirrored scan, misaligned rows, or an inconsistent date sequence). It may assert facts that are unverified or wrong. Sending is blocked until the enclosure is re-uploaded with a clean scan and re-analyzed.
+              </div>
+              {letter.enclosureParseIssues && letter.enclosureParseIssues.length > 0 && (
+                <ul className="text-[11px] text-red-700 list-disc pl-4 space-y-0.5">
+                  {letter.enclosureParseIssues.map((issue, i) => <li key={i}>{issue}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
           {step === 'confirm' && (
             <div className="space-y-4">
               <div>
@@ -415,13 +438,17 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
                   {verifying ? 'Verifying…' : 'Verify Address'}
                 </button>
               )}
-              {/* Address verification is a hard gate — methodology hard stop */}
+              {/* Address verification is a hard gate — methodology hard stop.
+                  enclosureParseBlocked is a second, independent hard stop —
+                  see the server-side check in lob.cjs, which is what
+                  actually enforces this; disabling here is just so staff
+                  aren't clicking a button that's guaranteed to fail. */}
               <button
                 onClick={handleSend}
-                disabled={sending || !verified || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip}
-                title={!verified ? 'Verify the address first' : undefined}
+                disabled={sending || !verified || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip || letter.enclosureParseBlocked}
+                title={letter.enclosureParseBlocked ? 'Blocked: enclosure could not be reliably parsed — re-upload and re-analyze first' : (!verified ? 'Verify the address first' : undefined)}
                 className="flex items-center gap-2 px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                style={{ backgroundColor: (sending || !verified || !toAddr.line1) ? '#B5BBC9' : '#1B2A4A', color: (sending || !verified || !toAddr.line1) ? '#FFFFFF' : '#C9A84C' }}
+                style={{ backgroundColor: (sending || !verified || !toAddr.line1 || letter.enclosureParseBlocked) ? '#B5BBC9' : '#1B2A4A', color: (sending || !verified || !toAddr.line1 || letter.enclosureParseBlocked) ? '#FFFFFF' : '#C9A84C' }}
               >
                 <Send size={13} strokeWidth={2} />
                 {sending ? 'Sending…' : 'Send Certified Mail'}

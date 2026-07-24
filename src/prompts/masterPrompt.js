@@ -50,6 +50,7 @@ Scan every credit report for:
 - DOFD later than charge-off date → temporally impossible
 - DOFD differing across bureaus → §607(b); potential re-aging
 - DOFD = charge-off date instead of first missed payment → illegal 7-year extension (§1681c(a)(4))
+- **DIRECTIONAL RULE — do not get this backwards:** the 7-year reporting window under §1681c(c)(1) runs FROM the DOFD, so an EARLIER true DOFD than reported is the violation that shortens reporting (re-aging forward — this is the normal, correct play). Asserting a LATER true DOFD than reported is affirmatively ADVERSE to the client — it extends their own reporting window. NEVER assert a specific competing DOFD that is later than the furnisher's reported DOFD, even if evidence seems to point that way — a non-verification challenge ("furnisher cannot substantiate the reported date") is always safe, but it must not pair with an affirmative later date. If the evidence for a DOFD claim comes from a document you could not reliably parse (see document quality standards), do not assert a specific date at all.
 
 **Balance / Payment paradoxes:**
 - Balance > $0 on bankruptcy-discharged account → 11 U.S.C. §524

@@ -67,6 +67,68 @@ function computeViolationsByType(accounts) {
   return [...byField.values()];
 }
 
+// Best-effort date parsing from the free-text currentlyReports/shouldReport
+// violation fields — "October 2023", "10/2023", "2023-10-20", "10/20/2023"
+// all appear in real model output. Returns a Date or null; never throws.
+// Exported for unit testing.
+export function parseLooseDate(text) {
+  if (!text) return null;
+  const s = String(text);
+  const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(Date.UTC(+iso[1], +iso[2] - 1, +iso[3]));
+  const mdy = s.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (mdy) return new Date(Date.UTC(+mdy[3], +mdy[1] - 1, +mdy[2]));
+  const my = s.match(/\b(\d{1,2})\/(\d{4})\b/);
+  if (my) return new Date(Date.UTC(+my[2], +my[1] - 1, 1));
+  const monthName = s.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December)\b\.?\s+(\d{1,2},?\s+)?(\d{4})\b/i);
+  if (monthName) {
+    const months = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+    const m = months.indexOf(monthName[1].toLowerCase());
+    const day = monthName[2] ? parseInt(monthName[2]) : 1;
+    return new Date(Date.UTC(+monthName[3], m, day));
+  }
+  return null;
+}
+
+// P0-2 (2026-07-23 defect report): the forensic play on DOFD is almost
+// always "the true date is EARLIER than reported" (re-aging forward to
+// extend the 7-year §1681c(c)(1) reporting clock). Arguing the true date is
+// LATER does the opposite — it extends the client's own reporting window —
+// and it slipped through once already (Kilpatrick/Align Balance). A prompt
+// instruction alone isn't a guarantee the model won't do this again, so
+// this deterministically strips any DOFD violation whose asserted
+// (shouldReport) date parses as later than the furnisher-reported
+// (currentlyReports) date. Only acts when BOTH dates parse cleanly — an
+// unparseable date is not evidence of anything, so it does not block
+// (avoids false positives on legitimate violations with free-text dates);
+// non-verification framing without a competing date is unaffected either
+// way, since there's nothing to compare. Mutates accounts in place and
+// returns the list of suppressions for admin visibility.
+export function applyDofdDirectionalGuard(accounts) {
+  const suppressed = [];
+  for (const acct of accounts || []) {
+    const kept = [];
+    for (const v of acct.violations || []) {
+      const isDofd = /\b25\b|DOFD|date of first delinquency/i.test(v.field || '');
+      if (isDofd) {
+        const reported = parseLooseDate(v.currentlyReports);
+        const asserted = parseLooseDate(v.shouldReport);
+        if (reported && asserted && asserted.getTime() > reported.getTime()) {
+          suppressed.push({
+            accountId: acct.id, furnisher: acct.furnisher, field: v.field,
+            reportedDOFD: v.currentlyReports, assertedDOFD: v.shouldReport,
+            reason: 'Asserted DOFD is later than reported DOFD — this extends the §1681c(c)(1) reporting window and is adverse to the client. Field 25 count suppressed.',
+          });
+          continue; // drop this violation
+        }
+      }
+      kept.push(v);
+    }
+    acct.violations = kept;
+  }
+  return suppressed;
+}
+
 export const handler = async (event) => {
   let jobId = null;
   try { jobId = JSON.parse(event.body || '{}').jobId; } catch (e) { /* handled below */ }
@@ -295,6 +357,16 @@ export const handler = async (event) => {
     }
 
     if (!audit || !audit.client) throw new Error('Audit produced no client data.');
+
+    // P0-2 (2026-07-23 defect report): must run BEFORE computeViolationsByType
+    // below, which counts from these same violations — a suppressed DOFD
+    // violation must not still show up in the type-count summary.
+    const dofdSuppressions = applyDofdDirectionalGuard(audit.accounts);
+    if (dofdSuppressions.length) {
+      console.warn('[dofd-guard] suppressed adverse-direction DOFD violation(s):', JSON.stringify(dofdSuppressions));
+      audit.dofdGuardSuppressions = dofdSuppressions;
+      audit.totalViolations = Math.max(0, (audit.totalViolations || 0) - dofdSuppressions.length);
+    }
 
     // violationsByType is no longer part of the model's structured output
     // (removed to fix the compiled-grammar-too-large 400 that was breaking

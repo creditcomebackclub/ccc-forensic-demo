@@ -303,6 +303,8 @@ function normalizeLetter(l) {
     deliveredAt: l.delivered_at,
     returnReceiptUrl: l.return_receipt_url,
     responseFileUrl: l.response_file_url,
+    enclosureParseBlocked: l.enclosure_parse_blocked || false,
+    enclosureParseIssues: l.enclosure_parse_issues || [],
   };
 }
 

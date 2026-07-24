@@ -271,6 +271,26 @@ export const PHASE2_SCHEMA = {
     },
     admissions: { type: 'array', items: { type: 'string' } },
     phase3Leverage: { type: 'string' },
+    // Parse-confidence gate (2026-07-23 defect report, P0-1): a mirrored/
+    // reversed scan or scrambled OCR alignment can make an enclosure
+    // unreadable in a way that still LOOKS like data — the model must self-
+    // report that instead of generating a confident, load-bearing factual
+    // claim about a document it couldn't reliably read. Kept as its own
+    // required top-level field (not optional/nested) so it can't be
+    // silently omitted. phase2-analyze-background.mjs enforces this
+    // server-side as a Lob-send hard block, not just a prompt instruction.
+    documentQuality: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        enclosureLegible: {
+          type: 'boolean',
+          description: 'False if any enclosed document (ledger, statement, etc.) could not be reliably read — reversed/mirrored scan, scrambled row-to-date alignment, illegible scan quality, or a non-monotonic/inconsistent date sequence that suggests misread rows. When false, the generated letters must not assert specific facts (dates, amounts, sequences) from that document as certain.',
+        },
+        issues: { type: 'array', items: { type: 'string' }, description: 'Plain-language description of each parse problem found, empty if enclosureLegible is true.' },
+      },
+      required: ['enclosureLegible', 'issues'],
+    },
     letters: {
       type: 'object',
       additionalProperties: false,
@@ -282,5 +302,5 @@ export const PHASE2_SCHEMA = {
       required: ['equifax', 'experian', 'transunion'],
     },
   },
-  required: ['classification', 'summary', 'demandAnalysis', 'admissions', 'phase3Leverage', 'letters'],
+  required: ['classification', 'summary', 'demandAnalysis', 'admissions', 'phase3Leverage', 'documentQuality', 'letters'],
 };

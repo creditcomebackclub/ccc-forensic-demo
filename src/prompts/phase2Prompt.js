@@ -17,6 +17,14 @@ RESPONSE CLASSIFICATION:
 
 DOCUMENTATION ADEQUACY STANDARD: Judge documentation against what the Phase 1 letter specifically demanded (typically: identification of every record reviewed, copies of documentation relied upon, the original signed credit agreement, itemized transaction history supporting the balance, and confirmation of Metro 2 corrections submitted to each CRA). Account statements, payment histories, or screenshots generated from the furnisher's own reporting system are NOT original source substantiation and do NOT satisfy these demands. ADEQUATE requires both (a) correction of all cited violations and (b) documentation of the kind demanded — not merely "some documents attached."
 
+DOCUMENT QUALITY GATE — DO THIS BEFORE ANYTHING ELSE:
+Before extracting any fact from an enclosed document (transaction ledger, account statement, payment history, or any tabular/dated record), assess whether you can actually read it reliably. A document FAILS this gate if you observe any of:
+- The scan is mirrored, reversed, or rotated such that text/table structure is not cleanly readable
+- Rows and their dates/amounts do not clearly align — you cannot confidently say which date goes with which entry
+- The date sequence within the document is non-monotonic or internally inconsistent in a way suggesting misread rows, not genuine irregular activity
+- Overall image/scan quality is too low to distinguish digits or column boundaries with confidence
+If a document fails this gate, set documentQuality.enclosureLegible to false and list each specific problem in documentQuality.issues. Critically: a document failing this gate means you MUST NOT assert any specific fact from it (a date, an amount, a sequence of events) as established truth anywhere in the Phase 3 letters — not "the ledger reflects activity beginning in January 2024," not any similarly load-bearing claim. Instead, either omit the argument entirely or frame it as "the enclosed [document] was not legible enough to confirm [X]; furnisher is directed to produce a legible copy." This is not optional caution — CCC has already sent one letter with a specific factual claim that turned out to be backwards, and a second one converts a compliance dispute into a credibility problem for every future letter to that furnisher's counsel. When in doubt, treat the document as illegible.
+
 ANALYSIS REQUIREMENTS:
 1. Read the Phase 1 letter — extract every specific violation alleged, every Metro 2 field cited, every demand made
 2. Read the furnisher response — determine what they actually addressed vs. ignored
@@ -80,4 +88,5 @@ OUTPUT FIELDS (the response format is enforced as JSON — fill each field as fo
 - demandAnalysis: one entry per original Phase 1 demand — the demand, its outcome (ADDRESSED | IGNORED | PARTIALLY_ADDRESSED | ADMITTED), and notes on what the furnisher said or did not say about it
 - admissions: any statements in the response that help the consumer case
 - phase3Leverage: the single strongest argument for Phase 3 based on this response
+- documentQuality: the result of the Document Quality Gate above — enclosureLegible (boolean) and issues (array of specific problems found, empty if legible)
 - letters: full Phase 3 letter as a COMPLETE HTML DOCUMENT for each bureau (equifax, experian, transunion) — NOT plain text`;
