@@ -16,8 +16,8 @@ export default defineConfig({
         // explicitly excluded gets served the cached index.html) hijacks
         // them for any browser that already has the SW installed, showing
         // the app shell instead of the real page.
-        navigateFallbackDenylist: [/^\/freeguide/, /^\/home/, /^\/terms/, /^\/privacy/, /^\/success/, /^\/sign-lpoa/, /^\/downloads\//],
-        globIgnores: ['**/freeguide.html', '**/home.html', '**/terms.html', '**/privacy.html', '**/success.html', '**/sign-lpoa.html', 'downloads/**'],
+        navigateFallbackDenylist: [/^\/freeguide/, /^\/home/, /^\/join/, /^\/terms/, /^\/privacy/, /^\/success/, /^\/sign-lpoa/, /^\/downloads\//],
+        globIgnores: ['**/freeguide.html', '**/home.html', '**/join.html', '**/terms.html', '**/privacy.html', '**/success.html', '**/sign-lpoa.html', 'downloads/**'],
       },
       manifest: {
         name: 'Credit Comeback Club',

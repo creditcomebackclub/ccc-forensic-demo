@@ -24,7 +24,7 @@ exports.handler = async (event) => {
 
   try {
     const payload = JSON.parse(event.body);
-    const { name, email, phone, tier } = payload;
+    const { name, email, phone, tier, ref } = payload;
 
     if (!name || !email) {
       return { statusCode: 400, body: JSON.stringify({ error: 'Name and email are required' }) };
@@ -45,6 +45,35 @@ exports.handler = async (event) => {
       return { statusCode: 500, body: JSON.stringify({ error: 'No admin user configured' }) };
     }
 
+    // 1b. Affiliate attribution. The affiliate portal hands out
+    // /join?ref=<first 8 chars of the affiliate UUID>, so resolve that
+    // prefix to the full affiliate and stamp referred_by on the lead —
+    // this is what makes the referral actually pay the affiliate. A bad or
+    // unmatched ref is ignored (lead still created), never fatal.
+    //
+    // Matched in JS, not via a `like` filter on the `id` column: PostgREST/
+    // Postgres has no `~~` (LIKE) operator for `uuid`, and this instance's
+    // PostgREST does not honor the `column::text` cast-in-filter-name
+    // syntax either (confirmed live — both return "operator does not exist:
+    // uuid ~~ unknown"). The affiliates table is tiny, so fetching all rows
+    // and prefix-matching client-side is simple and correct rather than
+    // fighting a query-string cast that doesn't work here.
+    let affiliate = null;
+    if (ref && /^[0-9a-f]{6,36}$/i.test(String(ref).trim())) {
+      try {
+        const refPrefix = String(ref).trim().toLowerCase();
+        const affRes = await fetch(`${supabaseUrl}/rest/v1/affiliates?select=id,name,company`, {
+          headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` }
+        });
+        const allAffs = await affRes.json();
+        const matches = Array.isArray(allAffs) ? allAffs.filter((a) => a.id.toLowerCase().startsWith(refPrefix)) : [];
+        // Only attribute on an unambiguous single match — never guess.
+        if (matches.length === 1) affiliate = matches[0];
+        else if (matches.length > 1) console.warn('Ambiguous affiliate ref (multiple matches), not attributing:', ref);
+      } catch (e) { console.warn('Affiliate ref lookup failed (non-fatal):', e.message); }
+    }
+    const affiliateLabel = affiliate ? (affiliate.company || affiliate.name) : null;
+
     // 2. Create the lead in Supabase via REST API
     const insertRes = await fetch(`${supabaseUrl}/rest/v1/clients`, {
       method: 'POST',
@@ -60,9 +89,10 @@ exports.handler = async (event) => {
         email: email.trim().toLowerCase(),
         lead_phone: phone ? phone.trim() : null,
         status: 'lead',
-        lead_source: 'Website Intake',
+        lead_source: affiliateLabel ? `Affiliate: ${affiliateLabel}` : 'Website Intake',
         lead_notes: tier ? `Selected Tier: ${tier}` : null,
-        lead_created_at: new Date().toISOString()
+        lead_created_at: new Date().toISOString(),
+        ...(affiliate ? { referred_by: affiliate.id, referral_fee: null } : {})
       })
     });
 
