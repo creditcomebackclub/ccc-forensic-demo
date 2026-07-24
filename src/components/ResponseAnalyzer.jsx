@@ -12,19 +12,29 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
   const today = new Date().toISOString().slice(0, 10);
   const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 
-  // Look up which bureaus this account actually reports on, so Phase 3
-  // letters are only generated for bureaus that actually carry the tradeline
-  // — a CRA can't reinvestigate a tradeline it doesn't have.
+  // Resolve which bureaus this account actually reports on. A CRA can't
+  // reinvestigate a tradeline it doesn't carry, so Phase 3 letters must only
+  // go to bureaus with real evidence the account is there.
   //
-  // MUST NOT key on account_id: acct_N ids are POSITIONAL and get reassigned
-  // on every audit run, so a Phase 1 letter's stored id (e.g. acct_8) rarely
-  // matches the same account in a later audit (now acct_2). That silently
-  // fell back to "all three bureaus" and generated letters for bureaus the
-  // account isn't on — confirmed on Align Balance (Experian-only, but three
-  // letters were made). Match on stable identity instead: furnisher name,
-  // narrowed by masked last-4 only when a client has multiple accounts from
-  // the same furnisher.
-  let activeBureaus = ['equifax', 'experian', 'transunion']; // fallback to all three
+  // AMBIGUITY MUST NOT EXPAND OUTPUT. The old code, on any lookup failure,
+  // fell back to generating for ALL THREE bureaus — responding to LESS
+  // information with MORE output, the same failure shape as the unparsed-
+  // ledger and DOFD-direction bugs. It also keyed on account_id (acct_N),
+  // which is POSITIONAL and reassigned every audit run, so a Phase 1
+  // letter's stored id resolved to whatever account now occupies that slot —
+  // a different account with a wrong bureau set. Now: match on stable
+  // identity, and if the account cannot be confidently resolved to a single
+  // audit account with a bureau list, BLOCK generation and surface to admin
+  // rather than guess.
+  //
+  // NOTE: furnisher-name matching is a stopgap. Name is unreliable for the
+  // exact accounts with the richest violations (cross-bureau entity-name
+  // conflicts) and for clients with multiple tradelines from one furnisher.
+  // The durable fix is a persistent client_accounts UUID per real tradeline
+  // (see the account-identity plan). Until that lands, the block-on-failure
+  // behavior here is what keeps a bad/ambiguous match from misrouting.
+  let account = null;
+  let resolutionError = null;
   try {
     const { data: audits } = await supabase
       .from('audits')
@@ -32,37 +42,45 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId) {
       .eq('client_name', clientName)
       .order('saved_at', { ascending: false })
       .limit(1);
-    if (audits && audits.length > 0) {
-      const accounts = audits[0].audit?.accounts || [];
-      // NEVER match on a.id: acct_N is positional and a Phase 1 letter's
-      // stored id points at whatever account occupied that slot in a PRIOR
-      // audit — in a re-run it silently resolves to a DIFFERENT account and
-      // its (wrong) bureau set. Match on stable identity only.
-      // 1) masked account number, if the letter happened to store one.
-      let account = accountId ? accounts.find(a => a.accountNumberMasked && a.accountNumberMasked === accountId) : null;
-      // 2) furnisher name (stable across audit runs) — the primary path,
-      //    since Phase 1 letters store the positional id, not the masked no.
+    const accounts = (audits && audits.length > 0) ? (audits[0].audit?.accounts || []) : [];
+    if (accounts.length === 0) {
+      resolutionError = 'no audit on file for this client';
+    } else {
+      // Never match on a.id (positional). Masked account number first (stable
+      // when present), then furnisher name, narrowed by last-4 for
+      // multi-tradeline furnishers.
+      account = accountId ? accounts.find(a => a.accountNumberMasked && a.accountNumberMasked === accountId) : null;
       if (!account) {
         const byFurnisher = accounts.filter(a => normalizeFurnisher(a.furnisher) === normalizeFurnisher(furnisher));
         if (byFurnisher.length === 1) {
           account = byFurnisher[0];
         } else if (byFurnisher.length > 1) {
-          // Multiple accounts from the same furnisher — only disambiguate on
-          // a real last-4; otherwise leave null and let the all-three
-          // fallback stand rather than guess a bureau set.
           const l4 = lastFour(accountId);
-          if (l4) account = byFurnisher.find(a => lastFour(a.accountNumberMasked) === l4) || null;
+          account = l4 ? (byFurnisher.find(a => lastFour(a.accountNumberMasked) === l4) || null) : null;
+          if (!account) resolutionError = `${byFurnisher.length} accounts from "${furnisher}" and none could be disambiguated by account number`;
+        } else {
+          resolutionError = `no account matching "${furnisher}" in the latest audit (furnisher name may have changed since Phase 1, or the account was sold/rebranded)`;
         }
       }
-      console.log('Bureau lookup — accountId:', accountId, 'furnisher:', furnisher, 'matched:', account?.id, 'bureaus:', account?.bureaus);
-      if (account && account.bureaus && account.bureaus.length > 0) {
-        const bureauMap = { 'EQ': 'equifax', 'EXP': 'experian', 'TU': 'transunion' };
-        const mapped = account.bureaus.map(b => bureauMap[b]).filter(Boolean);
-        if (mapped.length > 0) activeBureaus = mapped;
-        console.log('Active bureaus set to:', activeBureaus);
-      }
     }
-  } catch(e) { console.warn('Could not look up account bureaus, defaulting to all three:', e); }
+  } catch (e) {
+    resolutionError = 'the account lookup query failed (' + (e.message || e) + ')';
+  }
+
+  const bureauMap = { 'EQ': 'equifax', 'EXP': 'experian', 'TU': 'transunion' };
+  const activeBureaus = (account && account.bureaus)
+    ? account.bureaus.map(b => bureauMap[b]).filter(Boolean)
+    : [];
+
+  // BLOCK — do not generate any letter unless we have positive evidence of at
+  // least one reporting bureau. No default-to-all-three.
+  if (activeBureaus.length === 0) {
+    throw new Error(
+      `Cannot resolve reporting bureaus for "${furnisher}" — ${resolutionError || 'the matched account has no bureau list'}. ` +
+      `Re-link this account to its current audit entry before generating Phase 3 letters. No letters were created.`
+    );
+  }
+  console.log('Phase 3 bureau resolution — furnisher:', furnisher, 'matched:', account?.id, 'bureaus:', activeBureaus);
 
   // Look up client signature
   let signatureData = null;
