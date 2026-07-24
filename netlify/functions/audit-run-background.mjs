@@ -281,9 +281,39 @@ export const handler = async (event) => {
   // upsert (same slug__date id), and the lead-row upsert — attributed to the
   // job's user so the audit lands in their records even if the tab closed.
   async function saveAuditAs(userId, audit) {
-    const clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
+    let clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
     const clientAddress = (audit && audit.client && audit.client.address) || null;
     const reportDate = (audit && audit.client && audit.client.reportDate) || todayISO();
+
+    // Case-insensitive canonical-name resolution. The model extracts a name
+    // verbatim off whatever the credit report shows (often ALL CAPS in the
+    // personal-info section), which can differ in case from how the client
+    // was originally onboarded. Every lookup below this point matches on
+    // clientName by exact string equality — clients row, client_accounts
+    // identities, the audit's own id/client_name — so a case mismatch here
+    // used to create a second, fully disconnected client record (and a
+    // second, disconnected identity/letter history) for the SAME real
+    // person. Confirmed live: an audit extracted as "CAMERON MICHAEL MAY"
+    // created a brand-new lead instead of attaching to the real, active
+    // client "Cameron Michael May" (6 letters, active billing, onboarded
+    // 2026-06-19). Resolve to the EXISTING row's exact stored name whenever
+    // exactly one matches case-insensitively, so every write below lands
+    // under the one canonical name. Never auto-merge on more than one
+    // match — that's a real ambiguity (two different people who happen to
+    // share a name under this account), left for a human exactly like the
+    // account-identity system's own ambiguous-match rule; the audit still
+    // saves, just under the name as extracted.
+    try {
+      const escaped = clientName.replace(/[%_\\]/g, '\\$&');
+      const { data: nameMatches } = await db.from('clients')
+        .select('name').eq('user_id', userId).ilike('name', escaped);
+      if (nameMatches && nameMatches.length === 1 && nameMatches[0].name !== clientName) {
+        console.log('[audit] canonicalizing client name: "' + clientName + '" -> "' + nameMatches[0].name + '"');
+        clientName = nameMatches[0].name;
+      } else if (nameMatches && nameMatches.length > 1) {
+        console.warn('[audit] multiple clients match "' + clientName + '" case-insensitively — not auto-resolving, saving under the name as extracted:', nameMatches.map((m) => m.name));
+      }
+    } catch (e) { console.warn('[audit] name canonicalization lookup failed (non-fatal):', e.message); }
 
     try {
       const scores = audit.scores || (audit.client && audit.client.scores);
