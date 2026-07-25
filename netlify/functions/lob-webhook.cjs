@@ -1,33 +1,27 @@
 const https = require('https');
 const crypto = require('crypto');
 
-// Lob signs webhooks with HMAC-SHA256 over `${timestamp}.${rawBody}` using the
-// webhook's secret; the hex digest arrives in the Lob-Signature header.
+// Lob's ONE documented signing scheme (help.lob.com/print-and-mail/getting-
+// data-and-results/using-webhooks): HMAC-SHA256, keyed with the webhook's
+// secret exactly as shown in the Lob dashboard (plain string, no decoding),
+// over the input string `${Lob-Signature-Timestamp}.${raw JSON body}`,
+// hex-encoded, compared against the Lob-Signature header. No hex-decoded
+// secret, no whsec_ prefix, no CR-stripped body — those were speculative
+// variants from an earlier debugging attempt and are gone; matching more
+// than one candidate format is itself a weaker check than matching exactly
+// the one Lob documents.
+//
+// timingSafeEqual throws if the two buffers differ in length (rather than
+// returning false), so a bad/short/malformed header must never reach it
+// directly — hence the length check before comparing.
 function verifyLobSignature(rawBody, timestamp, signature, secret) {
-  if (!signature) return false;
+  if (!signature || !timestamp) return false;
   try {
-    const signatureBuffer = Buffer.from(signature);
-    const bodyNoCR = rawBody ? rawBody.replace(/\r/g, '') : '';
-    
-    // Format 1: Lob's classic format (just the raw body)
-    const computed1 = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-    if (crypto.timingSafeEqual(Buffer.from(computed1), signatureBuffer)) return true;
-    
-    // Format 2: Stripe-style format (timestamp.body)
-    if (timestamp) {
-      const computed2 = crypto.createHmac('sha256', secret).update(timestamp + '.' + rawBody).digest('hex');
-      if (crypto.timingSafeEqual(Buffer.from(computed2), signatureBuffer)) return true;
-      
-      // Experimental: Secret as Hex Buffer
-      const computedHex = crypto.createHmac('sha256', Buffer.from(secret, 'hex')).update(timestamp + '.' + rawBody).digest('hex');
-      if (crypto.timingSafeEqual(Buffer.from(computedHex), signatureBuffer)) return true;
-      
-      // Experimental: No Carriage Returns
-      const computedNoCR = crypto.createHmac('sha256', secret).update(timestamp + '.' + bodyNoCR).digest('hex');
-      if (crypto.timingSafeEqual(Buffer.from(computedNoCR), signatureBuffer)) return true;
-    }
-    
-    return false;
+    const expected = crypto.createHmac('sha256', secret).update(timestamp + '.' + (rawBody || '')).digest('hex');
+    const expectedBuffer = Buffer.from(expected, 'hex');
+    const signatureBuffer = Buffer.from(signature, 'hex');
+    if (expectedBuffer.length !== signatureBuffer.length) return false;
+    return crypto.timingSafeEqual(expectedBuffer, signatureBuffer);
   } catch (e) {
     return false;
   }
@@ -151,55 +145,43 @@ exports.handler = async (event) => {
   {
     const signature = event.headers['lob-signature'];
     const timestamp = event.headers['lob-signature-timestamp'];
-    
-    // Debug info computation (only used on failure to help diagnose)
-    let debugInfo = {};
-    try {
-      debugInfo = {
-        received_signature: signature,
-        computed_hash: crypto.createHmac('sha256', webhookSecret || '').update((timestamp || '') + '.' + (rawBody || '')).digest('hex'),
-        timestamp: timestamp,
-        isBase64Encoded: event.isBase64Encoded,
-        body_prefix: rawBody ? rawBody.substring(0, 50) : null
-      };
-    } catch(e) {}
 
     if (!verifyLobSignature(rawBody, timestamp, signature, webhookSecret)) {
-      console.warn('Rejected Lob webhook: bad or missing signature');
-      console.warn('Lob signature verification bypassed for demo purposes.');
-      // return { 
-      //   statusCode: 200, 
-      //   headers: { 'Content-Type': 'text/plain' },
-      //   body: `LOB_DEBUG_ERROR: Invalid signature. 
-// Received Signature: ${signature}
-// Secret Prefix: ${(webhookSecret || '').substring(0, 4)}...
-// Hash (body only): ${crypto.createHmac('sha256', webhookSecret || '').update(rawBody || '').digest('hex')}
-// Hash (timestamp.body): ${crypto.createHmac('sha256', webhookSecret || '').update((timestamp||'') + '.' + (rawBody || '')).digest('hex')}
-// Hash (whsec_ prefix): ${crypto.createHmac('sha256', 'whsec_' + (webhookSecret || '')).update((timestamp||'') + '.' + (rawBody || '')).digest('hex')}
-// Hash (Hex Secret + timestamp.body): ${crypto.createHmac('sha256', Buffer.from(webhookSecret || '', 'hex')).update((timestamp||'') + '.' + (rawBody || '')).digest('hex')}
-// Hash (Hex Secret + body only): ${crypto.createHmac('sha256', Buffer.from(webhookSecret || '', 'hex')).update(rawBody || '').digest('hex')}
-// Base64 Encoded: ${event.isBase64Encoded}
-// Timestamp: ${timestamp}`
-      // };
+      // Diagnostic detail goes to the function log (Netlify dashboard →
+      // Functions → lob-webhook), never in the HTTP response — the response
+      // body is public to anyone who can reach this URL, so it must never
+      // echo back the secret, the computed digest, or anything derived from
+      // the secret. Logging the expected digest's first few hex chars (not
+      // the full digest) is enough to tell "wrong secret" apart from "right
+      // secret, body/timestamp mismatch" without exposing a crackable amount
+      // of the HMAC output.
+      let expectedPreview = 'n/a';
+      try { expectedPreview = crypto.createHmac('sha256', webhookSecret).update((timestamp || '') + '.' + (rawBody || '')).digest('hex').slice(0, 8) + '…'; } catch (e) { /* leave as n/a */ }
+      console.error('Rejected Lob webhook: signature mismatch', {
+        has_signature_header: !!signature,
+        has_timestamp_header: !!timestamp,
+        signature_len: signature ? signature.length : 0,
+        expected_prefix: expectedPreview,
+        received_prefix: signature ? signature.slice(0, 8) + '…' : null,
+        raw_body_len: rawBody ? rawBody.length : 0,
+        isBase64Encoded: event.isBase64Encoded,
+      });
+      return { statusCode: 401, body: JSON.stringify({ error: 'Invalid signature' }) };
     }
-    
-    // Note: Lob sends timestamp as milliseconds or seconds?
-    // Let's compute age depending on its magnitude. If timestamp is in seconds, it will be ~1.7 billion.
-    // If it's in milliseconds, it will be ~1.7 trillion.
+
+    // Lob sends the timestamp in seconds; ~1.7 billion vs. ~1.7 trillion
+    // tells seconds and milliseconds apart if that ever changes.
     const tsNum = Number(timestamp);
     const tsMs = tsNum < 20000000000 ? tsNum * 1000 : tsNum;
-    
+
     const age = Math.abs(Date.now() - tsMs);
-    // 48 hours (172,800,000 ms) is a much safer tolerance for retries.
-    if (!Number.isFinite(age) || age > 48 * 60 * 60 * 1000) {
-      console.warn('Rejected Lob webhook: stale timestamp', timestamp);
-      return { 
-        statusCode: 200, 
-        headers: { 'Content-Type': 'text/plain' },
-        body: `LOB_DEBUG_ERROR: Stale timestamp. 
-Timestamp: ${timestamp}
-Age (ms): ${age}` 
-      };
+    // Lob's own docs recommend a 5-minute tolerance for replay protection;
+    // 10 minutes leaves headroom for normal delivery/clock-drift delay
+    // without reopening a multi-hour replay window (the previous 48-hour
+    // tolerance effectively provided none).
+    if (!Number.isFinite(age) || age > 10 * 60 * 1000) {
+      console.warn('Rejected Lob webhook: stale timestamp', { timestamp, age_ms: age });
+      return { statusCode: 401, body: JSON.stringify({ error: 'Stale timestamp' }) };
     }
   }
 
