@@ -582,17 +582,15 @@ export default function App() {
   const initials = displayName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
   const handleNavigate = (viewName, context = null) => {
-    if (viewName === 'clients' && context) {
-      setClientsContext(context);
-    } else {
-      setClientsContext(null);
-      // auditClientName is a one-time "jump to the client whose audit I
-      // just opened" signal (set in handleOpenSavedAudit) — without
-      // clearing it here, a plain sidebar "Clients" click (no context)
-      // keeps re-jumping to that same client indefinitely, since nothing
-      // else ever resets it.
-      if (viewName === 'clients') setAuditClientName(null);
-    }
+    setClientsContext(context);
+    // auditClientName is a one-time "jump to the client whose audit I just
+    // opened" signal (set in handleOpenSavedAudit) — it must be cleared on
+    // every navigation to 'clients', even when a context is also being set
+    // (e.g. the sidebar's own "Clients" button passes a {filter:'unanalyzed'}
+    // context whenever there's a pending unanalyzed response). Otherwise
+    // that context is unrelated to the stale jump target, which then keeps
+    // re-surfacing the same old client indefinitely.
+    if (viewName === 'clients') setAuditClientName(null);
     setView(viewName);
     refreshActionItems();
   };
