@@ -44,31 +44,12 @@ body {
   gap: 14px;
   margin-bottom: 22px;
 }
-.ccc-mark {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.ccc-badge {
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
-  background: var(--gold);
-  color: var(--navy);
-  font-family: 'Barlow Condensed', sans-serif;
-  font-weight: 800;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.ccc-wordmark {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-weight: 700;
-  font-size: 13.5px;
-  color: var(--navy);
-  letter-spacing: 0.01em;
-  white-space: nowrap;
+.ccc-logo {
+  height: 56px;
+  width: auto;
+  border-radius: 6px;
+  object-fit: contain;
+  display: block;
 }
 .brand-x {
   color: #C7CDDA;
@@ -76,8 +57,8 @@ body {
   font-weight: 600;
 }
 .partner-logo {
-  max-height: 30px;
-  max-width: 140px;
+  max-height: 40px;
+  max-width: 150px;
   object-fit: contain;
 }
 .eyebrow {
@@ -186,10 +167,7 @@ input:focus { outline: none; border-color: var(--navy); }
 <div class="card">
   <div id="formStep">
     <div class="brand-row" id="brandRow">
-      <div class="ccc-mark">
-        <div class="ccc-badge">CC</div>
-        <div class="ccc-wordmark">Credit Comeback Club</div>
-      </div>
+      <img src="/logo.jpg" alt="Credit Comeback Club" class="ccc-logo">
     </div>
 
     <div class="eyebrow-wrap"><span class="eyebrow" id="eyebrow" style="display:none;"></span></div>
