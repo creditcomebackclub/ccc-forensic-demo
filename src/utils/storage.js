@@ -372,7 +372,7 @@ export async function adminListClients() {
     // encrypted at rest in client_sensitive_data and only ever fetched
     // on-demand (decrypted server-side) via ClientProfilePanel, never as
     // part of this bulk dashboard load.
-    supabase.from('clients').select('id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at'),
+    supabase.from('clients').select('id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at'),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at'),
   ]);
   if (auditsRes.error) throw auditsRes.error;
@@ -404,6 +404,8 @@ export async function adminListClients() {
       c.email = meta.email || null;
       c.lpoaSigned = meta.lpoa_signed || false;
       c.lpoaSignedAt = meta.lpoa_signed_at || null;
+      c.lpoaSignatureData = meta.lpoa_signature_data || null;
+      c.signToken = meta.sign_token || null;
       c.phone = meta.phone || null;
       c.dateOfBirth = meta.date_of_birth || null;
       c.monitoringService = meta.monitoring_service || 'Privacy Guard';

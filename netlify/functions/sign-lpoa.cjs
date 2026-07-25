@@ -78,13 +78,29 @@ exports.handler = async (event) => {
   try { payload = JSON.parse(event.body); }
   catch (e) { return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
 
-  const { clientName, signerName, signatureData, signedAt } = payload;
+  const { clientName, signerName, signatureData, signedAt, token } = payload;
   if (!clientName || !signatureData) return { statusCode: 400, body: JSON.stringify({ error: 'clientName and signatureData required' }) };
+  if (!token) return { statusCode: 400, body: JSON.stringify({ error: 'token required' }) };
 
   const ip = event.headers['x-forwarded-for'] || 'unknown';
   const signedAtTime = signedAt || new Date().toISOString();
 
   try {
+    // The link is the only thing standing between a signature request and
+    // an actual signed authorization — clientName alone (a guessable string
+    // in the URL) was never actually checked against anything until this
+    // gate. Every client gets a random sign_token (clients migration
+    // 20260725), so this now requires possession of the exact link Chris
+    // generated for this specific client, not just knowledge of their name.
+    const tokenCheck = await supabaseRequest(
+      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=sign_token',
+      'GET', null, supabaseUrl, supabaseKey
+    );
+    const matchedRow = Array.isArray(tokenCheck.body) && tokenCheck.body[0];
+    if (!matchedRow || matchedRow.sign_token !== token) {
+      return { statusCode: 403, body: JSON.stringify({ error: 'Invalid or expired signing link.' }) };
+    }
+
     // Upload signature PNG to Supabase Storage via base64
     const base64Data = signatureData.replace(/^data:image\/png;base64,/, '');
     const sigBuffer = Buffer.from(base64Data, 'base64');
@@ -162,7 +178,7 @@ exports.handler = async (event) => {
     };
 
     const patchRes = await supabaseRequest(
-      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName),
+      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&sign_token=eq.' + encodeURIComponent(token),
       'PATCH',
       {
         lpoa_signed: true,

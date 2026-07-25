@@ -582,6 +582,18 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     }
   };
 
+  // For clients with no email/portal account — e.g. Swiftedly referrals,
+  // where staff don't run the normal LPOA + portal signup flow — this is
+  // the only path to a signature. Every client row has a sign_token
+  // (clients migration 20260725), so the link is always ready; nothing to
+  // generate on demand.
+  const copySignatureLink = (c) => {
+    if (!c.signToken) { toast.error('No signing token on this client yet — refresh and try again.'); return; }
+    const url = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(c.name) + '&token=' + c.signToken;
+    navigator.clipboard.writeText(url);
+    toast.success('Signature link copied');
+  };
+
   // Render modal at top level
   const createModal = showCreateClient ? (
     <CreateClientModal
@@ -637,6 +649,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     const clientMenu = [
       { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
       'divider',
+      { label: 'Copy Signature Link', onClick: () => copySignatureLink(c) },
       c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
       { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
     ].filter(Boolean);
@@ -1105,6 +1118,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
             'divider',
             !c.portalOnboarded && { label: sendingLpoa === c.name ? 'Sending Invite…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Portal Invite & LPOA'), onClick: () => handleSendInvite(c), disabled: !c.email || sendingLpoa === c.name, title: !c.email ? 'Add email first' : undefined },
+            { label: 'Copy Signature Link', onClick: () => copySignatureLink(c) },
             c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
             'divider',
             { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
