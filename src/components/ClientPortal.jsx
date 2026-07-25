@@ -424,11 +424,7 @@ export default function ClientPortal({ session, onSignOut }) {
         </AnimatePresence>
 
         <div className="text-center text-[11px] text-gray-400 mt-16 pb-8 font-medium">
-          Credit Comeback Club ·{' '}
-          <a href="https://maps.google.com/?q=3088+Colorado+Ave+Grand+Junction+CO+81504" target="_blank" rel="noopener noreferrer" className="hover:text-gray-600 transition-colors">
-            3088 Colorado Ave, Grand Junction, CO 81504
-          </a>{' '}
-          · creditcomebackclub.com ·{' '}
+          Credit Comeback Club · creditcomebackclub.com ·{' '}
           <a href="tel:9706440063" className="hover:text-gray-600 transition-colors">970-644-0063</a>
         </div>
       </div>
