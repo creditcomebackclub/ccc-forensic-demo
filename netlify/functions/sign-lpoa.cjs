@@ -28,8 +28,18 @@ function supabaseRequest(path, method, body, url, key) {
   });
 }
 
-function buildLpoaHtml(clientName, signerName, signatureData, signedAt) {
+// Section 4 (Fee Structure) is the only section that varies by lpoaType —
+// must mirror public/sign-lpoa.html's FEE_TEXT exactly, since this is the
+// permanent signed record and has to reflect what the client actually saw
+// and agreed to at signing time.
+const FEE_TEXT = {
+  standard: 'First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.',
+  inquiry: 'Personal Information / Inquiry Removal Fee: $50 per bureau, one-time. No monthly service fee. No deletion = no charge.',
+};
+
+function buildLpoaHtml(clientName, signerName, signatureData, signedAt, lpoaType) {
   const dateStr = new Date(signedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const feeText = FEE_TEXT[lpoaType] || FEE_TEXT.standard;
   return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
     + 'body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;margin:0;padding:40px;color:#000;}'
     + '.header{background:#1B2A4A;color:#C9A84C;padding:20px 32px;margin:-40px -40px 32px;}'
@@ -43,7 +53,7 @@ function buildLpoaHtml(clientName, signerName, signatureData, signedAt) {
     + '</style></head><body>'
     + '<div class="header"><h1>Credit Dispute Authorization — Limited Power of Attorney</h1><p>Executed ' + dateStr + '</p></div>'
     + '<h2>1. Parties</h2>'
-    + '<p>This LPOA is between <strong>' + clientName + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, 3088 Colorado Ave, Grand Junction, CO 81504 ("Attorney-in-Fact").</p>'
+    + '<p>This LPOA is between <strong>' + clientName + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO ("Attorney-in-Fact").</p>'
     + '<h2>2. Grant of Authority</h2>'
     + '<ul><li>Prepare and submit dispute letters to data furnishers under 15 U.S.C. §1681s-2(b)</li>'
     + '<li>Prepare and submit dispute letters to Equifax, Experian, and TransUnion</li>'
@@ -53,8 +63,10 @@ function buildLpoaHtml(clientName, signerName, signatureData, signedAt) {
     + '<li>Sign correspondence as "By: Credit Comeback Club, Authorized Representative"</li></ul>'
     + '<h2>3. Limitations</h2>'
     + '<p>Does NOT authorize financial decisions, account access, disputing accurate information, new credit identity creation, or settling legal claims without explicit consent.</p>'
-    + '<h2>4. No Guarantee</h2><p>No specific outcome guaranteed. Results vary by credit profile and creditor response.</p>'
-    + '<h2>5. ESIGN Disclosure</h2><p>Executed electronically under the ESIGN Act (15 U.S.C. §7001). Drawn signature, timestamp, and IP recorded as evidence of consent.</p>'
+    + '<h2>4. Fee Structure</h2><p>' + feeText + '</p>'
+    + '<h2>5. No Guarantee</h2><p>No specific outcome guaranteed. Results vary by credit profile and creditor response.</p>'
+    + '<h2>6. Duration &amp; Revocation</h2><p>Effective until written revocation or dispute completion. To revoke: email creditcomebackclub@gmail.com with "LPOA REVOCATION — [Your Name]."</p>'
+    + '<h2>7. ESIGN Disclosure</h2><p>Executed electronically under the ESIGN Act (15 U.S.C. §7001). Drawn signature, timestamp, and IP recorded as evidence of consent.</p>'
     + '<div class="sig-row">'
     + '<div class="sig-col"><div class="sig-line">' + (signatureData ? '<img src="' + signatureData + '" style="max-height:56px;max-width:200px;" />' : '') + '</div>'
     + '<div class="sig-label"><strong>' + signerName + '</strong> — Principal</div>'
@@ -63,7 +75,7 @@ function buildLpoaHtml(clientName, signerName, signatureData, signedAt) {
     + '<div class="sig-label"><strong>Christopher Holland</strong> — Attorney-in-Fact, Credit Comeback Club</div>'
     + '<div class="sig-label">Date: ' + dateStr + '</div></div>'
     + '</div>'
-    + '<div class="footer">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063 | creditcomebackclub.com | ESIGN Act 15 U.S.C. §7001</div>'
+    + '<div class="footer">Credit Comeback Club | Grand Junction, CO | 970-644-0063 | creditcomebackclub.com | ESIGN Act 15 U.S.C. §7001</div>'
     + '</body></html>';
 }
 
@@ -78,9 +90,10 @@ exports.handler = async (event) => {
   try { payload = JSON.parse(event.body); }
   catch (e) { return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
 
-  const { clientName, signerName, signatureData, signedAt, token } = payload;
+  const { clientName, signerName, signatureData, signedAt, token, lpoaType } = payload;
   if (!clientName || !signatureData) return { statusCode: 400, body: JSON.stringify({ error: 'clientName and signatureData required' }) };
   if (!token) return { statusCode: 400, body: JSON.stringify({ error: 'token required' }) };
+  const resolvedLpoaType = lpoaType === 'inquiry' ? 'inquiry' : 'standard';
 
   const ip = event.headers['x-forwarded-for'] || 'unknown';
   const signedAtTime = signedAt || new Date().toISOString();
@@ -137,7 +150,7 @@ exports.handler = async (event) => {
     const sigUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + encodeURIComponent(clientName) + '/signature.png';
 
     // Generate signed LPOA HTML
-    const lpoaHtml = buildLpoaHtml(clientName, signerName || clientName, signatureData, signedAtTime);
+    const lpoaHtml = buildLpoaHtml(clientName, signerName || clientName, signatureData, signedAtTime, resolvedLpoaType);
     const lpoaBuffer = Buffer.from(lpoaHtml, 'utf8');
 
     // Upload LPOA HTML
@@ -175,6 +188,7 @@ exports.handler = async (event) => {
       signedAt: signedAtTime,
       ip,
       method: 'Canvas drawn signature — standalone LPOA signing page',
+      lpoaType: resolvedLpoaType,
     };
 
     const patchRes = await supabaseRequest(

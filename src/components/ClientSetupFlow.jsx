@@ -262,7 +262,7 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '</style></head><body>'
         + '<div class="header"><h1>Credit Comeback Club — Limited Power of Attorney</h1><p>Credit Dispute Authorization | Executed ' + signedAt + '</p></div>'
         + '<h2>1. Parties</h2>'
-        + '<p>This Limited Power of Attorney is executed between <strong>' + clientFullName + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, 3088 Colorado Ave, Grand Junction, CO 81504, 970-644-0063 ("Attorney-in-Fact").</p>'
+        + '<p>This Limited Power of Attorney is executed between <strong>' + clientFullName + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO, 970-644-0063 ("Attorney-in-Fact").</p>'
         + '<h2>2. Grant of Authority</h2>'
         + '<p>Principal authorizes Credit Comeback Club to act exclusively for credit dispute activities, including:</p>'
         + '<ul><li>Prepare and submit dispute letters to data furnishers under 15 U.S.C. §1681s-2(b)</li>'
@@ -286,7 +286,7 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '<div class="sig-col"><div class="sig-line">' + (sigUrl ? '<img src="' + sigUrl + '" style="max-height:56px;max-width:220px;" />' : '') + '</div><div class="sig-label">Principal Signature — ' + clientFullName + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
         + '<div class="sig-col"><div class="sig-line"><img src="https://mlsbdmewxocgweotcdud.supabase.co/storage/v1/object/public/client-docs/standalone/Christopher%20Holland/chris_signature.png" style="max-height:56px;max-width:220px;" /></div><div class="sig-label">Christopher Holland — Attorney-in-Fact, Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
         + '</div></div>'
-        + '<div class="footer">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063 | creditcomebackclub.com | Executed under ESIGN Act 15 U.S.C. §7001</div>'
+        + '<div class="footer">Credit Comeback Club | Grand Junction, CO | 970-644-0063 | creditcomebackclub.com | Executed under ESIGN Act 15 U.S.C. §7001</div>'
         + '</body></html>';
 
       const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });

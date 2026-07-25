@@ -586,10 +586,13 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   // where staff don't run the normal LPOA + portal signup flow — this is
   // the only path to a signature. Every client row has a sign_token
   // (clients migration 20260725), so the link is always ready; nothing to
-  // generate on demand.
-  const copySignatureLink = (c) => {
+  // generate on demand. 'inquiry' swaps the Fee Structure section for
+  // personal-info/inquiry-only removal clients (flat per-bureau rate, no
+  // First Work Fee/monthly service) — see public/sign-lpoa.html.
+  const copySignatureLink = (c, lpoaType = 'standard') => {
     if (!c.signToken) { toast.error('No signing token on this client yet — refresh and try again.'); return; }
-    const url = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(c.name) + '&token=' + c.signToken;
+    const url = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(c.name) + '&token=' + c.signToken
+      + (lpoaType === 'inquiry' ? '&type=inquiry' : '');
     navigator.clipboard.writeText(url);
     toast.success('Signature link copied');
   };
@@ -649,7 +652,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     const clientMenu = [
       { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
       'divider',
-      { label: 'Copy Signature Link', onClick: () => copySignatureLink(c) },
+      { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
+      { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
       c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
       { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
     ].filter(Boolean);
@@ -1118,7 +1122,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
             'divider',
             !c.portalOnboarded && { label: sendingLpoa === c.name ? 'Sending Invite…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Portal Invite & LPOA'), onClick: () => handleSendInvite(c), disabled: !c.email || sendingLpoa === c.name, title: !c.email ? 'Add email first' : undefined },
-            { label: 'Copy Signature Link', onClick: () => copySignatureLink(c) },
+            { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
+      { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
             c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
             'divider',
             { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },

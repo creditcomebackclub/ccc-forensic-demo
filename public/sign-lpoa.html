@@ -60,7 +60,7 @@
     <div class="card-body">
       <div class="lpoa-text">
         <h3>1. Parties</h3>
-        <p>This Limited Power of Attorney is between <strong id="client-name-doc">[Client Name]</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, 3088 Colorado Ave, Grand Junction, CO 81504 ("Attorney-in-Fact").</p>
+        <p>This Limited Power of Attorney is between <strong id="client-name-doc">[Client Name]</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO ("Attorney-in-Fact").</p>
         <h3>2. Grant of Authority</h3>
         <p>Principal authorizes Credit Comeback Club to act exclusively for credit dispute activities:</p>
         <ul>
@@ -74,7 +74,7 @@
         <h3>3. Limitations</h3>
         <p>This authorization does NOT grant authority to make financial decisions, access financial accounts, dispute accurate information, create a new credit identity, or settle legal claims without explicit written consent.</p>
         <h3>4. Fee Structure</h3>
-        <p>First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.</p>
+        <p id="fee-structure-text">First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.</p>
         <h3>5. No Guarantee</h3>
         <p>No specific outcome is guaranteed. Results vary by credit profile and creditor response.</p>
         <h3>6. Duration & Revocation</h3>
@@ -124,12 +124,23 @@
   const params = new URLSearchParams(window.location.search);
   const clientName = decodeURIComponent(params.get('client') || '');
   const token = params.get('token') || '';
+  // 'inquiry' = personal-info/inquiry-only removal clients (e.g. a flat
+  // per-bureau rate, no monthly service) — the standard fee text below
+  // (First Work Fee + per-delete-by-type) doesn't apply to them, so this
+  // is the only section that varies by lpoaType. Everything else on this
+  // page (grant of authority, limitations, ESIGN, etc.) is identical.
+  const lpoaType = params.get('type') === 'inquiry' ? 'inquiry' : 'standard';
+  const FEE_TEXT = {
+    standard: 'First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.',
+    inquiry: 'Personal Information / Inquiry Removal Fee: $50 per bureau, one-time. No monthly service fee. No deletion = no charge.',
+  };
 
   if (clientName) {
     document.getElementById('client-name-header').textContent = clientName;
     document.getElementById('client-name-doc').textContent = clientName;
     document.getElementById('signer-name').value = clientName;
   }
+  document.getElementById('fee-structure-text').textContent = FEE_TEXT[lpoaType];
 
   // Canvas setup
   const canvas = document.getElementById('sig-canvas');
@@ -189,6 +200,7 @@
           signatureData,
           signedAt: new Date().toISOString(),
           token,
+          lpoaType,
         }),
       });
       const data = await res.json();
