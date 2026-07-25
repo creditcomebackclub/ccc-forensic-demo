@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, TrendingUp, TrendingDown, AlertCircle, Clock, CheckCircle, ChevronRight, Activity, Users, Layers, Repeat, UserMinus, Percent, CalendarClock, Timer, Landmark } from 'lucide-react';
-import { adminListClients } from '../utils/storage';
+import { DollarSign, TrendingUp, TrendingDown, AlertCircle, Clock, CheckCircle, ChevronRight, Activity, Users, Layers, Repeat, UserMinus, Percent, CalendarClock, Timer, Landmark, Receipt, Plus, X } from 'lucide-react';
+import { adminListClients, listExpenses, addExpense, deleteExpense } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { computeClientCommission, commissionRate } from '../utils/affiliateCommission';
 import { DEFAULT_TIER_PRICING } from '../utils/pricing';
@@ -128,6 +128,53 @@ function AgingBars({ buckets, total }) {
   );
 }
 
+function ExpenseList({ title, items, addLabel, category, month, onAdd, onDelete }) {
+  const [name, setName] = useState('');
+  const [amount, setAmount] = useState('');
+
+  const submit = async () => {
+    const amt = parseFloat(amount);
+    if (!name.trim() || !amt || amt <= 0) return;
+    await onAdd({ name: name.trim(), amount: amt, category, month });
+    setName(''); setAmount('');
+  };
+
+  const total = items.reduce((sum, e) => sum + e.amount, 0);
+
+  return (
+    <div className="flex-1">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-[11px] font-bold uppercase tracking-wider" style={{ color: T.muted }}>{title}</h3>
+        <span className="text-[13px] font-bold" style={{ color: T.navy }}>{money(total)}</span>
+      </div>
+      <div className="flex flex-col gap-1 mb-2">
+        {items.length === 0 && <div className="text-[12px] text-faint italic py-2">None yet.</div>}
+        {items.map((e) => (
+          <div key={e.id} className="flex items-center justify-between py-1.5 border-b last:border-0 group" style={{ borderColor: T.grid }}>
+            <span className="text-[12px] text-ink">{e.name}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] font-semibold text-ink">{money(e.amount)}</span>
+              <button onClick={() => onDelete(e.id)} title="Remove" className="opacity-0 group-hover:opacity-100 text-faint hover:text-red-600 transition-opacity">
+                <X size={12} strokeWidth={2} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder={addLabel}
+          className="flex-1 min-w-0 border rounded-md px-2 py-1 text-[12px] focus:outline-none focus:border-navy" style={{ borderColor: T.border }} />
+        <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="$" type="number" step="0.01"
+          className="w-20 border rounded-md px-2 py-1 text-[12px] focus:outline-none focus:border-navy" style={{ borderColor: T.border }}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} />
+        <button onClick={submit} className="p-1.5 rounded-md shrink-0" style={{ backgroundColor: T.navy, color: T.gold }}>
+          <Plus size={13} strokeWidth={2.5} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function StatLine({ label, value, tone, sub }) {
   const color = tone === 'good' ? T.green : tone === 'warn' ? T.amber : tone === 'bad' ? T.red : T.ink;
   return (
@@ -142,13 +189,19 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   const [clients, setClients] = useState([]);
   const [affiliates, setAffiliates] = useState({});
   const [commissionPayouts, setCommissionPayouts] = useState([]);
+  const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const loadExpenses = () => listExpenses().then(setExpenses);
+  const handleAddExpense = async (payload) => { await addExpense(payload); loadExpenses(); };
+  const handleDeleteExpense = async (id) => { await deleteExpense(id); loadExpenses(); };
 
   useEffect(() => {
     adminListClients().then(data => {
       setClients(data);
       setLoading(false);
     });
+    loadExpenses();
     // Raw rows keyed by id — affiliateCommission.js reads .commission_rate
     // directly, and .name/.company are used for display where needed.
     supabase.from('affiliates').select('id, name, company, commission_rate').then(({ data }) => {
@@ -358,6 +411,18 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   const projectedInflow = mrr + totalOutstanding;
   const projectedCommission = commissionOwed + (mrr * (commissionEarned > 0 && lifetimeRevenue > 0 ? commissionEarned / lifetimeRevenue : 0));
 
+  // Overhead: recurring subscriptions repeat every month automatically;
+  // variable costs (mail, metered API usage) only count for the specific
+  // month they were entered against.
+  const collectedThisMonth = months[months.length - 1].value;
+  const recurringExpenses = expenses.filter(e => e.category === 'subscription');
+  const recurringTotal = recurringExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const variableThisMonth = expenses.filter(e => e.category === 'variable' && e.month === thisMonth);
+  const variableTotal = variableThisMonth.reduce((sum, e) => sum + e.amount, 0);
+  const totalExpensesThisMonth = recurringTotal + variableTotal;
+  const overheadPct = collectedThisMonth > 0 ? (totalExpensesThisMonth / collectedThisMonth) * 100 : 0;
+  const lettersMailedThisMonth = clients.reduce((sum, c) => sum + (c.letters || []).filter(l => ym(l.mailedDate) === thisMonth).length, 0);
+
   const tierRows = [
     { key: 'VIP', label: 'VIP', color: T.gold, count: tierMix.VIP },
     { key: 'Standard', label: 'Standard', color: T.navy, count: tierMix.Standard },
@@ -504,6 +569,37 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
           </div>
         </Panel>
       </div>
+
+      {/* OVERHEAD & EXPENSES */}
+      <Panel title="Overhead & Expenses" icon={Receipt} iconColor={T.red}
+        right={<span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ color: overheadPct > 50 ? '#B91C1C' : overheadPct > 30 ? '#D97706' : '#15803D', backgroundColor: overheadPct > 50 ? '#FEF2F2' : overheadPct > 30 ? '#FFFBEB' : '#F0FDF4' }}>
+          {overheadPct.toFixed(0)}% of collected
+        </span>}>
+        <div className="p-5">
+          <div className="grid grid-cols-3 gap-4 mb-5 pb-5 border-b" style={{ borderColor: T.grid }}>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Collected This Month</div>
+              <div className="text-[18px] font-bold" style={{ color: T.navy }}>{money(collectedThisMonth)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Total Expenses This Month</div>
+              <div className="text-[18px] font-bold" style={{ color: T.red }}>{money(totalExpensesThisMonth)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Letters Mailed This Month</div>
+              <div className="text-[18px] font-bold" style={{ color: T.ink }}>{lettersMailedThisMonth}</div>
+            </div>
+          </div>
+          <div className="flex flex-col md:flex-row gap-6">
+            <ExpenseList title="Recurring Subscriptions" addLabel="e.g. Netlify, Claude, Gemini" items={recurringExpenses}
+              category="subscription" month={null} onAdd={handleAddExpense} onDelete={handleDeleteExpense} />
+            <div className="w-px shrink-0 hidden md:block" style={{ backgroundColor: T.grid }} />
+            <ExpenseList title={`Variable Costs — ${thisMonth}`} addLabel="e.g. Mail (Lob), Claude API usage" items={variableThisMonth}
+              category="variable" month={thisMonth} onAdd={handleAddExpense} onDelete={handleDeleteExpense} />
+          </div>
+          <div className="mt-4 text-[11px] text-faint">Recurring subscriptions repeat every month automatically. Variable costs (mail, metered API usage) need to be entered fresh each month from the real invoice — not auto-estimated, so this never drifts from what you actually paid.</div>
+        </div>
+      </Panel>
 
       {/* OVERDUE + GLOBAL FEED (retained) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

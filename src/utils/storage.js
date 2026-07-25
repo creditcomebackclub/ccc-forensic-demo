@@ -611,3 +611,28 @@ export async function deleteLead(clientName) {
   if (b.error) throw b.error;
   if (c.error) throw c.error;
 }
+
+// Recurring rows (month=null) repeat every month automatically; variable
+// rows are scoped to one 'YYYY-MM' and have to be re-entered each month.
+export async function listExpenses() {
+  const { data, error } = await supabase.from('business_expenses').select('*').order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data || []).map((e) => ({
+    id: e.id,
+    name: e.name,
+    amount: parseFloat(e.amount) || 0,
+    category: e.category,
+    month: e.month,
+  }));
+}
+
+export async function addExpense({ name, amount, category, month = null }) {
+  const userId = await getUserId();
+  const { error } = await supabase.from('business_expenses').insert({ user_id: userId, name, amount, category, month });
+  if (error) throw error;
+}
+
+export async function deleteExpense(id) {
+  const { error } = await supabase.from('business_expenses').delete().eq('id', id);
+  if (error) throw error;
+}
