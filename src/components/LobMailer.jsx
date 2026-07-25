@@ -152,7 +152,11 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         // reports to) — letter.furnisher on a bureau-facing Phase 3 row
         // is the bureau itself, not any one of the furnishers it covers,
         // so fetch every Phase 1 letter for this client rather than
-        // filtering by furnisher (that filter can never match).
+        // filtering by furnisher (that filter can never match). When the
+        // Phase 3 row's own coveredFurnishers is populated, narrow down
+        // to just those — it's the authoritative record of which
+        // furnishers this specific bureau letter actually discusses.
+        let allPhase1Letters = [];
         let phase1Letters = [];
         try {
           const { data } = await supabase.from('letters')
@@ -160,7 +164,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             .eq('client_name', letter.clientName)
             .ilike('phase', 'Phase 1%')
             .order('saved_at', { ascending: true });
-          phase1Letters = data || [];
+          allPhase1Letters = data || [];
+          phase1Letters = (letter.coveredFurnishers && letter.coveredFurnishers.length > 0)
+            ? allPhase1Letters.filter((p1) => letter.coveredFurnishers.includes(p1.furnisher))
+            : allPhase1Letters;
         } catch(e) { console.warn('Could not fetch Phase 1 letters:', e); }
 
         // Exhibit A — one sub-page per Phase 1 letter on file
@@ -227,7 +234,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         // mailing sent through a different channel, e.g. Dispute Fox),
         // the bureau has never received identity verification from us at
         // all — include it directly rather than assuming it's on file.
-        const anyPhase1SentViaLob = phase1Letters.some((p1) => p1.lob_id);
+        // Checked against every Phase 1 letter for the client (not just
+        // the coveredFurnishers-narrowed subset above) since this is a
+        // client-wide fact, not specific to this one bureau letter.
+        const anyPhase1SentViaLob = allPhase1Letters.some((p1) => p1.lob_id);
         if (!anyPhase1SentViaLob) {
           enclosurePages += await buildIdAddressPages();
         }
