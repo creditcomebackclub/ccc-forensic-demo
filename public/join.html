@@ -176,6 +176,10 @@ input:focus { outline: none; border-color: var(--navy); }
     <p class="subcopy">We dispute inaccurate accounts directly with the companies reporting them — not just the bureaus — targeting Metro 2 and FCRA violations they're legally required to fix. Tell us a little about you and we'll reach out to get started.</p>
 
     <form id="leadForm">
+      <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
+        <label for="leadWebsite">Leave this field blank</label>
+        <input type="text" id="leadWebsite" tabindex="-1" autocomplete="off">
+      </div>
       <div>
         <label for="leadName">Full Name</label>
         <input type="text" id="leadName" required autocomplete="name">
@@ -256,7 +260,8 @@ leadForm.addEventListener('submit', async (e) => {
     name: document.getElementById('leadName').value,
     email: document.getElementById('leadEmail').value,
     phone: document.getElementById('leadPhone').value,
-    ref: referralRef || undefined
+    ref: referralRef || undefined,
+    website: document.getElementById('leadWebsite').value
   };
 
   try {

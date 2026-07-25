@@ -798,6 +798,10 @@ Your browser does not support the video tag.
       <div class="modal-title">Get Started</div>
       <div class="modal-sub">Submit your information to create your portal account and schedule your free consultation.</div>
       <form id="intakeForm">
+        <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
+          <label for="intakeWebsite">Leave this field blank</label>
+          <input type="text" id="intakeWebsite" name="website" tabindex="-1" autocomplete="off">
+        </div>
         <div class="form-group">
           <label>Selected Tier</label>
           <input type="text" id="intakeTier" name="tier" readonly>
@@ -943,7 +947,8 @@ intakeForm.addEventListener('submit', async (e) => {
     name: document.getElementById('intakeName').value,
     email: document.getElementById('intakeEmail').value,
     phone: document.getElementById('intakePhone').value,
-    tier: document.getElementById('intakeTier').value
+    tier: document.getElementById('intakeTier').value,
+    website: document.getElementById('intakeWebsite').value
   };
 
   try {

@@ -24,10 +24,53 @@ exports.handler = async (event) => {
 
   try {
     const payload = JSON.parse(event.body);
-    const { name, email, phone, tier, ref } = payload;
+    const { name, email, phone, tier, ref, website } = payload;
 
     if (!name || !email) {
       return { statusCode: 400, body: JSON.stringify({ error: 'Name and email are required' }) };
+    }
+
+    // Honeypot: every intake form (home.html, freeguide.html, join.html,
+    // join-embed.js) carries a hidden `website` field a real visitor never
+    // sees or fills. A bot that fills every field it finds trips this.
+    // Pretend success rather than reject — a bot that gets an error tries a
+    // different payload shape; one that gets 200 has no reason to adapt.
+    if (website) {
+      console.warn('Intake honeypot triggered — dropping silently. IP:', (event.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim());
+      return { statusCode: 200, headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ success: true }) };
+    }
+
+    // Per-IP rate limiting. Netlify functions share no memory between
+    // invocations, so this has to be backed by something persistent —
+    // public_intake_attempts (migration 20260725) is that store. Record
+    // this attempt FIRST, then count the window inclusive of it: recording
+    // only attempts that make it past the limit would let a sustained flood
+    // fall out of the window and start passing again once older rows age
+    // out, since nothing would be left to count.
+    const clientIp = (event.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
+    const RATE_LIMIT_WINDOW_MIN = 15;
+    const RATE_LIMIT_MAX = 5;
+    try {
+      await fetch(`${supabaseUrl}/rest/v1/public_intake_attempts`, {
+        method: 'POST',
+        headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ip: clientIp }),
+      });
+
+      const sinceIso = new Date(Date.now() - RATE_LIMIT_WINDOW_MIN * 60 * 1000).toISOString();
+      const countRes = await fetch(
+        `${supabaseUrl}/rest/v1/public_intake_attempts?ip=eq.${encodeURIComponent(clientIp)}&created_at=gte.${encodeURIComponent(sinceIso)}&select=id`,
+        { headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` } }
+      );
+      const recentAttempts = await countRes.json();
+      if (Array.isArray(recentAttempts) && recentAttempts.length > RATE_LIMIT_MAX) {
+        console.warn('Rate limit exceeded for IP:', clientIp, '-', recentAttempts.length, 'attempts in', RATE_LIMIT_WINDOW_MIN, 'min');
+        return { statusCode: 429, headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ error: 'Too many submissions — please try again later.' }) };
+      }
+    } catch (e) {
+      // Rate-limit bookkeeping failing must never block a genuine lead —
+      // fail open here, the same as every other best-effort step below.
+      console.warn('Rate-limit check failed (non-fatal):', e.message);
     }
 
     // 1. Fetch the admin user_id from an existing client

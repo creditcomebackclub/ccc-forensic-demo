@@ -114,6 +114,7 @@
       '  <h2>Start Your Credit Comeback</h2>' +
       '  <p class="ccc-sub">We dispute inaccurate accounts directly with the companies reporting them — not just the bureaus — targeting Metro 2 and FCRA violations they\'re legally required to fix.</p>' +
       '  <form data-ccc-form>' +
+      '    <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true"><label>Leave this field blank</label><input type="text" data-ccc-website tabindex="-1" autocomplete="off"></div>' +
       '    <div><label>Full Name</label><input type="text" data-ccc-name required autocomplete="name"></div>' +
       '    <div><label>Email</label><input type="email" data-ccc-email required autocomplete="email"></div>' +
       '    <div><label>Phone</label><input type="tel" data-ccc-phone autocomplete="tel"></div>' +
@@ -174,7 +175,8 @@
         name: container.querySelector('[data-ccc-name]').value,
         email: container.querySelector('[data-ccc-email]').value,
         phone: container.querySelector('[data-ccc-phone]').value,
-        ref: refValid ? ref : undefined
+        ref: refValid ? ref : undefined,
+        website: container.querySelector('[data-ccc-website]').value
       };
 
       fetch(BASE + '/api/public-intake', {
