@@ -269,9 +269,21 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         if (finalHtml.includes('</body>')) finalHtml = finalHtml.replace('</body>', enclosurePages + '</body>');
         else finalHtml += enclosurePages;
       }
+      // Several stored letters are bare content fragments with no
+      // <html>/<head> at all — with no charset declared anywhere, Lob's
+      // PDF renderer has been guessing a single-byte encoding and garbling
+      // every multi-byte UTF-8 character (—, §, ®) in the actual mailed
+      // letter, even though the source text itself is stored correctly.
+      if (!/<meta[^>]+charset/i.test(finalHtml)) {
+        if (/<head[^>]*>/i.test(finalHtml)) {
+          finalHtml = finalHtml.replace(/<head[^>]*>/i, (m) => m + '<meta charset="UTF-8">');
+        } else {
+          finalHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>' + finalHtml + '</body></html>';
+        }
+      }
       const tempPath = user.id + '/temp-letters/' + slug(letter.clientName) + '-' + slug(letter.furnisher) + '-' + Date.now() + '.html';
-      const htmlBlob = new Blob([finalHtml], { type: 'text/html' });
-      const { error: uploadErr } = await supabase.storage.from('documents').upload(tempPath, htmlBlob, { upsert: true });
+      const htmlBlob = new Blob([finalHtml], { type: 'text/html;charset=utf-8' });
+      const { error: uploadErr } = await supabase.storage.from('documents').upload(tempPath, htmlBlob, { upsert: true, contentType: 'text/html;charset=utf-8' });
       if (uploadErr) throw new Error('Could not upload letter for mailing: ' + uploadErr.message);
       const { data: urlData, error: urlErr } = await supabase.storage.from('documents').createSignedUrl(tempPath, 3600);
       if (urlErr || !urlData) throw new Error('Could not get letter URL' + (urlErr ? ': ' + urlErr.message : ''));
