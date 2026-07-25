@@ -1,22 +1,23 @@
 import { supabase } from './supabase';
 
-function slug(s) {
-  return String(s || 'unknown')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '') || 'unknown';
-}
-
 async function getUserId() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
   return user.id;
 }
 
-export async function uploadDocument(clientName, docType, file) {
+// clientId is the real key — two clients named identically (which does
+// happen) would otherwise silently overwrite each other's ID/address
+// documents, since slug(clientName) collapses to the same storage path and
+// the old upsert conflicted on client_name. clientId is required for
+// uploads; it's optional on getDocuments only because LobMailer's caller
+// doesn't have one on hand (letters rows aren't client_id-keyed) and falls
+// back to the pre-existing name-based lookup there.
+export async function uploadDocument(clientId, clientName, docType, file) {
   const userId = await getUserId();
+  if (!clientId) throw new Error('uploadDocument requires a clientId');
   const ext = file.name.split('.').pop().toLowerCase();
-  const storagePath = `${userId}/${slug(clientName)}/${docType}.${ext}`;
+  const storagePath = `${userId}/${clientId}/${docType}.${ext}`;
 
   const { error: uploadError } = await supabase.storage
     .from('documents')
@@ -25,24 +26,23 @@ export async function uploadDocument(clientName, docType, file) {
 
   const { error: dbError } = await supabase.from('documents').upsert({
     user_id: userId,
+    client_id: clientId,
     client_name: clientName,
     doc_type: docType,
     file_name: file.name,
     storage_path: storagePath,
     uploaded_at: new Date().toISOString(),
-  }, { onConflict: 'user_id,client_name,doc_type' });
+  }, { onConflict: 'user_id,client_id,doc_type' });
   if (dbError) throw dbError;
 
   return storagePath;
 }
 
-export async function getDocuments(clientName) {
+export async function getDocuments(clientName, clientId) {
   const userId = await getUserId();
-  const { data, error } = await supabase
-    .from('documents')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('client_name', clientName);
+  let query = supabase.from('documents').select('*').eq('user_id', userId);
+  query = clientId ? query.eq('client_id', clientId) : query.eq('client_name', clientName);
+  const { data, error } = await query;
   if (error) throw error;
   return data || [];
 }
@@ -68,13 +68,14 @@ export async function getDocumentBase64(storagePath) {
   });
 }
 
-export async function deleteDocument(clientName, docType) {
+export async function deleteDocument(clientId, docType) {
   const userId = await getUserId();
+  if (!clientId) throw new Error('deleteDocument requires a clientId');
   const { data: docs } = await supabase
     .from('documents')
     .select('storage_path')
     .eq('user_id', userId)
-    .eq('client_name', clientName)
+    .eq('client_id', clientId)
     .eq('doc_type', docType);
 
   if (docs && docs[0]) {
@@ -85,7 +86,7 @@ export async function deleteDocument(clientName, docType) {
     .from('documents')
     .delete()
     .eq('user_id', userId)
-    .eq('client_name', clientName)
+    .eq('client_id', clientId)
     .eq('doc_type', docType);
   if (error) throw error;
 }

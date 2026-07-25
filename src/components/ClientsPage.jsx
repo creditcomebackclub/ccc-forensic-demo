@@ -856,7 +856,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             )}
 
             {(activeTab[c.name] || 'Letters') === 'Documents' && (
-              <DocumentManager clientName={c.name} letters={c.letters || []} onChanged={load} setAnalyzingLetter={setAnalyzingLetter} />
+              <DocumentManager clientId={c.id} clientName={c.name} letters={c.letters || []} onChanged={load} setAnalyzingLetter={setAnalyzingLetter} />
             )}
           </div>
         </div>

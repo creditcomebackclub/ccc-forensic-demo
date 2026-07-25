@@ -32,7 +32,7 @@ function SectionLabel({ children, right }) {
   );
 }
 
-function DocSlot({ clientName, docType, label, desc, onChanged }) {
+function DocSlot({ clientId, clientName, docType, label, desc, onChanged }) {
   const [doc, setDoc] = useState(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -41,7 +41,7 @@ function DocSlot({ clientName, docType, label, desc, onChanged }) {
 
   const load = async () => {
     try {
-      const docs = await getDocuments(clientName);
+      const docs = await getDocuments(clientName, clientId);
       const found = docs.find((d) => d.doc_type === docType);
       setDoc(found || null);
     } catch (e) {
@@ -51,7 +51,7 @@ function DocSlot({ clientName, docType, label, desc, onChanged }) {
     }
   };
 
-  useEffect(() => { load(); }, [clientName, docType]);
+  useEffect(() => { load(); }, [clientId, clientName, docType]);
 
   const handleUpload = async (file) => {
     const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
@@ -60,7 +60,7 @@ function DocSlot({ clientName, docType, label, desc, onChanged }) {
     setUploading(true);
     setError(null);
     try {
-      await uploadDocument(clientName, docType, file);
+      await uploadDocument(clientId, clientName, docType, file);
       await load();
       onChanged();
     } catch (e) {
@@ -80,7 +80,7 @@ function DocSlot({ clientName, docType, label, desc, onChanged }) {
   const handleDelete = async () => {
     if (!window.confirm('Remove ' + label + '?')) return;
     try {
-      await deleteDocument(clientName, docType);
+      await deleteDocument(clientId, docType);
       setDoc(null);
       onChanged();
     } catch (e) { alert('Could not delete: ' + e.message); }
@@ -284,7 +284,7 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
   );
 }
 
-export default function DocumentManager({ clientName, letters, onChanged, setAnalyzingLetter }) {
+export default function DocumentManager({ clientId, clientName, letters, onChanged, setAnalyzingLetter }) {
   return (
     <div className="space-y-4">
       <div>
@@ -293,6 +293,7 @@ export default function DocumentManager({ clientName, letters, onChanged, setAna
           {DOC_TYPES.map((dt) => (
             <DocSlot
               key={dt.key}
+              clientId={clientId}
               clientName={clientName}
               docType={dt.key}
               label={dt.label}
