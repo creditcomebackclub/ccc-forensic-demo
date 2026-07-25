@@ -51,8 +51,62 @@ def _verify_caller(authorization: str | None, client_id: str) -> None:
         raise HTTPException(status_code=403, detail="Not authorized for this client")
 
 
+def _summarize_audit(audit: dict) -> dict:
+    """Condensed, concierge-relevant view of one audit. Deliberately drops
+    audit.get('personalInfo') (DOB, address, phone, employer, aliases) and
+    audit.get('client', {}).get('personalInfo') — real personal PII that a
+    "what's happening with my Discover account" question never needs — and
+    each violation's full statute/case-law text, keeping just field name +
+    severity so the concierge can still say what's wrong without carrying
+    the complete legal citation into a third-party LLM prompt. Per-account
+    furnisher/status/balance/masked-account-number and per-audit scores are
+    kept: none of that is PII, and it's exactly what dispute-status
+    questions need answered."""
+    accounts = []
+    for acct in (audit.get('accounts') or []):
+        violations = acct.get('violations') or []
+        accounts.append({
+            'furnisher': acct.get('furnisher'),
+            'accountNumberMasked': acct.get('accountNumberMasked'),
+            'status': acct.get('status'),
+            'balance': acct.get('balance'),
+            'type': acct.get('type'),
+            'disputeFlag': acct.get('disputeFlag'),
+            'violations': [
+                {'field': v.get('field'), 'severity': v.get('severity')}
+                for v in violations
+            ],
+        })
+    return {
+        'scores': audit.get('scores') or (audit.get('client') or {}).get('scores'),
+        'totalViolations': audit.get('totalViolations'),
+        'accountsTargeted': audit.get('accountsTargeted'),
+        'accounts': accounts,
+    }
+
+
+def _summarize_progress(diff: dict) -> dict:
+    """Furnisher-level change signals only — not the full before/after
+    violation objects (with statute text) the standalone diff engine
+    produces for staff/client-portal use."""
+    return {
+        'scoreDeltas': diff.get('scoreDeltas'),
+        'deleted_furnishers': [a.get('furnisher') for a in (diff.get('deleted') or [])],
+        'new_furnishers': [a.get('furnisher') for a in (diff.get('new') or [])],
+        'changed_furnishers': [c.get('furnisher') for c in (diff.get('changed') or [])],
+        'negativeCounts': diff.get('negativeCounts'),
+        'totalDebtRemoved': diff.get('totalDebtRemoved'),
+    }
+
+
 def _load_full_client_context(client_id: str) -> str:
-    """Load ALL data for this client from every relevant table and return it as a single context string."""
+    """Load this client's data and return it as a single context string for
+    the concierge prompt. Deliberately NOT everything in the underlying
+    tables — audits and progress diffs are passed through _summarize_audit
+    / _summarize_progress first, which strip personalInfo (DOB, address,
+    phone, employer) and full violation legal text before anything reaches
+    a third-party LLM. Letters were already a narrow column select (no
+    `html` column in it) from the query itself, so no change needed there."""
     if not supabase:
         return "Database not connected."
 
@@ -124,7 +178,7 @@ def _load_full_client_context(client_id: str) -> str:
         context_parts.append(f"\n=== FORENSIC AUDIT DATA ({len(audits)} audit(s)) ===")
         for i, a in enumerate(audits):
             context_parts.append(f"\n--- Audit #{i+1} (Report Date: {a.get('report_date', 'N/A')}) ---")
-            context_parts.append(json.dumps(a.get('audit', {})))
+            context_parts.append(json.dumps(_summarize_audit(a.get('audit') or {})))
     else:
         context_parts.append(f"\n=== NO AUDITS RUN YET ===")
 
@@ -136,7 +190,9 @@ def _load_full_client_context(client_id: str) -> str:
 
     if progress:
         context_parts.append(f"\n=== PROGRESS UPDATES ({len(progress)} update(s)) ===")
-        context_parts.append(json.dumps(progress))
+        for p in progress:
+            context_parts.append(f"\n--- {p.get('from_report_date', 'N/A')} → {p.get('to_report_date', 'N/A')} ---")
+            context_parts.append(json.dumps(_summarize_progress(p.get('diff') or {})))
 
     return "\n".join(context_parts)
 
@@ -158,9 +214,9 @@ async def chat_with_concierge(req: ChatRequest, authorization: str | None = Head
 
     system_instruction = (
         "You are the Credit Comeback Club Concierge, a precise and knowledgeable AI assistant. "
-        "You have been given the client's COMPLETE file below. This includes their full forensic audit "
-        "(with every account, furnisher, violation, and balance), all dispute letters sent, tracking info, "
-        "response outcomes, onboarding documents, credit scores, and progress updates.\n\n"
+        "You have been given a summary of the client's file below: every account with its furnisher, "
+        "status, balance, and violations, all dispute letters sent, tracking info, response outcomes, "
+        "onboarding documents, credit scores, and progress updates.\n\n"
         "RULES:\n"
         "1. Answer the client's exact question using the data provided. Be specific — reference account names, "
         "furnishers, violation types, dates, and statuses directly from the data.\n"
