@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X, Send, MoreHorizontal, Search, Pencil } from 'lucide-react';
-import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage, markLeadViewed } from '../utils/storage';
+import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, revertClientToLead, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage, markLeadViewed } from '../utils/storage';
 import { getReturnReceiptUrl } from '../utils/api';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import DocumentManager from './DocumentManager';
@@ -329,6 +329,21 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     'divider',
     !l.mailedDate && !l.lobId && { label: 'Mark as mailed…', onClick: () => { setDateVal(todayISO()); setMode('mailing'); } },
     l.mailedDate && !l.lobId && { label: 'Clear mail date', onClick: () => save({ mailedDate: null }) },
+    // A real Lob submission (lobId set) normally shouldn't be cleared —
+    // it's proof a mailing actually happened. But a submission that was
+    // canceled on Lob's side before printing (confirmed via Lob's API,
+    // not something this UI can verify itself) needs a way back to
+    // "unsent" so Send reappears for a real re-submission — otherwise
+    // the only edit available is the mail date itself, which doesn't
+    // let you actually mail it again.
+    l.mailedDate && l.lobId && {
+      label: 'Mark canceled — allow resend…',
+      onClick: () => {
+        if (window.confirm('Only use this if you\'ve confirmed on Lob\'s side that this letter was canceled before printing (no real postage used). This clears the mail date, tracking, and Lob ID so "Send" reappears for a fresh submission. Continue?')) {
+          save({ mailedDate: null, lobId: null, trackingNumber: null, trackingStatus: null, deliveredAt: null });
+        }
+      },
+    },
     l.mailedDate && !l.responseOutcome && { label: 'Log response…', onClick: () => { setDateVal(todayISO()); setMode('responding'); } },
     l.mailedDate && !l.responseOutcome && { label: 'Mark no response', onClick: () => save({ responseOutcome: 'no_response' }) },
     l.mailedDate && { label: 'Edit mail date…', onClick: () => { setDateVal(l.mailedDate); setMode('mailing'); } },
@@ -655,6 +670,15 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
       { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
       c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
+      'divider',
+      {
+        label: 'Revert to lead…', onClick: async () => {
+          if (window.confirm(c.name + ' will move back to the Leads pipeline (existing audits, letters, and documents stay untouched in case they come back). Continue?')) {
+            await revertClientToLead(c.name);
+            load();
+          }
+        },
+      },
       { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
     ].filter(Boolean);
 
@@ -1126,6 +1150,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
             c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
             'divider',
+            {
+              label: 'Revert to lead…', onClick: async () => {
+                if (window.confirm(c.name + ' will move back to the Leads pipeline (existing audits, letters, and documents stay untouched in case they come back). Continue?')) {
+                  await revertClientToLead(c.name);
+                  load();
+                }
+              },
+            },
             { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
           ];
 

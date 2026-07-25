@@ -574,6 +574,26 @@ export async function convertLeadToClient(clientName) {
   if (error) throw error;
 }
 
+// Reverses convertLeadToClient — for a client who was converted before
+// actually paying and then went dark. Only touches the same two fields
+// convertLeadToClient set (plus a fresh lead_viewed_at/lead_created_at so
+// they reappear as a new, unviewed lead in the pipeline) — existing audit,
+// letter, and document history is left untouched in case they come back.
+export async function revertClientToLead(clientName) {
+  const userId = await getUserId();
+  const { error } = await supabase
+    .from('clients')
+    .update({
+      status: 'lead',
+      enrollment_date: null,
+      lead_created_at: new Date().toISOString(),
+      lead_viewed_at: null,
+    })
+    .eq('user_id', userId)
+    .eq('name', clientName);
+  if (error) throw error;
+}
+
 export async function deleteLead(clientName) {
   const userId = await getUserId();
   // A "lead" in the dashboard can be a clients row, or purely synthesized
