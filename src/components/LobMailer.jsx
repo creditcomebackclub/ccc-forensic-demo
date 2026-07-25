@@ -293,8 +293,14 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         fromAddress: FROM_ADDRESS,
         remoteUrl: urlData.signedUrl,
         description: letter.clientName + ' — ' + letter.furnisher + ' — ' + letter.phase + (enclosurePages ? ' (w/ enclosures)' : ''),
-        // Retries of this same letter can never mail twice
-        idempotencyKey: letter.id,
+        // Scoped to this send attempt, not the letter row itself — letter.id
+        // alone would make Lob treat a deliberate resend (after a real
+        // cancellation) as a duplicate of the ORIGINAL submission, silently
+        // replaying its cached response: same lob_id, same old PDF, no new
+        // event, no new email. Still protects against an accidental
+        // double-fire of this exact click (the Send button is also disabled
+        // while `sending` is true).
+        idempotencyKey: letter.id + '-' + Date.now(),
         // Lets the webhook match this letter even if saving lob_id fails below
         metadata: { letter_id: String(letter.id) },
       });
