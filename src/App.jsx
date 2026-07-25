@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
-import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign, UserPlus, Clock, Copy } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign, UserPlus, Clock, Copy, Inbox } from 'lucide-react';
 import ProspectChatWidget from './components/ProspectChatWidget';
 import { Toaster } from 'react-hot-toast';
 import { supabase } from './utils/supabase';
@@ -25,9 +25,10 @@ const AffiliatePortal = lazy(() => import('./components/AffiliatePortal'));
 const SettingsModal = lazy(() => import('./components/SettingsModal'));
 const BillingDashboardPage = lazy(() => import('./components/BillingDashboardPage'));
 const LetterTrackerPage = lazy(() => import('./components/LetterTrackerPage'));
+const InboxPage = lazy(() => import('./components/InboxPage'));
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
-const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', BILLING: 'billing', LETTER_TRACKER: 'letter-tracker', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
+const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', BILLING: 'billing', LETTER_TRACKER: 'letter-tracker', INBOX: 'inbox', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
 
 // Same link format shown inside the affiliate's own portal
 // (AffiliatePortal.jsx) — lets Chris grab it for an affiliate without
@@ -657,6 +658,7 @@ export default function App() {
             {view === VIEW.AFFILIATES && isAdmin && <AffiliatesPage />}
             {view === VIEW.BILLING && isAdmin && <BillingDashboardPage onNavigate={handleNavigate} isAdmin={isAdmin} />}
             {view === VIEW.LETTER_TRACKER && isAdmin && <LetterTrackerPage onNavigate={handleNavigate} isAdmin={isAdmin} />}
+            {view === VIEW.INBOX && isAdmin && <InboxPage onNavigate={handleNavigate} isAdmin={isAdmin} />}
             {view === VIEW.AUDIT && (
               <>
                 {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
@@ -697,6 +699,9 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
 
       <nav className="flex-1 py-3">
         <NavItem icon={Home} label="Dashboard" active={view === 'dashboard'} onClick={() => onNavigate('dashboard')} />
+        {isAdmin && (
+          <NavItem icon={Inbox} label="Inbox" active={view === 'inbox'} onClick={() => onNavigate('inbox')} />
+        )}
         <NavItem icon={LayoutDashboard} label="New Audit" active={view === 'audit'} onClick={() => onNavigate('audit')} />
         <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients', hasUnanalyzed ? { filter: 'unanalyzed' } : null)} badge={actionItemCount} badgeTitle="unanalyzed client response(s) — click to view" />
         <NavItem icon={UserPlus} label="Leads" active={view === 'leads'} onClick={() => onNavigate('leads', newLeadsCount > 0 ? { filter: 'unviewed' } : null)} badge={newLeadsCount} badgeTitle="unviewed lead(s) — click to view" />
@@ -766,7 +771,7 @@ function NavItem({ icon: Icon, label, active, onClick, badge, badgeTitle }) {
 
 function TopBar({ view, state, isAdmin }) {
   // These views carry their own branded page headers
-  if (['dashboard', 'clients', 'leads', 'methodology', 'team', 'audit', 'letter-tracker'].includes(view)) return null;
+  if (['dashboard', 'clients', 'leads', 'methodology', 'team', 'audit', 'letter-tracker', 'inbox'].includes(view)) return null;
   if (view === 'clients') return (
     <header className="px-8 py-5 border-b border-border bg-white">
       <h1 className="ccc-display text-2xl text-ink font-medium">Clients</h1>

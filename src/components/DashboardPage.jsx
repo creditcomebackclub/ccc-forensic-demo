@@ -1,13 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, TrendingUp, Clock, Zap, Star, Activity, FileText, Mail, ChevronRight, Upload, Send, CheckCircle, X, BarChart2, Award, Target, Timer, Users, Table2 } from 'lucide-react';
+import { AlertCircle, TrendingUp, Clock, Zap, Star, Activity, FileText, Mail, ChevronRight, Upload, CheckCircle, X, BarChart2, Award, Target, Timer, Users, Table2 } from 'lucide-react';
 import { listClients, adminListClients, updateLetter } from '../utils/storage';
-import LobMailer from './LobMailer';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_HOURS = 24;
 const STD_RESPONSE_DAYS = 3;
-const BACKLOG_WARN_DAYS = 7;
-const BACKLOG_LATE_DAYS = 14;
 
 // Brand + chart tokens. Chart mark colors are validated steps of the brand
 // hues (navy/gold are chrome colors — too dark / low-contrast for marks).
@@ -69,8 +66,6 @@ function letterStatus(l) {
 
 function computeDashboard(clients) {
   const actions = [];
-  const priorityQueue = [];
-  const mailingQueue = [];
   const windowCountdown = [];
   const recentActivity = [];
   const vipClients = clients.filter((c) => c.isVip);
@@ -146,10 +141,6 @@ function computeDashboard(clients) {
       }
       const hasPhase3 = c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
 
-      if (!l.mailedDate) {
-        mailingQueue.push({ letterId: l.id, client: c.name, furnisher: l.furnisher, isVip: c.isVip, savedAt: l.savedAt, ageDays: l.savedAt ? daysBetween(l.savedAt, todayISO()) : 0, letter: l });
-      }
-
       if (st.code === 'awaiting') {
         awaiting++;
         windowCountdown.push({ client: c.name, furnisher: l.furnisher, isVip: c.isVip, remaining: st.remaining, mailedDate: l.mailedDate });
@@ -159,13 +150,11 @@ function computeDashboard(clients) {
         escalate++;
         const item = { type: 'escalate', priority: c.isVip ? 0 : 1, client: c.name, furnisher: l.furnisher, isVip: c.isVip, label: 'Window closed — ready to escalate', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
         actions.push(item);
-        priorityQueue.push({ ...item, urgency: 0, label: 'Escalate now' });
       }
 
       if (st.code === 'no_response' && !hasPhase3) {
         const item = { type: 'no_response', priority: c.isVip ? 0 : 1, client: c.name, furnisher: l.furnisher, isVip: c.isVip, label: 'No response — generate Phase 3', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
         actions.push(item);
-        priorityQueue.push({ ...item, urgency: 1, label: 'Generate Phase 3' });
       }
 
       if (st.code === 'received' && !hasPhase3) {
@@ -176,7 +165,6 @@ function computeDashboard(clients) {
           const tone = hoursLeft <= 0 ? 'red' : c.isVip ? 'red' : 'amber';
           const item = { type: 'respond', priority: c.isVip ? 0 : 1, client: c.name, furnisher: l.furnisher, isVip: c.isVip, label, tone, savedAt: l.responseDate || l.savedAt, filter: 'received', letter: l };
           actions.push(item);
-          priorityQueue.push({ ...item, urgency: hoursLeft <= 0 ? 0 : 2, hoursLeft });
         }
       }
 
@@ -189,8 +177,6 @@ function computeDashboard(clients) {
   }
 
   actions.sort((a, b) => a.priority - b.priority || (b.savedAt || '').localeCompare(a.savedAt || ''));
-  priorityQueue.sort((a, b) => (a.urgency || 0) - (b.urgency || 0) || (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0));
-  mailingQueue.sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0) || (a.savedAt || '').localeCompare(b.savedAt || ''));
   windowCountdown.sort((a, b) => a.remaining - b.remaining);
   recentActivity.sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
 
@@ -198,7 +184,7 @@ function computeDashboard(clients) {
   const avgDeleteDays = deleteDays.length > 0 ? Math.round(deleteDays.reduce((s, d) => s + d, 0) / deleteDays.length) : null;
 
   return {
-    actions: actions.slice(0, 6), priorityQueue: priorityQueue.slice(0, 8), mailingQueue: mailingQueue.slice(0, 8),
+    actions: actions.slice(0, 6),
     windowCountdown: windowCountdown.slice(0, 10), weeklyData, awaiting, escalate, phase3, active,
     recentActivity: recentActivity.slice(0, 10), vipClients,
     funnel, deletedAll, deletedThisMonth, deletedLastMonth, winRate, avgDeleteDays, outcomeCount, portal,
@@ -493,12 +479,6 @@ function WeeklyChart({ data }) {
   );
 }
 
-function AgeBadge({ days }) {
-  if (days >= BACKLOG_LATE_DAYS) return <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-sm bg-red-50 text-red-700 font-medium"><Clock size={9} strokeWidth={2.5} /> {days}d waiting</span>;
-  if (days >= BACKLOG_WARN_DAYS) return <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-sm bg-amber-50 text-amber-700 font-medium"><Clock size={9} strokeWidth={2.5} /> {days}d waiting</span>;
-  return null;
-}
-
 function PortalAdoption({ portal, onNavigate }) {
   const invitedTotal = portal.active + portal.pending.length;
   if (invitedTotal === 0 && portal.notInvited === 0) return null;
@@ -589,7 +569,6 @@ function QuickActionPanel({ action, onDone, onCancel, onNavigate }) {
 export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
   const [dash, setDash] = useState(null);
   const [activeAction, setActiveAction] = useState(null);
-  const [lobMailerLetter, setLobMailerLetter] = useState(null);
 
   const load = async () => {
     try {
@@ -677,34 +656,6 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
 
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-5 space-y-4">
-          <Card title="Today's Priority Queue">
-            {dash.priorityQueue.length === 0 ? (
-              <div className="text-center py-4">
-                <CheckCircle size={20} className="text-green-600 mx-auto mb-2" strokeWidth={1.5} />
-                <div className="text-[12px] text-ink-muted">All clear — no urgent actions today</div>
-              </div>
-            ) : (
-              <div className="space-y-0">
-                {dash.priorityQueue.map((item, i) => (
-                  <div key={i} onClick={() => onNavigate('clients', { jumpTo: item.client })}
-                    className="flex items-center justify-between py-2 border-b border-border last:border-b-0 cursor-pointer hover:bg-gray-50 rounded px-1 transition-colors group">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {item.isVip && <Star size={11} strokeWidth={2.5} style={{ color: T.gold, flexShrink: 0 }} />}
-                      <div className="min-w-0">
-                        <div className="text-[12px] text-ink font-medium truncate group-hover:text-navy">{item.client}</div>
-                        <div className="text-[10px] text-ink-muted truncate">{item.furnisher}</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Pill label={item.label} tone={item.tone} />
-                      <ChevronRight size={11} strokeWidth={2} className="text-ink-faint group-hover:text-navy" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-
           <Card title="Recent Activity">
             {dash.recentActivity.length === 0 && <div className="text-[12px] text-ink-muted py-2">No activity yet</div>}
             <div className="space-y-0">
@@ -791,32 +742,6 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
             </Card>
           )}
 
-          {dash.mailingQueue.length > 0 && (
-            <Card title="Ready to Mail" right={<span style={{ fontSize: 10, color: T.faint }}>{dash.mailingQueue.length} letter{dash.mailingQueue.length === 1 ? '' : 's'} waiting</span>}>
-              <div className="space-y-0">
-                {dash.mailingQueue.map((item, i) => (
-                  <div key={i} className="flex items-center justify-between py-2 border-b border-border last:border-b-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {item.isVip && <Star size={11} strokeWidth={2.5} style={{ color: T.gold, flexShrink: 0 }} />}
-                      <div className="min-w-0">
-                        <div className="text-[12px] text-ink font-medium truncate">{item.client}</div>
-                        <div className="text-[10px] text-ink-muted">{item.furnisher} · generated {fmtTime(item.savedAt)}</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <AgeBadge days={item.ageDays} />
-                      <button onClick={() => setLobMailerLetter(item.letter)}
-                        className="flex items-center gap-1 text-[11px] uppercase tracking-wider px-2 py-1 rounded-sm shrink-0 transition-colors"
-                        style={{ backgroundColor: T.navy, color: T.gold }}>
-                        <Send size={11} strokeWidth={2} /> Send
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
           {isAdmin && <PortalAdoption portal={dash.portal} onNavigate={onNavigate} />}
 
           <div
@@ -833,18 +758,6 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
         </div>
       </div>
 
-      {lobMailerLetter && (
-        <LobMailer
-          letter={lobMailerLetter}
-          onClose={() => setLobMailerLetter(null)}
-          onSent={async (data) => {
-            // Don't close the modal here — LobMailer shows the sent/receipt
-            // screen (and a warning if this save fails); user closes it
-            await updateLetter(lobMailerLetter.id, { mailedDate: data.mailedDate, lobId: data.lobId, trackingNumber: data.trackingNumber });
-            load();
-          }}
-        />
-      )}
     </div>
   );
 }
