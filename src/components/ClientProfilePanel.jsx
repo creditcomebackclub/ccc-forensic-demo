@@ -284,8 +284,13 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
     onChanged();
   };
 
+  // storage.js fetches audits ordered newest-first (descending saved_at)
+  // and buildClientMap preserves that order without re-sorting — so
+  // audits[0] is the latest, not audits[length - 1] (that's the oldest).
+  // ClientsPage.jsx's importDueInfo already documents and relies on this
+  // same descending order; this was reading the array backwards.
   const latestAudit = client.audits && client.audits.length > 0
-    ? client.audits[client.audits.length - 1]
+    ? client.audits[0]
     : null;
   // Scores live inside the saved audit blob (record.audit.scores)
   const scores = (latestAudit && (latestAudit.audit?.scores || latestAudit.scores)) || {};
