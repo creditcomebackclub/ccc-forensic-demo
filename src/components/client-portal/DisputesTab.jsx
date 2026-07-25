@@ -11,7 +11,7 @@ function daysBetween(aIso, bIso) {
   return Math.round((b - a) / 86400000);
 }
 function responseCountdown(l) {
-  if (l.response_outcome === 'deleted' || l.response_outcome === 'received') return null;
+  if (l.response_outcome === 'deleted' || l.response_outcome === 'received' || l.response_outcome === 'no_response') return null;
   if (l.mailed_date && !l.delivered_at) {
     return { label: 'In Transit — 30-day window begins upon delivery', tone: 'text-gray-600 bg-gray-50 border-gray-200' };
   }
@@ -102,11 +102,13 @@ export default function DisputesTab({
                 </div>
                 <span className={`text-[10px] px-2.5 py-1 rounded-md whitespace-nowrap uppercase tracking-[0.05em] font-semibold border ${
                   l.response_outcome === 'deleted' ? 'bg-green-50 text-green-700 border-green-200'
+                  : l.response_outcome === 'no_response' ? 'bg-red-50 text-red-700 border-red-200'
+                  : l.response_outcome === 'received' ? 'bg-blue-50 text-blue-700 border-blue-200'
                   : l.tracking_status === 'Delivered' ? 'bg-blue-50 text-blue-700 border-blue-200'
                   : l.mailed_date ? 'bg-amber-50 text-amber-700 border-amber-200'
                   : 'bg-gray-50 text-gray-500 border-gray-200'
                 }`}>
-                  {l.response_outcome === 'deleted' ? '🏆 Deleted' : l.response_outcome === 'received' ? 'Response Received' : l.tracking_status === 'Delivered' ? 'Delivered' : l.mailed_date ? 'In Transit' : 'Pending'}
+                  {l.response_outcome === 'deleted' ? '🏆 Deleted' : l.response_outcome === 'no_response' ? 'No Response — Escalated' : l.response_outcome === 'received' ? 'Response Received' : l.tracking_status === 'Delivered' ? 'Delivered' : l.mailed_date ? 'In Transit' : 'Pending'}
                 </span>
               </div>
               
@@ -129,7 +131,7 @@ export default function DisputesTab({
               
               {l.mailed_date && (
                 <div className="text-[11px] text-gray-400 mt-3 font-medium">
-                  Mailed {new Date(l.mailed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  Mailed {new Date(l.mailed_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                   {l.tracking_number && (
                     <a href={'https://tools.usps.com/go/TrackConfirmAction?tLabels=' + l.tracking_number} target="_blank" rel="noopener noreferrer"
                       className="ml-2 text-slate-900 font-semibold hover:text-blue-600 transition-colors">Track →</a>
