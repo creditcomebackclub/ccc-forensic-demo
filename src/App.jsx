@@ -586,6 +586,12 @@ export default function App() {
       setClientsContext(context);
     } else {
       setClientsContext(null);
+      // auditClientName is a one-time "jump to the client whose audit I
+      // just opened" signal (set in handleOpenSavedAudit) — without
+      // clearing it here, a plain sidebar "Clients" click (no context)
+      // keeps re-jumping to that same client indefinitely, since nothing
+      // else ever resets it.
+      if (viewName === 'clients') setAuditClientName(null);
     }
     setView(viewName);
     refreshActionItems();
