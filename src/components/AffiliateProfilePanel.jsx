@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, CheckCircle, ExternalLink, Link as LinkIcon, DollarSign, TrendingUp, Users, Check } from 'lucide-react';
+import { X, CheckCircle, ExternalLink, Link as LinkIcon, DollarSign, TrendingUp, Users, Check, Copy } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 import { computeClientCommission, recognizedTotal } from '../utils/affiliateCommission';
 
@@ -162,6 +162,7 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
             </div>
           </div>
           <div className="flex items-center gap-4 self-start mt-1">
+            <CopyReferralLinkButton affiliate={affiliate} />
             <ImpersonateButton affiliate={affiliate} />
             <button onClick={onClose} className="p-1 rounded-md text-ink-faint hover:bg-gray-100 transition-colors">
               <X size={18} />
@@ -315,6 +316,26 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
         </div>
       </div>
     </div>
+  );
+}
+
+function CopyReferralLinkButton({ affiliate }) {
+  const [copied, setCopied] = React.useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(`https://creditcomebackclub.com/join?ref=${affiliate.id.slice(0, 8)}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      title="Copy referral link"
+      className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] uppercase tracking-wider rounded border transition-colors"
+      style={{ borderColor: copied ? '#15803D' : T.border, color: copied ? '#15803D' : T.muted }}
+    >
+      {copied ? <CheckCircle size={12} /> : <Copy size={12} />}
+      {copied ? 'Copied' : 'Copy Link'}
+    </button>
   );
 }
 

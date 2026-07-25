@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
-import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign, UserPlus, Clock } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign, UserPlus, Clock, Copy } from 'lucide-react';
 import ProspectChatWidget from './components/ProspectChatWidget';
 import { Toaster } from 'react-hot-toast';
 import { supabase } from './utils/supabase';
@@ -28,6 +28,30 @@ const LetterTrackerPage = lazy(() => import('./components/LetterTrackerPage'));
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
 const VIEW = { DASHBOARD: 'dashboard', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', BILLING: 'billing', LETTER_TRACKER: 'letter-tracker', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
+
+// Same link format shown inside the affiliate's own portal
+// (AffiliatePortal.jsx) — lets Chris grab it for an affiliate without
+// impersonating their account just to read it off their Commissions tab.
+function CopyReferralLinkButton({ affiliate }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(`https://creditcomebackclub.com/join?ref=${affiliate.id.slice(0, 8)}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      title="Copy referral link"
+      className="flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider rounded-sm border transition-colors"
+      style={{ borderColor: copied ? '#15803D' : '#E7EAF0', color: copied ? '#15803D' : '#6B7280' }}
+    >
+      {copied ? <CheckCircle size={12} /> : <Copy size={12} />}
+      {copied ? 'Copied' : 'Copy Link'}
+    </button>
+  );
+}
 
 function AffiliatesPage() {
   const [affiliates, setAffiliates] = React.useState([]);
@@ -192,6 +216,7 @@ function AffiliatesPage() {
                       <div className="text-[18px] font-bold" style={{ color: '#D97706' }}>${pendingComm.toFixed(2)}</div>
                       <div className="text-[10px] uppercase tracking-wider text-ink-faint">Pending</div>
                     </div>
+                    <CopyReferralLinkButton affiliate={aff} />
                   </div>
                 </div>
               </div>
