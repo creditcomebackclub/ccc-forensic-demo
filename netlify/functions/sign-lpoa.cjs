@@ -1,4 +1,5 @@
 const https = require('https');
+const crypto = require('crypto');
 
 function supabaseRequest(path, method, body, url, key) {
   return new Promise((resolve, reject) => {
@@ -106,13 +107,14 @@ exports.handler = async (event) => {
     // 20260725), so this now requires possession of the exact link Chris
     // generated for this specific client, not just knowledge of their name.
     const tokenCheck = await supabaseRequest(
-      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=sign_token',
+      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,sign_token',
       'GET', null, supabaseUrl, supabaseKey
     );
     const matchedRow = Array.isArray(tokenCheck.body) && tokenCheck.body[0];
     if (!matchedRow || matchedRow.sign_token !== token) {
       return { statusCode: 403, body: JSON.stringify({ error: 'Invalid or expired signing link.' }) };
     }
+    const clientId = matchedRow.id;
 
     // Upload signature PNG to Supabase Storage via base64
     const base64Data = signatureData.replace(/^data:image\/png;base64,/, '');
@@ -152,6 +154,10 @@ exports.handler = async (event) => {
     // Generate signed LPOA HTML
     const lpoaHtml = buildLpoaHtml(clientName, signerName || clientName, signatureData, signedAtTime, resolvedLpoaType);
     const lpoaBuffer = Buffer.from(lpoaHtml, 'utf8');
+    // Hashed from the exact bytes about to be uploaded — this is what lets
+    // anyone later confirm the stored lpoa-signed.html hasn't been altered
+    // since the moment of signing.
+    const documentHash = crypto.createHash('sha256').update(lpoaBuffer).digest('hex');
 
     // Upload LPOA HTML
     const lpoaUploadRes = await new Promise((resolve, reject) => {
@@ -189,6 +195,7 @@ exports.handler = async (event) => {
       ip,
       method: 'Canvas drawn signature — standalone LPOA signing page',
       lpoaType: resolvedLpoaType,
+      documentHash,
     };
 
     const patchRes = await supabaseRequest(
@@ -198,6 +205,7 @@ exports.handler = async (event) => {
         lpoa_signed: true,
         lpoa_signed_at: signedAtTime,
         lpoa_signature_data: signatureRecord,
+        lpoa_document_hash: documentHash,
       },
       supabaseUrl,
       supabaseKey
@@ -205,6 +213,29 @@ exports.handler = async (event) => {
 
     if (patchRes.status < 200 || patchRes.status >= 300) {
       throw new Error('Clients table update failed: ' + patchRes.status + ' ' + JSON.stringify(patchRes.body));
+    }
+
+    // Append-only audit trail (lpoa_audit_log, migration 20260725) — never
+    // overwritten by a later re-sign, unlike the JSON blob above. Best-effort:
+    // the signature is already recorded on the clients row by this point, so
+    // a logging failure here must not fail the whole request.
+    try {
+      const auditRes = await supabaseRequest('/rest/v1/lpoa_audit_log', 'POST', {
+        client_id: clientId,
+        client_name: clientName,
+        document_hash: documentHash,
+        document_url: lpoaUrl,
+        signer_name: signerName || clientName,
+        ip,
+        user_agent: event.headers['user-agent'] || null,
+        lpoa_type: resolvedLpoaType,
+        signed_at: signedAtTime,
+      }, supabaseUrl, supabaseKey);
+      if (auditRes.status < 200 || auditRes.status >= 300) {
+        console.warn('lpoa_audit_log insert failed (non-fatal):', auditRes.status, JSON.stringify(auditRes.body));
+      }
+    } catch (e) {
+      console.warn('lpoa_audit_log insert failed (non-fatal):', e.message);
     }
 
     return { statusCode: 200, body: JSON.stringify({ signed: true, sigUrl, lpoaUrl }) };

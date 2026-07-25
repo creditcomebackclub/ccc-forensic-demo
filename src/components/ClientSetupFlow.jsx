@@ -289,6 +289,11 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '<div class="footer">Credit Comeback Club | Grand Junction, CO | 970-644-0063 | creditcomebackclub.com | Executed under ESIGN Act 15 U.S.C. §7001</div>'
         + '</body></html>';
 
+      // Hashed from the exact string about to be uploaded — lets anyone
+      // later confirm the stored document hasn't been altered since signing.
+      const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(lpoaHtml));
+      const documentHash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+
       const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });
       const lpoaFile = new File([lpoaBlob], 'lpoa-signed.html', { type: 'text/html' });
       // LPOA upload — non-fatal if storage fails (enrollment is already marked complete above)
@@ -311,8 +316,28 @@ function ClientOnboardingModal({ session, onComplete }) {
         await supabase.from('clients').update({
           lpoa_signed: true,
           lpoa_signed_at: new Date().toISOString(),
-          lpoa_signature_data: { signatureUrl: sigUrl, lpoaUrl, signedAt: new Date().toISOString(), method: 'Canvas drawn signature + ESIGN Act' },
+          lpoa_signature_data: { signatureUrl: sigUrl, lpoaUrl, signedAt: new Date().toISOString(), method: 'Canvas drawn signature + ESIGN Act', documentHash },
+          lpoa_document_hash: documentHash,
         }).eq('name', cp.full_name);
+      }
+
+      // Append-only audit trail entry (lpoa_audit_log) — captures a
+      // server-observed IP/user-agent this client-side flow can't produce
+      // itself, and unlike the update above, is never overwritten by a
+      // later re-sign. Best-effort: the signature is already recorded on
+      // the clients row by this point, so a logging failure here must not
+      // block onboarding completion.
+      try {
+        await fetch('/.netlify/functions/record-lpoa-audit', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ documentHash, documentUrl: lpoaUrl, signerName: clientFullName, lpoaType: 'standard' }),
+        });
+      } catch (auditErr) {
+        console.warn('LPOA audit log entry failed (non-fatal):', auditErr);
       }
 
       toast.success('Agreements signed securely!', { id: toastId });
