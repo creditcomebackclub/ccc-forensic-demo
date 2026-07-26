@@ -6,7 +6,7 @@ import { upsertFurnisherAddress } from '../utils/storage';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
   FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale, MoreHorizontal, Pencil,
-  X, Send, AlertCircle,
+  X, Send, AlertCircle, Zap,
 } from 'lucide-react';
 
 // Brand tokens — matches the dashboard / clients card system
@@ -339,6 +339,18 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   const batch1 = accounts.filter((a) => a.batch === 1);
   const batch2 = accounts.filter((a) => a.batch === 2);
 
+  // Same condition that gates whether Step 1 (Personal Info & Inquiries)
+  // renders at all — reused below for a soft nudge on Batch 1 rather than
+  // repeating the check, and never a hard block: some audits genuinely have
+  // nothing to clean up, or a client may need the account disputes out the
+  // door before cleanup catches up, and that's a real judgment call, not a
+  // mistake to prevent.
+  const hasCleanupWork = (audit.inquiries || []).length > 0 || !!(audit.personalInfo && (
+    (audit.personalInfo.formerAddresses || []).length > 0 ||
+    (audit.personalInfo.nameVariants || []).length > 1 ||
+    (audit.personalInfo.formerEmployers || []).length > 0
+  ));
+
   const genStatus = (status, label) => {
     if (!status) return null;
     if (status === 'running') return <span style={{ color: T.muted }}>Generating {label}…</span>;
@@ -385,8 +397,6 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
             <Mail size={13} strokeWidth={1.75} /> Email Audit to Client
           </button>
           <Menu items={[
-            { label: cleanupStatus === 'done' ? '✓ Personal Info & Inquiries generated' : 'Generate Personal Info & Inquiries Letter', onClick: runCombinedCleanup, disabled: cleanupStatus === 'running' },
-            'divider',
             { label: 'New audit', onClick: onReset },
           ]} />
         </div>
@@ -460,18 +470,27 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
         </div>
       )}
 
-      {/* Inquiries & Personal Information — review before generating */}
-      {((audit.inquiries || []).length > 0 || (audit.personalInfo && (
-        (audit.personalInfo.formerAddresses || []).length > 0 ||
-        (audit.personalInfo.nameVariants || []).length > 1 ||
-        (audit.personalInfo.formerEmployers || []).length > 0
-      ))) && (
+      {/* Step 1 — Inquiries & Personal Information cleanup */}
+      {hasCleanupWork && (
         <div style={{ background: '#fff', border: '1px solid ' + T.border, borderRadius: 14, padding: 24, boxShadow: T.cardShadow }}>
-          <div className="flex items-center gap-2 mb-1">
-            <span style={{ width: 3, height: 14, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
-            <h3 className="ccc-display text-sm font-medium text-ink">Inquiries &amp; Personal Information</h3>
+          <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span style={{ width: 3, height: 14, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+              <h3 className="ccc-display text-sm font-medium text-ink">Step 1 — Clean Up Your File (Personal Info &amp; Inquiries)</h3>
+            </div>
+            <button
+              onClick={runCombinedCleanup}
+              disabled={cleanupStatus === 'running' || cleanupStatus === 'done'}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] uppercase tracking-wider rounded-lg shrink-0 disabled:opacity-60"
+              style={{ backgroundColor: T.navy, color: T.gold }}>
+              <Zap size={13} strokeWidth={1.75} />
+              {cleanupStatus === 'running' ? 'Generating…' : cleanupStatus === 'done' ? '✓ Generated' : 'Generate & Send First'}
+            </button>
           </div>
-          <p className="text-[12px] text-ink-muted mb-4">Review before using the buttons above. A "no linked account" tag means no matching tradeline was found — it does NOT by itself mean the inquiry was unauthorized. Confirm with the client before disputing.</p>
+          {cleanupStatus && cleanupStatus !== 'running' && cleanupStatus !== 'done' && (
+            <div className="text-[11px] text-red-600 mb-2">{cleanupStatus}</div>
+          )}
+          <p className="text-[12px] text-ink-muted mb-4">Clean up name variants, stale addresses, and unauthorized inquiries before disputing individual accounts below — a mixed-identity file gives furnishers an easy out. A "no linked account" tag means no matching tradeline was found — it does NOT by itself mean the inquiry was unauthorized. Confirm with the client before disputing.</p>
 
           {(audit.inquiries || []).length > 0 && (
             <div className="mb-5">
@@ -553,8 +572,14 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
       )}
 
       {/* Round 1 Batch 1 */}
+      {hasCleanupWork && cleanupStatus !== 'done' && (
+        <div className="flex items-center gap-2 px-4 py-2.5 text-[12px]" style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, color: '#92400E' }}>
+          <AlertCircle size={14} strokeWidth={1.75} className="shrink-0" />
+          Step 1 (Personal Info &amp; Inquiries cleanup) hasn't been generated yet — consider starting there before these account disputes.
+        </div>
+      )}
       <AccountTable
-        title="Round 1 — Batch 1"
+        title={(hasCleanupWork ? 'Step 2 — ' : '') + 'Round 1 — Batch 1'}
         subtitle="Top accounts by balance × violation strength · Send now"
         accounts={batch1}
         onSelect={(a) => setSelectedAccount({ ...a, _clientName: audit.client?.name, _clientId: audit.client?.id })}
@@ -565,7 +590,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
       {/* Round 1 Batch 2 */}
       {batch2.length > 0 && (
         <AccountTable
-          title="Round 1 — Batch 2"
+          title={(hasCleanupWork ? 'Step 3 — ' : '') + 'Round 1 — Batch 2'}
           subtitle="Staggered for postage cost control · Send next"
           accounts={batch2}
           onSelect={(a) => setSelectedAccount({ ...a, _clientName: audit.client?.name, _clientId: audit.client?.id })}
