@@ -5,7 +5,7 @@ import { runPhase2Job } from '../utils/phase2Jobs';
 import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED_TYPE_MESSAGE, uploadResponseBatch, validateBatch } from '../utils/responseFiles';
 import { normalizeFurnisher, lastFour } from '../utils/diffEngine';
 
-async function savePhase3Letters(analysis, clientName, furnisher, accountId, clientAccountId) {
+async function savePhase3Letters(analysis, clientName, furnisher, accountId, clientAccountId, clientId) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
 
@@ -36,12 +36,12 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId, cli
   let account = null;
   let resolutionError = null;
   try {
-    const { data: audits } = await supabase
-      .from('audits')
-      .select('audit')
-      .eq('client_name', clientName)
-      .order('saved_at', { ascending: false })
-      .limit(1);
+    // clientId preferred — client_name alone can resolve to the wrong
+    // client's latest audit if two clients share a name.
+    const auditsQuery = clientId
+      ? supabase.from('audits').select('audit').eq('client_id', clientId).order('saved_at', { ascending: false }).limit(1)
+      : supabase.from('audits').select('audit').eq('client_name', clientName).order('saved_at', { ascending: false }).limit(1);
+    const { data: audits } = await auditsQuery;
     const accounts = (audits && audits.length > 0) ? (audits[0].audit?.accounts || []) : [];
     if (accounts.length === 0) {
       resolutionError = 'no audit on file for this client';
@@ -92,12 +92,18 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId, cli
   // Look up client signature
   let signatureData = null;
   try {
-    const { data: cp } = await supabase.from('client_profiles').select('signature_data').eq('full_name', clientName).limit(1);
+    const cpQuery = clientId
+      ? supabase.from('client_profiles').select('signature_data').eq('client_id', clientId).limit(1)
+      : supabase.from('client_profiles').select('signature_data').eq('full_name', clientName).limit(1);
+    const { data: cp } = await cpQuery;
     if (cp && cp.length > 0 && cp[0].signature_data) {
       signatureData = cp[0].signature_data;
     }
     if (!signatureData) {
-      const { data: cm } = await supabase.from('clients').select('lpoa_signature_data').eq('name', clientName).limit(1);
+      const clientsQuery = clientId
+        ? supabase.from('clients').select('lpoa_signature_data').eq('id', clientId).limit(1)
+        : supabase.from('clients').select('lpoa_signature_data').eq('name', clientName).limit(1);
+      const { data: cm } = await clientsQuery;
       if (cm && cm.length > 0 && cm[0].lpoa_signature_data?.signatureUrl) {
         signatureData = cm[0].lpoa_signature_data.signatureUrl;
       }
@@ -131,11 +137,17 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId, cli
       html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>' + escaped + '</pre></body></html>';
     }
 
-    const id = slug(clientName) + '__' + slug(furnisher) + '__phase3-' + bureau + '__' + today;
+    // id embeds clientId when known — two same-named clients getting a
+    // Phase 3 letter for the same furnisher/bureau on the same day used to
+    // collide on this literal primary key. See the client_id migration plan.
+    const id = clientId
+      ? slug(clientName) + '__' + clientId + '__' + slug(furnisher) + '__phase3-' + bureau + '__' + today
+      : slug(clientName) + '__' + slug(furnisher) + '__phase3-' + bureau + '__' + today;
     const { error } = await supabase.from('letters').upsert({
       id,
       user_id: user.id,
       created_by: user.id,
+      client_id: clientId || null,
       client_name: clientName,
       furnisher,
       account_id: accountId,
@@ -308,7 +320,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
     if (!analysis) return;
     setSaving(true);
     try {
-      await savePhase3Letters(analysis, letter.clientName, letter.furnisher, letter.accountId || '', letter.clientAccountId || null);
+      await savePhase3Letters(analysis, letter.clientName, letter.furnisher, letter.accountId || '', letter.clientAccountId || null, letter.clientId || null);
       setSaved(true);
       setTimeout(() => { onSaved(); onClose(); }, 1500);
     } catch (e) {

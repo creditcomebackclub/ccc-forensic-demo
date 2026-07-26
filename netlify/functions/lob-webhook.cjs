@@ -273,10 +273,12 @@ exports.handler = async (event) => {
     try {
       const letter = updatedRows[0];
       if (letter && letter.client_name) {
-        const clientRes = await supabaseRequest(
-          '/rest/v1/clients?name=eq.' + encodeURIComponent(letter.client_name) + '&select=email',
-          'GET', null, supabaseUrl, supabaseKey
-        );
+        // client_id preferred (present on the updated row since the PATCH
+        // above returns the full row) — client_name alone can resolve to
+        // the wrong same-named client's email.
+        const clientRes = letter.client_id
+          ? await supabaseRequest('/rest/v1/clients?id=eq.' + letter.client_id + '&select=email', 'GET', null, supabaseUrl, supabaseKey)
+          : await supabaseRequest('/rest/v1/clients?name=eq.' + encodeURIComponent(letter.client_name) + '&select=email', 'GET', null, supabaseUrl, supabaseKey);
 
         const clientEmail = clientRes.body && clientRes.body[0] && clientRes.body[0].email;
         if (clientEmail) {

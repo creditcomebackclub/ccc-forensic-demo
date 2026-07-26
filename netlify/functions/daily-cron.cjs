@@ -125,7 +125,7 @@ exports.handler = async () => {
 
   // --- 1. Process 30-day escalation and Client Updates ---
   const lettersRes = await supabaseRequest(
-    '/rest/v1/letters?select=id,client_name,furnisher,phase,mailed_date,delivered_at,response_outcome,notifications_sent&response_outcome=is.null',
+    '/rest/v1/letters?select=id,client_id,client_name,furnisher,phase,mailed_date,delivered_at,response_outcome,notifications_sent&response_outcome=is.null',
     'GET', null, supabaseUrl, supabaseKey
   );
   const letters = Array.isArray(lettersRes.body) ? lettersRes.body : [];
@@ -142,10 +142,14 @@ exports.handler = async () => {
     let clientEmail = null;
     if (sgKey) {
       try {
-        const cpRes = await supabaseRequest(
-          '/rest/v1/client_profiles?full_name=eq.' + encodeURIComponent(letter.client_name) + '&select=email&limit=1',
-          'GET', null, supabaseUrl, supabaseKey
-        );
+        // client_id preferred — client_profiles isn't firm-scoped at all
+        // (full_name is the only match key it has besides email), so a
+        // same-named client at a different firm could otherwise get this
+        // email about someone else's dispute.
+        const cpPath = letter.client_id
+          ? '/rest/v1/client_profiles?client_id=eq.' + letter.client_id + '&select=email&limit=1'
+          : '/rest/v1/client_profiles?full_name=eq.' + encodeURIComponent(letter.client_name) + '&select=email&limit=1';
+        const cpRes = await supabaseRequest(cpPath, 'GET', null, supabaseUrl, supabaseKey);
         clientEmail = cpRes.body && cpRes.body[0] && cpRes.body[0].email;
       } catch (e) { /* non-fatal */ }
     }
@@ -412,17 +416,20 @@ exports.handler = async () => {
       const { inFlightLettersForClient } = await import('../../src/utils/inFlightLetters.js');
 
       const pausedRes = await supabaseRequest(
-        '/rest/v1/clients?billing_status=eq.Paused&select=name,status_changed_at,winback_notifications_sent',
+        '/rest/v1/clients?billing_status=eq.Paused&select=id,name,status_changed_at,winback_notifications_sent',
         'GET', null, supabaseUrl, supabaseKey
       );
       const pausedClients = Array.isArray(pausedRes.body) ? pausedRes.body : [];
 
       // Reuse the `letters` array already fetched above (all unresolved,
       // response_outcome is null) instead of a second per-client query.
+      // client_id preferred — client_name alone could pull a same-named
+      // client's in-flight letters into the wrong paused client's count.
       const lettersByClient = new Map();
       for (const l of letters) {
-        if (!lettersByClient.has(l.client_name)) lettersByClient.set(l.client_name, []);
-        lettersByClient.get(l.client_name).push({
+        const key = l.client_id || l.client_name;
+        if (!lettersByClient.has(key)) lettersByClient.set(key, []);
+        lettersByClient.get(key).push({
           id: l.id, furnisher: l.furnisher, phase: l.phase,
           mailedDate: l.mailed_date, deliveredAt: l.delivered_at, responseOutcome: l.response_outcome,
         });
@@ -444,13 +451,15 @@ exports.handler = async () => {
         else if (daysPaused >= 21 && !sentMarkers.includes(step1Marker)) step = 1;
         if (!step) continue;
 
-        const inFlight = inFlightLettersForClient(c.name, lettersByClient.get(c.name) || [], []);
+        const inFlight = inFlightLettersForClient(c.name, lettersByClient.get(c.id) || lettersByClient.get(c.name) || [], []);
         if (inFlight.length === 0) continue; // nothing worth sending — same rule for both steps
 
-        const cpRes = await supabaseRequest(
-          '/rest/v1/client_profiles?full_name=eq.' + encodeURIComponent(c.name) + '&select=email&limit=1',
-          'GET', null, supabaseUrl, supabaseKey
-        );
+        // client_id preferred — client_profiles isn't firm-scoped, so a
+        // same-named client at a different firm could otherwise get this.
+        const cpPath = c.id
+          ? '/rest/v1/client_profiles?client_id=eq.' + c.id + '&select=email&limit=1'
+          : '/rest/v1/client_profiles?full_name=eq.' + encodeURIComponent(c.name) + '&select=email&limit=1';
+        const cpRes = await supabaseRequest(cpPath, 'GET', null, supabaseUrl, supabaseKey);
         const clientEmail = cpRes.body && cpRes.body[0] && cpRes.body[0].email;
         if (!clientEmail) continue;
 
@@ -491,7 +500,7 @@ exports.handler = async () => {
         try {
           await sendgridEmail(clientEmail, 'Status on your file — ' + inFlight.length + ' letter' + (inFlight.length === 1 ? '' : 's') + ' still active', html, sgKey);
           await supabaseRequest(
-            '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
+            '/rest/v1/clients?id=eq.' + c.id,
             'PATCH', { winback_notifications_sent: [...sentMarkers, 'step' + step + '@' + pausedDate] }, supabaseUrl, supabaseKey
           );
           winbackSentCount++;

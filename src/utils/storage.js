@@ -274,6 +274,7 @@ export async function saveLetter(account, client, html, summary, phase, idSuffix
     id,
     user_id: userId,
     created_by: userId,
+    client_id: (client && client.id) || null,
     client_name: clientName,
     furnisher,
     account_id: accountId,
@@ -348,6 +349,7 @@ function normalizeAudit(a) {
 function normalizeLetter(l) {
   return {
     id: l.id,
+    clientId: l.client_id || null,
     clientName: l.client_name,
     furnisher: l.furnisher,
     accountId: l.account_id,
@@ -544,15 +546,24 @@ export async function adminListClients() {
   return out;
 }
 
-export async function deleteClient(clientName) {
+// clientId is optional and preferred over clientName when present — see
+// the client_id migration plan; clients.name has no unique constraint.
+export async function deleteClient(clientName, clientId) {
   const userId = await getUserId();
-  const [a, b] = await Promise.all([
-    supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
-    supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
-    supabase.from('clients').delete().eq('user_id', userId).eq('name', clientName),
+  const [a, b, c] = await Promise.all([
+    clientId
+      ? supabase.from('audits').delete().eq('user_id', userId).eq('client_id', clientId)
+      : supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
+    clientId
+      ? supabase.from('letters').delete().eq('user_id', userId).eq('client_id', clientId)
+      : supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
+    clientId
+      ? supabase.from('clients').delete().eq('user_id', userId).eq('id', clientId)
+      : supabase.from('clients').delete().eq('user_id', userId).eq('name', clientName),
   ]);
   if (a.error) throw a.error;
   if (b.error) throw b.error;
+  if (c.error) throw c.error;
 }
 
 export async function createLead({ name, email, phone, source, notes }) {
@@ -658,7 +669,10 @@ export async function revertClientToLead(clientName) {
   if (error) throw error;
 }
 
-export async function deleteLead(clientName) {
+// clientId is optional — genuinely absent for a lead purely synthesized
+// from orphan audits/letters with no clients row at all (see below), so
+// this always has to tolerate falling back to clientName.
+export async function deleteLead(clientName, clientId) {
   const userId = await getUserId();
   // A "lead" in the dashboard can be a clients row, or purely synthesized
   // from orphan audits/letters with no clients row at all (buildClientMap
@@ -667,9 +681,15 @@ export async function deleteLead(clientName) {
   // delete matched zero rows, threw no error, and the lead reappeared on
   // reload. Clear all three, same as deleteClient().
   const [a, b, c] = await Promise.all([
-    supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
-    supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
-    supabase.from('clients').delete().eq('user_id', userId).eq('name', clientName).eq('status', 'lead'),
+    clientId
+      ? supabase.from('audits').delete().eq('user_id', userId).eq('client_id', clientId)
+      : supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
+    clientId
+      ? supabase.from('letters').delete().eq('user_id', userId).eq('client_id', clientId)
+      : supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
+    clientId
+      ? supabase.from('clients').delete().eq('user_id', userId).eq('id', clientId).eq('status', 'lead')
+      : supabase.from('clients').delete().eq('user_id', userId).eq('name', clientName).eq('status', 'lead'),
   ]);
   if (a.error) throw a.error;
   if (b.error) throw b.error;

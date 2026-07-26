@@ -549,8 +549,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     if (!w) { toast.error('Popup blocked — allow popups to view letters.'); return; }
   };
 
-  const handleDelete = async (name) => {
-    await deleteClient(name);
+  const handleDelete = async (name, clientId) => {
+    await deleteClient(name, clientId);
     setConfirmDelete(null);
     load();
   };
@@ -757,7 +757,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           {confirmDelete === c.name && (
             <div className="pt-4 mt-4 flex items-center gap-3" style={{ borderTop: '1px solid ' + T.grid }}>
               <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
-              <button onClick={() => handleDelete(c.name)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
+              <button onClick={() => handleDelete(c.name, c.id)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
               <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
             </div>
           )}
@@ -1119,7 +1119,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 onDelete={async () => {
                   if (!window.confirm('Delete lead ' + c.name + '? This cannot be undone.')) return;
                   try {
-                    await deleteLead(c.name);
+                    await deleteLead(c.name, c.id);
                     await load();
                   } catch (e) {
                     toast.error('Could not delete lead: ' + e.message);
@@ -1228,7 +1228,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               {confirmDelete === c.name && (
                 <div className="px-4 pb-3 flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
                   <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
-                  <button onClick={() => handleDelete(c.name)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
+                  <button onClick={() => handleDelete(c.name, c.id)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
                   <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
                 </div>
               )}

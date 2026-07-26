@@ -106,18 +106,19 @@ exports.handler = async (event, context) => {
       const formatIn = (str) => str.includes(',') ? `"${str}"` : str;
 
       const names = rawClients.map(c => c.name).filter(Boolean);
-      // client_name alone isn't unique — two different firms (user_id)
-      // could have a same-named client, and without this filter their
-      // letters/audits would leak into this affiliate's portal. This is a
-      // stopgap until letters/audits carry their own client_id (tracked in
-      // ccc-demo-guardrails memory / the client_id migration plan); it
-      // still doesn't disambiguate two same-named clients under the SAME
-      // user_id, only cross-tenant leakage.
+      const ids = rawClients.map(c => c.id).filter(Boolean);
       const userIds = [...new Set(rawClients.map(c => c.user_id).filter(Boolean))];
       if (names.length > 0 && userIds.length > 0) {
         const namesQuery = names.map(formatIn).join(',');
+        const idsQuery = ids.join(',');
         const userIdsQuery = userIds.join(',');
-        const lettersData = await fetchWithKey(`${supabaseUrl}/rest/v1/letters?select=client_name,furnisher,phase,mailed_date,tracking_status,delivered_at,response_outcome,saved_at&client_name=in.(${encodeURIComponent(namesQuery)})&user_id=in.(${userIdsQuery})`);
+        // client_id preferred (these clients' own real ids — no ambiguity
+        // possible) OR'd with the old client_name+user_id match for any
+        // legacy letters/audits rows not yet backfilled with a client_id.
+        // Was a stopgap here (user_id-only scoping) until letters/audits
+        // got their own client_id — see the client_id migration plan.
+        const orFilter = `or=(client_id.in.(${idsQuery}),and(client_id.is.null,client_name.in.(${encodeURIComponent(namesQuery)}),user_id.in.(${userIdsQuery})))`;
+        const lettersData = await fetchWithKey(`${supabaseUrl}/rest/v1/letters?select=client_id,client_name,furnisher,phase,mailed_date,tracking_status,delivered_at,response_outcome,saved_at&${orFilter}`);
         if (Array.isArray(lettersData)) letters = lettersData;
 
         // Current scores live in the audit blob, not client_profiles (that
@@ -125,15 +126,16 @@ exports.handler = async (event, context) => {
         // version of this query selected fields that don't exist, so
         // scoreIncrease was silently 'N/A' for every affiliate, always).
         // report_date desc: audits[0] per client is the latest.
-        const auditsData = await fetchWithKey(`${supabaseUrl}/rest/v1/audits?select=client_name,report_date,audit&client_name=in.(${encodeURIComponent(namesQuery)})&user_id=in.(${userIdsQuery})&order=report_date.desc`);
+        const auditsData = await fetchWithKey(`${supabaseUrl}/rest/v1/audits?select=client_id,client_name,report_date,audit&${orFilter}&order=report_date.desc`);
         const latestAuditByClient = new Map();
         if (Array.isArray(auditsData)) {
           for (const a of auditsData) {
-            if (!latestAuditByClient.has(a.client_name)) latestAuditByClient.set(a.client_name, a);
+            const key = a.client_id || a.client_name;
+            if (!latestAuditByClient.has(key)) latestAuditByClient.set(key, a);
           }
         }
         profiles = clients.map((c) => {
-          const latest = latestAuditByClient.get(c.name);
+          const latest = latestAuditByClient.get(c.id) || latestAuditByClient.get(c.name);
           const scores = latest?.audit?.scores || null;
           return { name: c.name, currentScores: scores };
         });

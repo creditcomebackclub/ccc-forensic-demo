@@ -68,8 +68,8 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
   const [verified, setVerified] = useState(false);
 
   useEffect(() => {
-    getDocuments(letter.clientName).then(setDocs).catch(console.error);
-  }, [letter.clientName]);
+    getDocuments(letter.clientName, letter.clientId).then(setDocs).catch(console.error);
+  }, [letter.clientName, letter.clientId]);
 
   const idDoc = docs.find((d) => d.doc_type === 'id');
   const addressDoc = docs.find((d) => d.doc_type === 'address');
@@ -159,11 +159,12 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         let allPhase1Letters = [];
         let phase1Letters = [];
         try {
-          const { data } = await supabase.from('letters')
-            .select('id, furnisher, html, saved_at, lob_id')
-            .eq('client_name', letter.clientName)
-            .ilike('phase', 'Phase 1%')
-            .order('saved_at', { ascending: true });
+          // clientId preferred — client_name alone can pull in another
+          // same-named client's Phase 1 letters as exhibits.
+          const phase1Query = letter.clientId
+            ? supabase.from('letters').select('id, furnisher, html, saved_at, lob_id').eq('client_id', letter.clientId).ilike('phase', 'Phase 1%').order('saved_at', { ascending: true })
+            : supabase.from('letters').select('id, furnisher, html, saved_at, lob_id').eq('client_name', letter.clientName).ilike('phase', 'Phase 1%').order('saved_at', { ascending: true });
+          const { data } = await phase1Query;
           allPhase1Letters = data || [];
           phase1Letters = (letter.coveredFurnishers && letter.coveredFurnishers.length > 0)
             ? allPhase1Letters.filter((p1) => letter.coveredFurnishers.includes(p1.furnisher))
@@ -182,7 +183,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
         // Exhibit B — furnisher response(s), one section per Phase 1 letter that has one on file
         try {
-          const { data: cp } = await supabase.from('client_profiles').select('user_id').eq('full_name', letter.clientName).limit(1);
+          const cpQuery = letter.clientId
+            ? supabase.from('client_profiles').select('user_id').eq('client_id', letter.clientId).limit(1)
+            : supabase.from('client_profiles').select('user_id').eq('full_name', letter.clientName).limit(1);
+          const { data: cp } = await cpQuery;
           const clientUserId = cp && cp.length > 0 ? cp[0].user_id : null;
           if (clientUserId) {
             for (const p1 of phase1Letters) {
@@ -213,7 +217,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
         // LPOA still included for Phase 3
         try {
-          const { data: clientMeta } = await supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
+          const clientMetaQuery = letter.clientId
+            ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
+            : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
+          const { data: clientMeta } = await clientMetaQuery;
           if (clientMeta && clientMeta.length > 0 && clientMeta[0].lpoa_signature_data?.lpoaUrl) {
             const lpoaRes = await fetch(clientMeta[0].lpoa_signature_data.lpoaUrl);
             const lpoaHtml = await lpoaRes.text();
@@ -245,7 +252,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       } else {
         // Phase 1 enclosures: LPOA + ID + Address
         try {
-          const { data: clientMeta } = await supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
+          const clientMetaQuery = letter.clientId
+            ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
+            : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
+          const { data: clientMeta } = await clientMetaQuery;
           if (clientMeta && clientMeta.length > 0 && clientMeta[0].lpoa_signature_data && clientMeta[0].lpoa_signature_data.lpoaUrl) {
             const lpoaRes = await fetch(clientMeta[0].lpoa_signature_data.lpoaUrl);
             const lpoaHtml = await lpoaRes.text();
@@ -281,7 +291,11 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           finalHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>' + finalHtml + '</body></html>';
         }
       }
-      const tempPath = user.id + '/temp-letters/' + slug(letter.clientName) + '-' + slug(letter.furnisher) + '-' + Date.now() + '.html';
+      // clientId (when known) alongside the readable slug — Date.now() already
+      // makes an exact collision unlikely, but this is a temp path for a
+      // physical-mail send, not worth leaving on name alone when the id is
+      // sitting right there.
+      const tempPath = user.id + '/temp-letters/' + slug(letter.clientName) + (letter.clientId ? '-' + letter.clientId : '') + '-' + slug(letter.furnisher) + '-' + Date.now() + '.html';
       const htmlBlob = new Blob([finalHtml], { type: 'text/html;charset=utf-8' });
       const { error: uploadErr } = await supabase.storage.from('documents').upload(tempPath, htmlBlob, { upsert: true, contentType: 'text/html;charset=utf-8' });
       if (uploadErr) throw new Error('Could not upload letter for mailing: ' + uploadErr.message);
@@ -326,9 +340,16 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           + (saveErr.message || saveErr) + '. Do NOT resend — note the Lob ID and set the mail date on the letter manually.');
       }
 
-      // Fire phase notification (non-blocking)
+      // Fire phase notification (non-blocking). clientId preferred — the
+      // ilike match here vs. exact-match elsewhere in the app was a known
+      // inconsistency where a case-mismatched client could get this email
+      // while other client_name-keyed reads (e.g. the portal) silently
+      // returned nothing for them.
       try {
-        const { data: cp } = await supabase.from('client_profiles').select('email,full_name').ilike('full_name', letter.clientName).limit(1);
+        const notifyCpQuery = letter.clientId
+          ? supabase.from('client_profiles').select('email,full_name').eq('client_id', letter.clientId).limit(1)
+          : supabase.from('client_profiles').select('email,full_name').ilike('full_name', letter.clientName).limit(1);
+        const { data: cp } = await notifyCpQuery;
         if (cp && cp.length > 0 && cp[0].email) {
           const { data: { session } } = await supabase.auth.getSession();
           const token = session?.access_token;

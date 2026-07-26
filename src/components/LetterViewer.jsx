@@ -16,20 +16,22 @@ export default function LetterViewer({ account, client, onClose }) {
     const fetchSigAndGenerate = async () => {
       let enrichedClient = { ...client };
       try {
-        const { data: cp } = await supabase
-          .from('client_profiles')
-          .select('signature_data,full_name')
-          .eq('full_name', client.name)
-          .limit(1);
+        // client.id preferred (client_profiles.client_id, backfilled in the
+        // client_id migration's RLS-foundation phase) — client.name alone
+        // can match the wrong client's signature if two clients share a
+        // name, which would embed the wrong signature into a mailed letter.
+        const cpQuery = client.id
+          ? supabase.from('client_profiles').select('signature_data,full_name').eq('client_id', client.id).limit(1)
+          : supabase.from('client_profiles').select('signature_data,full_name').eq('full_name', client.name).limit(1);
+        const { data: cp } = await cpQuery;
         if (cp && cp.length > 0 && cp[0].signature_data) {
           enrichedClient.signatureData = cp[0].signature_data;
         }
         if (!enrichedClient.signatureData) {
-          const { data: c } = await supabase
-            .from('clients')
-            .select('lpoa_signature_data,name,address')
-            .eq('name', client.name)
-            .limit(1);
+          const clientsQuery = client.id
+            ? supabase.from('clients').select('lpoa_signature_data,name,address').eq('id', client.id).limit(1)
+            : supabase.from('clients').select('lpoa_signature_data,name,address').eq('name', client.name).limit(1);
+          const { data: c } = await clientsQuery;
           if (c && c.length > 0 && c[0].lpoa_signature_data && c[0].lpoa_signature_data.signatureUrl) {
             enrichedClient.signatureData = c[0].lpoa_signature_data.signatureUrl;
           }
