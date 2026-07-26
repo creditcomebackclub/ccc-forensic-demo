@@ -401,9 +401,18 @@ export const handler = async (event) => {
     try {
       const scores = audit.scores || (audit.client && audit.client.scores);
       if (clientName && scores) {
+        // address MUST be in this select list: the auto-populate below guards
+        // on `!existing[0].address` to "only fill blanks", and a column that
+        // isn't selected reads back undefined — so that guard silently
+        // inverted itself and overwrote the stored address on EVERY audit run.
+        // Cost a real correction: staff set Stefani Bryant's current Mesa AZ
+        // address by hand, then her next audit replaced it with the stale
+        // Alabama address her credit file still lists. date_of_birth and phone
+        // were already selected here, so only address was affected.
+        const PROFILE_COLS = 'score_eq_start,score_exp_start,score_tu_start,date_of_birth,phone,address';
         const existingQuery = clientId
-          ? db.from('clients').select('score_eq_start,score_exp_start,score_tu_start,date_of_birth,phone').eq('id', clientId).limit(1)
-          : db.from('clients').select('score_eq_start,score_exp_start,score_tu_start,date_of_birth,phone').eq('name', clientName).eq('user_id', userId).limit(1);
+          ? db.from('clients').select(PROFILE_COLS).eq('id', clientId).limit(1)
+          : db.from('clients').select(PROFILE_COLS).eq('name', clientName).eq('user_id', userId).limit(1);
         const { data: existing } = await existingQuery;
         const hasScores = existing && existing.length > 0 && (existing[0].score_eq_start || existing[0].score_exp_start || existing[0].score_tu_start);
         if (!hasScores) {
@@ -433,7 +442,13 @@ export const handler = async (event) => {
           if (reportCurrentAddress && !existing[0].address) profilePatch.address = reportCurrentAddress;
 
           if (Object.keys(profilePatch).length > 0) {
-            await db.from('clients').update(profilePatch).eq('user_id', userId).eq('name', clientName);
+            // Key on the resolved id when we have one — clients.name has no
+            // unique constraint, so a name-only match here could patch a
+            // same-named client's profile instead (standing client_id rule).
+            const patchQuery = clientId
+              ? db.from('clients').update(profilePatch).eq('id', clientId)
+              : db.from('clients').update(profilePatch).eq('user_id', userId).eq('name', clientName);
+            await patchQuery;
             console.log('[audit] auto-populated profile fields:', Object.keys(profilePatch).join(', '));
           }
         }
