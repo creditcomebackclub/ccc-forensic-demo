@@ -51,7 +51,7 @@ exports.handler = async (event, context) => {
     // are fetched, and the raw ledger/referral_fee never leave this
     // function; only the derived numbers do.
     const clientsData = await fetchWithKey(
-      `${supabaseUrl}/rest/v1/clients?referred_by=eq.${affiliateId}&select=id,name,email,phone,created_at,referral_fee,ledger,score_eq_start,score_exp_start,score_tu_start`
+      `${supabaseUrl}/rest/v1/clients?referred_by=eq.${affiliateId}&select=id,name,user_id,email,phone,created_at,referral_fee,ledger,score_eq_start,score_exp_start,score_tu_start`
     );
     const rawClients = Array.isArray(clientsData) ? clientsData : [];
 
@@ -105,10 +105,19 @@ exports.handler = async (event, context) => {
     if (clients.length > 0) {
       const formatIn = (str) => str.includes(',') ? `"${str}"` : str;
 
-      const names = clients.map(c => c.name).filter(Boolean);
-      if (names.length > 0) {
+      const names = rawClients.map(c => c.name).filter(Boolean);
+      // client_name alone isn't unique — two different firms (user_id)
+      // could have a same-named client, and without this filter their
+      // letters/audits would leak into this affiliate's portal. This is a
+      // stopgap until letters/audits carry their own client_id (tracked in
+      // ccc-demo-guardrails memory / the client_id migration plan); it
+      // still doesn't disambiguate two same-named clients under the SAME
+      // user_id, only cross-tenant leakage.
+      const userIds = [...new Set(rawClients.map(c => c.user_id).filter(Boolean))];
+      if (names.length > 0 && userIds.length > 0) {
         const namesQuery = names.map(formatIn).join(',');
-        const lettersData = await fetchWithKey(`${supabaseUrl}/rest/v1/letters?select=client_name,furnisher,phase,mailed_date,tracking_status,delivered_at,response_outcome,saved_at&client_name=in.(${encodeURIComponent(namesQuery)})`);
+        const userIdsQuery = userIds.join(',');
+        const lettersData = await fetchWithKey(`${supabaseUrl}/rest/v1/letters?select=client_name,furnisher,phase,mailed_date,tracking_status,delivered_at,response_outcome,saved_at&client_name=in.(${encodeURIComponent(namesQuery)})&user_id=in.(${userIdsQuery})`);
         if (Array.isArray(lettersData)) letters = lettersData;
 
         // Current scores live in the audit blob, not client_profiles (that
@@ -116,7 +125,7 @@ exports.handler = async (event, context) => {
         // version of this query selected fields that don't exist, so
         // scoreIncrease was silently 'N/A' for every affiliate, always).
         // report_date desc: audits[0] per client is the latest.
-        const auditsData = await fetchWithKey(`${supabaseUrl}/rest/v1/audits?select=client_name,report_date,audit&client_name=in.(${encodeURIComponent(namesQuery)})&order=report_date.desc`);
+        const auditsData = await fetchWithKey(`${supabaseUrl}/rest/v1/audits?select=client_name,report_date,audit&client_name=in.(${encodeURIComponent(namesQuery)})&user_id=in.(${userIdsQuery})&order=report_date.desc`);
         const latestAuditByClient = new Map();
         if (Array.isArray(auditsData)) {
           for (const a of auditsData) {

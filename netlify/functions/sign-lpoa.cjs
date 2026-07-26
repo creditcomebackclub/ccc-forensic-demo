@@ -120,9 +120,11 @@ exports.handler = async (event) => {
     const base64Data = signatureData.replace(/^data:image\/png;base64,/, '');
     const sigBuffer = Buffer.from(base64Data, 'base64');
 
-    // Upload via Supabase Storage API
+    // Upload via Supabase Storage API. Keyed by clientId, not clientName —
+    // clients.name has no unique constraint, so two same-named clients
+    // would otherwise silently overwrite each other's signature/LPOA.
     const storageRes = await new Promise((resolve, reject) => {
-      const path = '/storage/v1/object/client-docs/standalone/' + encodeURIComponent(clientName) + '/signature.png';
+      const path = '/storage/v1/object/client-docs/standalone/' + clientId + '/signature.png';
       const u = new URL(supabaseUrl + path);
       const options = {
         hostname: u.hostname, port: 443, path: u.pathname, method: 'POST',
@@ -149,7 +151,7 @@ exports.handler = async (event) => {
     }
 
     // Get public URL
-    const sigUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + encodeURIComponent(clientName) + '/signature.png';
+    const sigUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + clientId + '/signature.png';
 
     // Generate signed LPOA HTML
     const lpoaHtml = buildLpoaHtml(clientName, signerName || clientName, signatureData, signedAtTime, resolvedLpoaType);
@@ -161,7 +163,7 @@ exports.handler = async (event) => {
 
     // Upload LPOA HTML
     const lpoaUploadRes = await new Promise((resolve, reject) => {
-      const path = '/storage/v1/object/client-docs/standalone/' + encodeURIComponent(clientName) + '/lpoa-signed.html';
+      const path = '/storage/v1/object/client-docs/standalone/' + clientId + '/lpoa-signed.html';
       const u = new URL(supabaseUrl + path);
       const options = {
         hostname: u.hostname, port: 443, path: u.pathname, method: 'POST',
@@ -185,7 +187,7 @@ exports.handler = async (event) => {
       throw new Error('LPOA upload failed: ' + lpoaUploadRes.status + ' ' + lpoaUploadRes.body);
     }
 
-    const lpoaUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + encodeURIComponent(clientName) + '/lpoa-signed.html';
+    const lpoaUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + clientId + '/lpoa-signed.html';
 
     // Update clients table
     const signatureRecord = {
