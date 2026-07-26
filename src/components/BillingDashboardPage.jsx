@@ -191,6 +191,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   const [commissionPayouts, setCommissionPayouts] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [overheadMonth, setOverheadMonth] = useState(null); // null = current month
 
   const loadExpenses = () => listExpenses().then(setExpenses);
   const handleAddExpense = async (payload) => { await addExpense(payload); loadExpenses(); };
@@ -413,15 +414,20 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
 
   // Overhead: recurring subscriptions repeat every month automatically;
   // variable costs (mail, metered API usage) only count for the specific
-  // month they were entered against.
-  const collectedThisMonth = months[months.length - 1].value;
+  // month they were entered against. Every variable expense is already
+  // saved permanently under its own month regardless of which month is
+  // being viewed right now — overheadMonth only changes what's displayed.
+  const effectiveOverheadMonth = overheadMonth || thisMonth;
+  const overheadMonthEntry = months.find(m => m.ym === effectiveOverheadMonth);
+  const collectedThisMonth = overheadMonthEntry ? overheadMonthEntry.value : 0;
   const recurringExpenses = expenses.filter(e => e.category === 'subscription');
   const recurringTotal = recurringExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const variableThisMonth = expenses.filter(e => e.category === 'variable' && e.month === thisMonth);
+  const variableThisMonth = expenses.filter(e => e.category === 'variable' && e.month === effectiveOverheadMonth);
   const variableTotal = variableThisMonth.reduce((sum, e) => sum + e.amount, 0);
   const totalExpensesThisMonth = recurringTotal + variableTotal;
   const overheadPct = collectedThisMonth > 0 ? (totalExpensesThisMonth / collectedThisMonth) * 100 : 0;
-  const lettersMailedThisMonth = clients.reduce((sum, c) => sum + (c.letters || []).filter(l => ym(l.mailedDate) === thisMonth).length, 0);
+  const netThisMonth = collectedThisMonth - totalExpensesThisMonth;
+  const lettersMailedThisMonth = clients.reduce((sum, c) => sum + (c.letters || []).filter(l => ym(l.mailedDate) === effectiveOverheadMonth).length, 0);
 
   const tierRows = [
     { key: 'VIP', label: 'VIP', color: T.gold, count: tierMix.VIP },
@@ -572,21 +578,35 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
 
       {/* OVERHEAD & EXPENSES */}
       <Panel title="Overhead & Expenses" icon={Receipt} iconColor={T.red}
-        right={<span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ color: overheadPct > 50 ? '#B91C1C' : overheadPct > 30 ? '#D97706' : '#15803D', backgroundColor: overheadPct > 50 ? '#FEF2F2' : overheadPct > 30 ? '#FFFBEB' : '#F0FDF4' }}>
-          {overheadPct.toFixed(0)}% of collected
-        </span>}>
+        right={
+          <div className="flex items-center gap-2.5">
+            <select value={effectiveOverheadMonth} onChange={(e) => setOverheadMonth(e.target.value)}
+              className="border rounded-md px-2 py-1 text-[11px] font-medium focus:outline-none focus:border-navy bg-white" style={{ borderColor: T.border, color: T.ink }}>
+              {[...months].reverse().map(m => (
+                <option key={m.ym} value={m.ym}>{m.label} {m.year}{m.ym === thisMonth ? ' (current)' : ''}</option>
+              ))}
+            </select>
+            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ color: overheadPct > 50 ? '#B91C1C' : overheadPct > 30 ? '#D97706' : '#15803D', backgroundColor: overheadPct > 50 ? '#FEF2F2' : overheadPct > 30 ? '#FFFBEB' : '#F0FDF4' }}>
+              {overheadPct.toFixed(0)}% of collected
+            </span>
+          </div>
+        }>
         <div className="p-5">
-          <div className="grid grid-cols-3 gap-4 mb-5 pb-5 border-b" style={{ borderColor: T.grid }}>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5 pb-5 border-b" style={{ borderColor: T.grid }}>
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Collected This Month</div>
+              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Collected</div>
               <div className="text-[18px] font-bold" style={{ color: T.navy }}>{money(collectedThisMonth)}</div>
             </div>
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Total Expenses This Month</div>
+              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Total Expenses</div>
               <div className="text-[18px] font-bold" style={{ color: T.red }}>{money(totalExpensesThisMonth)}</div>
             </div>
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Letters Mailed This Month</div>
+              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Net</div>
+              <div className="text-[18px] font-bold" style={{ color: netThisMonth >= 0 ? T.green : T.red }}>{money(netThisMonth)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Letters Mailed</div>
               <div className="text-[18px] font-bold" style={{ color: T.ink }}>{lettersMailedThisMonth}</div>
             </div>
           </div>
@@ -594,10 +614,10 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
             <ExpenseList title="Recurring Subscriptions" addLabel="e.g. Netlify, Claude, Gemini" items={recurringExpenses}
               category="subscription" month={null} onAdd={handleAddExpense} onDelete={handleDeleteExpense} />
             <div className="w-px shrink-0 hidden md:block" style={{ backgroundColor: T.grid }} />
-            <ExpenseList title={`Variable Costs — ${thisMonth}`} addLabel="e.g. Mail (Lob), Claude API usage" items={variableThisMonth}
-              category="variable" month={thisMonth} onAdd={handleAddExpense} onDelete={handleDeleteExpense} />
+            <ExpenseList title={`Variable Costs — ${effectiveOverheadMonth}`} addLabel="e.g. Mail (Lob), Claude API usage" items={variableThisMonth}
+              category="variable" month={effectiveOverheadMonth} onAdd={handleAddExpense} onDelete={handleDeleteExpense} />
           </div>
-          <div className="mt-4 text-[11px] text-faint">Recurring subscriptions repeat every month automatically. Variable costs (mail, metered API usage) need to be entered fresh each month from the real invoice — not auto-estimated, so this never drifts from what you actually paid.</div>
+          <div className="mt-4 text-[11px] text-faint">Recurring subscriptions repeat every month automatically. Variable costs (mail, metered API usage) need to be entered fresh each month from the real invoice — not auto-estimated, so this never drifts from what you actually paid. Every entry is saved permanently under its own month — use the selector above to pull any past month's numbers.</div>
         </div>
       </Panel>
 
