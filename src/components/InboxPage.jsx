@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Star, ChevronRight, Send, Clock, Inbox as InboxIcon, FileSignature, FileSearch, MapPinned, Mail as MailIcon, Zap } from 'lucide-react';
 import { adminListClients, updateLetter } from '../utils/storage';
 import { getUnanalyzedResponseStats } from '../utils/actionItems';
+import { normalizeFurnisher } from '../utils/diffEngine';
 import LobMailer from './LobMailer';
 
 const T = {
@@ -70,8 +71,13 @@ function computeInboxColumns(clients, unanalyzedNames) {
 
     const latestAccounts = (c.audits[0] && c.audits[0].audit && c.audits[0].audit.accounts) || [];
     for (const acct of latestAccounts) {
-      if (acct.addressStatus === 'PENDING') {
-        addressConfirm.push({ client: c.name, isVip: c.isVip, furnisher: acct.furnisher, accountId: acct.id });
+      // CONFIRM (matched masterPrompt.js's static list, pre-filled but not
+      // yet human-approved) belongs here too, not just PENDING (no match at
+      // all) — same two statuses the audit-run-background.mjs backfill
+      // resolves. CONFIRM ones are a single approve-click, not a lookup, so
+      // status rides along for the UI to distinguish.
+      if (acct.addressStatus === 'PENDING' || acct.addressStatus === 'CONFIRM') {
+        addressConfirm.push({ client: c.name, isVip: c.isVip, furnisher: acct.furnisher, accountId: acct.id, status: acct.addressStatus });
       }
     }
 
@@ -95,6 +101,27 @@ function computeInboxColumns(clients, unanalyzedNames) {
   phase2Inbox.sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0));
 
   return { newLeads, needsLpoa, auditComplete, addressConfirm, readyToMail, phase2Inbox };
+}
+
+// Same furnisher shows up once per affected client (each is a distinct
+// account needing its own confirm click), but the actual research burden —
+// finding the real address — only needs doing once per furnisher. Groups by
+// the same normalizeFurnisher() key furnisher_addresses itself keys on, so
+// "Capital One Bank, N.A." and "CAPITAL ONE BANK NA" land in one group
+// instead of looking like two furnishers to look up separately. Biggest
+// groups first — confirming a furnisher that's blocking 5 clients clears
+// more of the column at once than one blocking a single client.
+function groupAddressConfirmByFurnisher(items) {
+  const groups = new Map();
+  for (const item of items) {
+    const key = normalizeFurnisher(item.furnisher) || item.furnisher || 'unknown';
+    if (!groups.has(key)) groups.set(key, { key, furnisher: item.furnisher, items: [] });
+    groups.get(key).items.push(item);
+  }
+  return [...groups.values()].sort((a, b) =>
+    b.items.length - a.items.length
+    || (b.items.some((i) => i.isVip) ? 1 : 0) - (a.items.some((i) => i.isVip) ? 1 : 0)
+  );
 }
 
 function AgeBadge({ days }) {
@@ -206,8 +233,19 @@ export default function InboxPage({ isAdmin, onNavigate }) {
         </Column>
 
         <Column icon={MapPinned} title="Address Confirm" hint="Blocking letter generation" count={columns.addressConfirm.length} empty="No addresses pending">
-          {columns.addressConfirm.map((a, i) => (
-            <ItemCard key={i} onClick={() => goto(a.client)} isVip={a.isVip} title={a.client} subtitle={a.furnisher} />
+          {groupAddressConfirmByFurnisher(columns.addressConfirm).map((g) => (
+            <div key={g.key}>
+              <div className="text-[10px] uppercase tracking-wider font-semibold px-1 mb-1 flex items-center justify-between gap-2">
+                <span className="truncate" style={{ color: T.muted }}>{g.furnisher}</span>
+                <span className="shrink-0" style={{ color: T.faint }}>{g.items.length} {g.items.length === 1 ? 'client' : 'clients'}</span>
+              </div>
+              <div className="space-y-1.5 mb-2">
+                {g.items.map((a, i) => (
+                  <ItemCard key={i} onClick={() => goto(a.client)} isVip={a.isVip} title={a.client}
+                    subtitle={a.status === 'CONFIRM' ? 'Suggested address — 1 click to approve' : 'No address on file yet'} />
+                ))}
+              </div>
+            </div>
           ))}
         </Column>
 
