@@ -365,6 +365,21 @@ export async function adminListClients() {
     const meta = metaMap2.get(c.name);
     if (meta) {
       c.id = meta.id;
+      // clients.address was missing from this whole merge block, so it was
+      // never read for any client that has an audit or letter — buildClientMap
+      // only ever sets c.address from an AUDIT row (c.address ||
+      // a.clientAddress), and the row-level fallback further down only runs
+      // for clients with no audits AND no letters. A client with letters but
+      // zero audits (Stefani Bryant, David A. Roberts) therefore had no
+      // source for address at all: the profile panel's save wrote
+      // clients.address successfully (200, no RLS/trigger interference) and
+      // the UI kept showing "Not set" forever, which reads as "it won't let
+      // me save." Manually-set clients.address wins over the audit-derived
+      // value — an admin correcting an address by hand must not be silently
+      // overridden by whatever the last credit report happened to list
+      // (audit-run-background.mjs only seeds clients.address when it's blank,
+      // so these agree for everyone who hasn't been hand-edited).
+      if (meta.address) c.address = meta.address;
       c.email = meta.email || null;
       c.lpoaSigned = meta.lpoa_signed || false;
       c.lpoaSignedAt = meta.lpoa_signed_at || null;
