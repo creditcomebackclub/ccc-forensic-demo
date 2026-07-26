@@ -1,178 +1,153 @@
-# CCC Forensic Suite — Browser Demo
+# Credit Comeback Club — Forensic Operations Suite
 
-A working forensic credit audit + dispute letter generator for **Credit Comeback Club**.
+An internal operations platform and client portal for Credit Comeback Club. It supports the end-to-end credit-repair workflow: lead intake, client onboarding, forensic credit-report audits, dispute-letter generation and mailing, response handling, escalations, billing, affiliate tracking, and client-facing progress updates.
 
-Upload a 3-bureau credit report PDF → get back a structured forensic audit + Phase 1 dispute letters, all built on the CCC methodology (Setup & Spike framework, Metro 2 field violations, FCRA §1681s-2 citations, Johnson v. MBNA standard).
+> This software supports an operational workflow; it is not legal advice. Configure and use it in accordance with applicable credit-repair, privacy, consumer-protection, and data-security requirements.
 
----
+## What is built
 
-## How It Works
+### Staff operations
 
+- Role-aware authentication and administration through Supabase.
+- A dashboard for active dispute campaigns, response windows, escalation readiness, Phase 3/4 workload, deletion outcomes, and portal adoption.
+- Client and lead management with lifecycle statuses, VIP handling, referral data, notes, document status, billing status, and case history.
+- An AI-assisted forensic audit workflow for uploaded credit reports, using CCC methodology and Metro 2 field references.
+- Phase 1 dispute letters, Phase 2 response analysis, Phase 3 CRA escalations, and Phase 4 CFPB/AG escalation generation.
+- Letter review, editing, mail fulfillment through Lob, delivery/return-receipt tracking, and a firm-wide in-flight letter tracker.
+- Document management, LPOA signing/audit logging, response-file uploads, and encrypted handling for selected sensitive client data.
+- Billing, accounts receivable, affiliate commissions, payout tracking, and affiliate management.
+
+### Client and affiliate experiences
+
+- A client portal for onboarding, audit progress, disputes, timeline, documents, billing, VIP services, and concierge chat.
+- Public lead intake and referral flows.
+- Branded affiliate portal data, referral links, and commission visibility.
+
+## Architecture
+
+```text
+React + Vite frontend
+        |
+        +-- Supabase: Auth, Postgres, Storage, RLS
+        |
+        +-- Netlify Functions: privileged workflows, AI jobs, mailing,
+        |                       LPOA, intake, notifications, cron
+        |
+        +-- Anthropic API: audits, letters, response analysis,
+        |                   progress narratives, escalations
+        |
+        +-- Lob: letter fulfillment, tracking, webhooks
+        |
+        +-- Optional concierge service: Python service in /agents
 ```
-Browser (React)
-    │
-    │  POST /api/audit  ─────────► Netlify Function (audit.js)
-    │   { pdfBase64 }                        │
-    │                                        │  Anthropic API
-    │                                        │  + Master System Prompt
-    │                                        │  + PDF
-    │                                        ▼
-    │                              Claude Opus reads PDF,
-    │                              applies CCC forensic methodology,
-    │                              returns structured JSON
-    │                                        │
-    ◄────────────────────────────────────────┘
-   Display:
-   - Client info + 3-bureau scores
-   - Account list (Type A/B/C, violations, batch)
-   - Per-account violation details
-   - "Generate Phase 1 Letter" → renders printable HTML
-```
 
-**The API key never touches the browser.** It lives in Netlify environment variables and is only accessed by the serverless function.
+The browser uses the Supabase anon key only. Privileged serverless functions use the Supabase service-role key and AI/mailing keys, which must remain server-side.
 
----
+## Key areas of the repository
 
-## Local Development
+| Path | Purpose |
+| --- | --- |
+| `src/App.jsx` | Application shell, authentication, navigation, and role-aware views |
+| `src/components/` | Staff dashboard, client management, portal, billing, affiliate, audit, and mailing UI |
+| `src/components/client-portal/` | Client self-service portal tabs and concierge chat |
+| `src/prompts/` | CCC forensic-audit, letter, Phase 2, Phase 4, and progress-narrative prompts |
+| `src/utils/` | Supabase data access, workflow helpers, document handling, reporting, and calculations |
+| `netlify/functions/` | Authenticated/privileged API endpoints, background jobs, Lob integration, webhooks, and cron |
+| `supabase/migrations/` | Database schema, RLS, workflow, security, and data-migration history |
+| `agents/` | Optional Python concierge-agent service |
+| `public/` | Public marketing, intake, legal, embed, and static assets |
+
+## Local development
 
 ### Prerequisites
+
 - Node.js 20+
-- An Anthropic API key
+- A Supabase project with the migrations applied
+- Netlify CLI for local serverless functions
+- Required environment variables configured locally and in Netlify
 
-### Setup
+### Install and run
 
 ```bash
-# Install dependencies
 npm install
-
-# Create env file
-cp .env.example .env
-# Edit .env and add your real ANTHROPIC_API_KEY
-
-# Install Netlify CLI globally (one-time)
-npm install -g netlify-cli
-
-# Run with Netlify dev (this runs both Vite AND the serverless function)
-netlify dev
-```
-
-The Netlify CLI will start everything on `http://localhost:8888`. The React app proxies `/api/*` requests to the serverless function.
-
-### Alternative: Vite-only (without Netlify functions)
-If you want to run just the frontend (functions won't work):
-```bash
 npm run dev
 ```
-Opens on `http://localhost:5173`.
 
----
-
-## Netlify Deployment
-
-### Option 1: Push to GitHub, then connect in Netlify dashboard
-
-1. Push this repo to GitHub
-2. In Netlify dashboard: "Add new site" → "Import an existing project" → connect your repo
-3. Build settings (auto-detected from `netlify.toml`):
-   - Build command: `npm run build`
-   - Publish directory: `dist`
-   - Functions directory: `netlify/functions`
-4. **Critical:** Add environment variable in Site Settings → Environment Variables:
-   - Key: `ANTHROPIC_API_KEY`
-   - Value: your real Anthropic API key
-5. Deploy
-
-### Option 2: Direct CLI deploy
+`npm run dev` starts the Vite frontend only. For the application plus Netlify Functions, use:
 
 ```bash
-netlify login
-netlify init  # link to a new or existing site
-netlify env:set ANTHROPIC_API_KEY sk-ant-...
-netlify deploy --prod
+npx netlify dev
 ```
 
----
+The Netlify development server normally runs at `http://localhost:8888`.
 
-## File Structure
+### Required environment variables
 
-```
-ccc-demo/
-├── netlify/
-│   └── functions/
-│       └── audit.js              # Serverless function — calls Claude API
-├── src/
-│   ├── components/
-│   │   ├── UploadZone.jsx        # PDF drop zone
-│   │   ├── AuditProgress.jsx     # Loading state with step animation
-│   │   ├── AuditResults.jsx      # Results display (accounts, violations, batches)
-│   │   └── LetterViewer.jsx      # HTML letter render + print/download
-│   ├── prompts/
-│   │   └── masterPrompt.js       # THE master CCC system prompt
-│   ├── styles/
-│   │   └── index.css             # Tailwind + custom CSS
-│   ├── utils/
-│   │   └── api.js                # API client wrapper
-│   ├── App.jsx                   # Main app component
-│   └── main.jsx                  # Entry point
-├── index.html
-├── netlify.toml                  # Netlify config (redirects, build, functions)
-├── package.json
-├── postcss.config.js
-├── tailwind.config.js
-└── vite.config.js
+Client-side variables:
+
+```bash
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+VITE_AGENTS_API_URL=  # optional; concierge-agent service URL
 ```
 
----
+Server-only variables:
 
-## How to Modify the Methodology
+```bash
+SUPABASE_SERVICE_ROLE_KEY=
+ANTHROPIC_API_KEY=
+LOB_MODE=test
+LOB_TEST_KEY=
+LOB_LIVE_KEY=
+LOB_WEBHOOK_SECRET=
+```
 
-**All the forensic logic lives in `src/prompts/masterPrompt.js`.**
+Never expose `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, or Lob keys in client code or public build variables.
 
-This is the single file you edit when:
-- A new violation pattern emerges → add it to Section 3
-- A new furnisher gets verified → add to Section 12 master list
-- A new pattern card from a case → add to Section 8 pattern library
-- Letter format changes → edit Section 7
-- Tone or rules change → edit Section 11
+## Database and security
 
-Every API call uses this prompt. Update it once, every future audit reflects the change.
+Apply the SQL migrations in `supabase/migrations/` to the target Supabase project, in filename order. They establish the application’s schema and include changes for client IDs, sensitive data, documents, letters, audits, billing, lifecycle status, escalations, affiliate commissions, and row-level security.
 
----
+Before deploying to a new environment, verify:
 
-## Cost Tracking
+1. Supabase Auth redirect URLs and email templates.
+2. Storage buckets and policies used by client documents and response uploads.
+3. RLS policies for staff, clients, affiliates, and public intake.
+4. Server-side environment variables in Netlify.
+5. Lob test/live mode, webhook secret, sender address, and return-address configuration.
+6. The scheduled `daily-cron` function, configured in `netlify.toml`.
 
-Each audit uses roughly:
-- ~10,000 tokens for the system prompt
-- ~20,000–60,000 tokens for a credit report PDF (depending on length)
-- ~3,000–6,000 tokens output
+## Build and deploy
 
-That's around **$0.30–$0.60 per audit** at current Claude Opus pricing. Letters are around $0.15–$0.30 each.
+```bash
+npm run build
+```
 
-50 active clients running monthly audits + 5–10 letters each ≈ $200–$400/month in API costs. Compare with $30/month × 3 specialists × Claude.ai subscriptions = $90/month in subs but full operational chaos.
+Netlify is configured in `netlify.toml`:
 
----
+- Build command: `npm run build`
+- Publish directory: `dist`
+- Functions directory: `netlify/functions`
+- Node version: 20
 
-## Known Limitations (v1)
+The public homepage is served from `public/home.html`; authenticated app routes fall back to the React application.
 
-- Letters are HTML, not editable .docx. Print-to-PDF works perfectly for mailing.
-- No client management / no persistence between sessions. Each audit is one-shot.
-- No furnisher response analysis (Phase 2/3) yet — Phase 1 only.
-- No DisputeFox integration.
-- Single user. No team / multi-specialist support yet.
+## Current scaling work
 
-All of these are addressable in the next iteration when you're ready to build the full platform. This is the demo that proves it works.
+The admin dashboard and client boards currently load full audit JSON and letter HTML for broad client lists. At higher volume, that creates unnecessary browser payload and memory pressure.
 
----
+[implementation_plan.md](implementation_plan.md) describes the planned remedy:
 
-## Next Steps After Demo Validation
+- fetch lightweight client/audit/letter metadata for dashboard and Kanban views;
+- fetch a client’s full audits and letters only when their detail panel opens;
+- preserve the existing UI while allowing the system to scale to much larger client volumes.
 
-1. **Add Phase 2/3 modes**: upload furnisher response → analyze + build CRA letters
-2. **Add client persistence**: PostgreSQL backend for case state
-3. **Add multi-user auth**: specialist logins, role-based access
-4. **Add letter editing**: structured JSON output + DOCX generation client-side
-5. **Add DisputeFox integration** if they have an API
-6. **Add Phase 2 monitoring dashboard**: track response windows across all clients
+## Validation
 
----
+Run the production build after frontend changes:
 
-*Built by Claude for Credit Comeback Club. The master prompt encodes the full Setup & Spike framework.*
+```bash
+npm run build
+```
+
+For workflow changes, also test the relevant role and path in Netlify local development: staff/admin, client portal, affiliate portal, public intake, mail tracking, and any affected background function.
