@@ -556,7 +556,7 @@ function ClientOnboardingModal({ session, onComplete }) {
                     <input type="checkbox" checked={agreedToTerms} onChange={(e) => setAgreedToTerms(e.target.checked)}
                       className="mt-1 w-4 h-4 rounded border-gray-300 text-amber-500 focus:ring-amber-400" />
                     <span className="text-xs text-gray-600 leading-relaxed">
-                      I have read and agree to the <strong className="text-slate-900">Client Service Agreement</strong> above. I authorize Credit Comeback Club to dispute credit information on my behalf per the Limited Power of Attorney. I understand my electronic signature is legally binding under the ESIGN Act (15 U.S.C. §7001).
+                      I have read and agree to the <strong className="text-slate-900">Client Service Agreement</strong> above. I have also received and reviewed the <a href="/croa-statement.html" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-semibold">Statement of Consumer Rights Under the Credit Repair Organizations Act</a>. I authorize Credit Comeback Club to dispute credit information on my behalf per the Limited Power of Attorney. I understand my electronic signature is legally binding under the ESIGN Act (15 U.S.C. §7001).
                     </span>
                   </label>
 
