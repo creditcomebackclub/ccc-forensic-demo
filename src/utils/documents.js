@@ -45,6 +45,43 @@ export async function uploadDocument(clientId, clientName, docType, file, ownerU
   return storagePath;
 }
 
+// Arbitrary document upload — a dropdown category (or free-typed "Other"
+// text) rather than one of the two fixed slots ('id'/'address'). Unlike
+// uploadDocument, this must never collide with a prior upload of the same
+// category (a client should be able to upload three "Bank Statement"s), so
+// doc_type here is a synthetic, always-unique value — label is what's
+// actually displayed. Same clientId/ownerUserId contract as uploadDocument.
+export async function uploadArbitraryDocument(clientId, clientName, label, file, ownerUserId) {
+  const userId = ownerUserId || await getUserId();
+  if (!clientId) throw new Error('uploadArbitraryDocument requires a clientId');
+  if (!label) throw new Error('uploadArbitraryDocument requires a label');
+  const ext = file.name.split('.').pop().toLowerCase();
+  const docType = 'other-' + crypto.randomUUID();
+  const storagePath = `${userId}/${clientId}/${docType}.${ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('documents')
+    .upload(storagePath, file, { upsert: true });
+  if (uploadError) throw uploadError;
+
+  const { error: dbError } = await supabase.from('documents').insert({
+    user_id: userId,
+    client_id: clientId,
+    client_name: clientName,
+    doc_type: docType,
+    label,
+    file_name: file.name,
+    storage_path: storagePath,
+    uploaded_at: new Date().toISOString(),
+  });
+  if (dbError) throw dbError;
+
+  return storagePath;
+}
+
+// deleteDocument keys on (clientId, docType) — arbitrary uploads' doc_type
+// is already unique per row, so it works unchanged for these too.
+
 export async function getDocuments(clientName, clientId) {
   const userId = await getUserId();
   let query = supabase.from('documents').select('*').eq('user_id', userId);

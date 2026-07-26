@@ -24,7 +24,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const [progressUpdates, setProgressUpdates] = useState([]);
   const [activeTab, setActiveTab] = useState('overview');
   const [uploadingLetter, setUploadingLetter] = useState(null);
-  const [clientDocs, setClientDocs] = useState({ id: null, address: null });
+  const [clientDocs, setClientDocs] = useState({ id: null, address: null, other: [] });
   const [uploadingDoc, setUploadingDoc] = useState(null);
   const [settings, setSettings] = useState(null);
   
@@ -69,8 +69,8 @@ export default function ClientPortal({ session, onSignOut }) {
           ? supabase.from('clients').select('*').eq('id', cp.client_id).limit(1)
           : supabase.from('clients').select('*').eq('name', cp.full_name).limit(1);
         const documentsQuery = cp.client_id
-          ? supabase.from('documents').select('doc_type,file_name,uploaded_at').eq('client_id', cp.client_id)
-          : supabase.from('documents').select('doc_type,file_name,uploaded_at').eq('client_name', cp.full_name);
+          ? supabase.from('documents').select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_id', cp.client_id)
+          : supabase.from('documents').select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_name', cp.full_name);
         const lettersQuery = cp.client_id
           ? supabase.from('letters').select('*').eq('client_id', cp.client_id).order('saved_at', { ascending: true })
           : supabase.from('letters').select('*').eq('client_name', cp.full_name).order('saved_at', { ascending: true });
@@ -98,6 +98,7 @@ export default function ClientPortal({ session, onSignOut }) {
           setClientDocs({
             id: docRows.find(d => d.doc_type === 'id') || null,
             address: docRows.find(d => d.doc_type === 'address') || null,
+            other: docRows.filter(d => d.doc_type !== 'id' && d.doc_type !== 'address'),
           });
         }
       }
@@ -128,6 +129,24 @@ export default function ClientPortal({ session, onSignOut }) {
       setClientDocs(prev => ({ ...prev, [internalDocType]: { name: storagePath } }));
       toast.success('Document uploaded successfully!', { id: toastId });
     } catch(e) {
+      console.error('Doc upload error:', e);
+      toast.error('Upload failed. Please try again.', { id: toastId });
+    }
+    setUploadingDoc(null);
+  };
+
+  const handleUploadOther = async (label, file) => {
+    setUploadingDoc('other');
+    const toastId = toast.loading('Uploading document...');
+    try {
+      const clientId = clientMeta?.id;
+      const adminUserId = clientMeta?.user_id;
+      if (!adminUserId || !clientId) throw new Error('Could not identify client record.');
+      const { uploadArbitraryDocument } = await import('../utils/documents.js');
+      await uploadArbitraryDocument(clientId, profile.full_name, label, file, adminUserId);
+      await loadData();
+      toast.success('Document uploaded successfully!', { id: toastId });
+    } catch (e) {
       console.error('Doc upload error:', e);
       toast.error('Upload failed. Please try again.', { id: toastId });
     }
@@ -399,6 +418,7 @@ export default function ClientPortal({ session, onSignOut }) {
                 clientDocs={clientDocs}
                 uploadingDoc={uploadingDoc}
                 handleUploadDoc={handleUploadDoc}
+                handleUploadOther={handleUploadOther}
                 monitoringStep={monitoringStep}
                 setMonitoringStep={setMonitoringStep}
                 monitoringForm={monitoringForm}

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Upload, FileText, Trash2, Eye, CheckCircle, Zap } from 'lucide-react';
-import { uploadDocument, getDocuments, getDocumentUrl, deleteDocument } from '../utils/documents';
+import { uploadDocument, uploadArbitraryDocument, getDocuments, getDocumentUrl, deleteDocument } from '../utils/documents';
 import { supabase } from '../utils/supabase';
 import { CONVERTED_PREFIX, groupResponseFiles } from '../utils/responseFiles';
 
@@ -18,6 +18,13 @@ const T = {
 const DOC_TYPES = [
   { key: 'id', label: 'Government ID', desc: "Driver's license or passport" },
   { key: 'address', label: 'Proof of Address', desc: 'Utility bill or bank statement' },
+];
+
+// Common categories for the arbitrary-upload dropdown — "Other" reveals a
+// free-text field instead of forcing a fit into one of these.
+const OTHER_DOC_CATEGORIES = [
+  'Bank Statement', 'Pay Stub', 'Tax Document', 'Court Document',
+  'Insurance Document', 'Correspondence', 'Original Forensic Audit', 'Other',
 ];
 
 function SectionLabel({ children, right }) {
@@ -147,6 +154,117 @@ function DocSlot({ clientId, clientName, docType, label, desc, onChanged }) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function OtherDocumentsSection({ clientId, clientName, onChanged }) {
+  const [docs, setDocs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [category, setCategory] = useState(OTHER_DOC_CATEGORIES[0]);
+  const [customLabel, setCustomLabel] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const load = async () => {
+    try {
+      const all = await getDocuments(clientName, clientId);
+      setDocs(all.filter((d) => d.doc_type !== 'id' && d.doc_type !== 'address'));
+    } catch (e) { console.error('Other-docs load failed', e); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, [clientId, clientName]);
+
+  const handleUpload = async (file) => {
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) { setError('PDF, JPG, PNG, or WEBP only'); return; }
+    if (file.size > 10 * 1024 * 1024) { setError('File must be under 10MB'); return; }
+    const label = category === 'Other' ? customLabel.trim() : category;
+    if (!label) { setError('Enter a name for this document.'); return; }
+    setUploading(true);
+    setError(null);
+    try {
+      await uploadArbitraryDocument(clientId, clientName, label, file);
+      setCustomLabel('');
+      await load();
+      onChanged();
+    } catch (e) {
+      setError(e.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleView = async (doc) => {
+    try {
+      const url = await getDocumentUrl(doc.storage_path);
+      window.open(url, '_blank');
+    } catch (e) { alert('Could not open document: ' + e.message); }
+  };
+
+  const handleDelete = async (doc) => {
+    if (!window.confirm('Remove "' + (doc.label || doc.file_name) + '"?')) return;
+    try {
+      await deleteDocument(clientId, doc.doc_type);
+      await load();
+      onChanged();
+    } catch (e) { alert('Could not delete: ' + e.message); }
+  };
+
+  return (
+    <div>
+      <div style={{ border: '1px solid ' + T.border, borderRadius: 10, padding: 14, background: '#FAFBFC', marginBottom: docs.length > 0 ? 10 : 0 }}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select value={category} onChange={(e) => setCategory(e.target.value)}
+            className="text-[12px] border rounded-md px-2 py-1.5" style={{ borderColor: T.border }}>
+            {OTHER_DOC_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {category === 'Other' && (
+            <input value={customLabel} onChange={(e) => setCustomLabel(e.target.value)} placeholder="Document name"
+              className="text-[12px] border rounded-md px-2 py-1.5 flex-1 min-w-[140px]" style={{ borderColor: T.border }} />
+          )}
+          <label className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-md cursor-pointer shrink-0"
+            style={{ background: T.navy, color: T.gold, opacity: uploading ? 0.6 : 1 }}>
+            {uploading ? 'Uploading…' : 'Choose File'}
+            <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden" disabled={uploading}
+              onChange={(e) => { if (e.target.files[0]) handleUpload(e.target.files[0]); e.target.value = ''; }} />
+          </label>
+        </div>
+        {error && <div className="text-[10px] text-red-600 mt-1.5">{error}</div>}
+      </div>
+
+      {!loading && docs.length > 0 && (
+        <div style={{ border: '1px solid #EBEEF3', borderRadius: 10 }}>
+          {docs.map((doc) => (
+            <div key={doc.id || doc.storage_path} className="flex items-center justify-between gap-3 px-3 py-2.5 border-b last:border-b-0" style={{ borderColor: T.grid }}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="shrink-0 flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 8, background: '#EEF1F7' }}>
+                  <FileText size={13} strokeWidth={1.75} style={{ color: T.navy }} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[12px] font-medium truncate" style={{ color: T.ink }}>{doc.label || doc.file_name}</div>
+                  <div className="text-[10px] truncate" style={{ color: T.muted }}>
+                    {doc.file_name} · {doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button onClick={() => handleView(doc)} title="View document"
+                  className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border transition-colors hover:border-navy hover:text-navy"
+                  style={{ borderColor: T.border, color: T.muted }}>
+                  <Eye size={11} strokeWidth={1.75} /> View
+                </button>
+                <button onClick={() => handleDelete(doc)} title="Remove"
+                  className="flex items-center justify-center rounded-md transition-colors hover:bg-red-50 hover:text-red-600"
+                  style={{ width: 24, height: 24, color: T.faint }}>
+                  <Trash2 size={12} strokeWidth={1.75} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -305,6 +423,10 @@ export default function DocumentManager({ clientId, clientName, letters, onChang
         <div className="text-[10px] mt-2 leading-relaxed" style={{ color: T.faint }}>
           Documents are stored securely and attached as enclosures when mailing via Lob.
         </div>
+      </div>
+      <div>
+        <SectionLabel>Other Documents</SectionLabel>
+        <OtherDocumentsSection clientId={clientId} clientName={clientName} onChanged={onChanged} />
       </div>
       <div>
         <SectionLabel>Client-Uploaded Responses</SectionLabel>

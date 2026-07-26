@@ -1,0 +1,13 @@
+-- Arbitrary document uploads (dropdown + "Other" free text). Purely
+-- additive — no existing behavior changes.
+--
+-- documents.doc_type is the identity that uploadDocument's upsert conflicts
+-- on (user_id, client_id, doc_type), which is exactly right for the two
+-- fixed slots ('id', 'address') where only one document should ever exist.
+-- Arbitrary uploads need the opposite property — many documents per client,
+-- never colliding — so they get a synthetic always-unique doc_type
+-- (generated client-side, see uploadArbitraryDocument in documents.js) and
+-- this new label column holds what's actually shown to staff/the client:
+-- the dropdown category, or their own typed text when they pick "Other".
+-- No constraint changes at all; 'id'/'address' behavior is untouched.
+alter table public.documents add column if not exists label text;

@@ -1,7 +1,84 @@
-import React from 'react';
-import { ExternalLink, FileText, Shield, Upload } from 'lucide-react';
+import React, { useState } from 'react';
+import { ExternalLink, FileText, Shield, Upload, Eye, Trash2 } from 'lucide-react';
 import { supabase } from '../../utils/supabase';
 import { writeClientSensitiveData } from '../../utils/clientSensitiveData';
+import { getDocumentUrl, deleteDocument } from '../../utils/documents';
+
+const OTHER_DOC_CATEGORIES = [
+  'Bank Statement', 'Pay Stub', 'Tax Document', 'Court Document',
+  'Insurance Document', 'Correspondence', 'Other',
+];
+
+function OtherDocsCard({ docs, uploadingOther, handleUploadOther, clientId, onChanged }) {
+  const [category, setCategory] = useState(OTHER_DOC_CATEGORIES[0]);
+  const [customLabel, setCustomLabel] = useState('');
+  const [error, setError] = useState(null);
+
+  const handleFile = (file) => {
+    const label = category === 'Other' ? customLabel.trim() : category;
+    if (!label) { setError('Enter a name for this document.'); return; }
+    setError(null);
+    setCustomLabel('');
+    handleUploadOther(label, file);
+  };
+
+  const handleView = async (doc) => {
+    try {
+      const url = await getDocumentUrl(doc.storage_path);
+      window.open(url, '_blank');
+    } catch (e) { alert('Could not open document: ' + e.message); }
+  };
+
+  const handleDelete = async (doc) => {
+    if (!window.confirm('Remove "' + (doc.label || doc.file_name) + '"?')) return;
+    try {
+      await deleteDocument(clientId, doc.doc_type);
+      onChanged();
+    } catch (e) { alert('Could not delete: ' + e.message); }
+  };
+
+  return (
+    <div className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-5 shadow-sm">
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        <select value={category} onChange={(e) => setCategory(e.target.value)}
+          className="text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white">
+          {OTHER_DOC_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {category === 'Other' && (
+          <input value={customLabel} onChange={(e) => setCustomLabel(e.target.value)} placeholder="Document name"
+            className="text-xs border border-gray-200 rounded-lg px-3 py-2 flex-1 min-w-[140px]" />
+        )}
+        <label className={`flex items-center gap-1.5 text-[11px] px-4 py-2 rounded-lg font-semibold cursor-pointer whitespace-nowrap shrink-0 bg-slate-900 text-amber-400 hover:bg-slate-800 transition-all ${uploadingOther ? 'opacity-50 pointer-events-none' : ''}`}>
+          <Upload size={12} strokeWidth={2.5} />
+          {uploadingOther ? 'Uploading…' : 'Upload'}
+          <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+            onChange={(e) => { if (e.target.files[0]) handleFile(e.target.files[0]); e.target.value = ''; }} />
+        </label>
+      </div>
+      {error && <div className="text-[11px] text-red-600 mb-2">{error}</div>}
+      {docs && docs.length > 0 && (
+        <div className="space-y-2">
+          {docs.map((doc) => (
+            <div key={doc.id || doc.storage_path} className="flex items-center justify-between gap-3 border border-gray-100 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText size={14} className="text-slate-400 shrink-0" strokeWidth={1.75} />
+                <span className="text-xs font-medium text-slate-900 truncate">{doc.label || doc.file_name}</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => handleView(doc)} className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-900 flex items-center gap-1">
+                  <Eye size={11} /> View
+                </button>
+                <button onClick={() => handleDelete(doc)} className="text-slate-300 hover:text-red-600">
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function DocCard({ icon, title, subtitle, uploaded_at, docType, uploadingDoc, handleUploadDoc, done }) {
   const isUploading = uploadingDoc === docType;
@@ -42,6 +119,8 @@ export default function DocumentsTab({
   clientDocs,
   uploadingDoc,
   handleUploadDoc,
+  handleUploadOther,
+  loadData,
   monitoringStep,
   setMonitoringStep,
   monitoringForm,
@@ -50,7 +129,6 @@ export default function DocumentsTab({
   setMonitoringSaving,
   monitoringError,
   setMonitoringError,
-  loadData,
 }) {
   const allDocsDone = !!clientDocs.id && !!clientDocs.address && clientMeta?.lpoa_signed;
 
@@ -104,6 +182,18 @@ export default function DocumentsTab({
             done={!!clientDocs.address}
           />
         </div>
+      </div>
+
+      {/* Other documents */}
+      <div>
+        <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 mb-3">Other Documents</div>
+        <OtherDocsCard
+          docs={clientDocs.other || []}
+          uploadingOther={uploadingDoc === 'other'}
+          handleUploadOther={handleUploadOther}
+          clientId={clientMeta?.id}
+          onChanged={loadData}
+        />
       </div>
 
       {/* Credit Monitoring */}
