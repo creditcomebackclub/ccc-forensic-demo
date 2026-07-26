@@ -31,69 +31,68 @@ export async function getProfile() {
   return data;
 }
 
-export async function updateClientProfile(clientName, fields) {
+// clientId is optional and preferred over clientName when present — see
+// the client_id migration plan; clients.name has no unique constraint.
+// Genuinely absent for a lead purely synthesized from orphan audits/letters
+// with no clients row yet (see deleteLead), so upsert (not update) is kept
+// either way — conflict target just switches to the real PK when we have it,
+// which also means an existing row is matched/updated by id even if its
+// name has since changed, instead of silently creating a second row.
+export async function updateClientProfile(clientName, fields, clientId) {
   const userId = await getUserId();
-  const { error } = await supabase.from('clients').upsert({
-    user_id: userId,
-    name: clientName,
-    ...fields,
-  }, { onConflict: 'user_id,name' });
+  const { error } = clientId
+    ? await supabase.from('clients').upsert({ id: clientId, user_id: userId, name: clientName, ...fields }, { onConflict: 'id' })
+    : await supabase.from('clients').upsert({ user_id: userId, name: clientName, ...fields }, { onConflict: 'user_id,name' });
   if (error) throw error;
 }
 
-export async function updateClientEmail(clientName, email) {
+export async function updateClientEmail(clientName, email, clientId) {
   const userId = await getUserId();
-  const { error } = await supabase.from('clients').upsert({
-    user_id: userId, name: clientName, email,
-  }, { onConflict: 'user_id,name' });
+  const { error } = clientId
+    ? await supabase.from('clients').upsert({ id: clientId, user_id: userId, name: clientName, email }, { onConflict: 'id' })
+    : await supabase.from('clients').upsert({ user_id: userId, name: clientName, email }, { onConflict: 'user_id,name' });
   if (error) throw error;
 }
 
-export async function updateLeadInfo(clientName, { email, phone, source, notes }) {
+export async function updateLeadInfo(clientName, { email, phone, source, notes }, clientId) {
   const userId = await getUserId();
-  const patch = { user_id: userId, name: clientName };
+  const patch = clientId ? { id: clientId, user_id: userId, name: clientName } : { user_id: userId, name: clientName };
   if (email !== undefined) patch.email = email || null;
   if (phone !== undefined) patch.lead_phone = phone || null;
   if (source !== undefined) patch.lead_source = source || null;
   if (notes !== undefined) patch.lead_notes = notes || null;
-  const { error } = await supabase.from('clients').upsert(patch, { onConflict: 'user_id,name' });
+  const { error } = await supabase.from('clients').upsert(patch, clientId ? { onConflict: 'id' } : { onConflict: 'user_id,name' });
   if (error) throw error;
 }
 
 // Lead pipeline stage lives in the tags array as 'lead-stage:<stage>' —
 // no schema change needed; other tags are preserved
-export async function updateLeadStage(clientName, stage, existingTags) {
+export async function updateLeadStage(clientName, stage, existingTags, clientId) {
   const userId = await getUserId();
   const tags = (existingTags || []).map(String).filter((t) => !t.startsWith('lead-stage:'));
   if (stage) tags.push('lead-stage:' + stage);
-  const { error } = await supabase.from('clients').upsert({
-    user_id: userId,
-    name: clientName,
-    tags,
-  }, { onConflict: 'user_id,name' });
+  const { error } = clientId
+    ? await supabase.from('clients').upsert({ id: clientId, user_id: userId, name: clientName, tags }, { onConflict: 'id' })
+    : await supabase.from('clients').upsert({ user_id: userId, name: clientName, tags }, { onConflict: 'user_id,name' });
   if (error) throw error;
 }
 
 // Clears the sidebar's "new leads" badge for this one lead — stamped the
 // moment staff open its card, not on any timer, so the badge behaves like a
 // real notification instead of decaying on a 48h clock.
-export async function markLeadViewed(clientName) {
+export async function markLeadViewed(clientName, clientId) {
   const userId = await getUserId();
-  const { error } = await supabase.from('clients').upsert({
-    user_id: userId,
-    name: clientName,
-    lead_viewed_at: new Date().toISOString(),
-  }, { onConflict: 'user_id,name' });
+  const { error } = clientId
+    ? await supabase.from('clients').upsert({ id: clientId, user_id: userId, name: clientName, lead_viewed_at: new Date().toISOString() }, { onConflict: 'id' })
+    : await supabase.from('clients').upsert({ user_id: userId, name: clientName, lead_viewed_at: new Date().toISOString() }, { onConflict: 'user_id,name' });
   if (error) throw error;
 }
 
-export async function toggleVip(clientName, isVip) {
+export async function toggleVip(clientName, isVip, clientId) {
   const userId = await getUserId();
-  const { error } = await supabase.from('clients').upsert({
-    user_id: userId,
-    name: clientName,
-    is_vip: isVip,
-  }, { onConflict: 'user_id,name' });
+  const { error } = clientId
+    ? await supabase.from('clients').upsert({ id: clientId, user_id: userId, name: clientName, is_vip: isVip }, { onConflict: 'id' })
+    : await supabase.from('clients').upsert({ user_id: userId, name: clientName, is_vip: isVip }, { onConflict: 'user_id,name' });
   if (error) throw error;
 }
 
@@ -644,13 +643,14 @@ export async function getProgressUpdates(clientName) {
   return data || [];
 }
 
-export async function convertLeadToClient(clientName) {
+// clientId is optional and preferred over clientName when present — see
+// the client_id migration plan; clients.name has no unique constraint.
+export async function convertLeadToClient(clientName, clientId) {
   const userId = await getUserId();
-  const { error } = await supabase
-    .from('clients')
-    .update({ status: 'active', enrollment_date: new Date().toISOString().slice(0, 10) })
-    .eq('user_id', userId)
-    .eq('name', clientName);
+  const patch = { status: 'active', enrollment_date: new Date().toISOString().slice(0, 10) };
+  const { error } = clientId
+    ? await supabase.from('clients').update(patch).eq('user_id', userId).eq('id', clientId)
+    : await supabase.from('clients').update(patch).eq('user_id', userId).eq('name', clientName);
   if (error) throw error;
 }
 
@@ -659,18 +659,17 @@ export async function convertLeadToClient(clientName) {
 // convertLeadToClient set (plus a fresh lead_viewed_at/lead_created_at so
 // they reappear as a new, unviewed lead in the pipeline) — existing audit,
 // letter, and document history is left untouched in case they come back.
-export async function revertClientToLead(clientName) {
+export async function revertClientToLead(clientName, clientId) {
   const userId = await getUserId();
-  const { error } = await supabase
-    .from('clients')
-    .update({
-      status: 'lead',
-      enrollment_date: null,
-      lead_created_at: new Date().toISOString(),
-      lead_viewed_at: null,
-    })
-    .eq('user_id', userId)
-    .eq('name', clientName);
+  const patch = {
+    status: 'lead',
+    enrollment_date: null,
+    lead_created_at: new Date().toISOString(),
+    lead_viewed_at: null,
+  };
+  const { error } = clientId
+    ? await supabase.from('clients').update(patch).eq('user_id', userId).eq('id', clientId)
+    : await supabase.from('clients').update(patch).eq('user_id', userId).eq('name', clientName);
   if (error) throw error;
 }
 

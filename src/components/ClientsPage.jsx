@@ -555,10 +555,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     load();
   };
 
-  const handleVipToggle = async (clientName, currentVip) => {
+  const handleVipToggle = async (clientName, currentVip, clientId) => {
     setTogglingVip(clientName);
     try {
-      await toggleVip(clientName, !currentVip);
+      await toggleVip(clientName, !currentVip, clientId);
       await load();
     } catch (e) {
       toast.error('Could not update VIP status: ' + (e.message || e));
@@ -674,7 +674,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       {
         label: 'Revert to lead…', onClick: async () => {
           if (window.confirm(c.name + ' will move back to the Leads pipeline (existing audits, letters, and documents stay untouched in case they come back). Continue?')) {
-            await revertClientToLead(c.name);
+            await revertClientToLead(c.name, c.id);
             load();
           }
         },
@@ -730,7 +730,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                </div>
                
                <div className="flex items-center gap-2 mt-2">
-                 <button onClick={() => handleVipToggle(c.name, c.isVip)} disabled={togglingVip === c.name} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md border transition-colors hover:bg-gray-50 disabled:opacity-50" style={{ borderColor: T.border, color: T.ink }}>
+                 <button onClick={() => handleVipToggle(c.name, c.isVip, c.id)} disabled={togglingVip === c.name} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md border transition-colors hover:bg-gray-50 disabled:opacity-50" style={{ borderColor: T.border, color: T.ink }}>
                    {togglingVip === c.name ? 'Updating…' : (c.isVip ? 'Remove VIP' : 'Set as VIP')}
                  </button>
                  {!c.portalOnboarded && (
@@ -748,8 +748,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               <input type="email" value={emailVal} onChange={(e) => setEmailVal(e.target.value)}
                 className="text-[11px] border border-border rounded-sm px-2 py-1 w-56"
                 placeholder="client@email.com" autoFocus
-                onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
-              <button onClick={() => { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm">Save</button>
+                onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal, c.id).then(load); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
+              <button onClick={() => { updateClientEmail(c.name, emailVal, c.id).then(load); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm">Save</button>
               <button onClick={() => setEditingEmail(null)} className="text-[10px] text-ink-muted">Cancel</button>
             </div>
           )}
@@ -1097,7 +1097,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 onViewed={async () => {
                   if (c.leadViewedAt) return;
                   try {
-                    await markLeadViewed(c.name);
+                    await markLeadViewed(c.name, c.id);
                     c.leadViewedAt = new Date().toISOString(); // avoid re-firing before the next full reload
                     if (onLeadsChanged) onLeadsChanged();
                   } catch (e) {
@@ -1107,7 +1107,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 onConvert={async () => {
                   setConvertingLead(c.name);
                   try {
-                    await convertLeadToClient(c.name);
+                    await convertLeadToClient(c.name, c.id);
                     await load();
                   } catch (e) {
                     toast.error('Could not convert lead: ' + e.message);
@@ -1142,7 +1142,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
           const lpoaUrl = c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl;
           const clientMenu = [
-            { label: togglingVip === c.name ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip), disabled: togglingVip === c.name },
+            { label: togglingVip === c.name ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip, c.id), disabled: togglingVip === c.name },
             { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
             'divider',
             !c.portalOnboarded && { label: sendingLpoa === c.name ? 'Sending Invite…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Portal Invite & LPOA'), onClick: () => handleSendInvite(c), disabled: !c.email || sendingLpoa === c.name, title: !c.email ? 'Add email first' : undefined },
@@ -1153,7 +1153,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             {
               label: 'Revert to lead…', onClick: async () => {
                 if (window.confirm(c.name + ' will move back to the Leads pipeline (existing audits, letters, and documents stay untouched in case they come back). Continue?')) {
-                  await revertClientToLead(c.name);
+                  await revertClientToLead(c.name, c.id);
                   load();
                 }
               },
@@ -1219,8 +1219,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   <input type="email" value={emailVal} onChange={(e) => setEmailVal(e.target.value)}
                     className="text-[11px] border border-border rounded-sm px-2 py-1 w-56"
                     placeholder="client@email.com" autoFocus
-                    onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
-                  <button onClick={() => { updateClientEmail(c.name, emailVal).then(load); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm">Save</button>
+                    onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal, c.id).then(load); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
+                  <button onClick={() => { updateClientEmail(c.name, emailVal, c.id).then(load); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm">Save</button>
                   <button onClick={() => setEditingEmail(null)} className="text-[10px] text-ink-muted">Cancel</button>
                 </div>
               )}
@@ -1465,7 +1465,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
   const handleSave = async () => {
     setSaving(true);
     try {
-      await updateLeadInfo(c.name, { email: emailVal.trim(), phone: phoneVal.trim(), source: sourceVal, notes: notesVal.trim() });
+      await updateLeadInfo(c.name, { email: emailVal.trim(), phone: phoneVal.trim(), source: sourceVal, notes: notesVal.trim() }, c.id);
       setEditing(false);
       if (onChanged) await onChanged();
     } catch (e) {
@@ -1479,7 +1479,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
     if (!quickEmail.trim()) return;
     setSavingEmail(true);
     try {
-      await updateLeadInfo(c.name, { email: quickEmail.trim().toLowerCase() });
+      await updateLeadInfo(c.name, { email: quickEmail.trim().toLowerCase() }, c.id);
       setQuickEmail('');
       if (onChanged) await onChanged();
     } catch (e) {
@@ -1492,7 +1492,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
   const handleStageChange = async (next) => {
     setSavingStage(true);
     try {
-      await updateLeadStage(c.name, next, c.tags);
+      await updateLeadStage(c.name, next, c.tags, c.id);
       if (onChanged) await onChanged();
     } catch (e) {
       toast.error('Could not update stage: ' + e.message);

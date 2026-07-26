@@ -74,9 +74,13 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
     }
   };
 
-  const setClientRateOverride = async (clientName, value) => {
+  const setClientRateOverride = async (clientName, value, clientId) => {
     let override = value ? parseFloat(value) : null;
-    await supabase.from('clients').update({ referral_fee: override }).eq('name', clientName);
+    if (clientId) {
+      await supabase.from('clients').update({ referral_fee: override }).eq('id', clientId);
+    } else {
+      await supabase.from('clients').update({ referral_fee: override }).eq('name', clientName);
+    }
     onUpdate && onUpdate();
   };
 
@@ -261,7 +265,7 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
                             type="number"
                             defaultValue={c.referral_fee || ''}
                             placeholder={`${Math.round((affiliate.commission_rate || 0.20) * 100)}%`}
-                            onBlur={e => setClientRateOverride(c.name, e.target.value)}
+                            onBlur={e => setClientRateOverride(c.name, e.target.value, c.id)}
                             className="w-14 text-[11px] px-1.5 py-1 border rounded bg-white text-center"
                           />
                         </td>

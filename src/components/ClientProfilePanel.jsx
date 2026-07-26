@@ -280,7 +280,7 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
   }, []);
 
   const save = async (fields) => {
-    await updateClientProfile(client.name, fields);
+    await updateClientProfile(client.name, fields, client.id);
     onChanged();
   };
 

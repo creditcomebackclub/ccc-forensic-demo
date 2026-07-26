@@ -209,7 +209,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
 
   const save = async (fields) => {
     try {
-      await updateClientProfile(client.name, fields);
+      await updateClientProfile(client.name, fields, client.id);
       if (onChanged) onChanged();
     } catch (e) {
       console.error('Failed to save billing settings:', e);

@@ -72,7 +72,7 @@ exports.handler = async (event) => {
     // Resolve the caller's own client identity — never trust a client-
     // supplied name/id for whose audit entry this is.
     const profileRes = await supabaseRequest(
-      '/rest/v1/client_profiles?user_id=eq.' + encodeURIComponent(userId) + '&select=full_name',
+      '/rest/v1/client_profiles?user_id=eq.' + encodeURIComponent(userId) + '&select=full_name,client_id',
       'GET', null, supabaseUrl, serviceKey
     );
     const profile = Array.isArray(profileRes.body) && profileRes.body[0];
@@ -81,12 +81,19 @@ exports.handler = async (event) => {
     }
     const clientName = profile.full_name;
 
-    const clientRes = await supabaseRequest(
-      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id',
-      'GET', null, supabaseUrl, serviceKey
-    );
-    const clientRow = Array.isArray(clientRes.body) && clientRes.body[0];
-    const clientId = clientRow ? clientRow.id : null;
+    // client_profiles.client_id (backfilled in the client_id migration's
+    // RLS-foundation phase) is preferred — it's resolved from the
+    // auth-verified session's own profile row, not a name re-lookup. Falls
+    // back to the name lookup only for a profile not yet backfilled.
+    let clientId = profile.client_id || null;
+    if (!clientId) {
+      const clientRes = await supabaseRequest(
+        '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id',
+        'GET', null, supabaseUrl, serviceKey
+      );
+      const clientRow = Array.isArray(clientRes.body) && clientRes.body[0];
+      clientId = clientRow ? clientRow.id : null;
+    }
 
     const ip = (event.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
     const userAgent = event.headers['user-agent'] || null;
