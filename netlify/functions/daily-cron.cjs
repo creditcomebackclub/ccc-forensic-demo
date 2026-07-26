@@ -208,42 +208,52 @@ exports.handler = async () => {
   let reportRefreshDripsCount = 0;
   if (sgKey) {
     try {
-      const auditsRes = await supabaseRequest('/rest/v1/audits?select=id,client_name,user_id,saved_at,report_date', 'GET', null, supabaseUrl, supabaseKey);
+      const auditsRes = await supabaseRequest('/rest/v1/audits?select=id,client_id,client_name,user_id,saved_at,report_date', 'GET', null, supabaseUrl, supabaseKey);
       const audits = Array.isArray(auditsRes.body) ? auditsRes.body : [];
-      
-      // Group audits by client_name (or user_id) to find the LATEST audit for each client
+
+      // Group by client_id when available (falls back to user_id+client_name
+      // for rows not yet backfilled — see the client_id migration plan).
+      // Grouping by client_name alone, with no user_id, used to let two
+      // different firms' same-named clients collide into one "latest audit"
+      // bucket below, which could then email/patch the WRONG firm's client
+      // record entirely — client_id closes that, not just the same-tenant
+      // same-name case.
       const latestAudits = new Map();
       for (const a of audits) {
         const dateStr = a.saved_at || a.report_date;
         if (!dateStr) continue;
-        const currentLatest = latestAudits.get(a.client_name);
+        const key = a.client_id || (a.user_id + '::' + a.client_name);
+        const currentLatest = latestAudits.get(key);
         if (!currentLatest || dateStr > (currentLatest.saved_at || currentLatest.report_date)) {
-          latestAudits.set(a.client_name, a);
+          latestAudits.set(key, a);
         }
       }
 
-      for (const [clientName, audit] of latestAudits.entries()) {
+      for (const audit of latestAudits.values()) {
+        const clientName = audit.client_name;
         const dateStr = audit.saved_at || audit.report_date;
         const daysElapsed = daysBetween(dateStr.slice(0, 10), today);
-        
+
         if (daysElapsed === 35) {
           // Check if we already sent a reminder for this specific audit ID to prevent duplicate emails
           // We'll store it in the client's lead_drips_sent array with a unique prefix
-          const clientsRes = await supabaseRequest(`/rest/v1/clients?name=eq.${encodeURIComponent(clientName)}&select=email,lead_drips_sent`, 'GET', null, supabaseUrl, supabaseKey);
+          const clientsRes = audit.client_id
+            ? await supabaseRequest(`/rest/v1/clients?id=eq.${audit.client_id}&select=email,lead_drips_sent`, 'GET', null, supabaseUrl, supabaseKey)
+            : await supabaseRequest(`/rest/v1/clients?name=eq.${encodeURIComponent(clientName)}&user_id=eq.${audit.user_id}&select=email,lead_drips_sent`, 'GET', null, supabaseUrl, supabaseKey);
           const clientRow = Array.isArray(clientsRes.body) && clientsRes.body[0] ? clientsRes.body[0] : null;
-          
+
           if (clientRow && clientRow.email) {
             const sentDrips = clientRow.lead_drips_sent || [];
             const dripKey = `report35_${audit.id}`;
-            
+
             if (!sentDrips.includes(dripKey)) {
               try {
                 await fetch_send('send_report_refresh', { clientName, clientEmail: clientRow.email });
                 const newDrips = [...sentDrips, dripKey];
-                await supabaseRequest(
-                  `/rest/v1/clients?name=eq.${encodeURIComponent(clientName)}`,
-                  'PATCH', { lead_drips_sent: newDrips }, supabaseUrl, supabaseKey
-                );
+                const patchPath = audit.client_id
+                  ? `/rest/v1/clients?id=eq.${audit.client_id}`
+                  : `/rest/v1/clients?name=eq.${encodeURIComponent(clientName)}&user_id=eq.${audit.user_id}`;
+                await supabaseRequest(patchPath, 'PATCH', { lead_drips_sent: newDrips }, supabaseUrl, supabaseKey);
                 reportRefreshDripsCount++;
               } catch (e) {
                 console.error('Report refresh email failed:', e);
@@ -275,7 +285,7 @@ exports.handler = async () => {
   let nurtureDripsCount = 0;
   if (sgKey) {
     const leadsRes = await supabaseRequest(
-      '/rest/v1/clients?select=name,email,lead_created_at,lead_drips_sent,tags&status=eq.lead',
+      '/rest/v1/clients?select=id,user_id,name,email,lead_created_at,lead_drips_sent,tags&status=eq.lead',
       'GET', null, supabaseUrl, supabaseKey
     );
     const leads = Array.isArray(leadsRes.body) ? leadsRes.body : [];
@@ -342,10 +352,21 @@ exports.handler = async () => {
           if (daysSince >= d.day && !sentDrips.includes(d.key)) {
             let auditSummary = null;
             try {
-              const auditRes = await supabaseRequest(
-                '/rest/v1/audits?client_name=eq.' + encodeURIComponent(lead.name) + '&select=audit,saved_at,report_date&order=saved_at.desc&limit=1',
+              // lead is itself a clients row, so lead.id IS the client_id to
+              // match on — no name-guessing needed here at all. Falls back
+              // to the old name+user_id match (scoped by user_id, unlike
+              // before, to avoid pulling a same-named client's audit from a
+              // different firm) only for audits rows not yet backfilled.
+              let auditRes = await supabaseRequest(
+                '/rest/v1/audits?client_id=eq.' + lead.id + '&select=audit,saved_at,report_date&order=saved_at.desc&limit=1',
                 'GET', null, supabaseUrl, supabaseKey
               );
+              if (!Array.isArray(auditRes.body) || auditRes.body.length === 0) {
+                auditRes = await supabaseRequest(
+                  '/rest/v1/audits?client_name=eq.' + encodeURIComponent(lead.name) + '&user_id=eq.' + lead.user_id + '&select=audit,saved_at,report_date&order=saved_at.desc&limit=1',
+                  'GET', null, supabaseUrl, supabaseKey
+                );
+              }
               const latest = Array.isArray(auditRes.body) && auditRes.body[0] ? auditRes.body[0].audit : null;
               if (latest && latest.totalViolations != null) {
                 auditSummary = {

@@ -774,7 +774,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 <button onClick={async () => {
                     setDiffLoading(c.name);
                     try {
-                      const result = await runProgressDiff(c.name);
+                      const result = await runProgressDiff(c.name, c.id);
                       setDiffResult({ clientName: c.name, letters: c.letters, ...result });
                     } catch (e) {
                       toast.error('Could not run comparison: ' + e.message);
@@ -796,7 +796,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     {isAdmin && a.auditorName && <span className="text-[11px] text-ink-faint ml-2">· {a.auditorName}</span>}
                     <span className="text-ink-faint text-[11px] ml-2">{fmtTime(a.savedAt)}</span>
                   </div>
-                  <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
+                  <button onClick={() => onOpenAudit(a.clientId ? { ...a.audit, client: { ...a.audit.client, id: a.clientId } } : a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
                 </div>
               ))}
             </div>
@@ -1637,7 +1637,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
                 <span className="text-ink-muted"> · {(a.audit && a.audit.accountsTargeted) || 0} accounts · {(a.audit && a.audit.totalViolations) || 0} violations</span>
                 {isAdmin && a.auditorName && <span className="text-[10px] text-ink-faint ml-2">· {a.auditorName}</span>}
               </div>
-              <button onClick={() => onOpenAudit(a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
+              <button onClick={() => onOpenAudit(a.clientId ? { ...a.audit, client: { ...a.audit.client, id: a.clientId } } : a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
             </div>
           ))}
         </div>

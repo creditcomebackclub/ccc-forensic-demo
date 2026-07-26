@@ -284,11 +284,16 @@ export const handler = async (event) => {
     let clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
     const clientAddress = (audit && audit.client && audit.client.address) || null;
     const reportDate = (audit && audit.client && audit.client.reportDate) || todayISO();
+    // Resolved alongside clientName below (explicit pick, canonicalization,
+    // or the resolve-or-create fallback) so client_accounts/audits can be
+    // written keyed on the real identity instead of only ever the
+    // (collision-prone) name — see the client_id migration plan.
+    let clientId = null;
 
     // Explicit staff attribution (added after the Cameron May incident below)
     // is authoritative: staff picked this client on the upload screen BEFORE
     // the audit ran, so there's no ambiguity left to resolve — look up that
-    // client's exact stored name and use it directly, skipping the
+    // client's exact stored name/id and use them directly, skipping the
     // heuristic entirely. If staff explicitly chose "new lead", also skip
     // the heuristic in the other direction: they've already confirmed this
     // isn't an existing client, so don't second-guess that with a fuzzy
@@ -297,12 +302,13 @@ export const handler = async (event) => {
     if (job && job.selected_client_id) {
       try {
         const { data: picked } = await db.from('clients')
-          .select('name').eq('id', job.selected_client_id).eq('user_id', userId).limit(1);
+          .select('id,name').eq('id', job.selected_client_id).eq('user_id', userId).limit(1);
         if (picked && picked.length === 1) {
           if (picked[0].name !== clientName) {
             console.log('[audit] using staff-selected client: "' + clientName + '" -> "' + picked[0].name + '"');
           }
           clientName = picked[0].name;
+          clientId = picked[0].id;
           explicitlyAttributed = true;
         } else {
           console.warn('[audit] selected_client_id ' + job.selected_client_id + ' not found for this user — falling back to name-matching heuristic');
@@ -335,21 +341,50 @@ export const handler = async (event) => {
     if (!explicitlyAttributed) try {
       const escaped = clientName.replace(/[%_\\]/g, '\\$&');
       const { data: nameMatches } = await db.from('clients')
-        .select('name').eq('user_id', userId).ilike('name', escaped);
-      if (nameMatches && nameMatches.length === 1 && nameMatches[0].name !== clientName) {
-        console.log('[audit] canonicalizing client name: "' + clientName + '" -> "' + nameMatches[0].name + '"');
-        clientName = nameMatches[0].name;
+        .select('id,name').eq('user_id', userId).ilike('name', escaped);
+      if (nameMatches && nameMatches.length === 1) {
+        if (nameMatches[0].name !== clientName) {
+          console.log('[audit] canonicalizing client name: "' + clientName + '" -> "' + nameMatches[0].name + '"');
+          clientName = nameMatches[0].name;
+        }
+        clientId = nameMatches[0].id;
       } else if (nameMatches && nameMatches.length > 1) {
         console.warn('[audit] multiple clients match "' + clientName + '" case-insensitively — not auto-resolving, saving under the name as extracted:', nameMatches.map((m) => m.name));
       }
     } catch (e) { console.warn('[audit] name canonicalization lookup failed (non-fatal):', e.message); }
 
+    // Resolve or create the clients row's id when neither path above found
+    // one — either an exact-name match (staff didn't pre-select, but the
+    // extracted name matches an existing client exactly) or, if truly
+    // nothing matches, a brand-new lead. Only refuses to resolve when the
+    // exact literal name is itself already ambiguous (two existing clients
+    // share the identical name) — genuine ambiguity for a human to sort
+    // out, same rule as the canonicalization step above.
+    if (!clientId && clientName) {
+      try {
+        const { data: exact } = await db.from('clients')
+          .select('id').eq('user_id', userId).eq('name', clientName);
+        if (exact && exact.length === 1) {
+          clientId = exact[0].id;
+        } else if (!exact || exact.length === 0) {
+          const { data: created, error: createErr } = await db.from('clients')
+            .insert({ user_id: userId, name: clientName, address: clientAddress, status: 'lead' })
+            .select('id').single();
+          if (createErr) throw createErr;
+          clientId = created.id;
+        } else {
+          console.warn('[audit] ' + exact.length + ' existing clients share the exact name "' + clientName + '" — leaving client_id unresolved for this audit, needs manual reconciliation');
+        }
+      } catch (e) { console.warn('[audit] client_id resolve/create failed (non-fatal):', e.message); }
+    }
+
     try {
       const scores = audit.scores || (audit.client && audit.client.scores);
       if (clientName && scores) {
-        const { data: existing } = await db.from('clients')
-          .select('score_eq_start,score_exp_start,score_tu_start,date_of_birth,phone')
-          .eq('name', clientName).eq('user_id', userId).limit(1);
+        const existingQuery = clientId
+          ? db.from('clients').select('score_eq_start,score_exp_start,score_tu_start,date_of_birth,phone').eq('id', clientId).limit(1)
+          : db.from('clients').select('score_eq_start,score_exp_start,score_tu_start,date_of_birth,phone').eq('name', clientName).eq('user_id', userId).limit(1);
+        const { data: existing } = await existingQuery;
         const hasScores = existing && existing.length > 0 && (existing[0].score_eq_start || existing[0].score_exp_start || existing[0].score_tu_start);
         if (!hasScores) {
           const eq = scores.equifax || scores.eq || null;
@@ -392,16 +427,17 @@ export const handler = async (event) => {
     // clientAccountId and Phase 3 falls back to (and blocks on) furnisher
     // matching.
     try {
-      const { data: existingIds } = await db.from('client_accounts')
-        .select('id,norm_furnisher,original_creditor,account_last4')
-        .eq('user_id', userId).eq('client_name', clientName);
+      const identityQuery = clientId
+        ? db.from('client_accounts').select('id,norm_furnisher,original_creditor,account_last4').eq('user_id', userId).eq('client_id', clientId)
+        : db.from('client_accounts').select('id,norm_furnisher,original_creditor,account_last4').eq('user_id', userId).eq('client_name', clientName);
+      const { data: existingIds } = await identityQuery;
       const existing = existingIds || [];
       const accounts = (audit && audit.accounts) || [];
       const { assignments, creates, enriches, reviews } = resolveAuditIdentities(accounts, existing, randomUUID);
 
       if (creates.length) {
         const rows = creates.map((c) => ({
-          id: c.id, user_id: userId, client_name: clientName,
+          id: c.id, user_id: userId, client_id: clientId, client_name: clientName,
           norm_furnisher: c.norm_furnisher, display_furnisher: c.display_furnisher,
           original_creditor: c.original_creditor, account_last4: c.account_last4,
         }));
@@ -425,10 +461,25 @@ export const handler = async (event) => {
       for (const acct of accounts) acct.clientAccountId = assignments.get(acct.id) || null;
     } catch (e) { console.warn('[identity] resolution failed (non-fatal):', e.message); }
 
+    // id embeds clientId (when resolved) alongside the readable slug, not
+    // just slug(clientName)+date — two same-named clients auditing on the
+    // same report date used to collide on this literal primary key, one
+    // upsert silently overwriting the other's saved audit. Nothing parses
+    // this id back apart (confirmed before making this change), and it's
+    // never shown to end users (PDF filenames/portal views derive from
+    // audit.client.name directly), so widening the format is safe. Only
+    // falls back to the old bare format in the rare case clientId
+    // genuinely couldn't be resolved (exact-name ambiguity) — same
+    // collision risk that already existed there, not a new one.
+    const auditId = clientId
+      ? slug(clientName) + '__' + clientId + '__' + reportDate
+      : slug(clientName) + '__' + reportDate;
+
     const { error } = await db.from('audits').upsert({
-      id: slug(clientName) + '__' + reportDate,
+      id: auditId,
       user_id: userId,
       created_by: userId,
+      client_id: clientId,
       client_name: clientName,
       client_address: clientAddress,
       report_date: reportDate,
@@ -451,7 +502,7 @@ export const handler = async (event) => {
       user_id: userId, name: clientName, address: clientAddress, status: 'lead',
     }, { onConflict: 'user_id,name', ignoreDuplicates: true });
 
-    return clientName;
+    return { clientName, clientId };
   }
 
   const filePaths = (job.files || []).map((f) => f.path);
@@ -563,7 +614,7 @@ export const handler = async (event) => {
       console.warn('[audit-enrichment] failed (non-fatal, audit continues without these fields):', e.message);
     }
 
-    const savedClientName = await saveAuditAs(job.user_id, audit, job);
+    const { clientName: savedClientName, clientId: savedClientId } = await saveAuditAs(job.user_id, audit, job);
 
     // Retention Build 1b/1d — fire-and-forget, never awaited and never
     // allowed to affect this job's success. This is the ONLY place that
@@ -588,7 +639,7 @@ export const handler = async (event) => {
         await fetch(base + '/.netlify/functions/progress-narrative-background', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + serviceKey },
-          body: JSON.stringify({ clientName, userId: job.user_id }),
+          body: JSON.stringify({ clientName, clientId: savedClientId || null, userId: job.user_id }),
         });
       } catch (e) {
         console.warn('[audit] progress-narrative trigger failed (non-fatal):', e.message);

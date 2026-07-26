@@ -80,8 +80,16 @@ function SeverityBar({ severity }) {
 
 // Client email lookup — client_profiles first, fall back to clients table.
 // Shared by the button's enabled/disabled state and the send modal's "To" field.
-async function lookupClientEmail(clientName) {
-  if (!clientName) return null;
+// clientId (from audit.client.id, when the audit was opened from the Clients
+// list post-client_id-migration) is preferred over name matching — see the
+// client_id migration plan; clients.name has no unique constraint.
+async function lookupClientEmail(clientName, clientId) {
+  if (!clientName && !clientId) return null;
+  if (clientId) {
+    const { data: cm } = await supabase.from('clients').select('email').eq('id', clientId).limit(1);
+    const email = cm && cm.length > 0 ? cm[0].email : null;
+    if (email) return email;
+  }
   const { data: cp } = await supabase.from('client_profiles').select('email,full_name').eq('full_name', clientName).limit(1);
   let email = cp && cp.length > 0 ? cp[0].email : null;
   if (!email) {
@@ -153,8 +161,13 @@ function EmailAuditModal({ audit, clientEmail, onClose }) {
       // server state with a stale local snapshot.
       try {
         const clientName = audit.client?.name;
-        const { data: rows } = await supabase.from('audits').select('id, audit')
-          .eq('client_name', clientName || '').order('saved_at', { ascending: false }).limit(1);
+        const clientId = audit.client?.id;
+        // clientId preferred — client_name alone can match the wrong
+        // client's latest audit if two clients share a name.
+        const rowsQuery = clientId
+          ? supabase.from('audits').select('id, audit').eq('client_id', clientId).order('saved_at', { ascending: false }).limit(1)
+          : supabase.from('audits').select('id, audit').eq('client_name', clientName || '').order('saved_at', { ascending: false }).limit(1);
+        const { data: rows } = await rowsQuery;
         if (rows && rows.length > 0) {
           const fresh = rows[0].audit;
           fresh.sentAt = new Date().toISOString();
@@ -267,7 +280,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
 
   React.useEffect(() => {
     let cancelled = false;
-    lookupClientEmail(audit.client?.name).then((email) => { if (!cancelled) setClientEmail(email); });
+    lookupClientEmail(audit.client?.name, audit.client?.id).then((email) => { if (!cancelled) setClientEmail(email); });
     return () => { cancelled = true; };
   }, [audit.client?.name]);
 
@@ -544,7 +557,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
         title="Round 1 — Batch 1"
         subtitle="Top accounts by balance × violation strength · Send now"
         accounts={batch1}
-        onSelect={(a) => setSelectedAccount({ ...a, _clientName: audit.client?.name })}
+        onSelect={(a) => setSelectedAccount({ ...a, _clientName: audit.client?.name, _clientId: audit.client?.id })}
         onGenerateLetter={onGenerateLetter} existingLetters={existingLetters}
         emphasis
       />
@@ -555,7 +568,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           title="Round 1 — Batch 2"
           subtitle="Staggered for postage cost control · Send next"
           accounts={batch2}
-          onSelect={(a) => setSelectedAccount({ ...a, _clientName: audit.client?.name })}
+          onSelect={(a) => setSelectedAccount({ ...a, _clientName: audit.client?.name, _clientId: audit.client?.id })}
           onGenerateLetter={onGenerateLetter} existingLetters={existingLetters}
         />
       )}
@@ -732,9 +745,13 @@ function FurnisherAddressInput({ account, onSaved }) {
     if (!addr.line1 || !addr.city || !addr.state || !addr.zip) return;
     setSaving(true);
     try {
-      // Save to audit jsonb
+      // Save to audit jsonb. clientId preferred — client_name alone can
+      // match the wrong client's latest audit if two clients share a name.
       const { supabase } = await import('../utils/supabase.js');
-      const { data: audits } = await supabase.from('audits').select('id, audit').eq('client_name', account._clientName || '').order('saved_at', { ascending: false }).limit(1);
+      const auditsQuery = account._clientId
+        ? supabase.from('audits').select('id, audit').eq('client_id', account._clientId).order('saved_at', { ascending: false }).limit(1)
+        : supabase.from('audits').select('id, audit').eq('client_name', account._clientName || '').order('saved_at', { ascending: false }).limit(1);
+      const { data: audits } = await auditsQuery;
       if (audits && audits.length > 0) {
         const auditData = audits[0].audit;
         const accounts = auditData.accounts || [];

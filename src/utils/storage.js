@@ -110,14 +110,16 @@ async function getClientMeta(userId) {
 // Fire-and-forget: kicks the server-side progress-narrative background
 // function (Retention Build 1b) when a client has picked up their 2nd+
 // audit. Never awaited by saveAudit() and never throws outward — a failure
-// here must not surface as an audit-save error.
-async function triggerProgressNarrative(clientName) {
+// here must not surface as an audit-save error. clientId is optional and
+// preferred over clientName when present — see the client_id migration
+// plan; clients.name has no unique constraint.
+async function triggerProgressNarrative(clientName, clientId) {
   try {
     const userId = await getUserId();
-    const { count } = await supabase.from('audits')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('client_name', clientName);
+    const countQuery = clientId
+      ? supabase.from('audits').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('client_id', clientId)
+      : supabase.from('audits').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('client_name', clientName);
+    const { count } = await countQuery;
     if (!count || count < 2) return;
 
     const { data: { session } } = await supabase.auth.getSession();
@@ -130,7 +132,7 @@ async function triggerProgressNarrative(clientName) {
     await fetch('/.netlify/functions/progress-narrative-background', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
-      body: JSON.stringify({ clientName }),
+      body: JSON.stringify({ clientName, clientId: clientId || null }),
     });
   } catch (e) {
     console.warn('Could not trigger progress narrative:', e);
@@ -333,6 +335,7 @@ export async function deleteLetter(id) {
 function normalizeAudit(a) {
   return {
     id: a.id,
+    clientId: a.client_id || null,
     clientName: a.client_name,
     clientAddress: a.client_address,
     reportDate: a.report_date,
@@ -567,15 +570,14 @@ export async function createLead({ name, email, phone, source, notes }) {
   if (error) throw error;
 }
 
-export async function runProgressDiff(clientName) {
+// clientId is optional and preferred over clientName when present — see
+// the client_id migration plan; clients.name has no unique constraint.
+export async function runProgressDiff(clientName, clientId) {
   const userId = await getUserId();
-  const { data: audits, error } = await supabase
-    .from('audits')
-    .select('id,report_date,audit')
-    .eq('user_id', userId)
-    .eq('client_name', clientName)
-    .order('report_date', { ascending: false })
-    .limit(2);
+  const auditsQuery = clientId
+    ? supabase.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_id', clientId).order('report_date', { ascending: false }).limit(2)
+    : supabase.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_name', clientName).order('report_date', { ascending: false }).limit(2);
+  const { data: audits, error } = await auditsQuery;
 
   if (error) throw error;
   if (!audits || audits.length < 2) {
@@ -604,13 +606,14 @@ export async function runProgressDiff(clientName) {
   // sees the raw account-level diff with no plain-language summary,
   // indefinitely (this manual path was the only way into progress_updates
   // that never called this trigger).
-  triggerProgressNarrative(clientName); // fire-and-forget — never blocks the comparison UI
+  triggerProgressNarrative(clientName, clientId); // fire-and-forget — never blocks the comparison UI
 
   // newerAudit rides along so callers (the Report Comparison modal's
   // "Generate Letter" shortcut) can look up a diffed account's full record
   // — violations, batch, strategy, etc. — without a second fetch; already
   // in hand here since diffAuditAccounts() needed it above.
-  return { id, fromReportDate: older.report_date, toReportDate: newer.report_date, diff, newerAudit: newer.audit };
+  const newerAudit = clientId ? { ...newer.audit, client: { ...newer.audit.client, id: clientId } } : newer.audit;
+  return { id, fromReportDate: older.report_date, toReportDate: newer.report_date, diff, newerAudit };
 }
 
 export async function getProgressUpdates(clientName) {

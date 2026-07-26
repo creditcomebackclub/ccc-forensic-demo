@@ -151,7 +151,12 @@ async function maybeSendEmail(db, { id, clientName, narrative, toReportDate, ori
 
 export const handler = async (event) => {
   let clientName = null;
-  try { clientName = JSON.parse(event.body || '{}').clientName; } catch (e) { /* handled below */ }
+  let clientId = null;
+  try {
+    const body = JSON.parse(event.body || '{}');
+    clientName = body.clientName;
+    clientId = body.clientId || null;
+  } catch (e) { /* handled below */ }
   if (!clientName) return { statusCode: 400, body: 'clientName required' };
 
   let userId;
@@ -173,13 +178,14 @@ export const handler = async (event) => {
     realtime: { transport: ws },
   });
 
-  const { data: audits, error: auditsErr } = await db
-    .from('audits')
-    .select('id,report_date,audit')
-    .eq('user_id', userId)
-    .eq('client_name', clientName)
-    .order('report_date', { ascending: false })
-    .limit(2);
+  // clientId is preferred over clientName when the caller has it — see the
+  // client_id migration plan; clients.name has no unique constraint. Older
+  // callers/queued jobs that only ever knew clientName still work via the
+  // fallback.
+  const auditsQuery = clientId
+    ? db.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_id', clientId).order('report_date', { ascending: false }).limit(2)
+    : db.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_name', clientName).order('report_date', { ascending: false }).limit(2);
+  const { data: audits, error: auditsErr } = await auditsQuery;
   if (auditsErr) {
     console.error('progress-narrative: audits fetch failed', auditsErr.message);
     return { statusCode: 500, body: 'audits fetch failed' };
