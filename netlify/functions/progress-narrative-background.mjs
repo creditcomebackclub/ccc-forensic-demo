@@ -99,15 +99,14 @@ async function sendProgressEmail(sgKey, to, html, subject) {
 // overwrites a response_outcome that's already set (e.g. a staff member
 // already logged a real response) — a diff-detected deletion only fills in
 // the gap, it doesn't override a human's own record.
-async function markDeletedLetters(db, { userId, clientName, deletedFurnishers, confirmedDate }) {
+async function markDeletedLetters(db, { userId, clientName, clientId, deletedFurnishers, confirmedDate }) {
   if (!deletedFurnishers || deletedFurnishers.length === 0) return;
   try {
     const normalizedDeleted = deletedFurnishers.map(normalizeFurnisher);
-    const { data: letters } = await db.from('letters')
-      .select('id,furnisher,response_outcome')
-      .eq('user_id', userId)
-      .eq('client_name', clientName)
-      .ilike('phase', 'Phase 1%');
+    const lettersQuery = clientId
+      ? db.from('letters').select('id,furnisher,response_outcome').eq('user_id', userId).eq('client_id', clientId).ilike('phase', 'Phase 1%')
+      : db.from('letters').select('id,furnisher,response_outcome').eq('user_id', userId).eq('client_name', clientName).ilike('phase', 'Phase 1%');
+    const { data: letters } = await lettersQuery;
     for (const l of letters || []) {
       if (l.response_outcome) continue; // never overwrite an existing outcome
       if (normalizedDeleted.includes(normalizeFurnisher(l.furnisher))) {
@@ -125,7 +124,7 @@ async function markDeletedLetters(db, { userId, clientName, deletedFurnishers, c
 // both already succeeded sends nothing. Best-effort: a failure here must
 // never undo the narrative that's already saved and already visible in the
 // portal's Progress tab.
-async function maybeSendEmail(db, { id, clientName, narrative, toReportDate, origin, deletedFurnishers = [] }) {
+async function maybeSendEmail(db, { id, clientName, clientId, narrative, toReportDate, origin, deletedFurnishers = [] }) {
   try {
     const { data: rows } = await db.from('progress_updates').select('emailed_at').eq('id', id).limit(1);
     if (rows && rows[0] && rows[0].emailed_at) return; // already stamped — skip
@@ -133,7 +132,10 @@ async function maybeSendEmail(db, { id, clientName, narrative, toReportDate, ori
     const sgKey = process.env.SENDGRID_API_KEY;
     if (!sgKey) return;
 
-    const { data: cpRows } = await db.from('client_profiles').select('email').eq('full_name', clientName).limit(1);
+    const cpQuery = clientId
+      ? db.from('client_profiles').select('email').eq('client_id', clientId).limit(1)
+      : db.from('client_profiles').select('email').eq('full_name', clientName).limit(1);
+    const { data: cpRows } = await cpQuery;
     const clientEmail = cpRows && cpRows[0] && cpRows[0].email;
     if (!clientEmail) return;
 
@@ -195,7 +197,13 @@ export const handler = async (event) => {
   }
 
   const [newer, older] = audits; // already ordered desc
-  const id = slug(clientName) + '__diff__' + older.report_date + '__' + newer.report_date;
+  // Must match storage.js's runProgressDiff id format exactly — this
+  // function's idempotency check (below) looks up that same row by id, so
+  // a mismatched format here would silently create a duplicate instead of
+  // finding the manually-triggered "Compare Latest Reports" row.
+  const id = clientId
+    ? slug(clientName) + '__' + clientId + '__diff__' + older.report_date + '__' + newer.report_date
+    : slug(clientName) + '__diff__' + older.report_date + '__' + newer.report_date;
 
   const origin = event.headers.origin || 'https://ccc-forensic-demo.netlify.app';
 
@@ -207,8 +215,8 @@ export const handler = async (event) => {
   const { data: existingRows } = await db.from('progress_updates').select('narrative,diff').eq('id', id).limit(1);
   if (existingRows && existingRows.length > 0 && existingRows[0].narrative) {
     const existingDeleted = ((existingRows[0].diff && existingRows[0].diff.deleted) || []).map((a) => a.furnisher).filter(Boolean);
-    await markDeletedLetters(db, { userId, clientName, deletedFurnishers: existingDeleted, confirmedDate: newer.report_date });
-    await maybeSendEmail(db, { id, clientName, narrative: existingRows[0].narrative, toReportDate: newer.report_date, origin, deletedFurnishers: existingDeleted });
+    await markDeletedLetters(db, { userId, clientName, clientId, deletedFurnishers: existingDeleted, confirmedDate: newer.report_date });
+    await maybeSendEmail(db, { id, clientName, clientId, narrative: existingRows[0].narrative, toReportDate: newer.report_date, origin, deletedFurnishers: existingDeleted });
     return { statusCode: 200, body: 'narrative already generated' };
   }
 
@@ -219,6 +227,7 @@ export const handler = async (event) => {
   const { error: upsertErr } = await db.from('progress_updates').upsert({
     id,
     user_id: userId,
+    client_id: clientId || null,
     client_name: clientName,
     from_audit_id: older.id,
     to_audit_id: newer.id,
@@ -272,8 +281,8 @@ export const handler = async (event) => {
   }
 
   const deletedFurnishers = (diff.deleted || []).map((a) => a.furnisher).filter(Boolean);
-  await markDeletedLetters(db, { userId, clientName, deletedFurnishers, confirmedDate: newer.report_date });
-  await maybeSendEmail(db, { id, clientName, narrative, toReportDate: newer.report_date, origin, deletedFurnishers });
+  await markDeletedLetters(db, { userId, clientName, clientId, deletedFurnishers, confirmedDate: newer.report_date });
+  await maybeSendEmail(db, { id, clientName, clientId, narrative, toReportDate: newer.report_date, origin, deletedFurnishers });
 
   return { statusCode: 200, body: JSON.stringify({ id }) };
 };

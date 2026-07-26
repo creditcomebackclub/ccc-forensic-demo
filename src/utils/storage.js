@@ -598,10 +598,15 @@ export async function runProgressDiff(clientName, clientId) {
   const [newer, older] = audits; // already ordered desc
   const diff = diffAuditAccounts(older.audit, newer.audit);
 
-  const id = slug(clientName) + '__diff__' + older.report_date + '__' + newer.report_date;
+  // id embeds clientId when known — same collision class as audits.id and
+  // letters.id fixed in earlier phases.
+  const id = clientId
+    ? slug(clientName) + '__' + clientId + '__diff__' + older.report_date + '__' + newer.report_date
+    : slug(clientName) + '__diff__' + older.report_date + '__' + newer.report_date;
   const { error: saveErr } = await supabase.from('progress_updates').upsert({
     id,
     user_id: userId,
+    client_id: clientId || null,
     client_name: clientName,
     from_audit_id: older.id,
     to_audit_id: newer.id,

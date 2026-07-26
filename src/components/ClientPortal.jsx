@@ -71,12 +71,21 @@ export default function ClientPortal({ session, onSignOut }) {
         const documentsQuery = cp.client_id
           ? supabase.from('documents').select('doc_type,file_name,uploaded_at').eq('client_id', cp.client_id)
           : supabase.from('documents').select('doc_type,file_name,uploaded_at').eq('client_name', cp.full_name);
+        const lettersQuery = cp.client_id
+          ? supabase.from('letters').select('*').eq('client_id', cp.client_id).order('saved_at', { ascending: true })
+          : supabase.from('letters').select('*').eq('client_name', cp.full_name).order('saved_at', { ascending: true });
+        const auditsQuery = cp.client_id
+          ? supabase.from('audits').select('audit,saved_at').eq('client_id', cp.client_id).order('saved_at', { ascending: false }).limit(5)
+          : supabase.from('audits').select('audit,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5);
+        const progressQuery = cp.client_id
+          ? supabase.from('progress_updates').select('*').eq('client_id', cp.client_id).order('to_report_date', { ascending: false })
+          : supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).order('to_report_date', { ascending: false });
 
         const [lettersRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
-          supabase.from('letters').select('*').eq('client_name', cp.full_name).order('saved_at', { ascending: true }),
+          lettersQuery,
           clientsQuery,
-          supabase.from('audits').select('audit,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5),
-          supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).order('to_report_date', { ascending: false }),
+          auditsQuery,
+          progressQuery,
           documentsQuery,
         ]);
         setLetters(lettersRes.data || []);
