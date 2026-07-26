@@ -462,20 +462,27 @@ export const handler = async (event) => {
       for (const acct of accounts) acct.clientAccountId = assignments.get(acct.id) || null;
     } catch (e) { console.warn('[identity] resolution failed (non-fatal):', e.message); }
 
-    // Fill in any account the audit-generation LLM left PENDING using
-    // addresses staff have already confirmed for other clients — this is
-    // what actually makes a confirmation reusable instead of one-off. This
-    // used to only exist in the client-side saveAudit() (dead — nothing
-    // calls it, the real upload flow is this background job), so the
-    // furnisher_addresses table was being written to by confirmations but
-    // never read back. This is the fix.
+    // Fill in any account the audit-generation LLM left PENDING (no address
+    // match at all) or CONFIRM (matched masterPrompt.js's own static list,
+    // pre-filled but not yet human-approved) using addresses staff have
+    // already confirmed for other clients — this is what actually makes a
+    // confirmation reusable instead of one-off. Covers CONFIRM too, not
+    // just PENDING: a furnisher a human already verified via this table
+    // shouldn't need a redundant click just because masterPrompt.js's
+    // static list also happens to have a (still human-unapproved) guess for
+    // it — a match against a real prior human confirmation is strictly
+    // more trustworthy than the static list's own unconfirmed suggestion.
+    // This used to only exist in the client-side saveAudit() (dead —
+    // nothing calls it, the real upload flow is this background job), so
+    // the furnisher_addresses table was being written to by confirmations
+    // but never read back. This is the fix.
     try {
       const accounts = (audit && audit.accounts) || [];
-      if (accounts.some((a) => a.addressStatus === 'PENDING')) {
+      if (accounts.some((a) => a.addressStatus === 'PENDING' || a.addressStatus === 'CONFIRM')) {
         const { data: known } = await db.from('furnisher_addresses').select('*').eq('user_id', userId);
         const byKey = new Map((known || []).map((r) => [r.furnisher_key, r]));
         for (const acct of accounts) {
-          if (acct.addressStatus !== 'PENDING') continue;
+          if (acct.addressStatus !== 'PENDING' && acct.addressStatus !== 'CONFIRM') continue;
           const match = byKey.get(normalizeFurnisher(acct.furnisher));
           if (match) {
             acct.furnisherAddress = [match.address_line1, match.address_line2, match.city + ', ' + match.state + ' ' + match.zip].filter(Boolean).join(', ');
