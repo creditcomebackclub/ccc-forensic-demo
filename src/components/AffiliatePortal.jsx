@@ -6,7 +6,6 @@ import { getSettings } from '../utils/settings';
 export default function AffiliatePortal({ session, onSignOut }) {
   const [affiliate, setAffiliate] = useState(null);
   const [clients, setClients] = useState([]);
-  const [profiles, setProfiles] = useState([]);
   const [letters, setLetters] = useState([]);
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -17,7 +16,12 @@ export default function AffiliatePortal({ session, onSignOut }) {
   const [referSuccess, setReferSuccess] = useState(false);
   const [error, setError] = useState(null);
 
-  const brandColor = affiliate?.brand_color || '#22C55E';
+  // A malformed stored value (e.g. "##0693e3" — confirmed live for one real
+  // affiliate) is invalid CSS; the browser silently drops it and the text
+  // inherits whatever's above it, which on this dark portal background
+  // renders as unreadable near-black-on-black instead of an visible error.
+  const isValidHexColor = (c) => typeof c === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(c);
+  const brandColor = isValidHexColor(affiliate?.brand_color) ? affiliate.brand_color : '#22C55E';
   const isSwiftedly = affiliate?.company?.toLowerCase().includes('swiftedly') || affiliate?.name?.toLowerCase().includes('swiftedly');
   const accentColor = isSwiftedly ? '#FF6900' : brandColor; // Action Orange for Swiftedly
   const brandName = affiliate?.brand_name || affiliate?.company || 'Partner Portal';
@@ -54,7 +58,8 @@ export default function AffiliatePortal({ session, onSignOut }) {
       setAffiliate(aff);
 
       if (aff) {
-        // Fetch clients, letters, and profiles securely via endpoint to bypass RLS
+        // Fetch clients (with score increase pre-computed server-side) and
+        // letters securely via endpoint to bypass RLS
         const res = await fetch('/.netlify/functions/affiliate-portal-data', {
           method: 'POST',
           headers: {
@@ -68,7 +73,6 @@ export default function AffiliatePortal({ session, onSignOut }) {
           const data = await res.json();
           setClients(data.clients || []);
           setLetters(data.letters || []);
-          setProfiles(data.profiles || []);
         } else {
           console.error('Failed to load affiliate clients', await res.text());
         }
@@ -132,13 +136,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
     const headers = ['Client Name', 'Email', 'Phone', 'Date Referred', 'Status', 'Commissions Paid', 'Score Increase'];
     const rows = clients.map(c => {
       const status = getClientStatus(c.name).label;
-      const profile = profiles.find(p => p.email === c.email);
-      let scoreIncrease = 'N/A';
-      if (profile && profile.starting_scores && profile.current) {
-        const start = Math.round((profile.starting_scores.equifax + profile.starting_scores.experian + profile.starting_scores.transunion) / 3);
-        const current = Math.round((profile.current.equifax + profile.current.experian + profile.current.transunion) / 3);
-        if (current > start) scoreIncrease = `+${current - start} pts`;
-      }
+      const scoreIncrease = c.scoreIncrease != null ? `+${c.scoreIncrease} pts` : 'N/A';
       return [
         `"${c.name}"`,
         `"${c.email}"`,
@@ -331,13 +329,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   const status = getClientStatus(c.name);
                   const style = toneStyles[status.tone];
                   
-                  const profile = profiles.find(p => p.email === c.email);
-                  let scoreIncrease = null;
-                  if (profile && profile.starting_scores && profile.current) {
-                    const start = Math.round((profile.starting_scores.equifax + profile.starting_scores.experian + profile.starting_scores.transunion) / 3);
-                    const current = Math.round((profile.current.equifax + profile.current.experian + profile.current.transunion) / 3);
-                    if (current > start) scoreIncrease = `+${current - start} pts`;
-                  }
+                  const scoreIncrease = c.scoreIncrease != null ? `+${c.scoreIncrease} pts` : null;
 
                   return (
                     <div key={c.id} style={{ padding: '14px 20px', borderBottom: '1px solid #1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -394,13 +386,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   const delivered = clientLetters.filter(l => l.tracking_status === 'Delivered').length;
                   const deleted = clientLetters.filter(l => l.response_outcome === 'deleted').length;
 
-                  const profile = profiles.find(p => p.email === c.email);
-                  let scoreIncrease = 'N/A';
-                  if (profile && profile.starting_scores && profile.current) {
-                    const start = Math.round((profile.starting_scores.equifax + profile.starting_scores.experian + profile.starting_scores.transunion) / 3);
-                    const current = Math.round((profile.current.equifax + profile.current.experian + profile.current.transunion) / 3);
-                    if (current > start) scoreIncrease = `+${current - start} pts`;
-                  }
+                  const scoreIncrease = c.scoreIncrease != null ? `+${c.scoreIncrease} pts` : 'N/A';
 
                   return (
                     <div key={c.id} style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 20 }}>

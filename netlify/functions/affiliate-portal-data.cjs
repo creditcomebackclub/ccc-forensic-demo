@@ -51,7 +51,7 @@ exports.handler = async (event, context) => {
     // are fetched, and the raw ledger/referral_fee never leave this
     // function; only the derived numbers do.
     const clientsData = await fetchWithKey(
-      `${supabaseUrl}/rest/v1/clients?referred_by=eq.${affiliateId}&select=id,name,email,phone,created_at,referral_fee,ledger`
+      `${supabaseUrl}/rest/v1/clients?referred_by=eq.${affiliateId}&select=id,name,email,phone,created_at,referral_fee,ledger,score_eq_start,score_exp_start,score_tu_start`
     );
     const rawClients = Array.isArray(clientsData) ? clientsData : [];
 
@@ -92,10 +92,13 @@ exports.handler = async (event, context) => {
         commissionPaid: paid,
         commissionOwed: owed,
         ratePct,
+        scoreEqStart: c.score_eq_start ?? null,
+        scoreExpStart: c.score_exp_start ?? null,
+        scoreTuStart: c.score_tu_start ?? null,
       };
     });
 
-    // 4. Fetch letters and profiles for these clients
+    // 4. Fetch letters and audits for these clients
     let letters = [];
     let profiles = [];
 
@@ -107,20 +110,54 @@ exports.handler = async (event, context) => {
         const namesQuery = names.map(formatIn).join(',');
         const lettersData = await fetchWithKey(`${supabaseUrl}/rest/v1/letters?select=client_name,furnisher,phase,mailed_date,tracking_status,delivered_at,response_outcome,saved_at&client_name=in.(${encodeURIComponent(namesQuery)})`);
         if (Array.isArray(lettersData)) letters = lettersData;
-      }
 
-      const emails = clients.map(c => c.email).filter(Boolean);
-      if (emails.length > 0) {
-        const emailsQuery = emails.map(formatIn).join(',');
-        const profilesData = await fetchWithKey(`${supabaseUrl}/rest/v1/client_profiles?select=email,full_name,starting_scores,current&email=in.(${encodeURIComponent(emailsQuery)})`);
-        if (Array.isArray(profilesData)) profiles = profilesData;
+        // Current scores live in the audit blob, not client_profiles (that
+        // table has no starting_scores/current columns — the previous
+        // version of this query selected fields that don't exist, so
+        // scoreIncrease was silently 'N/A' for every affiliate, always).
+        // report_date desc: audits[0] per client is the latest.
+        const auditsData = await fetchWithKey(`${supabaseUrl}/rest/v1/audits?select=client_name,report_date,audit&client_name=in.(${encodeURIComponent(namesQuery)})&order=report_date.desc`);
+        const latestAuditByClient = new Map();
+        if (Array.isArray(auditsData)) {
+          for (const a of auditsData) {
+            if (!latestAuditByClient.has(a.client_name)) latestAuditByClient.set(a.client_name, a);
+          }
+        }
+        profiles = clients.map((c) => {
+          const latest = latestAuditByClient.get(c.name);
+          const scores = latest?.audit?.scores || null;
+          return { name: c.name, currentScores: scores };
+        });
       }
     }
+
+    // Sum-of-all-bureaus score increase (not an average) — each client's
+    // scoreIncrease is the total points gained across Equifax + Experian +
+    // TransUnion combined, only when both a start and a current score exist
+    // for that bureau.
+    const clientsWithScoreIncrease = clients.map((c) => {
+      const latest = profiles.find((p) => p.name === c.name);
+      const cur = latest?.currentScores;
+      let scoreIncrease = null;
+      if (cur) {
+        const pairs = [
+          [c.scoreEqStart, cur.equifax],
+          [c.scoreExpStart, cur.experian],
+          [c.scoreTuStart, cur.transunion],
+        ];
+        let sum = 0, any = false;
+        for (const [start, current] of pairs) {
+          if (start != null && current != null) { sum += (current - start); any = true; }
+        }
+        if (any) scoreIncrease = sum;
+      }
+      return { ...c, scoreIncrease };
+    });
 
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clients, letters, profiles })
+      body: JSON.stringify({ clients: clientsWithScoreIncrease, letters })
     };
 
   } catch (e) {
