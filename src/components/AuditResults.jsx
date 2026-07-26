@@ -764,7 +764,8 @@ function FurnisherAddressInput({ account, onSaved }) {
       }
       // Also write to the reusable address book so every future client's
       // audit for this furnisher can be backfilled instead of re-typed —
-      // see storage.js's upsertFurnisherAddress and saveAudit backfill.
+      // see storage.js's upsertFurnisherAddress and the backfill logic in
+      // audit-run-background.mjs's saveAuditAs (the live audit pipeline).
       await upsertFurnisherAddress(account.furnisher, addr);
       onSaved(addr);
       setSaved(true);

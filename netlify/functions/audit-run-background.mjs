@@ -13,6 +13,7 @@ import ws from 'ws';
 import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
 import { AUDIT_SCHEMA, BUREAU_SCHEMA, ACCOUNT_ENRICHMENT_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { resolveAuditIdentities } from '../../src/utils/accountIdentity.js';
+import { normalizeFurnisher } from '../../src/utils/diffEngine.js';
 import { randomUUID } from 'crypto';
 import {
   buildReportContent, combinedAuditPrompt, singleBureauAuditPrompt,
@@ -460,6 +461,29 @@ export const handler = async (event) => {
       // Inject the resolved UUID onto each account in the stored audit JSON.
       for (const acct of accounts) acct.clientAccountId = assignments.get(acct.id) || null;
     } catch (e) { console.warn('[identity] resolution failed (non-fatal):', e.message); }
+
+    // Fill in any account the audit-generation LLM left PENDING using
+    // addresses staff have already confirmed for other clients — this is
+    // what actually makes a confirmation reusable instead of one-off. This
+    // used to only exist in the client-side saveAudit() (dead — nothing
+    // calls it, the real upload flow is this background job), so the
+    // furnisher_addresses table was being written to by confirmations but
+    // never read back. This is the fix.
+    try {
+      const accounts = (audit && audit.accounts) || [];
+      if (accounts.some((a) => a.addressStatus === 'PENDING')) {
+        const { data: known } = await db.from('furnisher_addresses').select('*').eq('user_id', userId);
+        const byKey = new Map((known || []).map((r) => [r.furnisher_key, r]));
+        for (const acct of accounts) {
+          if (acct.addressStatus !== 'PENDING') continue;
+          const match = byKey.get(normalizeFurnisher(acct.furnisher));
+          if (match) {
+            acct.furnisherAddress = [match.address_line1, match.address_line2, match.city + ', ' + match.state + ' ' + match.zip].filter(Boolean).join(', ');
+            acct.addressStatus = 'YES';
+          }
+        }
+      }
+    } catch (e) { console.warn('[audit] furnisher-address backfill failed (non-fatal):', e.message); }
 
     // id embeds clientId (when resolved) alongside the readable slug, not
     // just slug(clientName)+date — two same-named clients auditing on the

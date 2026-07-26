@@ -108,7 +108,7 @@ async function getClientMeta(userId) {
 
 // Fire-and-forget: kicks the server-side progress-narrative background
 // function (Retention Build 1b) when a client has picked up their 2nd+
-// audit. Never awaited by saveAudit() and never throws outward — a failure
+// audit. Never awaited by its callers and never throws outward — a failure
 // here must not surface as an audit-save error. clientId is optional and
 // preferred over clientName when present — see the client_id migration
 // plan; clients.name has no unique constraint.
@@ -125,9 +125,8 @@ async function triggerProgressNarrative(clientName, clientId) {
     if (!session?.access_token) return;
 
     // Netlify background functions ACK with 202 and run detached — this
-    // fetch is not awaited by the caller (saveAudit doesn't await this
-    // function's promise), so the audit save never waits on the network
-    // round trip, let alone the narrative generation itself.
+    // fetch is not awaited by the caller, so the audit save never waits on
+    // the network round trip, let alone the narrative generation itself.
     await fetch('/.netlify/functions/progress-narrative-background', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
@@ -136,27 +135,6 @@ async function triggerProgressNarrative(clientName, clientId) {
   } catch (e) {
     console.warn('Could not trigger progress narrative:', e);
   }
-}
-
-// Reusable, compounding furnisher-address book — see
-// supabase/migrations/20260726_furnisher_addresses.sql for why this exists.
-export async function listFurnisherAddresses() {
-  const userId = await getUserId();
-  const { data, error } = await supabase.from('furnisher_addresses').select('*').eq('user_id', userId);
-  if (error) throw error;
-  return (data || []).map((r) => ({
-    id: r.id,
-    furnisherKey: r.furnisher_key,
-    displayName: r.display_name,
-    address: {
-      name: r.display_name,
-      line1: r.address_line1,
-      line2: r.address_line2 || '',
-      city: r.city,
-      state: r.state,
-      zip: r.zip,
-    },
-  }));
 }
 
 // Called from AuditResults.jsx whenever staff confirm a furnisher's address
@@ -179,85 +157,6 @@ export async function upsertFurnisherAddress(furnisherName, address) {
     updated_at: new Date().toISOString(),
   }, { onConflict: 'user_id,furnisher_key' });
   if (error) console.warn('Could not save furnisher address:', error);
-}
-
-export async function saveAudit(audit) {
-  // Auto-populate starting scores if not already set
-  try {
-    const userId = await getUserId();
-    const clientName = audit.client && audit.client.name;
-    const scores = audit.scores || (audit.client && audit.client.scores);
-    if (clientName && scores) {
-      const { data: existing } = await supabase.from('clients')
-        .select('score_eq_start,score_exp_start,score_tu_start')
-        .eq('name', clientName)
-        .eq('user_id', userId)
-        .limit(1);
-      const hasScores = existing && existing.length > 0 && (existing[0].score_eq_start || existing[0].score_exp_start || existing[0].score_tu_start);
-      if (!hasScores) {
-        const eq = scores.equifax || scores.eq || null;
-        const exp = scores.experian || scores.exp || null;
-        const tu = scores.transunion || scores.tu || null;
-        if (eq || exp || tu) {
-          const isNewRow = !existing || existing.length === 0;
-          await supabase.from('clients').upsert({
-            user_id: userId,
-            name: clientName,
-            score_eq_start: eq ? parseInt(eq) : null,
-            score_exp_start: exp ? parseInt(exp) : null,
-            score_tu_start: tu ? parseInt(tu) : null,
-            ...(isNewRow ? { status: 'lead' } : {}),
-          }, { onConflict: 'user_id,name' });
-        }
-      }
-    }
-  } catch(e) { console.warn('Could not auto-populate scores:', e); }
-
-  // Fill in any account the audit-generation LLM left PENDING using
-  // addresses staff have already confirmed for other clients — this is
-  // what actually makes a confirmation reusable instead of one-off.
-  try {
-    if (Array.isArray(audit.accounts) && audit.accounts.some((a) => a.addressStatus === 'PENDING')) {
-      const known = await listFurnisherAddresses();
-      const byKey = new Map(known.map((k) => [k.furnisherKey, k]));
-      for (const acct of audit.accounts) {
-        if (acct.addressStatus !== 'PENDING') continue;
-        const match = byKey.get(normalizeFurnisher(acct.furnisher));
-        if (match) {
-          acct.furnisherAddress = [match.address.line1, match.address.line2, match.address.city + ', ' + match.address.state + ' ' + match.address.zip].filter(Boolean).join(', ');
-          acct.addressStatus = 'YES';
-        }
-      }
-    }
-  } catch (e) { console.warn('Could not backfill furnisher addresses:', e); }
-
-  const userId = await getUserId();
-  const clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
-  const clientAddress = (audit && audit.client && audit.client.address) || null;
-  const reportDate = (audit && audit.client && audit.client.reportDate) || todayISO();
-  const id = slug(clientName) + '__' + reportDate;
-
-  const { error } = await supabase.from('audits').upsert({
-    id,
-    user_id: userId,
-    created_by: userId,
-    client_name: clientName,
-    client_address: clientAddress,
-    report_date: reportDate,
-    saved_at: new Date().toISOString(),
-    audit,
-  });
-  if (error) throw error;
-
-  await supabase.from('clients').upsert({
-    user_id: userId,
-    name: clientName,
-    address: clientAddress,
-  }, { onConflict: 'user_id,name', ignoreDuplicates: true });
-
-  triggerProgressNarrative(clientName); // fire-and-forget — never blocks the save
-
-  return id;
 }
 
 export async function saveLetter(account, client, html, summary, phase, idSuffix) {
@@ -629,18 +528,6 @@ export async function runProgressDiff(clientName, clientId) {
   // in hand here since diffAuditAccounts() needed it above.
   const newerAudit = clientId ? { ...newer.audit, client: { ...newer.audit.client, id: clientId } } : newer.audit;
   return { id, fromReportDate: older.report_date, toReportDate: newer.report_date, diff, newerAudit };
-}
-
-export async function getProgressUpdates(clientName) {
-  const userId = await getUserId();
-  const { data, error } = await supabase
-    .from('progress_updates')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('client_name', clientName)
-    .order('to_report_date', { ascending: false });
-  if (error) throw error;
-  return data || [];
 }
 
 // clientId is optional and preferred over clientName when present — see
