@@ -686,10 +686,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
         <StatTile icon={Clock} label="Awaiting response" value={dash.awaiting} sub={WINDOW_DAYS + '-day windows open'} tone={dash.awaiting > 0 ? 'amber' : 'navy'} clickable={dash.awaiting > 0} onClick={() => handleStatClick('awaiting')} />
         <StatTile icon={Zap} label="Ready to escalate" value={dash.escalate} sub="windows closed" tone={dash.escalate > 0 ? 'red' : 'navy'} clickable={dash.escalate > 0} onClick={() => handleStatClick('escalate')} />
         <StatTile icon={TrendingUp} label="Phase 3 active" value={dash.phase3} sub="CRA letters sent" tone={dash.phase3 > 0 ? 'green' : 'navy'} clickable={dash.phase3 > 0} onClick={() => handleStatClick('phase3')} />
-        {/* Not clickable yet — ClientsPage/Kanban filter wiring for 'phase4'
-            lands with the CFPB/AG generation UI itself; this tile is the
-            tracking signal on its own, surfaced before that flow exists. */}
-        <StatTile icon={AlertCircle} label="Ready for CFPB/AG" value={dash.readyForPhase4} sub="Phase 3 exhausted" tone={dash.readyForPhase4 > 0 ? 'red' : 'navy'} clickable={false} />
+        <StatTile icon={AlertCircle} label="Ready for CFPB/AG" value={dash.readyForPhase4} sub="Phase 3 exhausted" tone={dash.readyForPhase4 > 0 ? 'red' : 'navy'} clickable={dash.readyForPhase4 > 0} onClick={() => handleStatClick('phase4')} />
       </div>
 
       {/* Results — what clients pay for */}

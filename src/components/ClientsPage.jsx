@@ -5,12 +5,18 @@ import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X,
 import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, revertClientToLead, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage, markLeadViewed } from '../utils/storage';
 import { getReturnReceiptUrl } from '../utils/api';
 import ResponseAnalyzer from './ResponseAnalyzer';
+import EscalationPanel from './EscalationPanel';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
 import ClientBillingPanel from './ClientBillingPanel';
 import LobMailer from './LobMailer';
 
 const WINDOW_DAYS = 30;
+// 15 U.S.C. §1681i(a)&(e): a CRA-directed CFPB complaint needs 45 days (or
+// a no-longer-pending dispute), not the 30 used for Phase 1 — see
+// DashboardPage.jsx's identical constant and the ccc-phase4-cfpb-filing-
+// rules memory this is built from.
+const CRA_WINDOW_DAYS = 45;
 const VIP_RESPONSE_DAYS = 1;
 const STD_RESPONSE_DAYS = 3;
 
@@ -73,14 +79,14 @@ function hoursBetween(aIso, bIso) {
   return Math.round((new Date(bIso) - new Date(aIso)) / 3600000);
 }
 
-function letterStatus(l) {
+function letterStatus(l, windowDays = WINDOW_DAYS) {
   if (l.responseOutcome === 'received') return { code: 'received', label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
   if (l.responseOutcome === 'no_response') return { code: 'no_response', label: 'No response confirmed', tone: 'red' };
   if (!l.mailedDate) return { code: 'not_mailed', label: 'Not mailed', tone: 'neutral' };
   if (!l.deliveredAt) return { code: 'in_transit', label: 'In Transit', tone: 'neutral' };
   const clockStart = l.deliveredAt.slice(0, 10);
   const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = WINDOW_DAYS - elapsed;
+  const remaining = windowDays - elapsed;
   if (remaining > 0) return { code: 'awaiting', label: 'Awaiting · ' + remaining + 'd left', tone: 'amber' };
   return { code: 'window_closed', label: 'Window elapsed · ready to escalate', tone: 'red' };
 }
@@ -111,6 +117,12 @@ function clientMatchesFilter(c, filter, unanalyzedNames) {
       return (st.code === 'window_closed' || st.code === 'no_response') && !hasPhase3;
     });
     case 'phase3': return c.letters.some((l) => l.phase?.startsWith('Phase 3'));
+    case 'phase4': return c.letters.some((l) => {
+      if (!l.phase?.startsWith('Phase 3')) return false;
+      const st3 = letterStatus(l, CRA_WINDOW_DAYS);
+      const hasPhase4 = c.letters.some((pl) => pl.phase?.startsWith('Phase 4') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
+      return !hasPhase4 && (st3.code === 'window_closed' || st3.code === 'no_response' || st3.code === 'received');
+    });
     case 'received': return openLetters.some((l) => l.responseOutcome === 'received');
     case 'noemail': return !c.email;
     case 'vip': return !!c.isVip;
@@ -124,6 +136,7 @@ const FILTER_LABELS = {
   awaiting: 'Awaiting Response',
   escalate: 'Ready to Escalate',
   phase3: 'Phase 3 Active',
+  phase4: 'Ready for CFPB/AG',
   received: 'Response Received',
   noemail: 'No Email',
   vip: 'VIP',
@@ -258,11 +271,14 @@ function StageTracker({ l }) {
   );
 }
 
-function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail, onOpenAccount, onEdit }) {
+function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail, onOpenAccount, onEdit, onEscalate }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
   const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
+  // Phase 3's own escalation-readiness uses the 45-day CRA clock, not the
+  // 30-day one — same reasoning as DashboardPage.jsx's identical gate.
+  const status3 = isPhase3 ? letterStatus(l, CRA_WINDOW_DAYS) : null;
 
   const urgency = (() => {
     if (hasPhase3) return null;
@@ -295,6 +311,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   };
 
   const canAnalyze = !isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response');
+  const canEscalate = isPhase3 && status3 && (status3.code === 'received' || status3.code === 'window_closed' || status3.code === 'no_response');
 
   // One visible action per letter; the rest live in the ⋯ menu
   const primaryAction = (() => {
@@ -310,6 +327,13 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0"
         style={{ backgroundColor: T.navy, color: T.gold }}>
         <Zap size={10} strokeWidth={2} /> Analyze
+      </button>
+    );
+    if (canEscalate) return (
+      <button onClick={() => onEscalate(l)}
+        className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0"
+        style={{ backgroundColor: '#B91C1C', color: '#fff' }}>
+        <Zap size={10} strokeWidth={2} /> Escalate CFPB/AG
       </button>
     );
     if (l.mailedDate && !l.responseOutcome) return (
@@ -482,6 +506,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [selectedClientName, setSelectedClientName] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [analyzingLetter, setAnalyzingLetter] = useState(null);
+  const [escalatingLetter, setEscalatingLetter] = useState(null); // { letter, client }
   const [lobMailerQueue, setLobMailerQueue] = useState([]);
   const [togglingVip, setTogglingVip] = useState(null);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
@@ -861,7 +886,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                             <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
                               hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
                               onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={(l) => setLobMailerQueue([l])}
-                              onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount} />
+                              onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount}
+                              onEscalate={(letter) => setEscalatingLetter({ letter, client: c })} />
                           ))}
                         </div>
                       </div>
@@ -912,6 +938,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             letter={analyzingLetter}
             onClose={() => setAnalyzingLetter(null)}
             onSaved={() => { setAnalyzingLetter(null); load(); }}
+          />
+        )}
+        {escalatingLetter && (
+          <EscalationPanel
+            letter={escalatingLetter.letter}
+            client={escalatingLetter.client}
+            onClose={() => setEscalatingLetter(null)}
+            onSaved={load}
           />
         )}
         <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />
