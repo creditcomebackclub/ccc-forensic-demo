@@ -47,7 +47,16 @@ create table if not exists public.escalations (
   user_id uuid not null,                       -- staff owner, matches every other table's RLS shape
   client_id uuid references public.clients(id) on delete cascade,
   client_account_id uuid references public.client_accounts(id) on delete set null,
-  phase3_letter_id uuid references public.letters(id) on delete set null,
+  -- letters.id is a text slug (built in storage.js's saveLetter as
+  -- clientName__furnisher__date), not a uuid, and carries no unique/PK
+  -- constraint this table can reference (confirmed live 2026-07-26 — the
+  -- first attempt at this migration declared this uuid + a references
+  -- clause and Postgres rejected it: 42830, no unique constraint matching
+  -- given keys). No other migration in this codebase declares an FK against
+  -- letters.id either — same reason. Stored as a plain identifier, not
+  -- enforced at the DB level; the app already resolves letters by
+  -- client_id/client_name everywhere, not by FK joins on this column.
+  phase3_letter_id text,
   track text not null check (track in ('furnisher', 'bureau')),
   channel text not null check (channel in ('cfpb', 'state_ag')),
   state text,                                  -- state_ag channel only; which ag_directory row applies
@@ -72,18 +81,25 @@ alter table public.escalations enable row level security;
 
 -- ag_directory: staff-readable reference data, no client-facing policy at
 -- all (matches profiles' read_all_profiles precedent for staff-only tables).
+-- drop-if-exists guards make this whole script safely re-runnable — the
+-- first attempt failed partway through (on the FK above), and ag_directory's
+-- table/index/policies may have already been created successfully.
+drop policy if exists "staff_read_ag_directory" on public.ag_directory;
 create policy "staff_read_ag_directory" on public.ag_directory for select using (
   exists (select 1 from public.profiles p where p.id = auth.uid() and p.role in ('admin', 'auditor'))
 );
+drop policy if exists "staff_write_ag_directory" on public.ag_directory;
 create policy "staff_write_ag_directory" on public.ag_directory for insert with check (
   exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin')
 );
+drop policy if exists "staff_update_ag_directory" on public.ag_directory;
 create policy "staff_update_ag_directory" on public.ag_directory for update using (
   exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 
 -- escalations: same staff_all_* shape as audits/letters/documents. No
 -- client-facing policy — this table isn't shown in the client portal.
+drop policy if exists "staff_all_escalations" on public.escalations;
 create policy "staff_all_escalations" on public.escalations for all using (
   exists (select 1 from public.profiles p where p.id = auth.uid() and (p.role = 'admin' or escalations.user_id = p.id))
 );
