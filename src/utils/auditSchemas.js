@@ -304,3 +304,35 @@ export const PHASE2_SCHEMA = {
   },
   required: ['classification', 'summary', 'demandAnalysis', 'admissions', 'phase3Leverage', 'documentQuality', 'letters'],
 };
+
+// Phase 4 (CFPB / state-AG escalation) narrative — mirrors the JSON contract
+// in src/prompts/phase4Prompt.js field-for-field. cfpbCategory/cfpbSubIssue
+// are free-text, not an enum: CFPB's own picklist already changed once
+// during the research this was built from (2026-07-26), and a rigid enum
+// would need a code migration every time their form does — the prompt
+// itself is what pins these to the current verified values.
+export const PHASE4_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    track: { type: 'string', enum: ['furnisher', 'bureau'] },
+    cfpbCategory: { type: 'string' },
+    cfpbSubIssue: { type: 'string' },
+    cfpbNarrative: { type: 'string' },
+    agNarrative: { type: 'string' },
+    keyFacts: { type: 'array', items: { type: 'string' } },
+    recommendedAttachments: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          docType: { type: 'string' },
+          reason: { type: 'string' },
+        },
+        required: ['docType', 'reason'],
+      },
+    },
+  },
+  required: ['track', 'cfpbCategory', 'cfpbSubIssue', 'cfpbNarrative', 'agNarrative', 'keyFacts', 'recommendedAttachments'],
+};
