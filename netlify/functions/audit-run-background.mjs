@@ -282,6 +282,25 @@ export const handler = async (event) => {
   // upsert (same slug__date id), and the lead-row upsert — attributed to the
   // job's user so the audit lands in their records even if the tab closed.
   async function saveAuditAs(userId, audit, job) {
+    // Enforce the addressStatus/furnisherAddress pairing server-side rather
+    // than trusting masterPrompt.js's instructions alone — confirmed live
+    // (William Pope's Navy Federal, Austin Mote's Suzuki account) that the
+    // model sometimes sets CONFIRM without ever populating furnisherAddress,
+    // leaving the Kanban "Address Confirm" card with nothing to confirm.
+    // CONFIRM/YES with no address is downgraded to PENDING (the only status
+    // that's actually true of an empty address); YES is never a legitimate
+    // audit-generation output per masterPrompt.js §10, so any account still
+    // carrying it this early (before the furnisher_addresses backfill below,
+    // which is the sole legitimate source of YES) is treated the same way.
+    for (const acct of (audit && audit.accounts) || []) {
+      const hasAddress = !!(acct.furnisherAddress && acct.furnisherAddress.trim());
+      if ((acct.addressStatus === 'CONFIRM' || acct.addressStatus === 'YES') && !hasAddress) {
+        acct.addressStatus = 'PENDING';
+      } else if (acct.addressStatus === 'YES' && hasAddress) {
+        acct.addressStatus = 'CONFIRM';
+      }
+    }
+
     let clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
     const clientAddress = (audit && audit.client && audit.client.address) || null;
     const reportDate = (audit && audit.client && audit.client.reportDate) || todayISO();

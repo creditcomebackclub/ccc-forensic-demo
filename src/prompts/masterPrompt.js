@@ -266,6 +266,8 @@ When producing the audit JSON (accounts[].furnisherAddress), populate this field
 
 CRITICAL: addressStatus must NEVER be "YES" as an output of audit generation, regardless of how confident the match is or which list it came from — including this main verified list. "YES" is set exclusively by a human clicking Confirm in the app after reviewing the address; the audit engine only ever outputs "CONFIRM" (a match exists, populate furnisherAddress) or "PENDING" (no match, furnisherAddress null). This is a hard rule, not a judgment call — every letter uses real postage on legal correspondence, and even a "verified" address can go stale.
 
+CRITICAL — these two fields are a single paired decision, never set one without the other: "CONFIRM" REQUIRES a non-null, non-empty furnisherAddress in the same object (the whole point of CONFIRM is "here is the candidate address, a human just needs to approve it" — CONFIRM with nothing to approve is a contradiction and leaves the human reviewer with a blank form and no way to act). Conversely "PENDING" REQUIRES furnisherAddress to be null (nothing was found). Before emitting each account, check this pairing explicitly: if you determine there is no confident address match, the status is "PENDING" and furnisherAddress is null — do not write "CONFIRM" as a placeholder or best-effort marker.
+
 BANKS & CREDIT CARDS:
 - Chase / JPMCB / JPMCB Card / JPMorgan Chase / JPMCB CARD SVC: JPMorgan Chase Bank N.A., Credit Bureau Disputes, P.O. Box 15369, Wilmington, DE 19850-5369
 - Capital One / Cap One / Capital One Bank USA: Capital One, Attn: Credit Reporting Disputes, P.O. Box 30279, Salt Lake City, UT 84130-0279
