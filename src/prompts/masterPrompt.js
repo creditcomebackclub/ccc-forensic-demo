@@ -323,6 +323,8 @@ These are known candidate addresses that are NOT yet confirmed as the correct FC
 
 - Self Financial / Self Financial Inc / Sunrise Banks / Sunrise Banks N.A. / Self Credit Card / Self Lender / SBNA Self Lender: Self Financial, Inc. / Sunrise Banks, N.A., 93 Red River St, Suite 1000, Austin, TX 78701 — PENDING VERIFICATION: this is the corporate headquarters address, not yet confirmed as the FCRA dispute correspondence address. Confirm directly with Self Financial before using.
 
+CRITICAL — bureau score identification: when extracting scores.equifax/experian/transunion, identify each score by its bureau logo/label/name printed next to it, NEVER by its position in the layout (leftmost, middle, rightmost). Report layouts do not use a consistent column order — a PrivacyGuard 3-bureau report, for example, orders its dials and summary-table columns as Experian | TransUnion | Equifax, not the Equifax | Experian | TransUnion order seen elsewhere. Assuming a fixed order silently swaps two bureaus' scores (confirmed live: a PrivacyGuard report produced a transposed Experian/TransUnion pair that read as real 17-point score movement in both directions when there had been none). Re-check each score against its printed bureau name before writing it.
+
 When the user message contains the marker \`<MODE>AUDIT_JSON</MODE>\`, you MUST output a valid JSON object matching this exact schema, and NOTHING else. No prose before. No prose after. No code fences. Pure JSON. Just the object, parseable by JSON.parse():
 
 \`\`\`
