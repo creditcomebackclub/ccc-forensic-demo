@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { diffAuditAccounts } from './diffEngine';
+import { diffAuditAccounts, normalizeFurnisher } from './diffEngine';
 
 function slug(s) {
   return String(s || 'unknown')
@@ -137,6 +137,49 @@ async function triggerProgressNarrative(clientName) {
   }
 }
 
+// Reusable, compounding furnisher-address book — see
+// supabase/migrations/20260726_furnisher_addresses.sql for why this exists.
+export async function listFurnisherAddresses() {
+  const userId = await getUserId();
+  const { data, error } = await supabase.from('furnisher_addresses').select('*').eq('user_id', userId);
+  if (error) throw error;
+  return (data || []).map((r) => ({
+    id: r.id,
+    furnisherKey: r.furnisher_key,
+    displayName: r.display_name,
+    address: {
+      name: r.display_name,
+      line1: r.address_line1,
+      line2: r.address_line2 || '',
+      city: r.city,
+      state: r.state,
+      zip: r.zip,
+    },
+  }));
+}
+
+// Called from AuditResults.jsx whenever staff confirm a furnisher's address
+// (the existing workflow, no new step) — makes that confirmation available
+// for every future client's audit instead of it only ever applying to the
+// one account it was typed in for.
+export async function upsertFurnisherAddress(furnisherName, address) {
+  const userId = await getUserId();
+  const furnisherKey = normalizeFurnisher(furnisherName);
+  if (!furnisherKey || !address || !address.line1) return;
+  const { error } = await supabase.from('furnisher_addresses').upsert({
+    user_id: userId,
+    furnisher_key: furnisherKey,
+    display_name: address.name || furnisherName,
+    address_line1: address.line1,
+    address_line2: address.line2 || null,
+    city: address.city,
+    state: address.state,
+    zip: address.zip,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id,furnisher_key' });
+  if (error) console.warn('Could not save furnisher address:', error);
+}
+
 export async function saveAudit(audit) {
   // Auto-populate starting scores if not already set
   try {
@@ -168,6 +211,24 @@ export async function saveAudit(audit) {
       }
     }
   } catch(e) { console.warn('Could not auto-populate scores:', e); }
+
+  // Fill in any account the audit-generation LLM left PENDING using
+  // addresses staff have already confirmed for other clients — this is
+  // what actually makes a confirmation reusable instead of one-off.
+  try {
+    if (Array.isArray(audit.accounts) && audit.accounts.some((a) => a.addressStatus === 'PENDING')) {
+      const known = await listFurnisherAddresses();
+      const byKey = new Map(known.map((k) => [k.furnisherKey, k]));
+      for (const acct of audit.accounts) {
+        if (acct.addressStatus !== 'PENDING') continue;
+        const match = byKey.get(normalizeFurnisher(acct.furnisher));
+        if (match) {
+          acct.furnisherAddress = [match.address.line1, match.address.line2, match.address.city + ', ' + match.address.state + ' ' + match.address.zip].filter(Boolean).join(', ');
+          acct.addressStatus = 'YES';
+        }
+      }
+    }
+  } catch (e) { console.warn('Could not backfill furnisher addresses:', e); }
 
   const userId = await getUserId();
   const clientName = (audit && audit.client && audit.client.name) || 'Unknown Client';

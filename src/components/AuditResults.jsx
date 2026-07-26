@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
 import { generateCombinedCleanupLetter } from '../utils/api';
 import { buildAuditPdfDoc, auditPdfFilename, blobToBase64 } from '../utils/auditPdf';
+import { upsertFurnisherAddress } from '../utils/storage';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
   FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale, MoreHorizontal, Pencil,
@@ -744,6 +745,10 @@ function FurnisherAddressInput({ account, onSaved }) {
           await supabase.from('audits').update({ audit: auditData }).eq('id', audits[0].id);
         }
       }
+      // Also write to the reusable address book so every future client's
+      // audit for this furnisher can be backfilled instead of re-typed —
+      // see storage.js's upsertFurnisherAddress and saveAudit backfill.
+      await upsertFurnisherAddress(account.furnisher, addr);
       onSaved(addr);
       setSaved(true);
     } catch(e) { console.error('Could not save address:', e); }
