@@ -29,6 +29,15 @@
 [functions."daily-cron"]
   schedule = "0 15 * * *"
 
+# public-affiliate-lookup is public, unauthenticated, and read-only — unlike
+# public-intake.cjs (which has its own app-level honeypot + DB-tracked IP
+# throttle) this one has no protection at all against being hammered, or
+# used to enumerate affiliate ref-code prefixes one character at a time.
+[functions."public-affiliate-lookup"]
+  [functions."public-affiliate-lookup".rate_limit]
+    window = "1m"
+    limit = 30
+
 [[headers]]
   for = "/*"
   [headers.values]
