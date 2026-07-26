@@ -59,18 +59,32 @@ export default function ClientPortal({ session, onSignOut }) {
       }
       setProfile(cp);
       if (cp) {
-        const [lettersRes, metaRes, auditsRes, progressRes] = await Promise.all([
+        // clients/documents queries prefer client_id (backfilled onto
+        // client_profiles — see the client_id migration plan) since
+        // clients.name has no unique constraint and a same-named client
+        // would otherwise risk resolving to the wrong record. Falls back
+        // to the pre-existing name match when client_id wasn't backfilled
+        // (e.g. genuine ambiguity, or no matching clients row at all).
+        const clientsQuery = cp.client_id
+          ? supabase.from('clients').select('*').eq('id', cp.client_id).limit(1)
+          : supabase.from('clients').select('*').eq('name', cp.full_name).limit(1);
+        const documentsQuery = cp.client_id
+          ? supabase.from('documents').select('doc_type,file_name,uploaded_at').eq('client_id', cp.client_id)
+          : supabase.from('documents').select('doc_type,file_name,uploaded_at').eq('client_name', cp.full_name);
+
+        const [lettersRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
           supabase.from('letters').select('*').eq('client_name', cp.full_name).order('saved_at', { ascending: true }),
-          supabase.from('clients').select('*').eq('name', cp.full_name).limit(1),
+          clientsQuery,
           supabase.from('audits').select('audit,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5),
           supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).order('to_report_date', { ascending: false }),
+          documentsQuery,
         ]);
         setLetters(lettersRes.data || []);
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
         setProgressUpdates(progressRes.data || []);
 
-        const { data: docRows } = await supabase.from('documents').select('doc_type,file_name,uploaded_at').eq('client_name', cp.full_name);
+        const docRows = docsRes.data;
         if (docRows) {
           setClientDocs({
             id: docRows.find(d => d.doc_type === 'id') || null,
@@ -90,23 +104,19 @@ export default function ClientPortal({ session, onSignOut }) {
     setUploadingDoc(docType);
     const toastId = toast.loading('Uploading document...');
     try {
-      const ext = file.name.split('.').pop();
+      // clientId keyed (via utils/documents.js's uploadDocument, the same
+      // path the admin-side DocumentManager.jsx uses) instead of an inline
+      // name slug — two same-named clients would otherwise silently
+      // overwrite each other's ID/address documents. ownerUserId must be
+      // the firm's staff user_id, not this session's own (client) auth id,
+      // to match staff_all_documents RLS and where admin-side uploads live.
+      const clientId = clientMeta?.id;
       const adminUserId = clientMeta?.user_id;
-      if (!adminUserId) throw new Error('Could not identify firm admin user id.');
-      const slug = String(profile.full_name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      if (!adminUserId || !clientId) throw new Error('Could not identify client record.');
+      const { uploadDocument } = await import('../utils/documents.js');
       const internalDocType = docType === 'government_id' ? 'id' : 'address';
-      const path = adminUserId + '/' + slug + '/' + internalDocType + '.' + ext;
-
-      await supabase.storage.from('documents').upload(path, file, { upsert: true });
-      await supabase.from('documents').upsert({
-        user_id: adminUserId,
-        client_name: profile.full_name,
-        doc_type: internalDocType,
-        file_name: file.name,
-        storage_path: path,
-        uploaded_at: new Date().toISOString(),
-      }, { onConflict: 'user_id,client_name,doc_type' });
-      setClientDocs(prev => ({ ...prev, [internalDocType]: { name: path } }));
+      const storagePath = await uploadDocument(clientId, profile.full_name, internalDocType, file, adminUserId);
+      setClientDocs(prev => ({ ...prev, [internalDocType]: { name: storagePath } }));
       toast.success('Document uploaded successfully!', { id: toastId });
     } catch(e) {
       console.error('Doc upload error:', e);

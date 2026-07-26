@@ -13,8 +13,15 @@ async function getUserId() {
 // uploads; it's optional on getDocuments only because LobMailer's caller
 // doesn't have one on hand (letters rows aren't client_id-keyed) and falls
 // back to the pre-existing name-based lookup there.
-export async function uploadDocument(clientId, clientName, docType, file) {
-  const userId = await getUserId();
+//
+// ownerUserId is optional and only needed when the caller isn't the
+// document's owner — e.g. ClientPortal.jsx uploads on behalf of the client,
+// but the row (and storage path) must still be rooted under the firm's
+// staff user_id, not the client's own auth id, to match staff_all_documents
+// RLS and where admin-side uploads already live. Defaults to the current
+// session's own id, which is correct for every admin-side caller.
+export async function uploadDocument(clientId, clientName, docType, file, ownerUserId) {
+  const userId = ownerUserId || await getUserId();
   if (!clientId) throw new Error('uploadDocument requires a clientId');
   const ext = file.name.split('.').pop().toLowerCase();
   const storagePath = `${userId}/${clientId}/${docType}.${ext}`;
