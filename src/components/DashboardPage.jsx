@@ -5,6 +5,13 @@ import { listClients, adminListClients, updateLetter } from '../utils/storage';
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_HOURS = 24;
 const STD_RESPONSE_DAYS = 3;
+// 15 U.S.C. §1681i(a) & (e): before a CFPB complaint about a credit
+// reporting agency's investigation, the consumer must have disputed
+// directly with the CRA AND either 45 days must have passed or the
+// dispute is no longer pending. Phase 3 letters are CRA-directed, so their
+// own escalation-readiness clock needs 45 days, not the 30 used for Phase 1
+// (furnisher-directed — no such statutory prerequisite applies there).
+const CRA_WINDOW_DAYS = 45;
 
 // Brand + chart tokens. Chart mark colors are validated steps of the brand
 // hues (navy/gold are chrome colors — too dark / low-contrast for marks).
@@ -51,7 +58,7 @@ function fmtTime(iso) {
   } catch (e) { return iso; }
 }
 
-function letterStatus(l) {
+function letterStatus(l, windowDays = WINDOW_DAYS) {
   if (l.responseOutcome === 'deleted') return { code: 'deleted', tone: 'green' };
   if (l.responseOutcome === 'received') return { code: 'received', tone: 'green' };
   if (l.responseOutcome === 'no_response') return { code: 'no_response', tone: 'red' };
@@ -59,7 +66,7 @@ function letterStatus(l) {
   if (!l.deliveredAt) return { code: 'in_transit', tone: 'neutral' };
   const clockStart = l.deliveredAt.slice(0, 10);
   const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = WINDOW_DAYS - elapsed;
+  const remaining = windowDays - elapsed;
   if (remaining > 0) return { code: 'awaiting', remaining, tone: 'amber' };
   return { code: 'window_closed', tone: 'red' };
 }
@@ -69,7 +76,7 @@ function computeDashboard(clients) {
   const windowCountdown = [];
   const recentActivity = [];
   const vipClients = clients.filter((c) => c.isVip);
-  let awaiting = 0, escalate = 0, phase3 = 0, active = 0;
+  let awaiting = 0, escalate = 0, phase3 = 0, active = 0, phase4 = 0, readyForPhase4 = 0;
 
   // Outcomes — deletions are the product; measure them
   let deletedAll = 0, deletedThisMonth = 0, deletedLastMonth = 0, outcomeCount = 0;
@@ -127,7 +134,48 @@ function computeDashboard(clients) {
         }
       }
 
-      if (l.phase?.startsWith('Phase 3')) { phase3++; continue; }
+      // Phase 4 letters don't exist yet (no generation flow built), but this
+      // guard is here from day one so Phase 4 rows are never miscounted as
+      // still-open Phase 3 once they do.
+      if (l.phase?.startsWith('Phase 4')) { phase4++; continue; }
+
+      if (l.phase?.startsWith('Phase 3')) {
+        phase3++;
+        // Previously this just `continue`d — every Phase 3 (CRA) letter
+        // vanished from tracking the moment it was mailed. No 30/45-day
+        // clock, no "did the bureau respond" signal, nothing: staff had no
+        // way to know a bureau dispute had gone stale short of manually
+        // opening each client. This is the prerequisite for Phase 4 (CFPB/AG
+        // escalation) — that trigger is "Phase 3 got no result," which
+        // didn't exist as a derivable signal at all until now.
+        //
+        // Gated the same way Phase 1→Phase 3 already is (hasPhase3 below):
+        // once a Phase 4 record exists for this bureau, stop flagging it.
+        const hasPhase4 = c.letters.some((pl) => pl.phase?.startsWith('Phase 4') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
+        if (!hasPhase4) {
+          // CRA_WINDOW_DAYS (45), not WINDOW_DAYS (30) — see the constant's
+          // comment. A bureau that already responded has no waiting period
+          // left (§1681i(a)'s "or the dispute is no longer pending" branch),
+          // so 'received' is immediately actionable, just for human review
+          // of adequacy rather than an automatic escalation.
+          const st3 = letterStatus(l, CRA_WINDOW_DAYS);
+          if (st3.code === 'window_closed' || st3.code === 'no_response') {
+            readyForPhase4++;
+            actions.push({
+              type: 'escalate_phase4', priority: c.isVip ? 0 : 1, client: c.name, furnisher: l.furnisher, isVip: c.isVip,
+              label: st3.code === 'no_response' ? 'Bureau confirmed no response — ready for CFPB/AG' : '45-day CRA window closed — ready for CFPB/AG',
+              tone: 'red', savedAt: l.savedAt, filter: 'phase4', letter: l,
+            });
+          } else if (st3.code === 'received') {
+            readyForPhase4++;
+            actions.push({
+              type: 'escalate_phase4', priority: c.isVip ? 0 : 1, client: c.name, furnisher: l.furnisher, isVip: c.isVip,
+              label: 'Bureau responded — review for CFPB/AG escalation', tone: 'amber', savedAt: l.responseDate || l.savedAt, filter: 'phase4', letter: l,
+            });
+          }
+        }
+        continue;
+      }
 
       funnel.generated++;
       if (l.mailedDate) funnel.mailed++;
@@ -185,7 +233,7 @@ function computeDashboard(clients) {
 
   return {
     actions: actions.slice(0, 6),
-    windowCountdown: windowCountdown.slice(0, 10), weeklyData, awaiting, escalate, phase3, active,
+    windowCountdown: windowCountdown.slice(0, 10), weeklyData, awaiting, escalate, phase3, active, phase4, readyForPhase4,
     recentActivity: recentActivity.slice(0, 10), vipClients,
     funnel, deletedAll, deletedThisMonth, deletedLastMonth, winRate, avgDeleteDays, outcomeCount, portal,
   };
@@ -543,8 +591,8 @@ function QuickActionPanel({ action, onDone, onCancel, onNavigate }) {
       )}
       {mode === null && (
         <div className="flex items-center gap-2 flex-wrap">
-          {(action.type === 'escalate' || action.type === 'no_response') && (
-            <button 
+          {(action.type === 'escalate' || action.type === 'no_response' || action.type === 'escalate_phase4') && (
+            <button
               onClick={() => onNavigate('clients', { jumpTo: action.client })}
               className="text-[11px] uppercase tracking-wider text-navy hover:text-gold"
             >
@@ -638,6 +686,10 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
         <StatTile icon={Clock} label="Awaiting response" value={dash.awaiting} sub={WINDOW_DAYS + '-day windows open'} tone={dash.awaiting > 0 ? 'amber' : 'navy'} clickable={dash.awaiting > 0} onClick={() => handleStatClick('awaiting')} />
         <StatTile icon={Zap} label="Ready to escalate" value={dash.escalate} sub="windows closed" tone={dash.escalate > 0 ? 'red' : 'navy'} clickable={dash.escalate > 0} onClick={() => handleStatClick('escalate')} />
         <StatTile icon={TrendingUp} label="Phase 3 active" value={dash.phase3} sub="CRA letters sent" tone={dash.phase3 > 0 ? 'green' : 'navy'} clickable={dash.phase3 > 0} onClick={() => handleStatClick('phase3')} />
+        {/* Not clickable yet — ClientsPage/Kanban filter wiring for 'phase4'
+            lands with the CFPB/AG generation UI itself; this tile is the
+            tracking signal on its own, surfaced before that flow exists. */}
+        <StatTile icon={AlertCircle} label="Ready for CFPB/AG" value={dash.readyForPhase4} sub="Phase 3 exhausted" tone={dash.readyForPhase4 > 0 ? 'red' : 'navy'} clickable={false} />
       </div>
 
       {/* Results — what clients pay for */}
