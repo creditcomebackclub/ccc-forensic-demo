@@ -129,6 +129,7 @@ const RETURN_RECEIPT_EVENTS = new Set([
 // earlier archive attempt was interrupted. Webhook bodies can redact URLs,
 // so _lobArtifacts retrieves the authoritative letter record with Lob's API.
 const RENDERED_PDF_EVENTS = new Set(['letter.rendered_pdf']);
+const FAILED_EVENTS = new Set(['letter.failed', 'letter.certified.failed']);
 
 
 exports.handler = async (event) => {
@@ -320,6 +321,40 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ received: true, lobId, event: 'return_receipt', saved: true }) };
   }
   // ─────────────────────────────────────────────────────────────────────────
+
+  // A creation response only means Lob accepted the job; rendering can still
+  // fail before anything reaches USPS. Mark that submission retryable and
+  // clear the operational mail fields. The failed Lob ID remains preserved in
+  // the webhook ledger, so a future retry cannot erase the audit trail.
+  if (FAILED_EVENTS.has(eventType)) {
+    const failureMessage = lobLetter?.failure_reason || lobLetter?.error || 'Lob failed to render this mailpiece before mailing.';
+    let failedLetter = await supabaseRequest(
+      '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId),
+      'PATCH',
+      { tracking_status: 'Failed', mailed_date: null, tracking_number: null, delivered_at: null },
+      supabaseUrl, supabaseKey
+    );
+    if (Array.isArray(failedLetter.body) && failedLetter.body.length === 0 && metaLetterId) {
+      failedLetter = await supabaseRequest(
+        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId),
+        'PATCH',
+        { tracking_status: 'Failed', mailed_date: null, tracking_number: null, delivered_at: null },
+        supabaseUrl, supabaseKey
+      );
+    }
+    const failedSubmission = await supabaseRequest(
+      '/rest/v1/mail_submissions?lob_id=eq.' + encodeURIComponent(lobId),
+      'PATCH',
+      { status: 'failed', last_error: String(failureMessage).slice(0, 1000) },
+      supabaseUrl, supabaseKey
+    );
+    if (failedLetter.status < 200 || failedLetter.status >= 300 || failedSubmission.status < 200 || failedSubmission.status >= 300) {
+      console.error('Could not record Lob mail failure:', lobId, failedLetter.status, failedSubmission.status);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Could not record failed Lob mailpiece' }) };
+    }
+    console.warn('Lob mailpiece failed before mailing:', lobId, failureMessage);
+    return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Failed', retryable: true }) };
+  }
 
   const trackingStatus = statusMap[eventType];
   if (!trackingStatus) {

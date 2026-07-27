@@ -79,7 +79,7 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_name,lob_id,mailed_date,tracking_number,enclosure_parse_blocked,enclosure_parse_issues',
+      + '&select=id,user_id,client_id,client_name,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
@@ -133,6 +133,41 @@ async function updateSubmission(letterId, patch, supabaseUrl, serviceKey) {
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not update durable mail submission'));
   return Array.isArray(result.body) ? result.body[0] : null;
+}
+
+// A retry is permitted only after the signed Lob webhook has recorded a
+// rendering failure. It deliberately rotates the durable idempotency key and
+// clears only the operational fields; the original failed Lob ID remains in
+// lob_webhook_events as the immutable audit record.
+async function prepareFailedRetry(letter, submission, supabaseUrl, serviceKey) {
+  if (submission.status !== 'failed' || letter.tracking_status !== 'Failed' || !letter.lob_id) {
+    throw new Error('This mailpiece is not a confirmed failed Lob send and cannot be retried.');
+  }
+  const cleared = await supabaseRequest(
+    '/rest/v1/letters?id=eq.' + encodeURIComponent(letter.id)
+      + '&lob_id=eq.' + encodeURIComponent(letter.lob_id)
+      + '&tracking_status=eq.Failed',
+    'PATCH',
+    { lob_id: null, mailed_date: null, tracking_number: null, tracking_status: 'Retrying', delivered_at: null },
+    supabaseUrl, serviceKey
+  );
+  if (!isSuccess(cleared) || !Array.isArray(cleared.body) || cleared.body.length !== 1) {
+    throw new Error('The failed mailpiece changed before it could be retried. Refresh the letter and try again.');
+  }
+  const reset = await supabaseRequest(
+    '/rest/v1/mail_submissions?letter_id=eq.' + encodeURIComponent(letter.id) + '&status=eq.failed',
+    'PATCH',
+    {
+      idempotency_key: crypto.randomUUID(), status: 'pending', lob_id: null,
+      tracking_number: null, submitted_at: null, last_error: null,
+      updated_at: new Date().toISOString(),
+    },
+    supabaseUrl, serviceKey
+  );
+  if (!isSuccess(reset) || !Array.isArray(reset.body) || reset.body.length !== 1) {
+    throw new Error('Could not prepare a fresh safe retry for this failed mailpiece.');
+  }
+  return reset.body[0];
 }
 
 exports.handler = async (event) => {
@@ -243,6 +278,10 @@ exports.handler = async (event) => {
             mail_submission_status: submission.status,
           }),
         };
+      }
+
+      if (submission.status === 'failed') {
+        submission = await prepareFailedRetry(letter, submission, supabaseUrl, serviceKey);
       }
 
       await updateSubmission(letterId, {

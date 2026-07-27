@@ -118,6 +118,25 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       const { data: { user } } = await supabase.auth.getUser();
       const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 
+      // Lob fetches the hosted HTML itself.  Keeping full-page base64 images
+      // inside that HTML made larger Phase 3 packets exceed Lob's renderer
+      // buffer (and fail after an initial accepted response).  Store small,
+      // temporary raster pages privately instead and give Lob expiring URLs;
+      // the source HTML stays compact without omitting any evidence.
+      const assetPrefix = user.id + '/temp-letter-assets/' + Date.now();
+      let assetNumber = 0;
+      const uploadMailImage = async (blob) => {
+        const storagePath = assetPrefix + '/page-' + (++assetNumber) + '.jpg';
+        const { error: assetError } = await supabase.storage.from('documents').upload(storagePath, blob, {
+          upsert: false,
+          contentType: 'image/jpeg',
+        });
+        if (assetError) throw new Error('Could not prepare a print enclosure: ' + assetError.message);
+        const { data, error: urlError } = await supabase.storage.from('documents').createSignedUrl(storagePath, 3600);
+        if (urlError || !data?.signedUrl) throw urlError || new Error('Could not prepare a print enclosure URL');
+        return data.signedUrl;
+      };
+
       // Lob prints HTML, not a multi-file attachment bundle. To include an
       // immutable PDF as evidence, render each original PDF page to an image
       // and embed it in the outgoing HTML. The archived source PDF remains
@@ -140,12 +159,16 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">' + heading + '</div>';
         for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
           const page = await pdf.getPage(pageNum);
-          const viewport = page.getViewport({ scale: 1.5 });
+          // A 612px-wide page is more than enough for B&W letter printing
+          // and is dramatically smaller than the prior 1.5x/0.9 JPEG data.
+          const viewport = page.getViewport({ scale: 1 });
           const canvas = document.createElement('canvas');
           canvas.width = viewport.width;
           canvas.height = viewport.height;
           await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-          html += '<img src="' + canvas.toDataURL('image/jpeg', 0.9) + '" style="max-width:100%;display:block;margin-bottom:10px;" />';
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.7));
+          if (!blob) throw new Error('Could not rasterize PDF enclosure page');
+          html += '<img src="' + await uploadMailImage(blob) + '" style="max-width:100%;display:block;margin-bottom:10px;" />';
         }
         return html + '</div>';
       };
@@ -164,15 +187,15 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           .download(storagePath);
         if (downloadError || !data) throw downloadError || new Error('Response file could not be downloaded.');
 
-        const b64 = await blobToBase64(data);
         const mediaType = inferMediaType(fileName, data.type);
-        if (mediaType === 'application/pdf') return renderPdfBase64(b64, heading);
+        if (mediaType === 'application/pdf') return renderPdfBase64(await blobToBase64(data), heading);
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)) {
           throw new Error('Unsupported response evidence type: ' + (fileName || storagePath));
         }
+        const imageUrl = await uploadMailImage(data);
         return '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
           + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">' + heading + '</div>'
-          + '<img src="data:' + mediaType + ';base64,' + b64 + '" style="max-width:100%;display:block;margin-bottom:8px;" />'
+          + '<img src="' + imageUrl + '" style="max-width:100%;display:block;margin-bottom:8px;" />'
           + '</div>';
       };
 
@@ -180,11 +203,12 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         if (!doc) return '';
         const isImg = doc.file_name && /\.(jpg|jpeg|png)$/i.test(doc.file_name);
         if (!isImg) return renderPdfPages(doc.storage_path, heading);
-        const b64 = await getDocumentBase64(doc.storage_path);
-        const type = doc.file_name.toLowerCase().endsWith('.png') ? 'png' : 'jpeg';
+        const { data, error: documentDownloadError } = await supabase.storage.from('documents').download(doc.storage_path);
+        if (documentDownloadError || !data) throw documentDownloadError || new Error('Could not read document enclosure');
+        const imageUrl = await uploadMailImage(data);
         return '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;filter:grayscale(100%);-webkit-filter:grayscale(100%);">'
           + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">' + heading + '</div>'
-          + '<img src="data:image/' + type + ';base64,' + b64 + '" style="max-width:100%;max-height:700px;" />'
+          + '<img src="' + imageUrl + '" style="max-width:100%;max-height:700px;" />'
           + '</div>';
       };
 
