@@ -149,28 +149,12 @@ exports.handler = async (event) => {
     const lead = insertedData[0]; // Prefer return=representation returns an array
 
 
-    // 3. Send a lead confirmation. Intake creates a CRM lead, not a portal
-    // account; portal access is issued only after staff onboarding.
+    // The lead form is followed by an embedded Calendly scheduler. Do not
+    // claim they booked—or send a scheduling email—until the embed reports
+    // calendly.event_scheduled. intake-booked.cjs owns that confirmation.
     const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
-    const emailRes = await fetch(base + '/.netlify/functions/send-lpoa', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${serviceKey}`
-      },
-      body: JSON.stringify({ 
-        action: 'send', 
-        clientName: lead.name, 
-        clientEmail: lead.email,
-        tier: tier || 'Consultation'
-      }),
-    });
 
-    if (!emailRes.ok) {
-      console.error('Email trigger failed:', await emailRes.text());
-    }
-
-    // 4. Trigger the Admin Notification email
+    // 3. Trigger the Admin Notification email
     const adminRes = await fetch(base + '/.netlify/functions/send-lpoa', {
       method: 'POST',
       headers: { 

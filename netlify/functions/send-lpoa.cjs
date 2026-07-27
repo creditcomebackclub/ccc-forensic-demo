@@ -65,7 +65,7 @@ exports.handler = async (event) => {
   // do not leave a generic client-authenticated email endpoint that can be
   // used to spoof arbitrary client/furnisher details to staff.
   const STAFF_ACTIONS = ['send_audit_email', 'send_phase_notification'];
-  const ADMIN_ACTIONS = ['send', 'send_onboarding_welcome', 'send_campaign_update', 'send_lead_drip', 'send_onboarding_reminder', 'send_lead_nurture', 'send_report_refresh', 'admin_new_lead', 'send_educational', 'affiliate_welcome'];
+  const ADMIN_ACTIONS = ['send', 'send_consultation_booked', 'send_onboarding_welcome', 'send_campaign_update', 'send_lead_drip', 'send_onboarding_reminder', 'send_lead_nurture', 'send_report_refresh', 'admin_new_lead', 'send_educational', 'affiliate_welcome'];
   const AFFILIATE_ACTIONS = ['affiliate_new_referral'];
   if (!STAFF_ACTIONS.includes(action) && !ADMIN_ACTIONS.includes(action) && !AFFILIATE_ACTIONS.includes(action)) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Unknown action' }) };
@@ -105,6 +105,31 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       console.error('Email error:', e.message);
+      return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    }
+  }
+
+  if (action === 'send_consultation_booked') {
+    const { clientName, clientEmail, tier, portalInvited } = payload;
+    if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
+    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    const firstName = String(clientName || 'there').split(' ')[0];
+    const enrollment = tier && tier !== 'Consultation';
+    const subject = enrollment
+      ? `You're Booked, ${firstName} — Let's Get Your File Ready`
+      : `You're Booked, ${firstName} — How to Prepare for Your Credit Review`;
+    const preparation = enrollment
+      ? `<p>We know you&rsquo;re ready to get moving. Before any campaign begins, we first complete a detailed forensic audit so you can see the FCRA compliance issues, Metro 2 reporting errors, and the exact strategy we recommend.</p>
+         ${portalInvited ? `<p>We sent a separate secure portal invitation. If you want to hit the ground running before the call, you can:</p>
+         <ol style="line-height:1.8;"><li>Upload your newest three-bureau credit report.</li><li>Connect your credit-monitoring account so we can review current data and track future changes.</li><li>Review the Limited Power of Attorney (LPOA). It is a limited authorization allowing Credit Comeback Club to communicate and prepare dispute correspondence on your behalf if you choose to proceed; it does not give us control of your money, credit accounts, or financial decisions.</li></ol>
+         <p>These steps are optional before the call, but completing them early lets us spend more of the consultation on findings and strategy.</p>` : `<p>Please have your newest three-bureau credit report ready. We&rsquo;ll send secure portal-onboarding instructions separately.</p>`}`
+      : `<p>We&rsquo;re looking forward to reviewing your file. Please have a copy of your newest credit report available&mdash;ideally a current three-bureau report showing Equifax, Experian, and TransUnion.</p>
+         <p>During the consultation, we&rsquo;ll walk through the file at a forensic level: potential FCRA compliance issues, Metro 2 reporting errors, which items may warrant documented disputes, and how Credit Comeback Club may be able to help. Bring any questions and recent correspondence you&rsquo;ve received from creditors, collectors, or the bureaus.</p>`;
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#111827;"><div style="background:#1B2A4A;padding:24px 32px;border-radius:6px 6px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Your Consultation Is Booked</p></div><div style="border:1px solid #E5E7EB;border-top:none;padding:24px 32px;border-radius:0 0 6px 6px;font-size:14px;line-height:1.65;"><p>Hi ${firstName},</p><p>Your consultation is on the calendar, and we&rsquo;re eager to take a close look at your file.</p>${preparation}<p>Calendly&rsquo;s calendar invitation contains the confirmed date, time, and meeting details. If you need to reschedule, use the link in that invitation.</p><p>Questions before the call? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;"><p style="font-size:11px;color:#9CA3AF;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
+    try {
+      await sendViaSendGrid(sgKey, clientEmail, subject, html);
+      return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+    } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
     }
   }
@@ -430,7 +455,7 @@ exports.handler = async (event) => {
           <li><strong>Phone:</strong> ${leadPhone || 'Not provided'}</li>
           <li><strong>Tier:</strong> ${tier || 'Not provided'}</li>
         </ul>
-        <p>They have been added to your CRM and received a consultation scheduling email.</p>
+        <p>They have been added to your CRM. Their preparation email will send after Calendly confirms the booking.</p>
         <div style="text-align:center;margin:32px 0;">
           <a href="https://ccc-forensic-demo.netlify.app" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Open CRM Dashboard &#8594;</a>
         </div>
