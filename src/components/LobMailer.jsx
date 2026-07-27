@@ -363,7 +363,13 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
               action: 'send_phase_notification',
               clientName: cp[0].full_name,
               clientEmail: cp[0].email,
-              phase: 'phase1_mailed',
+              // Pre-existing bug, independent of mail class: this was
+              // hardcoded 'phase1_mailed' for every send, so a Phase 3
+              // bureau letter's client email said "Your Phase 1 dispute
+              // letter... mailed via Certified Mail" — wrong phase label
+              // regardless of what actually mailed. isPhase3 above already
+              // tracks this correctly for the enclosure logic.
+              phase: isPhase3 ? 'phase3_mailed' : 'phase1_mailed',
               furnisher: letter.furnisher,
               trackingNumber: res.tracking_number || '',
             }),
