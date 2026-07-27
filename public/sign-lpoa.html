@@ -74,7 +74,7 @@
         <h3>3. Limitations</h3>
         <p>This authorization does NOT grant authority to make financial decisions, access financial accounts, dispute accurate information, create a new credit identity, or settle legal claims without explicit written consent.</p>
         <h3>4. Fee Structure</h3>
-        <p id="fee-structure-text">First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.</p>
+        <p id="fee-structure-text">$79/month, plus a $75 First Work Fee due after audit delivery.</p>
         <h3>5. No Guarantee</h3>
         <p>No specific outcome is guaranteed. Results vary by credit profile and creditor response.</p>
         <h3>6. Duration & Revocation</h3>
@@ -132,7 +132,7 @@
   const lpoaType = params.get('type') === 'inquiry' ? 'inquiry' : 'standard';
   const feeTextParam = params.get('feeText');
   const FEE_TEXT = {
-    standard: feeTextParam || 'First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.',
+    standard: feeTextParam || '$79/month, plus a $75 First Work Fee due after audit delivery.',
     inquiry: 'Personal Information / Inquiry Removal Fee: $50 per bureau, one-time. No monthly service fee. No deletion = no charge.',
   };
 
