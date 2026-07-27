@@ -14,6 +14,7 @@ import DocumentsTab from './client-portal/DocumentsTab';
 import VipTab from './client-portal/VipTab';
 import BillingTab from './client-portal/BillingTab';
 import ConciergeChat from './client-portal/ConciergeChat';
+import { clientCampaignLabel, isBureauCampaign } from '../utils/clientCampaignCopy';
 
 export default function ClientPortal({ session, onSignOut }) {
   const [profile, setProfile] = useState(null);
@@ -276,7 +277,7 @@ export default function ClientPortal({ session, onSignOut }) {
 
   const timeline = [];
   letters.forEach(l => {
-    if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: 'Dispute letter prepared — ' + l.furnisher, subtitle: l.phase, tone: 'blue' });
+    if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: 'Dispute letter prepared — ' + l.furnisher, subtitle: clientCampaignLabel(l.phase), tone: 'blue' });
     if (l.mailed_date) timeline.push({ date: l.mailed_date, icon: '✉️', title: 'Letter mailed via certified mail — ' + l.furnisher, subtitle: l.tracking_number ? 'USPS #' + l.tracking_number.slice(-8) : null, tone: 'default' });
 
     // Granular in-transit milestones from Lob webhook
@@ -286,21 +287,21 @@ export default function ClientPortal({ session, onSignOut }) {
       timeline.push({ date: l.mailed_date, icon: '📬', title: 'Out for Delivery — ' + l.furnisher, subtitle: 'Expected delivery today', tone: 'gold' });
 
     if (l.tracking_status === 'Delivered') {
-      const responseWindow = l.phase?.startsWith('Phase 3') ? '45-day' : '30-day';
+      const responseWindow = isBureauCampaign(l.phase) ? '45-day bureau review' : '30-day response';
       timeline.push({ date: l.delivered_at || l.mailed_date, icon: '✅', title: 'Delivered — ' + l.furnisher, subtitle: responseWindow + ' response window started', tone: 'green', lobId: l.lob_id, trackingNumber: l.tracking_number });
     }
     if (l.tracking_status === 'Returned to Sender') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '↩️', title: 'Returned to Sender — ' + l.furnisher, subtitle: 'Letter returned — address may need to be verified', tone: 'red' });
     if (l.tracking_status === 'Available for Pickup') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '🏢', title: 'Available for Pickup — ' + l.furnisher, subtitle: 'Awaiting pickup at post office', tone: 'gold' });
 
     if (l.response_outcome === 'received') {
-      const bureauUpdate = l.phase?.startsWith('Phase 3');
+      const bureauUpdate = isBureauCampaign(l.phase);
       const bureauStatus = l.bureau_response_status;
       const subtitle = bureauUpdate
         ? (bureauStatus === 'analyzing' ? 'Staff is reviewing the bureau response' : bureauStatus === 'review_ready' ? 'Staff review is ready for the next decision' : bureauStatus === 'reviewed' ? 'Next campaign step recorded' : 'Response received and queued for staff review')
         : null;
       timeline.push({ date: l.response_date, icon: '📬', title: (bureauUpdate ? 'Bureau response received — ' : 'Response received — ') + l.furnisher, subtitle, tone: 'gold' });
     }
-    if (l.response_outcome === 'no_response') timeline.push({ date: l.response_date || l.mailed_date, icon: '⚠️', title: 'No response — Phase 3 escalation triggered', subtitle: l.furnisher, tone: 'red' });
+    if (l.response_outcome === 'no_response') timeline.push({ date: l.response_date || l.mailed_date, icon: '⚠️', title: 'Response window closed — next action underway', subtitle: l.furnisher, tone: 'red' });
     if (l.response_outcome === 'deleted') timeline.push({ date: l.response_date, icon: '🏆', title: 'DELETED — ' + l.furnisher, subtitle: 'Account removed from your credit report', tone: 'green', responseUrl: l.response_file_url || null });
   });
 

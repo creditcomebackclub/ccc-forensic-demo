@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 const SUGGESTIONS = [
   "When is my next update?",
   "How long does the process take?",
-  "What is a Phase 3 dispute?"
+  "What happens during credit bureau review?"
 ];
 
 export default function ConciergeChat({ clientId, accessToken }) {

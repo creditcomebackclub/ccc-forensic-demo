@@ -1,11 +1,14 @@
 import React from 'react';
 import TimelineEvent from './TimelineEvent';
+import { clientCampaignLabel } from '../../utils/clientCampaignCopy';
 
-// Ordered steps in the dispute lifecycle
-const PHASE_STEPS = ['Prepared', 'Mailed', 'In Transit', 'Delivered', 'Awaiting Response', 'Resolved'];
+// Client-facing lifecycle. The last state deliberately describes what the
+// team does next — a response or a closed window is not automatically a
+// "resolution" for the client's overall case.
+const CAMPAIGN_STEPS = ['Prepared', 'Mailed', 'In Transit', 'Delivered', 'Response Window', 'Next Action'];
 
 function letterPhaseStep(l) {
-  if (l.response_outcome === 'deleted' || l.response_outcome === 'received' || l.response_outcome === 'no_response') return 5; // Resolved
+  if (l.response_outcome === 'deleted' || l.response_outcome === 'received' || l.response_outcome === 'no_response') return 5;
   if (l.tracking_status === 'Delivered') return 3; // Delivered → Awaiting Response
   if (l.tracking_status === 'Out for Delivery') return 2;
   if (l.tracking_status === 'In Transit') return 2;
@@ -16,54 +19,61 @@ function letterPhaseStep(l) {
 function PhaseProgressBar({ letters }) {
   if (!letters || letters.length === 0) return null;
 
-  // Group active (non-resolved) letters by phase
-  const active = letters.filter(l => !l.response_outcome || l.response_outcome === '');
   const groups = {};
   letters.forEach(l => {
-    const phase = l.phase || 'Unknown Phase';
-    if (!groups[phase]) groups[phase] = [];
-    groups[phase].push(l);
+    const campaign = clientCampaignLabel(l.phase);
+    if (!groups[campaign]) groups[campaign] = [];
+    groups[campaign].push(l);
   });
 
   return (
     <div className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-5 shadow-sm mb-4">
-      <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-slate-900 mb-4">📊 Campaign Progress by Phase</div>
+      <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-slate-900 mb-1">📊 Campaign Progress</div>
+      <p className="text-[11px] text-slate-500 mb-4">Your case may move directly to a bureau review when the record supports it. Internal phases are managed by our team.</p>
       <div className="space-y-5">
-        {Object.entries(groups).map(([phase, phaseLetters]) => {
-          // Use the furthest-along letter to represent the phase
-          const maxStep = Math.max(...phaseLetters.map(letterPhaseStep));
-          const currentLabel = PHASE_STEPS[maxStep] === 'Delivered' ? 'Awaiting Response' : PHASE_STEPS[maxStep];
-          const resolved = phaseLetters.every(l => l.response_outcome);
-          const deletions = phaseLetters.filter(l => l.response_outcome === 'deleted').length;
+        {Object.entries(groups).map(([campaign, campaignLetters]) => {
+          const maxStep = Math.max(...campaignLetters.map(letterPhaseStep));
+          const currentLabel = CAMPAIGN_STEPS[maxStep] === 'Delivered' ? 'Response Window' : CAMPAIGN_STEPS[maxStep];
+          const allHaveOutcome = campaignLetters.every(l => l.response_outcome);
+          const deletions = campaignLetters.filter(l => l.response_outcome === 'deleted').length;
+          const responses = campaignLetters.filter(l => l.response_outcome === 'received').length;
+          const noResponses = campaignLetters.filter(l => l.response_outcome === 'no_response').length;
+          const outcomeLabel = deletions > 0
+            ? `${deletions} deletion${deletions === 1 ? '' : 's'} confirmed`
+            : responses > 0
+              ? 'Response review in progress'
+              : noResponses > 0
+                ? 'Next action queued'
+                : allHaveOutcome ? 'Team review in progress' : currentLabel;
 
           return (
-            <div key={phase}>
+            <div key={campaign}>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[11px] font-semibold text-slate-800">{phase}</span>
+                <span className="text-[11px] font-semibold text-slate-800">{campaign}</span>
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border
-                  ${resolved && deletions > 0 ? 'bg-green-50 text-green-700 border-green-200'
-                  : resolved ? 'bg-gray-50 text-gray-500 border-gray-200'
+                  ${deletions > 0 ? 'bg-green-50 text-green-700 border-green-200'
+                  : allHaveOutcome ? 'bg-blue-50 text-blue-700 border-blue-200'
                   : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                  {resolved && deletions > 0 ? `✓ ${deletions} Deleted` : resolved ? 'Complete' : currentLabel}
+                  {outcomeLabel}
                 </span>
               </div>
               {/* Step dots */}
               <div className="flex items-center gap-0">
-                {PHASE_STEPS.map((step, idx) => {
+                {CAMPAIGN_STEPS.map((step, idx) => {
                   const done = idx <= maxStep;
-                  const active = idx === maxStep && !resolved;
+                  const active = idx === maxStep && !allHaveOutcome;
                   return (
                     <React.Fragment key={step}>
                       <div className={`relative flex flex-col items-center`}>
                         <div className={`w-3 h-3 rounded-full border-2 transition-all
-                          ${done && resolved ? 'bg-green-500 border-green-500'
+                          ${done && deletions > 0 ? 'bg-green-500 border-green-500'
                           : done && !active ? 'bg-slate-900 border-slate-900'
                           : active ? 'bg-amber-400 border-amber-500 ring-2 ring-amber-200'
                           : 'bg-white border-gray-300'}`}
                         />
                       </div>
-                      {idx < PHASE_STEPS.length - 1 && (
-                        <div className={`flex-1 h-0.5 mx-0.5 transition-all ${idx < maxStep ? (resolved ? 'bg-green-400' : 'bg-slate-900') : 'bg-gray-200'}`} />
+                      {idx < CAMPAIGN_STEPS.length - 1 && (
+                        <div className={`flex-1 h-0.5 mx-0.5 transition-all ${idx < maxStep ? (deletions > 0 ? 'bg-green-400' : 'bg-slate-900') : 'bg-gray-200'}`} />
                       )}
                     </React.Fragment>
                   );
@@ -71,9 +81,9 @@ function PhaseProgressBar({ letters }) {
               </div>
               {/* Step labels */}
               <div className="flex justify-between mt-1">
-                {PHASE_STEPS.map((step, idx) => (
+                {CAMPAIGN_STEPS.map((step, idx) => (
                   <span key={step} className={`text-[9px] uppercase tracking-wide ${idx === maxStep ? 'text-slate-900 font-bold' : 'text-gray-400'}`}
-                    style={{ width: idx === 0 ? 'auto' : idx === PHASE_STEPS.length - 1 ? 'auto' : undefined }}>
+                    style={{ width: idx === 0 ? 'auto' : idx === CAMPAIGN_STEPS.length - 1 ? 'auto' : undefined }}>
                     {step}
                   </span>
                 ))}

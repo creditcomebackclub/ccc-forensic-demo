@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ScoreDeltaBadge } from './ScoreMeter';
+import { clientCampaignLabel } from '../../utils/clientCampaignCopy';
 
 const BUREAU_LABEL = { equifax: 'Equifax', experian: 'Experian', transunion: 'TransUnion' };
 
@@ -55,7 +56,7 @@ function PhaseProgressList({ items }) {
               <div className="text-[12px] font-semibold text-slate-800 truncate">{item.furnisher}</div>
               <div className="mt-0.5 text-[11px] text-gray-500">{item.reportLabel} · {item.label}</div>
             </div>
-            <span className="shrink-0 rounded bg-blue-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-blue-700">Phase {item.phase}</span>
+            <span className="shrink-0 rounded bg-blue-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-blue-700">{clientCampaignLabel(/^phase\b/i.test(String(item.phase || '')) ? item.phase : 'Phase ' + item.phase)}</span>
           </div>
         ))}
       </div>

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getReturnReceiptUrl } from '../../utils/api';
+import { clientCampaignDetail, clientCampaignLabel, isBureauCampaign } from '../../utils/clientCampaignCopy';
 
 const RESPONSE_WINDOW_DAYS = 30;
 const BUREAU_RESPONSE_WINDOW_DAYS = 45;
@@ -13,7 +14,7 @@ function daysBetween(aIso, bIso) {
 }
 function responseCountdown(l) {
   if (l.response_outcome === 'deleted' || l.response_outcome === 'received' || l.response_outcome === 'no_response') return null;
-  const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
+  const isPhase3 = isBureauCampaign(l.phase);
   const windowDays = isPhase3 ? BUREAU_RESPONSE_WINDOW_DAYS : RESPONSE_WINDOW_DAYS;
   if (l.mailed_date && !l.delivered_at) {
     return { label: `In Transit — ${windowDays}-day window begins upon delivery`, tone: 'text-gray-600 bg-gray-50 border-gray-200' };
@@ -37,7 +38,7 @@ function responseCountdown(l) {
 }
 
 function responseBadge(l) {
-  const isBureau = l.phase && l.phase.startsWith('Phase 3');
+  const isBureau = isBureauCampaign(l.phase);
   if (l.response_outcome === 'deleted') return { label: '🏆 Deleted', tone: 'bg-green-50 text-green-700 border-green-200' };
   if (l.response_outcome === 'no_response') return { label: isBureau ? 'Bureau window closed' : 'No Response — Escalated', tone: 'bg-red-50 text-red-700 border-red-200' };
   if (l.response_outcome === 'received' && isBureau) {
@@ -115,10 +116,10 @@ export default function DisputesTab({
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="text-sm font-bold text-slate-900">
-                    {l.phase && l.phase.startsWith('Phase 3') ? `${l.phase.split('—')[1]?.trim() || l.phase} (re: ${l.furnisher})` : l.furnisher}
+                    {isBureauCampaign(l.phase) ? `Credit Bureau Review (re: ${l.furnisher})` : l.furnisher}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5">
-                    {l.phase && l.phase.startsWith('Phase 3') ? 'Phase 3 Escalation' : l.phase}{l.type ? ' · Type ' + l.type : ''}
+                    {clientCampaignLabel(l.phase)} · {clientCampaignDetail(l.phase)}{l.type ? ' · Letter type ' + l.type : ''}
                   </div>
                 </div>
                 <span className={`text-[10px] px-2.5 py-1 rounded-md whitespace-nowrap uppercase tracking-[0.05em] font-semibold border ${badge.tone}`}>
