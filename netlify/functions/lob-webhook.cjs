@@ -128,7 +128,16 @@ exports.handler = async (event) => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const sendgridKey = process.env.SENDGRID_API_KEY;
-  const webhookSecret = process.env.LOB_WEBHOOK_SECRET ? process.env.LOB_WEBHOOK_SECRET.trim() : null;
+  // Lob issues a distinct signing secret PER WEBHOOK, and Test/Live are
+  // fully separate webhooks in their dashboard — so a Test-mode event is
+  // signed with a different secret than a Live one. Accept either so
+  // sandbox verification (LOB_MODE=test) and real client mail (LOB_MODE=
+  // live) both work without swapping env vars back and forth. Confirmed
+  // live 2026-07-26: a freshly-created Test webhook 401'd against the
+  // single secret this used to check.
+  const webhookSecrets = [process.env.LOB_WEBHOOK_SECRET, process.env.LOB_WEBHOOK_SECRET_TEST]
+    .filter(Boolean)
+    .map((s) => s.trim());
 
   if (!supabaseUrl || !supabaseKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Supabase not configured' }) };
@@ -136,8 +145,8 @@ exports.handler = async (event) => {
 
   // Reject spoofed events — anyone can guess this URL, so the signature is
   // the only thing standing between the internet and our tracking data
-  if (!webhookSecret) {
-    console.error('LOB_WEBHOOK_SECRET not configured — rejecting all webhook requests');
+  if (webhookSecrets.length === 0) {
+    console.error('No LOB_WEBHOOK_SECRET or LOB_WEBHOOK_SECRET_TEST configured — rejecting all webhook requests');
     return { statusCode: 500, body: JSON.stringify({ error: 'Webhook not configured' }) };
   }
 
@@ -146,7 +155,7 @@ exports.handler = async (event) => {
     const signature = event.headers['lob-signature'];
     const timestamp = event.headers['lob-signature-timestamp'];
 
-    if (!verifyLobSignature(rawBody, timestamp, signature, webhookSecret)) {
+    if (!webhookSecrets.some((secret) => verifyLobSignature(rawBody, timestamp, signature, secret))) {
       // Diagnostic detail goes to the function log (Netlify dashboard →
       // Functions → lob-webhook), never in the HTTP response — the response
       // body is public to anyone who can reach this URL, so it must never
@@ -154,9 +163,10 @@ exports.handler = async (event) => {
       // the secret. Logging the expected digest's first few hex chars (not
       // the full digest) is enough to tell "wrong secret" apart from "right
       // secret, body/timestamp mismatch" without exposing a crackable amount
-      // of the HMAC output.
+      // of the HMAC output. Previewing against the first configured secret
+      // only — good enough as a diagnostic, doesn't need every candidate.
       let expectedPreview = 'n/a';
-      try { expectedPreview = crypto.createHmac('sha256', webhookSecret).update((timestamp || '') + '.' + (rawBody || '')).digest('hex').slice(0, 8) + '…'; } catch (e) { /* leave as n/a */ }
+      try { expectedPreview = crypto.createHmac('sha256', webhookSecrets[0]).update((timestamp || '') + '.' + (rawBody || '')).digest('hex').slice(0, 8) + '…'; } catch (e) { /* leave as n/a */ }
       console.error('Rejected Lob webhook: signature mismatch', {
         has_signature_header: !!signature,
         has_timestamp_header: !!timestamp,
