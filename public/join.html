@@ -209,6 +209,15 @@ input:focus { outline: none; border-color: var(--navy); }
 </div>
 
 <script>
+// When loaded inside an affiliate's iframe (?embedded=1), hide the CCC brand
+// row so the form looks native to their site instead of double-branded.
+const isEmbedded = new URLSearchParams(window.location.search).get('embedded') === '1';
+if (isEmbedded) {
+  const brandRow = document.getElementById('brandRow');
+  if (brandRow) brandRow.style.display = 'none';
+  document.body.style.background = 'transparent';
+}
+
 // Referral attribution — /join?ref=<affiliate id prefix>. Captured once on
 // load and threaded through to the intake payload so public-intake.cjs can
 // attribute the lead to the affiliate (referred_by). A missing/invalid ref

@@ -329,9 +329,63 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   </button>
                 </div>
               </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Embed Tools */}
+            {(() => {
+              const refCode = affiliate.id.slice(0, 8);
+              const iframeSnippet = `<iframe\n  src="https://creditcomebackclub.com/join?ref=${refCode}&embedded=1"\n  width="100%"\n  height="700"\n  frameborder="0"\n  style="border:none; border-radius:12px; max-width:560px; display:block;">\n</iframe>`;
+              const copySnippet = async (text, btn) => {
+                await navigator.clipboard.writeText(text);
+                const orig = btn.innerText;
+                btn.innerText = 'Copied!';
+                setTimeout(() => btn.innerText = orig, 2000);
+              };
+              return (
+                <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Embed Tools</div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginBottom: 20 }}>Drop your branded signup page directly onto your website. Your referral code is baked in — all sign-ups are automatically attributed to you.</div>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.4)', marginBottom: 8 }}>Booking Page — iframe Embed</div>
+                    <div style={{ background: '#0A0A0A', border: '1px solid #2A2A2A', borderRadius: 6, padding: '12px 14px', fontFamily: 'monospace', fontSize: 11, color: '#86efac', whiteSpace: 'pre', overflowX: 'auto', marginBottom: 8 }}>{iframeSnippet}</div>
+                    <button
+                      onClick={(e) => copySnippet(iframeSnippet, e.currentTarget)}
+                      style={{ background: '#2A2A2A', color: '#fff', border: 'none', borderRadius: 4, padding: '7px 16px', fontSize: 11, fontWeight: 600, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      Copy iframe Code
+                    </button>
+                  </div>
+                  <div style={{ borderTop: '1px solid #1E1E1E', paddingTop: 16 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.4)', marginBottom: 8 }}>Direct Booking Link</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input readOnly value={`https://creditcomebackclub.com/join?ref=${refCode}`}
+                        style={{ flex: 1, background: '#0A0A0A', border: '1px solid #2A2A2A', borderRadius: 4, padding: '8px 12px', color: '#fff', fontSize: 12, outline: 'none' }} />
+                      <button
+                        onClick={(e) => copySnippet(`https://creditcomebackclub.com/join?ref=${refCode}`, e.currentTarget)}
+                        style={{ background: '#2A2A2A', color: '#fff', border: 'none', borderRadius: 4, padding: '8px 16px', fontSize: 11, fontWeight: 600, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                        Copy
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', marginTop: 8 }}>Use this link in emails, texts, or social posts. Works everywhere an iframe won't.</div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Portal login tip */}
+            <div style={{ background: '#0A0F1A', border: '1px solid #1B2A4A', borderRadius: 8, padding: '14px 20px', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <div style={{ fontSize: 18, lineHeight: 1 }}>🔑</div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#93C5FD', marginBottom: 4 }}>Sharing your portal with teammates?</div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 }}>
+                  Your portal login is at <span style={{ color: '#fff', fontFamily: 'monospace' }}>creditcomebackclub.com</span> → click <strong style={{ color: '#fff' }}>Login</strong> and enter your email. A magic link will be sent to your inbox — no password needed.
+                </div>
+              </div>
             </div>
 
             {/* Recent clients */}
+
             <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, overflow: 'hidden' }}>
               <div style={{ padding: '14px 20px', borderBottom: '1px solid #1E1E1E', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)' }}>Recent Referrals</span>

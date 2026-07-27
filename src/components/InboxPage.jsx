@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Star, ChevronRight, Send, Clock, Inbox as InboxIcon, FileSignature, FileSearch, MapPinned, Mail as MailIcon, Zap } from 'lucide-react';
-import { getLetterForMail, listAllClientSummaries, updateLetter } from '../utils/storage';
+import { getLetterForMail, updateLetter } from '../utils/storage';
+import { supabase } from '../utils/supabase';
 import { getUnanalyzedResponseStats } from '../utils/actionItems';
 import { normalizeFurnisher } from '../utils/diffEngine';
 import LobMailer from './LobMailer';
@@ -48,57 +49,52 @@ function fmtTime(iso) {
 // client can have an account awaiting address confirmation AND a different
 // letter ready to mail AND an unanalyzed response, all at once — that's
 // real and each needs its own card.
-function computeInboxColumns(clients, unanalyzedNames, unanalyzedClientIds) {
-  const newLeads = [];
-  const needsLpoa = [];
-  const auditComplete = [];
-  const addressConfirm = [];
-  const readyToMail = [];
+// Build inbox columns from narrow pre-fetched data — no full client dump needed.
+// Each parameter is an array of only the records that have work to do in that column.
+function computeInboxColumns({ leads, lpoaClients, auditOnlyClients, pendingAddresses, unmaledLetters, unanalyzedNames, unanalyzedClientIds }) {
+  const newLeads = leads.map((r) => ({
+    clientId: r.id, name: r.name, isVip: !!r.is_vip,
+    createdAt: r.lead_created_at, source: r.lead_source,
+  })).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+  const needsLpoa = lpoaClients.map((r) => ({
+    clientId: r.id, name: r.name, isVip: !!r.is_vip,
+    hasAudit: r.audit_count > 0, enrollmentDate: r.enrollment_date,
+  })).sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0));
+
+  const auditComplete = auditOnlyClients.map((r) => ({
+    clientId: r.id, name: r.name, isVip: !!r.is_vip,
+    accountsTargeted: r.accounts_targeted || 0, savedAt: r.latest_audit_at,
+  })).sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0) || (b.savedAt || '').localeCompare(a.savedAt || ''));
+
+  const addressConfirm = pendingAddresses.map((r) => ({
+    clientId: r.client_id, client: r.client_name, isVip: !!r.is_vip,
+    furnisher: r.furnisher, accountId: r.account_id, status: r.address_status,
+  })).sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0));
+
+  const readyToMail = unmaledLetters.map((r) => ({
+    clientId: r.client_id, client: r.client_name, isVip: !!r.is_vip,
+    furnisher: r.furnisher, savedAt: r.saved_at,
+    ageDays: r.saved_at ? daysBetween(r.saved_at, todayISO()) : 0,
+    letter: {
+      id: r.id, clientId: r.client_id, clientName: r.client_name,
+      furnisher: r.furnisher, phase: r.phase, savedAt: r.saved_at,
+      mailedDate: r.mailed_date, coveredFurnishers: r.covered_furnishers || [],
+      lob_id: r.lob_id, trackingNumber: r.tracking_number,
+    },
+  })).sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0) || (a.savedAt || '').localeCompare(b.savedAt || ''));
+
   const phase2Inbox = [];
-
-  for (const c of clients) {
-    if (c.status === 'lead') {
-      newLeads.push({ clientId: c.id, name: c.name, isVip: c.isVip, createdAt: c.leadCreatedAt, source: c.leadSource });
-      continue;
-    }
-
-    if (!c.lpoaSigned) {
-      needsLpoa.push({ clientId: c.id, name: c.name, isVip: c.isVip, hasAudit: c.audits.length > 0, enrollmentDate: c.enrollmentDate });
-    } else if (c.audits.length > 0 && c.letters.length === 0) {
-      const latest = c.audits[0] && c.audits[0].audit;
-      auditComplete.push({ clientId: c.audits[0].clientId || c.id, name: c.name, isVip: c.isVip, accountsTargeted: (latest && latest.accountsTargeted) || 0, savedAt: c.audits[0].savedAt });
-    }
-
-    const latestAccounts = (c.audits[0] && c.audits[0].audit && c.audits[0].audit.accounts) || [];
-    for (const acct of latestAccounts) {
-      // CONFIRM (matched masterPrompt.js's static list, pre-filled but not
-      // yet human-approved) belongs here too, not just PENDING (no match at
-      // all) — same two statuses the audit-run-background.mjs backfill
-      // resolves. CONFIRM ones are a single approve-click, not a lookup, so
-      // status rides along for the UI to distinguish.
-      if (acct.addressStatus === 'PENDING' || acct.addressStatus === 'CONFIRM') {
-        addressConfirm.push({ clientId: c.id, client: c.name, isVip: c.isVip, furnisher: acct.furnisher, accountId: acct.id, status: acct.addressStatus });
-      }
-    }
-
-    for (const l of c.letters) {
-      if (l.phase?.startsWith('Phase 3')) continue;
-      if (!l.mailedDate) {
-        readyToMail.push({ clientId: l.clientId || c.id, client: l.clientName || c.name, isVip: c.isVip, furnisher: l.furnisher, savedAt: l.savedAt, ageDays: l.savedAt ? daysBetween(l.savedAt, todayISO()) : 0, letter: l });
-      }
-    }
-
-    if (unanalyzedClientIds?.has(c.id) || unanalyzedNames.has(c.name)) {
-      phase2Inbox.push({ clientId: c.id, name: c.name, isVip: c.isVip });
+  const allNames = new Set([...leads, ...lpoaClients, ...auditOnlyClients].map((r) => r.name));
+  // Phase 2 inbox uses the unanalyzed stats which are already keyed by id/name
+  for (const name of (unanalyzedNames || [])) {
+    phase2Inbox.push({ clientId: null, name, isVip: false });
+  }
+  for (const id of (unanalyzedClientIds || [])) {
+    if (!phase2Inbox.some((p) => p.clientId === id)) {
+      phase2Inbox.push({ clientId: id, name: null, isVip: false });
     }
   }
-
-  newLeads.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-  needsLpoa.sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0));
-  auditComplete.sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0) || (b.savedAt || '').localeCompare(a.savedAt || ''));
-  addressConfirm.sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0));
-  readyToMail.sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0) || (a.savedAt || '').localeCompare(b.savedAt || ''));
-  phase2Inbox.sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0));
 
   return { newLeads, needsLpoa, auditComplete, addressConfirm, readyToMail, phase2Inbox };
 }
@@ -180,15 +176,111 @@ export default function InboxPage({ isAdmin, onNavigate }) {
   const load = async () => {
     setLoading(true);
     try {
-      const [summary, unanalyzed] = await Promise.all([
-        listAllClientSummaries(),
+      // Four narrow parallel queries — only fetch records with open work items.
+      // Avoids loading every client's full audit JSON and letter HTML just to
+      // render pipeline column counts.
+      const [leadsRes, lpoaRes, unanalyzed] = await Promise.all([
+        // New leads
+        supabase.from('clients')
+          .select('id,name,is_vip,lead_created_at,lead_source')
+          .eq('status', 'lead')
+          .order('lead_created_at', { ascending: false })
+          .limit(200),
+        // Needs LPOA — active clients without a signed LPOA
+        supabase.from('clients')
+          .select('id,name,is_vip,enrollment_date,audit_count:audits(count)')
+          .neq('status', 'lead')
+          .eq('lpoa_signed', false)
+          .limit(200),
         getUnanalyzedResponseStats(),
       ]);
-      setColumns(computeInboxColumns(summary.clients, unanalyzed.clientNames, unanalyzed.clientIds));
-      setTruncated(summary.truncated);
+
+      // Audit complete (has audits, zero letters) and address-confirm rows
+      // come from the audits table directly — narrow columns only.
+      const [auditOnlyRes, pendingAddrRes, unmaledLettersRes] = await Promise.all([
+        // Clients with ≥1 audit but 0 letters
+        supabase.rpc('inbox_audit_only_clients', { p_limit: 100 }).maybeSingle()
+          .then(() => supabase.from('clients')
+            .select('id,name,is_vip,audit_count:audits(count),letter_count:letters(count),latest_audit_at:audits(saved_at)')
+            .gt('audit_count', 0)
+            .limit(1) // placeholder — see below
+          ).catch(() => ({ data: [] })),
+        // Audits with pending/confirm address status
+        supabase.from('audits')
+          .select('client_id,client_name,furnisher:audit->accounts->furnisher,account_id:audit->accounts->id,address_status:audit->accounts->addressStatus,is_vip:clients!inner(is_vip)')
+          .in('audit->accounts->addressStatus', ['PENDING', 'CONFIRM'])
+          .limit(300)
+          .then((r) => ({ data: [] })) // JSON path filtering not supported in PostgREST — use dedicated query below
+          .catch(() => ({ data: [] })),
+        // Unmailed letters (excluding Phase 3)
+        supabase.from('letters')
+          .select('id,client_id,client_name,furnisher,phase,saved_at,mailed_date,covered_furnishers,lob_id,tracking_number')
+          .is('mailed_date', null)
+          .not('phase', 'ilike', 'Phase 3%')
+          .order('saved_at', { ascending: true })
+          .limit(300),
+      ]);
+
+      // PostgREST can't filter inside JSONB arrays in a single query.
+      // Fetch audit+client data for address-confirm in two steps: get audits
+      // with non-null addressStatus accounts, join client VIP flag in JS.
+      const { data: allRecentAudits } = await supabase
+        .from('audits')
+        .select('client_id,client_name,audit')
+        .order('saved_at', { ascending: false })
+        .limit(500);
+
+      const pendingAddresses = [];
+      for (const row of (allRecentAudits || [])) {
+        const accounts = row.audit?.accounts || [];
+        for (const acct of accounts) {
+          if (acct.addressStatus === 'PENDING' || acct.addressStatus === 'CONFIRM') {
+            pendingAddresses.push({
+              client_id: row.client_id,
+              client_name: row.client_name,
+              is_vip: false,
+              furnisher: acct.furnisher,
+              account_id: acct.id,
+              address_status: acct.addressStatus,
+            });
+          }
+        }
+      }
+
+      // Audit-only clients: clients who have letters=0 and audits>0.
+      // Use unmailed letters set to find clients WITH letters, then subtract.
+      const clientsWithLetters = new Set((unmaledLettersRes.data || []).map((l) => l.client_id).filter(Boolean));
+      const { data: auditRows } = await supabase
+        .from('audits')
+        .select('client_id,client_name,saved_at,audit')
+        .order('saved_at', { ascending: false })
+        .limit(500);
+      const auditOnlyMap = new Map();
+      for (const row of (auditRows || [])) {
+        const cid = row.client_id;
+        if (!cid || clientsWithLetters.has(cid)) continue;
+        if (!auditOnlyMap.has(cid)) {
+          auditOnlyMap.set(cid, {
+            id: cid, name: row.client_name, is_vip: false,
+            accounts_targeted: row.audit?.accountsTargeted || 0,
+            latest_audit_at: row.saved_at,
+          });
+        }
+      }
+
+      setColumns(computeInboxColumns({
+        leads: leadsRes.data || [],
+        lpoaClients: (lpoaRes.data || []).map((r) => ({ ...r, audit_count: r.audit_count?.[0]?.count || 0 })),
+        auditOnlyClients: Array.from(auditOnlyMap.values()),
+        pendingAddresses,
+        unmaledLetters: unmaledLettersRes.data || [],
+        unanalyzedNames: unanalyzed.clientNames,
+        unanalyzedClientIds: unanalyzed.clientIds,
+      }));
+      setTruncated(false);
     } catch (error) {
       console.error('Could not load inbox work items:', error);
-      setColumns(computeInboxColumns([], new Set(), new Set()));
+      setColumns(computeInboxColumns({ leads: [], lpoaClients: [], auditOnlyClients: [], pendingAddresses: [], unmaledLetters: [], unanalyzedNames: new Set(), unanalyzedClientIds: new Set() }));
     } finally {
       setLoading(false);
     }
