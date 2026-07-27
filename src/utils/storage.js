@@ -208,6 +208,10 @@ export async function updateLetter(id, patch) {
   if ('summary' in patch) mapped.summary = patch.summary;
   if ('phase2Analysis' in patch) mapped.phase2_analysis = patch.phase2Analysis;
   if ('phase2AnalyzedAt' in patch) mapped.phase2_analyzed_at = patch.phase2AnalyzedAt;
+  if ('bureauReviewStatus' in patch) mapped.bureau_review_status = patch.bureauReviewStatus;
+  if ('bureauNextAction' in patch) mapped.bureau_next_action = patch.bureauNextAction;
+  if ('bureauReviewNotes' in patch) mapped.bureau_review_notes = patch.bureauReviewNotes;
+  if ('bureauReviewedAt' in patch) mapped.bureau_reviewed_at = patch.bureauReviewedAt;
 
   const { data, error } = await supabase
     .from('letters')
@@ -265,6 +269,10 @@ function normalizeLetter(l) {
     responseDate: l.response_date,
     phase2Analysis: l.phase2_analysis || null,
     phase2AnalyzedAt: l.phase2_analyzed_at || null,
+    bureauReviewStatus: l.bureau_review_status || 'not_reviewed',
+    bureauNextAction: l.bureau_next_action || null,
+    bureauReviewNotes: l.bureau_review_notes || null,
+    bureauReviewedAt: l.bureau_reviewed_at || null,
     lobId: l.lob_id,
     trackingNumber: l.tracking_number,
     trackingStatus: l.tracking_status,

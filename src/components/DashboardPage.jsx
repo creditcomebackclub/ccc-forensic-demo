@@ -149,10 +149,12 @@ function computeDashboard(clients) {
         // escalation) — that trigger is "Phase 3 got no result," which
         // didn't exist as a derivable signal at all until now.
         //
-        // Gated the same way Phase 1→Phase 3 already is (hasPhase3 below):
-        // once a Phase 4 record exists for this bureau, stop flagging it.
-        const hasPhase4 = c.letters.some((pl) => pl.phase?.startsWith('Phase 4') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
-        if (!hasPhase4) {
+        // A bureau response is a staff decision point. The old check looked
+        // for a nonexistent "Phase 4" letter, which kept a case in the ready
+        // queue even after staff had selected follow-up, documents, closure,
+        // or escalation.
+        const hasBureauDecision = l.bureauReviewStatus && l.bureauReviewStatus !== 'not_reviewed';
+        if (!hasBureauDecision) {
           // CRA_WINDOW_DAYS (45), not WINDOW_DAYS (30) — see the constant's
           // comment. A bureau that already responded has no waiting period
           // left (§1681i(a)'s "or the dispute is no longer pending" branch),

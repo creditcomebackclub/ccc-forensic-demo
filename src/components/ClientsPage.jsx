@@ -4,7 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X, Send, MoreHorizontal, Search, Pencil } from 'lucide-react';
 import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, revertClientToLead, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage, markLeadViewed } from '../utils/storage';
 import { getReturnReceiptUrl } from '../utils/api';
+import { archiveHistoricalMailpiece, getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
 import ResponseAnalyzer from './ResponseAnalyzer';
+import BureauResponseReview from './BureauResponseReview';
 import EscalationPanel from './EscalationPanel';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
@@ -120,8 +122,8 @@ function clientMatchesFilter(c, filter, unanalyzedNames) {
     case 'phase4': return c.letters.some((l) => {
       if (!l.phase?.startsWith('Phase 3')) return false;
       const st3 = letterStatus(l, CRA_WINDOW_DAYS);
-      const hasPhase4 = c.letters.some((pl) => pl.phase?.startsWith('Phase 4') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
-      return !hasPhase4 && (st3.code === 'window_closed' || st3.code === 'no_response' || st3.code === 'received');
+      const hasBureauDecision = l.bureauReviewStatus && l.bureauReviewStatus !== 'not_reviewed';
+      return !hasBureauDecision && (st3.code === 'window_closed' || st3.code === 'no_response' || st3.code === 'received');
     });
     case 'received': return openLetters.some((l) => l.responseOutcome === 'received');
     case 'noemail': return !c.email;
@@ -271,7 +273,44 @@ function StageTracker({ l }) {
   );
 }
 
-function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail, onOpenAccount, onEdit, onEscalate }) {
+function MailpieceLink({ artifact }) {
+  const [opening, setOpening] = useState(false);
+  if (!artifact) return null;
+  const open = async () => {
+    setOpening(true);
+    try {
+      const url = await getMailArtifactUrl(artifact);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      toast.error('Could not open the archived Lob PDF: ' + (e.message || e));
+    } finally { setOpening(false); }
+  };
+  return <button onClick={open} disabled={opening} className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2 disabled:opacity-50">
+    {opening ? 'Opening…' : 'Exact Lob PDF'}
+  </button>;
+}
+
+function ArchiveMailpieceButton({ letter, onArchived }) {
+  const [archiving, setArchiving] = useState(false);
+  if (!letter?.lobId || (letter.mailArtifacts || []).some((artifact) => artifact.artifact_type === 'mailpiece_pdf')) return null;
+  const archive = async () => {
+    setArchiving(true);
+    try {
+      const result = await archiveHistoricalMailpiece({ letterId: letter.id, lobId: letter.lobId });
+      if (result.archived) {
+        toast.success('Exact Lob PDF archived');
+        onArchived();
+      } else toast('Lob has not made the rendered PDF available yet. Try again shortly.');
+    } catch (e) {
+      toast.error('Could not archive the Lob PDF: ' + (e.message || e));
+    } finally { setArchiving(false); }
+  };
+  return <button onClick={archive} disabled={archiving} className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2 disabled:opacity-50">
+    {archiving ? 'Archiving…' : 'Archive Lob PDF'}
+  </button>;
+}
+
+function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail, onOpenAccount, onEdit, onEscalate, onReviewBureau }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
@@ -311,7 +350,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   };
 
   const canAnalyze = !isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response');
-  const canEscalate = isPhase3 && status3 && (status3.code === 'received' || status3.code === 'window_closed' || status3.code === 'no_response');
+  const needsBureauReview = isPhase3 && status3 && (status3.code === 'received' || status3.code === 'window_closed' || status3.code === 'no_response');
 
   // One visible action per letter; the rest live in the ⋯ menu
   const primaryAction = (() => {
@@ -329,11 +368,11 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
         <Zap size={10} strokeWidth={2} /> Analyze
       </button>
     );
-    if (canEscalate) return (
-      <button onClick={() => onEscalate(l)}
+    if (needsBureauReview) return (
+      <button onClick={() => onReviewBureau(l)}
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0"
-        style={{ backgroundColor: '#B91C1C', color: '#fff' }}>
-        <Zap size={10} strokeWidth={2} /> Escalate CFPB/AG
+        style={{ backgroundColor: l.bureauReviewStatus === 'escalated' ? '#6B7280' : T.navy, color: '#fff' }}>
+        <Zap size={10} strokeWidth={2} /> {l.bureauReviewStatus === 'escalated' ? 'View decision' : 'Review response'}
       </button>
     );
     if (l.mailedDate && !l.responseOutcome) return (
@@ -370,6 +409,8 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     },
     l.mailedDate && !l.responseOutcome && { label: 'Log response…', onClick: () => { setDateVal(todayISO()); setMode('responding'); } },
     l.mailedDate && !l.responseOutcome && { label: 'Mark no response', onClick: () => save({ responseOutcome: 'no_response' }) },
+    isPhase3 && l.responseOutcome && { label: 'Review bureau response…', onClick: () => onReviewBureau(l) },
+    isPhase3 && needsBureauReview && { label: 'Prepare CFPB / State AG escalation…', onClick: () => onEscalate(l) },
     l.mailedDate && { label: 'Edit mail date…', onClick: () => { setDateVal(l.mailedDate); setMode('mailing'); } },
     l.responseOutcome && { label: 'Reset response', onClick: () => save({ responseOutcome: null, responseDate: null }) },
     'divider',
@@ -389,6 +430,8 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
           {l.trackingStatus === 'Delivered' && l.lobId && (
             <ReturnReceiptButton lobId={l.lobId} returnReceiptUrl={l.returnReceiptUrl} />
           )}
+          <MailpieceLink artifact={(l.mailArtifacts || []).find((artifact) => artifact.artifact_type === 'mailpiece_pdf')} />
+          <ArchiveMailpieceButton letter={l} onArchived={onChange} />
           {l.lobId && !l.trackingNumber && (
             <span className="text-[10px] text-ink-faint ml-2">Lob: {l.lobId.slice(0, 12)}</span>
           )}
@@ -506,6 +549,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [selectedClientName, setSelectedClientName] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [analyzingLetter, setAnalyzingLetter] = useState(null);
+  const [reviewingBureauLetter, setReviewingBureauLetter] = useState(null); // { letter, client }
   const [escalatingLetter, setEscalatingLetter] = useState(null); // { letter, client }
   const [lobMailerQueue, setLobMailerQueue] = useState([]);
   const [togglingVip, setTogglingVip] = useState(null);
@@ -540,6 +584,23 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const load = async () => {
     try {
       const list = isAdmin ? await adminListClients() : await listClients();
+      // Evidence archival is additive. If the migration has not reached a
+      // preview environment yet, clients/letters still load normally.
+      try {
+        const ids = list.flatMap((client) => (client.letters || []).map((letter) => letter.id));
+        const artifacts = await listMailArtifacts(ids);
+        const byLetter = new Map();
+        for (const artifact of artifacts) {
+          const current = byLetter.get(artifact.letter_id) || [];
+          current.push(artifact);
+          byLetter.set(artifact.letter_id, current);
+        }
+        for (const client of list) {
+          client.letters = (client.letters || []).map((letter) => ({ ...letter, mailArtifacts: byLetter.get(letter.id) || [] }));
+        }
+      } catch (artifactError) {
+        console.warn('Mail artifacts unavailable in this environment:', artifactError.message || artifactError);
+      }
       setClients(list);
     } catch (e) {
       console.error('Failed to load clients', e);
@@ -887,7 +948,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                               hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
                               onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={(l) => setLobMailerQueue([l])}
                               onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount}
-                              onEscalate={(letter) => setEscalatingLetter({ letter, client: c })} />
+                              onEscalate={(letter) => setEscalatingLetter({ letter, client: c })}
+                              onReviewBureau={(letter) => setReviewingBureauLetter({ letter, client: c })} />
                           ))}
                         </div>
                       </div>
@@ -938,6 +1000,18 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             letter={analyzingLetter}
             onClose={() => setAnalyzingLetter(null)}
             onSaved={() => { setAnalyzingLetter(null); load(); }}
+          />
+        )}
+        {reviewingBureauLetter && (
+          <BureauResponseReview
+            letter={reviewingBureauLetter.letter}
+            onClose={() => setReviewingBureauLetter(null)}
+            onSaved={load}
+            onEscalate={() => {
+              const next = reviewingBureauLetter;
+              setReviewingBureauLetter(null);
+              setEscalatingLetter(next);
+            }}
           />
         )}
         {escalatingLetter && (

@@ -1,5 +1,6 @@
 const https = require('https');
 const crypto = require('crypto');
+const { archiveLobArtifact } = require('./_lobArtifacts.cjs');
 
 // Lob's ONE documented signing scheme (help.lob.com/print-and-mail/getting-
 // data-and-results/using-webhooks): HMAC-SHA256, keyed with the webhook's
@@ -111,13 +112,19 @@ const statusMap = {
   'letter.certified.returned_to_sender': 'Returned to Sender',
 };
 
-// Return-receipt events — these carry the USPS signature scan URL.
-// We save it permanently to the letters row so the portal can serve it
-// instantly without hitting the Lob API on every page load.
+// Kept as a defensive compatibility path for older/event-preview payloads.
+// Lob's current live webhook catalog does not list a distinct electronic
+// return-receipt event; get-return-receipt.cjs archives a receipt on demand.
 const RETURN_RECEIPT_EVENTS = new Set([
   'letter.certified.return_receipt',
   'letter.return_receipt',
 ]);
+
+// The creation response usually lets lob.cjs archive the PDF immediately.
+// This event is the safe fallback when Lob finishes rendering later or an
+// earlier archive attempt was interrupted. Webhook bodies can redact URLs,
+// so _lobArtifacts retrieves the authoritative letter record with Lob's API.
+const RENDERED_PDF_EVENTS = new Set(['letter.rendered_pdf']);
 
 
 exports.handler = async (event) => {
@@ -149,7 +156,7 @@ exports.handler = async (event) => {
   // Reject spoofed events — anyone can guess this URL, so the signature is
   // the only thing standing between the internet and our tracking data
   if (webhookSecrets.length === 0) {
-    console.error('No LOB_WEBHOOK_SECRET or LOB_WEBHOOK_SECRET_TEST configured — rejecting all webhook requests');
+    console.error('No LOB_WEBHOOK_SECRET configured — rejecting all webhook requests');
     return { statusCode: 500, body: JSON.stringify({ error: 'Webhook not configured' }) };
   }
 
@@ -214,6 +221,32 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'missing event_type or lob_id' }) };
   }
 
+  const mode = process.env.LOB_MODE || 'test';
+  const lobApiKey = mode === 'live' ? process.env.LOB_LIVE_KEY : process.env.LOB_TEST_KEY;
+
+  if (RENDERED_PDF_EVENTS.has(eventType)) {
+    if (!lobApiKey) {
+      console.error('Cannot archive rendered Lob PDF: active Lob API key is not configured');
+      return { statusCode: 500, body: JSON.stringify({ error: 'Lob API key not configured' }) };
+    }
+    try {
+      const archived = await archiveLobArtifact({
+        lobId,
+        letterId: metaLetterId || null,
+        artifactType: 'mailpiece_pdf',
+        apiKey: lobApiKey,
+        supabaseUrl,
+        serviceKey: supabaseKey,
+      });
+      return { statusCode: 200, body: JSON.stringify({ received: true, lobId, event: eventType, artifact: archived.archived ? 'archived' : archived.reason }) };
+    } catch (e) {
+      // Return a retryable status. An eventually-rendered PDF should not be
+      // silently lost just because the first storage attempt was transient.
+      console.error('Could not archive rendered Lob PDF for', lobId, e.message);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Could not archive rendered PDF' }) };
+    }
+  }
+
   // ── Return-receipt: USPS signed green-card scan is now available ─────────
   if (RETURN_RECEIPT_EVENTS.has(eventType)) {
     // The scan URL lives at body.return_receipt_url in Lob's payload
@@ -236,6 +269,24 @@ exports.handler = async (event) => {
     }
 
     console.log('Saved return_receipt_url for lob_id:', lobId, '→', receiptUrl.slice(0, 60) + '…');
+    if (lobApiKey) {
+      try {
+        const archived = await archiveLobArtifact({
+          lobId,
+          letterId: metaLetterId || null,
+          artifactType: 'return_receipt',
+          sourceUrl: receiptUrl,
+          apiKey: lobApiKey,
+          supabaseUrl,
+          serviceKey: supabaseKey,
+        });
+        if (!archived.archived) console.warn('Return receipt not archived yet:', lobId, archived.reason);
+      } catch (e) {
+        // Do not reject a valid USPS event just because a separate evidence
+        // copy is temporarily unavailable. Lob will not replay a 2xx event.
+        console.error('Could not archive return receipt for', lobId, e.message);
+      }
+    }
     return { statusCode: 200, body: JSON.stringify({ received: true, lobId, event: 'return_receipt', saved: true }) };
   }
   // ─────────────────────────────────────────────────────────────────────────

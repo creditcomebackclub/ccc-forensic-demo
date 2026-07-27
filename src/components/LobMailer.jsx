@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Send, CheckCircle, AlertCircle, MapPin } from 'lucide-react';
 import { getDocuments, getDocumentBase64 } from '../utils/documents';
+import { listMailArtifacts } from '../utils/mailArtifacts';
 import { supabase } from '../utils/supabase';
 
 const LOB_FUNCTION_URL = '/.netlify/functions/lob';
@@ -116,28 +117,52 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       const { data: { user } } = await supabase.auth.getUser();
       const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 
+      // Lob prints HTML, not a multi-file attachment bundle. To include an
+      // immutable PDF as evidence, render each original PDF page to an image
+      // and embed it in the outgoing HTML. The archived source PDF remains
+      // untouched in private storage for CFPB/AG portal uploads and audit.
+      const renderPdfPages = async (storagePath, heading) => {
+        const b64 = await getDocumentBase64(storagePath);
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const pdfjsLib = await import('pdfjs-dist');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+        const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+        let html = '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
+          + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">' + heading + '</div>';
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+          const page = await pdf.getPage(pageNum);
+          const viewport = page.getViewport({ scale: 1.5 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+          html += '<img src="' + canvas.toDataURL('image/jpeg', 0.9) + '" style="max-width:100%;display:block;margin-bottom:10px;" />';
+        }
+        return html + '</div>';
+      };
+
+      const buildDocumentEnclosure = async (doc, heading) => {
+        if (!doc) return '';
+        const isImg = doc.file_name && /\.(jpg|jpeg|png)$/i.test(doc.file_name);
+        if (!isImg) return renderPdfPages(doc.storage_path, heading);
+        const b64 = await getDocumentBase64(doc.storage_path);
+        const type = doc.file_name.toLowerCase().endsWith('.png') ? 'png' : 'jpeg';
+        return '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;filter:grayscale(100%);-webkit-filter:grayscale(100%);">'
+          + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">' + heading + '</div>'
+          + '<img src="data:image/' + type + ';base64,' + b64 + '" style="max-width:100%;max-height:700px;" />'
+          + '</div>';
+      };
+
       // Government ID + proof of address enclosure pages — shared by the
       // Phase 1 branch (always) and, conditionally, the Phase 3 branch
       // below (only when no Phase 1 letter was ever actually mailed, so
       // the bureau has no identity documentation from us on file at all).
       const buildIdAddressPages = async () => {
         let pages = '';
-        if (idDoc) {
-          const b64 = await getDocumentBase64(idDoc.storage_path);
-          const isImg = idDoc.file_name && /.(jpg|jpeg|png)$/i.test(idDoc.file_name);
-          pages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;filter:grayscale(100%);-webkit-filter:grayscale(100%);">'
-            + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Government-Issued Photo ID</div>'
-            + (isImg ? '<img src="data:image/' + (idDoc.file_name.endsWith('.png') ? 'png' : 'jpeg') + ';base64,' + b64 + '" style="max-width:100%;max-height:700px;" />' : '<p>ID document attached (PDF format)</p>')
-            + '</div>';
-        }
-        if (addressDoc) {
-          const b64 = await getDocumentBase64(addressDoc.storage_path);
-          const isImg = addressDoc.file_name && /.(jpg|jpeg|png)$/i.test(addressDoc.file_name);
-          pages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;filter:grayscale(100%);-webkit-filter:grayscale(100%);">'
-            + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Proof of Current Address</div>'
-            + (isImg ? '<img src="data:image/' + (addressDoc.file_name.endsWith('.png') ? 'png' : 'jpeg') + ';base64,' + b64 + '" style="max-width:100%;max-height:700px;" />' : '<p>Address document attached (PDF format)</p>')
-            + '</div>';
-        }
+        pages += await buildDocumentEnclosure(idDoc, 'Enclosure — Government-Issued Photo ID');
+        pages += await buildDocumentEnclosure(addressDoc, 'Enclosure — Proof of Current Address');
         return pages;
       };
 
@@ -171,8 +196,27 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             : allPhase1Letters;
         } catch(e) { console.warn('Could not fetch Phase 1 letters:', e); }
 
-        // Exhibit A — one sub-page per Phase 1 letter on file
+        // Exhibit A — use the immutable Lob mailpiece whenever it was
+        // archived. Historic mail without an artifact falls back to the
+        // stored HTML so no existing case is blocked by this improvement.
+        let artifactsByLetter = new Map();
+        try {
+          const artifacts = await listMailArtifacts(phase1Letters.map((p1) => p1.id));
+          artifactsByLetter = new Map(artifacts
+            .filter((artifact) => artifact.artifact_type === 'mailpiece_pdf')
+            .map((artifact) => [artifact.letter_id, artifact]));
+        } catch (e) { console.warn('Could not load archived Phase 1 mailpieces:', e); }
         for (const p1 of phase1Letters) {
+          const mailpiece = artifactsByLetter.get(p1.id);
+          if (mailpiece) {
+            try {
+              enclosurePages += await renderPdfPages(
+                mailpiece.storage_path,
+                'EXHIBIT A — Exact Lob Phase 1 Mailpiece (' + (p1.furnisher || 'Furnisher') + ')'
+              );
+              continue;
+            } catch (e) { console.warn('Could not render archived Phase 1 mailpiece:', p1.id, e); }
+          }
           if (!p1.html) continue;
           const p1Body = p1.html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
           const p1Content = p1Body ? p1Body[1] : p1.html;

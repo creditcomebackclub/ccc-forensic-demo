@@ -3,6 +3,8 @@ import { X, ExternalLink, Copy, CheckCircle, AlertCircle, Loader2 } from 'lucide
 import { supabase } from '../utils/supabase';
 import { createEscalation, updateEscalation, getAgDirectoryForState, listEscalationsForClient } from '../utils/escalations';
 import { runPhase4Job } from '../utils/phase4Jobs';
+import { updateLetter } from '../utils/storage';
+import { getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
 
 // Best-effort extraction from a free-text "123 Main St, City, ST 12345"
 // address — clients has no structured state column. Good enough to
@@ -36,6 +38,7 @@ function CopyButton({ text }) {
 
 export default function EscalationPanel({ letter, client, onClose, onSaved }) {
   const [existing, setExisting] = useState([]);
+  const [mailArtifacts, setMailArtifacts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [target, setTarget] = useState(null);   // 'furnisher' | 'bureau' — setup step
   const [channel, setChannel] = useState('cfpb');
@@ -61,6 +64,10 @@ export default function EscalationPanel({ letter, client, onClose, onSaved }) {
   }, [client.id, letter.id]);
 
   useEffect(() => {
+    listMailArtifacts([letter.id]).then(setMailArtifacts).catch(() => setMailArtifacts([]));
+  }, [letter.id]);
+
+  useEffect(() => {
     if (state) getAgDirectoryForState(state).then(setAgRows).catch(() => setAgRows([]));
   }, [state]);
 
@@ -83,6 +90,20 @@ export default function EscalationPanel({ letter, client, onClose, onSaved }) {
         state: channel === 'state_ag' ? state : null,
         furnisherName: trackChoice === 'bureau' ? letter.furnisher : furnisherName,
       });
+      // A Phase 4 filing is represented by an escalation row, not a new
+      // letter. Stamp the linked Phase 3 row so dashboard queues can reflect
+      // the staff decision immediately and never keep offering it as fresh.
+      try {
+        await updateLetter(letter.id, {
+          bureauReviewStatus: 'escalated',
+          bureauNextAction: 'escalation',
+          bureauReviewedAt: new Date().toISOString(),
+        });
+      } catch (markerError) {
+        // Do not strand an already-created escalation if an older database
+        // has not applied the additive review-status migration yet.
+        console.warn('Escalation created but Phase 3 marker was not saved:', markerError.message || markerError);
+      }
       setEscalation(created);
       setGenerating(true);
       setProgressTokens(0);
@@ -128,6 +149,11 @@ export default function EscalationPanel({ letter, client, onClose, onSaved }) {
     const url = client?.lpoaSignatureData?.lpoaUrl;
     if (url) window.open(url, '_blank');
     else setError('No signed LPOA on file for this client yet.');
+  };
+
+  const openArtifact = async (artifact) => {
+    try { window.open(await getMailArtifactUrl(artifact), '_blank', 'noopener,noreferrer'); }
+    catch (e) { setError(e.message || 'Could not open the archived mailpiece.'); }
   };
 
   const active = escalation || existing[0];
@@ -270,6 +296,9 @@ export default function EscalationPanel({ letter, client, onClose, onSaved }) {
             <Section title="Attachments — view/download, then upload to the form yourself">
               <div className="flex flex-col gap-2">
                 <button onClick={() => viewLetterHtml(letter.html)} className="text-[12px] text-left text-navy hover:text-gold">→ View this Phase 3 letter</button>
+                {mailArtifacts.filter((artifact) => artifact.artifact_type === 'mailpiece_pdf').map((artifact) => (
+                  <button key={artifact.id} onClick={() => openArtifact(artifact)} className="text-[12px] text-left text-navy hover:text-gold">→ Open exact Lob-rendered Phase 3 PDF</button>
+                ))}
                 <button onClick={openLpoa} className="text-[12px] text-left text-navy hover:text-gold">→ Open signed LPOA</button>
                 <div className="text-[11px] text-ink-faint">Audit PDF: open this client's audit and use Download PDF.</div>
                 <div className="text-[11px] text-ink-faint">Furnisher/bureau response images (if any): Letters tab → this letter's history → the analyzed response.</div>

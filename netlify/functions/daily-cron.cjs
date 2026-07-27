@@ -123,7 +123,7 @@ exports.handler = async () => {
     }
   }
 
-  // --- 1. Process 30-day escalation and Client Updates ---
+  // --- 1. Process tracked delivery clocks and client updates ---
   const lettersRes = await supabaseRequest(
     '/rest/v1/letters?select=id,client_id,client_name,furnisher,phase,mailed_date,delivered_at,response_outcome,notifications_sent&response_outcome=is.null',
     'GET', null, supabaseUrl, supabaseKey
@@ -132,8 +132,14 @@ exports.handler = async () => {
   const adminDigestItems = [];
 
   for (const letter of letters) {
-    if (!letter.mailed_date) continue;
-    const clockStart = letter.delivered_at ? letter.delivered_at.slice(0, 10) : letter.mailed_date;
+    // Certified Mail is the source of truth for this operation. A letter
+    // with no delivery event is an exception to reconcile with Lob/USPS, not
+    // a silently assumed deadline based on its mailing date.
+    if (!letter.delivered_at) continue;
+    const isPhase3 = String(letter.phase || '').startsWith('Phase 3');
+    const windowDays = isPhase3 ? 45 : 30;
+    const adminNotificationKey = isPhase3 ? 'admin45' : 'admin30';
+    const clockStart = letter.delivered_at.slice(0, 10);
     const daysElapsed = daysBetween(clockStart, today);
     const sent = letter.notifications_sent || [];
     let newSent = [...sent];
@@ -162,7 +168,7 @@ exports.handler = async () => {
       } catch(e) { console.error('day7 email failed:', e); }
     }
 
-    if (sgKey && clientEmail && daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
+    if (!isPhase3 && sgKey && clientEmail && daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
       try {
         await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day30_approaching', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day30'); touched = true;
@@ -170,28 +176,28 @@ exports.handler = async () => {
       } catch(e) { console.error('day30 email failed:', e); }
     }
 
-    if (daysElapsed >= 30 && !sent.includes('admin30')) {
+    if (daysElapsed >= windowDays && !sent.includes(adminNotificationKey)) {
       adminDigestItems.push({
         client: letter.client_name,
         furnisher: letter.furnisher,
         phase: letter.phase || 'Phase 1',
         daysElapsed,
-        deliveredOrMailed: letter.delivered_at ? 'delivered ' + clockStart : 'mailed ' + clockStart + ' (no delivery)',
+        deliveredOrMailed: 'delivered ' + clockStart,
       });
-      newSent.push('admin30'); touched = true;
+      newSent.push(adminNotificationKey); touched = true;
 
       if (sgKey && emailEscalationsEnabled) {
         try {
           await sendgridEmail(
             ADMIN_EMAIL,
-            'Escalation Ready: ' + letter.client_name + ' / ' + letter.furnisher,
+            (isPhase3 ? 'Bureau Response Review: ' : 'Escalation Ready: ') + letter.client_name + ' / ' + letter.furnisher,
             `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
               <div style="background:#1B2A4A;padding:20px 28px;border-radius:4px 4px 0 0;">
                 <h2 style="color:#C9A84C;margin:0;font-size:18px;">Escalation Ready for Review</h2>
               </div>
               <div style="border:1px solid #ddd;border-top:none;padding:20px 28px;border-radius:0 0 4px 4px;">
                 <p><strong>${letter.client_name}</strong> — ${letter.furnisher} (${letter.phase || 'Phase 1'})</p>
-                <p>${daysElapsed} days since ${letter.delivered_at ? 'delivery' : 'mailing (not yet marked delivered)'} with no furnisher response. This has crossed the 30-day FCRA response window and is ready for the next round of action.</p>
+                <p>${daysElapsed} days since confirmed delivery with no logged response. This has crossed the ${windowDays}-day operational review window and is ready for staff review.</p>
               </div>
             </div>`,
             sgKey

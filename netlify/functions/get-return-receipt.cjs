@@ -1,5 +1,6 @@
 const https = require('https');
 const { requireAuth, supabaseGet } = require('./_requireAuth.cjs');
+const { archiveLobArtifact } = require('./_lobArtifacts.cjs');
 
 function lobRequest(path, method, body, apiKey) {
   return new Promise((resolve, reject) => {
@@ -79,9 +80,25 @@ exports.handler = async (event) => {
 
     const letter = result.body;
     
-    // 4. Return the return receipt URL if it exists
-    if (letter.return_receipt && letter.return_receipt.url) {
-      return { statusCode: 200, body: JSON.stringify({ return_receipt_url: letter.return_receipt.url }) };
+    // 4. Return the return receipt URL if Lob exposes one for this letter.
+    const receiptUrl = letter.return_receipt?.url || letter.return_receipt_url || null;
+    if (receiptUrl) {
+      // Lob's current webhook catalog does not expose a distinct electronic
+      // return-receipt event. Archive the PDF at the moment a permitted user
+      // retrieves it instead, while still returning the normal URL promptly.
+      try {
+        await archiveLobArtifact({
+          lobId,
+          artifactType: 'return_receipt',
+          sourceUrl: receiptUrl,
+          apiKey,
+          supabaseUrl: process.env.VITE_SUPABASE_URL,
+          serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        });
+      } catch (archiveErr) {
+        console.error('Return receipt was available but could not be archived:', lobId, archiveErr.message);
+      }
+      return { statusCode: 200, body: JSON.stringify({ return_receipt_url: receiptUrl }) };
     } else {
       return { statusCode: 404, body: JSON.stringify({ error: 'Return receipt not available yet' }) };
     }

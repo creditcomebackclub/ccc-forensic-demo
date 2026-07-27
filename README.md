@@ -100,9 +100,10 @@ LOB_MODE=test
 LOB_TEST_KEY=
 LOB_LIVE_KEY=
 LOB_WEBHOOK_SECRET=
+SENDGRID_API_KEY=
 ```
 
-Never expose `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, or Lob keys in client code or public build variables.
+Never expose `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, SendGrid, or Lob keys in client code or public build variables. In particular, remove any legacy `VITE_LOB_*` variables from Netlify and local environment files: only browser-safe values may use the `VITE_` prefix.
 
 ## Database and security
 
@@ -116,6 +117,7 @@ Before deploying to a new environment, verify:
 4. Server-side environment variables in Netlify.
 5. Lob test/live mode, webhook secret, sender address, and return-address configuration.
 6. The scheduled `daily-cron` function, configured in `netlify.toml`.
+7. The `mail_artifacts` migration and private `documents` bucket access. A newly mailed letter should archive its exact Lob-rendered PDF; a return receipt is archived when Lob supplies it.
 
 ## Build and deploy
 

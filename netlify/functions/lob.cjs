@@ -1,4 +1,5 @@
 const https = require('https');
+const { archiveLobArtifact } = require('./_lobArtifacts.cjs');
 
 function lobRequest(path, method, body, apiKey, extraHeaders) {
   return new Promise((resolve, reject) => {
@@ -142,13 +143,57 @@ exports.handler = async (event) => {
       // Idempotency: a retry of the same letter can never mail twice
       const headers = idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : undefined;
       const result = await lobRequest('/v1/letters', 'POST', letterPayload, apiKey, headers);
-      return { statusCode: result.status, body: JSON.stringify(result.body) };
+      // Archive the immutable, Lob-rendered mailpiece while this request still
+      // knows the CCC letter id. This is evidence capture, never a condition
+      // of mailing: Lob already accepted the mailpiece, so an archive failure
+      // must not be reported as a send failure or invite an expensive resend.
+      let artifactArchive = null;
+      if (result.status >= 200 && result.status < 300 && result.body?.id && letterId) {
+        try {
+          artifactArchive = await archiveLobArtifact({
+            lobId: result.body.id,
+            letterId,
+            artifactType: 'mailpiece_pdf',
+            sourceUrl: result.body.url || null,
+            apiKey,
+            supabaseUrl: process.env.VITE_SUPABASE_URL,
+            serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+          });
+          if (!artifactArchive.archived) console.warn('Lob mailpiece not archived yet:', artifactArchive.reason, result.body.id);
+        } catch (archiveErr) {
+          console.error('Lob mailpiece archive failed (mail was still accepted):', result.body.id, archiveErr.message);
+        }
+      }
+      return {
+        statusCode: result.status,
+        body: JSON.stringify({
+          ...(result.body || {}),
+          artifact_archive: artifactArchive && artifactArchive.archived ? 'archived' : 'pending',
+        }),
+      };
     }
 
     if (action === 'get_tracking') {
       const { letterId } = payload;
       const result = await lobRequest('/v1/letters/' + letterId, 'GET', {}, apiKey);
       return { statusCode: result.status, body: JSON.stringify(result.body) };
+    }
+
+    // Historical backfill: a staff member can ask Lob for the exact rendered
+    // PDF for an already-mailed letter. The archive helper verifies that the
+    // supplied Lob ID belongs to this CCC letter before it downloads anything.
+    if (action === 'archive_letter_artifact') {
+      const { letterId, lobId } = payload;
+      if (!letterId || !lobId) return { statusCode: 400, body: JSON.stringify({ error: 'letterId and lobId required' }) };
+      const archived = await archiveLobArtifact({
+        lobId,
+        letterId,
+        artifactType: 'mailpiece_pdf',
+        apiKey,
+        supabaseUrl: process.env.VITE_SUPABASE_URL,
+        serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      });
+      return { statusCode: archived.archived ? 200 : 202, body: JSON.stringify(archived) };
     }
 
     return { statusCode: 400, body: JSON.stringify({ error: 'Unknown action' }) };
