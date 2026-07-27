@@ -130,8 +130,9 @@
   // is the only section that varies by lpoaType. Everything else on this
   // page (grant of authority, limitations, ESIGN, etc.) is identical.
   const lpoaType = params.get('type') === 'inquiry' ? 'inquiry' : 'standard';
+  const feeTextParam = params.get('feeText');
   const FEE_TEXT = {
-    standard: 'First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.',
+    standard: feeTextParam || 'First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.',
     inquiry: 'Personal Information / Inquiry Removal Fee: $50 per bureau, one-time. No monthly service fee. No deletion = no charge.',
   };
 
@@ -140,7 +141,9 @@
     document.getElementById('client-name-doc').textContent = clientName;
     document.getElementById('signer-name').value = clientName;
   }
-  document.getElementById('fee-structure-text').textContent = FEE_TEXT[lpoaType];
+  
+  const currentFeeText = FEE_TEXT[lpoaType];
+  document.getElementById('fee-structure-text').textContent = currentFeeText;
 
   // Canvas setup
   const canvas = document.getElementById('sig-canvas');
@@ -197,6 +200,7 @@
         body: JSON.stringify({
           clientName: clientName || name,
           signerName: name,
+          feeText: currentFeeText,
           signatureData,
           signedAt: new Date().toISOString(),
           token,

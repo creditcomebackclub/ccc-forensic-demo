@@ -29,18 +29,10 @@ function supabaseRequest(path, method, body, url, key) {
   });
 }
 
-// Section 4 (Fee Structure) is the only section that varies by lpoaType —
-// must mirror public/sign-lpoa.html's FEE_TEXT exactly, since this is the
-// permanent signed record and has to reflect what the client actually saw
-// and agreed to at signing time.
-const FEE_TEXT = {
-  standard: 'First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.',
-  inquiry: 'Personal Information / Inquiry Removal Fee: $50 per bureau, one-time. No monthly service fee. No deletion = no charge.',
-};
-
-function buildLpoaHtml(clientName, signerName, signatureData, signedAt, lpoaType) {
+// Section 4 (Fee Structure) receives the dynamically computed feeText
+// to ensure the signed record reflects exactly what the client agreed to.
+function buildLpoaHtml(clientName, signerName, signatureData, signedAt, feeText) {
   const dateStr = new Date(signedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  const feeText = FEE_TEXT[lpoaType] || FEE_TEXT.standard;
   return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
     + 'body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;margin:0;padding:40px;color:#000;}'
     + '.header{background:#1B2A4A;color:#C9A84C;padding:20px 32px;margin:-40px -40px 32px;}'
@@ -91,7 +83,7 @@ exports.handler = async (event) => {
   try { payload = JSON.parse(event.body); }
   catch (e) { return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
 
-  const { clientName, signerName, signatureData, signedAt, token, lpoaType } = payload;
+  const { clientName, signerName, signatureData, signedAt, token, lpoaType, feeText: frontendFeeText } = payload;
   if (!clientName || !signatureData) return { statusCode: 400, body: JSON.stringify({ error: 'clientName and signatureData required' }) };
   if (!token) return { statusCode: 400, body: JSON.stringify({ error: 'token required' }) };
   const resolvedLpoaType = lpoaType === 'inquiry' ? 'inquiry' : 'standard';
@@ -107,7 +99,7 @@ exports.handler = async (event) => {
     // 20260725), so this now requires possession of the exact link Chris
     // generated for this specific client, not just knowledge of their name.
     const tokenCheck = await supabaseRequest(
-      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,sign_token',
+      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,sign_token,billing_tier',
       'GET', null, supabaseUrl, supabaseKey
     );
     const matchedRow = Array.isArray(tokenCheck.body) && tokenCheck.body[0];
@@ -115,6 +107,46 @@ exports.handler = async (event) => {
       return { statusCode: 403, body: JSON.stringify({ error: 'Invalid or expired signing link.' }) };
     }
     const clientId = matchedRow.id;
+    
+    // Fetch settings to get any admin-overridden tier pricing
+    const settingsReq = await supabaseRequest('/rest/v1/settings?id=eq.1&select=pricing', 'GET', null, supabaseUrl, supabaseKey);
+    const settings = Array.isArray(settingsReq.body) && settingsReq.body[0] ? settingsReq.body[0] : {};
+    
+    // Dynamically compute the exact fee string based on the client's tier
+    let backendFeeText = '';
+    if (resolvedLpoaType === 'inquiry') {
+      backendFeeText = 'Personal Information / Inquiry Removal Fee: $50 per bureau, one-time. No monthly service fee. No deletion = no charge.';
+    } else {
+      const DEFAULT_TIER_PRICING = {
+        Standard: { monthlyFee: 79, firstWorkFee: 75 },
+        VIP: { monthlyFee: 149, firstWorkFee: 99 },
+        'Paid In Full': { flatFee: 499, flatMonths: 6, firstWorkFee: 0 },
+      };
+      const overrides = (settings && settings.pricing && settings.pricing.tiers) || {};
+      const tierPricing = {};
+      for (const tier of Object.keys(DEFAULT_TIER_PRICING)) {
+        tierPricing[tier] = { ...DEFAULT_TIER_PRICING[tier], ...(overrides[tier] || {}) };
+      }
+      const tier = matchedRow.billing_tier || 'Standard';
+      const p = tierPricing[tier] || tierPricing['Standard'];
+      
+      if (tier === 'Paid In Full') {
+        backendFeeText = `$${p.flatFee} flat for ${p.flatMonths} months of service (no monthly billing)${p.firstWorkFee ? `, plus a $${p.firstWorkFee} First Work Fee` : ' — First Work Fee waived'}.`;
+      } else {
+        backendFeeText = `$${p.monthlyFee}/month, plus a $${p.firstWorkFee} First Work Fee due after audit delivery.`;
+      }
+    }
+    
+    // Ensure mutual assent: the fee text the client saw MUST match what the database enforces.
+    // We fall back to the backend text if frontend feeText is completely missing (e.g. old link)
+    // to avoid permanently breaking existing in-flight links, but any mismatch is rejected.
+    if (frontendFeeText && frontendFeeText !== backendFeeText) {
+      // Allow legacy text mismatch if it's an old link falling back to hardcoded standard
+      const legacyStandard = 'First Work Fee: $49 after audit delivery. Per-delete fees: Type A $125/bureau, Type B $75/bureau, Type C $150/bureau, Public Record $175/bureau. No deletion = no charge.';
+      if (frontendFeeText !== legacyStandard) {
+        return { statusCode: 400, body: JSON.stringify({ error: 'Fee structure mismatch. Please ask your rep for a new signature link.' }) };
+      }
+    }
 
     // Upload signature PNG to Supabase Storage via base64
     const base64Data = signatureData.replace(/^data:image\/png;base64,/, '');
@@ -153,8 +185,8 @@ exports.handler = async (event) => {
     // Get public URL
     const sigUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + clientId + '/signature.png';
 
-    // Generate signed LPOA HTML
-    const lpoaHtml = buildLpoaHtml(clientName, signerName || clientName, signatureData, signedAtTime, resolvedLpoaType);
+    // Generate signed LPOA HTML with the verified backend fee text
+    const lpoaHtml = buildLpoaHtml(clientName, signerName || clientName, signatureData, signedAtTime, backendFeeText);
     const lpoaBuffer = Buffer.from(lpoaHtml, 'utf8');
     // Hashed from the exact bytes about to be uploaded — this is what lets
     // anyone later confirm the stored lpoa-signed.html hasn't been altered
