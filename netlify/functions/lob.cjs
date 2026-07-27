@@ -140,19 +140,21 @@ async function updateSubmission(letterId, patch, supabaseUrl, serviceKey) {
 // clears only the operational fields; the original failed Lob ID remains in
 // lob_webhook_events as the immutable audit record.
 async function prepareFailedRetry(letter, submission, supabaseUrl, serviceKey) {
-  if (submission.status !== 'failed' || letter.tracking_status !== 'Failed' || !letter.lob_id) {
+  if (submission.status !== 'failed' || letter.tracking_status !== 'Failed') {
     throw new Error('This mailpiece is not a confirmed failed Lob send and cannot be retried.');
   }
-  const cleared = await supabaseRequest(
-    '/rest/v1/letters?id=eq.' + encodeURIComponent(letter.id)
-      + '&lob_id=eq.' + encodeURIComponent(letter.lob_id)
-      + '&tracking_status=eq.Failed',
-    'PATCH',
-    { lob_id: null, mailed_date: null, tracking_number: null, tracking_status: 'Retrying', delivered_at: null },
-    supabaseUrl, serviceKey
-  );
-  if (!isSuccess(cleared) || !Array.isArray(cleared.body) || cleared.body.length !== 1) {
-    throw new Error('The failed mailpiece changed before it could be retried. Refresh the letter and try again.');
+  if (letter.lob_id) {
+    const cleared = await supabaseRequest(
+      '/rest/v1/letters?id=eq.' + encodeURIComponent(letter.id)
+        + '&lob_id=eq.' + encodeURIComponent(letter.lob_id)
+        + '&tracking_status=eq.Failed',
+      'PATCH',
+      { lob_id: null, mailed_date: null, tracking_number: null, tracking_status: 'Failed', delivered_at: null },
+      supabaseUrl, serviceKey
+    );
+    if (!isSuccess(cleared) || !Array.isArray(cleared.body) || cleared.body.length !== 1) {
+      throw new Error('The failed mailpiece changed before it could be retried. Refresh the letter and try again.');
+    }
   }
   const reset = await supabaseRequest(
     '/rest/v1/mail_submissions?letter_id=eq.' + encodeURIComponent(letter.id) + '&status=eq.failed',
