@@ -22,6 +22,24 @@ export default function AffiliatePortal({ session, onSignOut }) {
   // renders as unreadable near-black-on-black instead of an visible error.
   const isValidHexColor = (c) => typeof c === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(c);
   const brandColor = isValidHexColor(affiliate?.brand_color) ? affiliate.brand_color : '#22C55E';
+  
+  // Dark colors (like Fundhub's dark blue) are unreadable on a black background.
+  // This helper generates a lightened version for text and icons.
+  const getLightenedColor = (hex) => {
+    let c = hex.replace('#', '');
+    if (c.length === 3) c = c.split('').map(x => x + x).join('');
+    const r = parseInt(c.substring(0, 2), 16);
+    const g = parseInt(c.substring(2, 4), 16);
+    const b = parseInt(c.substring(4, 6), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    if (luminance < 0.35) {
+      const mix = (val) => Math.round(val + (255 - val) * 0.7);
+      return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+    }
+    return hex;
+  };
+  const textAccentColor = getLightenedColor(brandColor);
+
   const isSwiftedly = affiliate?.company?.toLowerCase().includes('swiftedly') || affiliate?.name?.toLowerCase().includes('swiftedly');
   const accentColor = isSwiftedly ? '#FF6900' : brandColor; // Action Orange for Swiftedly
   const brandName = affiliate?.brand_name || affiliate?.company || 'Partner Portal';
@@ -191,7 +209,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
 
   if (loading) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0C0C0C' }}>
-      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>Loading your portal…</div>
+      <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>Loading your portal…</div>
     </div>
   );
 
@@ -199,7 +217,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0C0C0C' }}>
       <div style={{ textAlign: 'center', padding: 40 }}>
         <div style={{ color: '#fff', fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Portal not configured</div>
-        <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>Contact Credit Comeback Club to set up your affiliate account.</div>
+        <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>Contact Credit Comeback Club to set up your affiliate account.</div>
       </div>
     </div>
   );
@@ -235,12 +253,12 @@ export default function AffiliatePortal({ session, onSignOut }) {
             <div style={{ width: 1, height: 24, background: '#2A2A2A' }} />
             <div>
               <div style={{ color: '#fff', fontWeight: 700, fontSize: 13 }}>Credit Comeback Club</div>
-              <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Partner Portal</div>
+              <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Partner Portal</div>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span className="affiliate-header-name" style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>{affiliate.name}</span>
-            <button onClick={onSignOut} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: '1px solid #2A2A2A', borderRadius: 4, padding: '6px 12px', color: 'rgba(255,255,255,0.4)', fontSize: 11, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            <span className="affiliate-header-name" style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12 }}>{affiliate.name}</span>
+            <button onClick={onSignOut} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: '1px solid #2A2A2A', borderRadius: 4, padding: '6px 12px', color: 'rgba(255,255,255,0.7)', fontSize: 11, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               <LogOut size={11} strokeWidth={1.75} /> Sign Out
             </button>
           </div>
@@ -254,7 +272,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
             <button key={tab} onClick={() => setActiveTab(tab)} style={{
               padding: '14px 16px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', cursor: 'pointer', background: 'none',
               border: 'none', borderBottom: activeTab === tab ? `2px solid ${brandColor}` : '2px solid transparent',
-              color: activeTab === tab ? '#fff' : 'rgba(255,255,255,0.35)', fontWeight: activeTab === tab ? 600 : 400,
+              color: activeTab === tab ? '#fff' : 'rgba(255,255,255,0.6)', fontWeight: activeTab === tab ? 600 : 400,
               transition: 'all 0.2s',
             }}>
               {tab}
@@ -272,7 +290,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
               <h1 style={{ fontSize: 24, fontWeight: 700, color: '#fff', marginBottom: 4 }}>
                 Welcome back, {affiliate.name.split(' ')[0]}.
               </h1>
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>
+              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>
                 Here's your Credit Comeback Club partnership at a glance.
               </p>
             </div>
@@ -280,15 +298,15 @@ export default function AffiliatePortal({ session, onSignOut }) {
             {/* Stats */}
             <div className="affiliate-stats">
               {[
-                { label: 'Clients Referred', value: clients.length, icon: <Users size={16} style={{ color: brandColor }} strokeWidth={1.75} /> },
-                { label: 'Active Campaigns', value: clients.filter(c => getClientStatus(c.name).tone !== 'neutral').length, icon: <TrendingUp size={16} style={{ color: brandColor }} strokeWidth={1.75} /> },
-                { label: 'Deletions Achieved', value: deletions, icon: <CheckCircle size={16} style={{ color: brandColor }} strokeWidth={1.75} /> },
-                { label: 'Commission Pending', value: '$' + pendingCommission.toFixed(2), icon: <DollarSign size={16} style={{ color: brandColor }} strokeWidth={1.75} /> },
+                { label: 'Clients Referred', value: clients.length, icon: <Users size={16} style={{ color: textAccentColor }} strokeWidth={1.75} /> },
+                { label: 'Active Campaigns', value: clients.filter(c => getClientStatus(c.name).tone !== 'neutral').length, icon: <TrendingUp size={16} style={{ color: textAccentColor }} strokeWidth={1.75} /> },
+                { label: 'Deletions Achieved', value: deletions, icon: <CheckCircle size={16} style={{ color: textAccentColor }} strokeWidth={1.75} /> },
+                { label: 'Commission Pending', value: '$' + pendingCommission.toFixed(2), icon: <DollarSign size={16} style={{ color: textAccentColor }} strokeWidth={1.75} /> },
               ].map(({ label, value, icon }) => (
                 <div key={label} style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 20 }}>
                   <div style={{ marginBottom: 10 }}>{icon}</div>
                   <div style={{ fontSize: 26, fontWeight: 800, color: '#fff', lineHeight: 1, marginBottom: 4 }}>{value}</div>
-                  <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(255,255,255,0.35)' }}>{label}</div>
+                  <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(255,255,255,0.6)' }}>{label}</div>
                 </div>
               ))}
             </div>
@@ -298,7 +316,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
               <div style={{ background: '#111', border: `1px solid ${brandColor}33`, borderRadius: 8, padding: 24, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Manual Referral</div>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Submit client info directly and we'll handle the onboarding.</div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>Submit client info directly and we'll handle the onboarding.</div>
                 </div>
                 <button onClick={() => setShowReferForm(true)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: accentColor, color: '#000', border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 24, alignSelf: 'flex-start' }}>
                   <Plus size={14} strokeWidth={2.5} /> Submit Info
@@ -308,7 +326,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
               <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Your Custom Referral Link</div>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Share this link. Clients who sign up will be automatically attributed to you.</div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>Share this link. Clients who sign up will be automatically attributed to you.</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16 }}>
                   <input 
@@ -344,9 +362,9 @@ export default function AffiliatePortal({ session, onSignOut }) {
               return (
                 <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Embed Tools</div>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginBottom: 20 }}>Drop your branded signup page directly onto your website. Your referral code is baked in — all sign-ups are automatically attributed to you.</div>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginBottom: 20 }}>Drop your branded signup page directly onto your website. Your referral code is baked in — all sign-ups are automatically attributed to you.</div>
                   <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.4)', marginBottom: 8 }}>Booking Page — iframe Embed</div>
+                    <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.7)', marginBottom: 8 }}>Booking Page — iframe Embed</div>
                     <div style={{ background: '#0A0A0A', border: '1px solid #2A2A2A', borderRadius: 6, padding: '12px 14px', fontFamily: 'monospace', fontSize: 11, color: '#86efac', whiteSpace: 'pre', overflowX: 'auto', marginBottom: 8 }}>{iframeSnippet}</div>
                     <button
                       onClick={(e) => copySnippet(iframeSnippet, e.currentTarget)}
@@ -355,7 +373,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                     </button>
                   </div>
                   <div style={{ borderTop: '1px solid #1E1E1E', paddingTop: 16 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.4)', marginBottom: 8 }}>Direct Booking Link</div>
+                    <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.7)', marginBottom: 8 }}>Direct Booking Link</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input readOnly value={`https://creditcomebackclub.com/join?ref=${refCode}`}
                         style={{ flex: 1, background: '#0A0A0A', border: '1px solid #2A2A2A', borderRadius: 4, padding: '8px 12px', color: '#fff', fontSize: 12, outline: 'none' }} />
@@ -365,7 +383,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                         Copy
                       </button>
                     </div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)', marginTop: 8 }}>Use this link in emails, texts, or social posts. Works everywhere an iframe won't.</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.8)', marginTop: 8 }}>Use this link in emails, texts, or social posts. Works everywhere an iframe won't.</div>
                   </div>
                 </div>
               );
@@ -376,7 +394,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
               <div style={{ fontSize: 18, lineHeight: 1 }}>🔑</div>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: '#93C5FD', marginBottom: 4 }}>Sharing your portal with teammates?</div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6 }}>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', lineHeight: 1.6 }}>
                   Your portal login is at <span style={{ color: '#fff', fontFamily: 'monospace' }}>creditcomebackclub.com</span> → click <strong style={{ color: '#fff' }}>Login</strong> and enter your email. A magic link will be sent to your inbox — no password needed.
                 </div>
               </div>
@@ -386,13 +404,13 @@ export default function AffiliatePortal({ session, onSignOut }) {
 
             <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, overflow: 'hidden' }}>
               <div style={{ padding: '14px 20px', borderBottom: '1px solid #1E1E1E', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)' }}>Recent Referrals</span>
-                <button onClick={() => setActiveTab('clients')} style={{ fontSize: 11, color: brandColor, background: 'none', border: 'none', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>View All →</button>
+                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.8)' }}>Recent Referrals</span>
+                <button onClick={() => setActiveTab('clients')} style={{ fontSize: 11, color: textAccentColor, background: 'none', border: 'none', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>View All →</button>
               </div>
               {clients.length === 0 ? (
                 <div style={{ padding: 40, textAlign: 'center' }}>
                   <Users size={24} style={{ color: '#2A2A2A', margin: '0 auto 10px' }} strokeWidth={1.5} />
-                  <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)' }}>No referrals yet. Use the "Refer Client" button above to get started.</p>
+                  <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>No referrals yet. Use the "Refer Client" button above to get started.</p>
                 </div>
               ) : (
                 clients.slice(0, 5).map(c => {
@@ -405,11 +423,11 @@ export default function AffiliatePortal({ session, onSignOut }) {
                     <div key={c.id} style={{ padding: '14px 20px', borderBottom: '1px solid #1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{c.name}</div>
-                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>{c.email}</div>
+                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>{c.email}</div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         {scoreIncrease && (
-                          <span style={{ fontSize: 11, color: brandColor, fontWeight: 700 }}>{scoreIncrease}</span>
+                          <span style={{ fontSize: 11, color: textAccentColor, fontWeight: 700 }}>{scoreIncrease}</span>
                         )}
                         <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 4, background: style.bg, color: style.color, border: `1px solid ${style.border}`, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>
                           {status.label}
@@ -429,7 +447,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
               <div>
                 <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Your Referred Clients</h2>
-                <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>{clients.length} client{clients.length !== 1 ? 's' : ''} total</p>
+                <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{clients.length} client{clients.length !== 1 ? 's' : ''} total</p>
               </div>
               <div className="affiliate-actions" style={{ display: 'flex', gap: 12 }}>
                 <button onClick={handleExportCSV} disabled={clients.length === 0} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#111', color: '#fff', border: '1px solid #2A2A2A', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: clients.length === 0 ? 'not-allowed' : 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: clients.length === 0 ? 0.5 : 1 }}>
@@ -444,7 +462,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
             {clients.length === 0 ? (
               <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 60, textAlign: 'center' }}>
                 <Users size={28} style={{ color: '#2A2A2A', margin: '0 auto 12px' }} strokeWidth={1.5} />
-                <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)' }}>No clients referred yet.</p>
+                <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>No clients referred yet.</p>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -463,7 +481,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16 }}>
                         <div>
                           <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 3 }}>{c.name}</div>
-                          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>{c.email}{c.phone ? ' · ' + c.phone : ''}</div>
+                          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>{c.email}{c.phone ? ' · ' + c.phone : ''}</div>
                         </div>
                         <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: style.bg, color: style.color, border: `1px solid ${style.border}`, textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, flexShrink: 0 }}>
                           {status.label}
@@ -478,14 +496,14 @@ export default function AffiliatePortal({ session, onSignOut }) {
                           { label: 'Score Increase', value: scoreIncrease },
                         ].map(({ label, value }) => (
                           <div key={label}>
-                            <div style={{ fontSize: 18, fontWeight: 700, color: value > 0 || String(value).startsWith('+') ? brandColor : 'rgba(255,255,255,0.3)' }}>{value}</div>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: value > 0 || String(value).startsWith('+') ? textAccentColor : 'rgba(255,255,255,0.3)' }}>{value}</div>
                             <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>{label}</div>
                           </div>
                         ))}
                         {(c.commissionOwed || 0) <= 0.01 && (c.commissionEarned || 0) > 0 && (
                           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <CheckCircle size={13} style={{ color: brandColor }} strokeWidth={2} />
-                            <span style={{ fontSize: 11, color: brandColor, fontWeight: 600 }}>Commission Paid</span>
+                            <CheckCircle size={13} style={{ color: textAccentColor }} strokeWidth={2} />
+                            <span style={{ fontSize: 11, color: textAccentColor, fontWeight: 600 }}>Commission Paid</span>
                           </div>
                         )}
                       </div>
@@ -502,35 +520,35 @@ export default function AffiliatePortal({ session, onSignOut }) {
           <>
             <div style={{ marginBottom: 24 }}>
               <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Commissions</h2>
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>{Math.round((affiliate?.commission_rate || 0.20) * 100)}% of the total revenue per referred client.</p>
+              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{Math.round((affiliate?.commission_rate || 0.20) * 100)}% of the total revenue per referred client.</p>
             </div>
 
             <div className="affiliate-commission-grid">
               <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
-                <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Total Revenue</div>
+                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Total Revenue</div>
                 <div style={{ color: '#fff', fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${totalRevenue.toFixed(2)}</div>
               </div>
               <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
-                <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Total Earned</div>
+                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Total Earned</div>
                 <div style={{ color: '#fff', fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${totalCommission.toFixed(2)}</div>
               </div>
               <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
-                <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Paid Out</div>
-                <div style={{ color: brandColor, fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${paidCommission.toFixed(2)}</div>
+                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Paid Out</div>
+                <div style={{ color: textAccentColor, fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${paidCommission.toFixed(2)}</div>
               </div>
               <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
-                <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Pending</div>
+                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Pending</div>
                 <div style={{ color: '#D97706', fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${pendingCommission.toFixed(2)}</div>
               </div>
             </div>
 
             <div className="affiliate-table-wrap" style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, overflow: 'hidden' }}>
               <div style={{ padding: '14px 20px', borderBottom: '1px solid #1E1E1E', background: '#0A0A0A' }}>
-                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)' }}>Commission Ledger</span>
+                <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.8)' }}>Commission Ledger</span>
               </div>
               {clients.length === 0 ? (
                 <div style={{ padding: 40, textAlign: 'center' }}>
-                  <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)' }}>No referrals yet — commissions will appear here once clients are enrolled.</p>
+                  <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)' }}>No referrals yet — commissions will appear here once clients are enrolled.</p>
                 </div>
               ) : (
                 <table className="affiliate-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -552,9 +570,9 @@ export default function AffiliatePortal({ session, onSignOut }) {
                         <tr key={c.id} style={{ borderBottom: '1px solid #1A1A1A' }}>
                           <td style={{ padding: '14px 20px' }}>
                             <div style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{c.name}</div>
-                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>Enrolled: {new Date(c.created_at).toLocaleDateString()}</div>
+                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 2 }}>Enrolled: {new Date(c.created_at).toLocaleDateString()}</div>
                           </td>
-                          <td style={{ padding: '14px 20px', fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+                          <td style={{ padding: '14px 20px', fontSize: 12, color: 'rgba(255,255,255,0.8)' }}>
                             ${totalPaid.toFixed(2)}
                           </td>
                           <td style={{ padding: '14px 20px', textAlign: 'right' }}>
@@ -567,7 +585,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                           </td>
                           <td style={{ padding: '14px 20px', textAlign: 'right' }}>
                             {commission <= 0 ? (
-                              <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#1A1A1A', color: 'rgba(255,255,255,0.25)', border: '1px solid #2A2A2A', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>TBD</span>
+                              <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#1A1A1A', color: 'rgba(255,255,255,0.8)', border: '1px solid #2A2A2A', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>TBD</span>
                             ) : owed <= 0.01 ? (
                               <span style={{ fontSize: 10, padding: '4px 10px', borderRadius: 4, background: '#F0FDF4', color: '#15803D', border: '1px solid #BBF7D0', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em' }}>Paid</span>
                             ) : (
@@ -597,7 +615,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
               <div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>Refer a Client</div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 3 }}>We'll handle everything from here.</div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginTop: 3 }}>We'll handle everything from here.</div>
               </div>
               <button onClick={() => setShowReferForm(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', padding: 4 }}>
                 <X size={18} strokeWidth={1.75} />
@@ -606,9 +624,9 @@ export default function AffiliatePortal({ session, onSignOut }) {
 
             {referSuccess ? (
               <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                <CheckCircle size={36} style={{ color: brandColor, margin: '0 auto 12px' }} strokeWidth={1.5} />
+                <CheckCircle size={36} style={{ color: textAccentColor, margin: '0 auto 12px' }} strokeWidth={1.5} />
                 <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 6 }}>Referral Submitted</div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>We'll reach out to {referForm.name || 'your client'} within 1 business day.</div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>We'll reach out to {referForm.name || 'your client'} within 1 business day.</div>
               </div>
             ) : (
               <>
@@ -624,8 +642,8 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   { key: 'notes', label: 'Notes (optional)', placeholder: 'Any context about their credit situation…', required: false },
                 ].map(({ key, label, placeholder, required }) => (
                   <div key={key} style={{ marginBottom: 16 }}>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
-                      {label}{required && <span style={{ color: brandColor, marginLeft: 3 }}>*</span>}
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.8)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                      {label}{required && <span style={{ color: textAccentColor, marginLeft: 3 }}>*</span>}
                     </label>
                     {key === 'notes' ? (
                       <textarea
