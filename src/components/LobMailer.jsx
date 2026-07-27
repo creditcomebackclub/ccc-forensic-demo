@@ -126,10 +126,12 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       const assetPrefix = user.id + '/temp-letter-assets/' + Date.now();
       let assetNumber = 0;
       const uploadMailImage = async (blob) => {
-        const storagePath = assetPrefix + '/page-' + (++assetNumber) + '.jpg';
+        const contentType = ['image/jpeg', 'image/png', 'image/webp'].includes(blob.type) ? blob.type : 'image/jpeg';
+        const extension = contentType === 'image/png' ? 'png' : (contentType === 'image/webp' ? 'webp' : 'jpg');
+        const storagePath = assetPrefix + '/page-' + (++assetNumber) + '.' + extension;
         const { error: assetError } = await supabase.storage.from('documents').upload(storagePath, blob, {
           upsert: false,
-          contentType: 'image/jpeg',
+          contentType,
         });
         if (assetError) throw new Error('Could not prepare a print enclosure: ' + assetError.message);
         const { data, error: urlError } = await supabase.storage.from('documents').createSignedUrl(storagePath, 3600);
