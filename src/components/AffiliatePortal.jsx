@@ -329,8 +329,6 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   </button>
                 </div>
               </div>
-                </div>
-              </div>
             </div>
 
             {/* Embed Tools */}
