@@ -130,14 +130,17 @@ exports.handler = async (event) => {
   const sendgridKey = process.env.SENDGRID_API_KEY;
   // Lob issues a distinct signing secret PER WEBHOOK, and Test/Live are
   // fully separate webhooks in their dashboard — so a Test-mode event is
-  // signed with a different secret than a Live one. Accept either so
-  // sandbox verification (LOB_MODE=test) and real client mail (LOB_MODE=
-  // live) both work without swapping env vars back and forth. Confirmed
-  // live 2026-07-26: a freshly-created Test webhook 401'd against the
-  // single secret this used to check.
-  const webhookSecrets = [process.env.LOB_WEBHOOK_SECRET, process.env.LOB_WEBHOOK_SECRET_TEST]
-    .filter(Boolean)
-    .map((s) => s.trim());
+  // signed with a different secret than a Live one. LOB_WEBHOOK_SECRET can
+  // hold either one secret, or both comma-separated ("live_secret,
+  // test_secret") — no separate env var, by design, so real in-flight
+  // client mail (LOB_MODE=live) never silently loses tracking just because
+  // LOB_WEBHOOK_SECRET was pointed at the Test secret for a sandbox check.
+  // Confirmed live 2026-07-26: a freshly-created Test webhook 401'd against
+  // the single Live secret this used to check exclusively.
+  const webhookSecrets = (process.env.LOB_WEBHOOK_SECRET || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   if (!supabaseUrl || !supabaseKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Supabase not configured' }) };
