@@ -303,7 +303,10 @@ export default function ClientPortal({ session, onSignOut }) {
   const timeline = [];
   letters.forEach(l => {
     if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: 'Dispute letter prepared — ' + l.furnisher, subtitle: l.phase, tone: 'blue' });
-    if (l.mailed_date) timeline.push({ date: l.mailed_date, icon: '✉️', title: 'Letter mailed via certified mail — ' + l.furnisher, subtitle: l.tracking_number ? 'USPS #' + l.tracking_number.slice(-8) : null, tone: 'default' });
+    if (l.mailed_date) {
+      const isCertified = l.phase && (l.phase.startsWith('Phase 3') || l.phase.startsWith('Phase 4'));
+      timeline.push({ date: l.mailed_date, icon: '✉️', title: 'Letter mailed via ' + (isCertified ? 'certified mail' : 'USPS First Class') + ' — ' + l.furnisher, subtitle: l.tracking_number ? 'USPS #' + l.tracking_number.slice(-8) : null, tone: 'default' });
+    }
 
     // Granular in-transit milestones from Lob webhook
     if (l.tracking_status === 'In Transit' && l.mailed_date)

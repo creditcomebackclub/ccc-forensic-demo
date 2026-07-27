@@ -705,7 +705,7 @@ exports.handler = async () => {
           <table style="width:100%;margin-bottom:24px;border-collapse:collapse;">
             <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${leadsDrippedCount}</strong> Lead Nurture Emails Sent</td></tr>
             <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${clientUpdatesCount}</strong> Client Update Emails Sent</td></tr>
-            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${lobDeliveriesCount}</strong> Certified Letters Delivered</td></tr>
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${lobDeliveriesCount}</strong> Letters Delivered</td></tr>
           </table>
 
           ${adminDigestItems.length > 0 ? `

@@ -204,7 +204,7 @@ CRITICAL: 71/78/80/82/83/84 are TIME-BASED DELINQUENCY STAGES, not derogatory-ou
    - Status paradox: "An account cannot simultaneously be [Status A] and carry [contradictory data point] — this is a Metro 2 integrity failure with no lawful explanation."
    Then close: "I expect your prompt attention to this matter and full compliance with FCRA requirements within thirty (30) days."
 15. Signature block: "Consumer — All Rights Reserved"
-16. Certified mail + Enclosures line
+16. Mail notation (First Class, not certified) + Enclosures line (ID + Address only, no LPOA)
 
 **Hard rules:**
 - NO CCC branding in letter headers
@@ -399,7 +399,7 @@ When the user message contains \`<MODE>LETTER_HTML</MODE>\` followed by an accou
 - Open directly with date → sender → recipient (NO CCC branding header)
 - Follow the 16-step structure in Section 7 exactly
 - For Type C, include §1692g(b) demands
-- Include certified mail notation at bottom. Enclosures line must read: "Enclosures: (1) Government-Issued Photo ID; (2) Proof of Current Address; (3) Limited Power of Attorney" — never mention credit report as an enclosure
+- Phase 1 letters mail standard USPS First Class, not certified — include a First Class mail notation at bottom, never "Certified Mail". Enclosures line must read: "Enclosures: (1) Government-Issued Photo ID; (2) Proof of Current Address" — never mention credit report or Limited Power of Attorney (LPOA is reserved for later escalation phases) as an enclosure. NOTE: this LETTER_HTML mode block is not currently wired into the live pipeline (Phase 1 letters run through letterPrompt.js via generate-letter-background.mjs) — kept in sync here in case that changes.
 - Be print-ready (use @page CSS for letter dimensions)
 - Output ONLY the HTML — no markdown code fences, no prose explanation
 

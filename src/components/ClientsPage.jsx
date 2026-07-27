@@ -301,7 +301,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
 
   const handleDelete = async () => {
     const confirmMsg = l.mailedDate
-      ? 'This letter was already mailed via certified mail on ' + fmt(l.mailedDate) + '. Deleting it only removes it from CCC\'s tracking system \u2014 it does NOT recall the physical mail already sent to ' + l.furnisher + '. This cannot be undone. Continue?'
+      ? 'This letter was already mailed on ' + fmt(l.mailedDate) + '. Deleting it only removes it from CCC\'s tracking system \u2014 it does NOT recall the physical mail already sent to ' + l.furnisher + '. This cannot be undone. Continue?'
       : 'Delete this letter draft for ' + l.furnisher + '? This cannot be undone.';
     if (!window.confirm(confirmMsg)) return;
     try {

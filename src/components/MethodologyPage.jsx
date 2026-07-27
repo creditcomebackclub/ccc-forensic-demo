@@ -195,7 +195,7 @@ function Phases() {
       <Table
         headers={['Phase', 'Action', 'Statute', 'Purpose']}
         rows={[
-          ['Phase 1 — Setup', 'Direct furnisher dispute, sent certified mail', '§1681s-2(a)', 'Build the evidentiary record. No private right of action here — this phase exists to document.'],
+          ['Phase 1 — Setup', 'Direct furnisher dispute, sent USPS First Class', '§1681s-2(a)', 'Build the evidentiary record. No private right of action here — this phase exists to document.'],
           ['Phase 2 — Analysis', 'Read the furnisher response against the original violations', 'Johnson v. MBNA standard', 'Classify the response: form letter, wrong framework, partial fix, or non-response. Each failure mode becomes Phase 3 fuel.'],
           ['Phase 3 — Spike', 'CRA-triggered dispute referencing the failed Phase 1 response', '§1681s-2(b)', 'Where the damages live. Statutory and punitive exposure under §1681n once the furnisher is on notice and the investigation was inadequate.'],
         ]}
@@ -363,7 +363,7 @@ function Letters() {
         <li>No emotional narrative — no hardship story, no appeals to goodwill.</li>
         <li>No questions — statements and demands only.</li>
         <li>No threat to dispute with the bureaus inside a Phase 1 furnisher letter — that is not leverage at this stage.</li>
-        <li>Signature block reads &quot;Consumer — All Rights Reserved.&quot; Sent certified mail, return receipt requested.</li>
+        <li>Signature block reads &quot;Consumer — All Rights Reserved.&quot; Phase 1 letters go USPS First Class; Phase 3+ escalations go certified mail with return receipt requested.</li>
       </ul>
       <Sub>Letter Anatomy</Sub>
       <p className="text-[13px] text-ink leading-relaxed mb-2 max-w-3xl">

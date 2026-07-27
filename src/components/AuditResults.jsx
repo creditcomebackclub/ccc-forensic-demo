@@ -113,7 +113,7 @@ Scores: Equifax ${scores.equifax ?? '—'} · Experian ${scores.experian ?? '—
 
 We identified ${accountsTargeted} accounts with actionable violations and ${totalViolations} total violations under Metro 2®, FCRA, and FDCPA standards.
 
-Your dispute battle plan is attached. Review it and let us know if you have any questions — we'll be in touch with next steps once your first certified letters go out.
+Your dispute battle plan is attached. Review it and let us know if you have any questions — we'll be in touch with next steps once your first letters go out.
 
 — Chris & the Credit Comeback Club Team
 970-644-0063 | creditcomebackclub.com`;
@@ -986,8 +986,8 @@ function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = n
             <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#15803D', fontWeight: 600, marginBottom: 6 }}>The Game Plan — In Plain English</div>
             <div style={{ fontSize: 12, color: '#1B2A4A', lineHeight: 1.6 }}>
               {account.type === 'C'
-                ? <>We're going to hit <strong>{account.furnisher}</strong> with two simultaneous certified letters — one demanding debt validation under federal debt collection law (they have to prove you owe this and that they have the right to collect it), and one disputing the inaccurate reporting directly. If they can't validate the debt within 30 days, they're legally required to stop reporting it. If they don't respond or respond inadequately, we escalate to all three credit bureaus with their silence or weak response as evidence against them.</>
-                : <>We're going to send a certified letter directly to <strong>{account.furnisher}</strong> demanding they fix or remove the inaccurate information on your credit report — specifically, {account.primaryViolation ? account.primaryViolation.toLowerCase() : 'the violations identified above'}. They have 30 days to respond with original source documentation. If they can't back up what they're reporting, they have to correct or delete it. If they ignore us or send a weak response, we take that to the credit bureaus as proof they can't defend their reporting.</>
+                ? <>We're going to hit <strong>{account.furnisher}</strong> with two simultaneous letters — one demanding debt validation under federal debt collection law (they have to prove you owe this and that they have the right to collect it), and one disputing the inaccurate reporting directly. If they can't validate the debt within 30 days, they're legally required to stop reporting it. If they don't respond or respond inadequately, we escalate to all three credit bureaus with their silence or weak response as evidence against them.</>
+                : <>We're going to send a letter directly to <strong>{account.furnisher}</strong> demanding they fix or remove the inaccurate information on your credit report — specifically, {account.primaryViolation ? account.primaryViolation.toLowerCase() : 'the violations identified above'}. They have 30 days to respond with original source documentation. If they can't back up what they're reporting, they have to correct or delete it. If they ignore us or send a weak response, we take that to the credit bureaus as proof they can't defend their reporting.</>
               }
             </div>
           </div>

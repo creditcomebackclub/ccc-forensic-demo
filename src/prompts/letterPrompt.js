@@ -77,7 +77,7 @@ ${failureToComply}
    - Form letters, "verified as reported" responses, or automated replies are deemed non-responsive and legally insufficient under Johnson v. MBNA, 357 F.3d 426
 14. ${closingInstruction}
 15. Signature block: "Consumer — All Rights Reserved"
-16. Certified mail + Enclosures line
+16. Mail notation + Enclosures line
 
 **Tone:** ${toneDescription}
 
@@ -87,7 +87,7 @@ ${hardRules}
 ## 2. OUTPUT HTML REQUIREMENTS (CRITICAL CONCISENESS RULE)
 - Be a complete \`<!DOCTYPE html>\` document.
 - Open directly with date → sender → recipient (NO CCC branding header)
-- Certified mail notation at bottom. Enclosures line must read: "Enclosures: (1) Government-Issued Photo ID; (2) Proof of Current Address; (3) Limited Power of Attorney" — never mention credit report as an enclosure.
+- This is a Phase 1 direct-furnisher dispute, mailed standard USPS First Class (not certified, no return receipt) — state only "Sent via First Class Mail" with no tracking/article number field or placeholder. Do NOT write "Certified Mail" anywhere in the letter. Enclosures line must read: "Enclosures: (1) Government-Issued Photo ID; (2) Proof of Current Address" — never mention credit report or Limited Power of Attorney as an enclosure (LPOA is reserved for later escalation phases and is not physically attached to this letter).
 - **CRITICAL CONCISENESS RULE**: Do NOT generate any CSS, <style> block, or inline style attributes. The system will automatically inject the standard CSS stylesheet into your HTML later. Output plain HTML using these exact classes: class='id-table', class='list-table', class='demands-table', class='signature-block', class='enclosures', class='mail-notation', class='section-header', class='date-line', class='sender-block', class='recipient-block', class='re-line', class='closing-statement'. This is required to prevent the API output from truncating.
 - Output ONLY the HTML — no markdown code fences, no prose explanation.
 `;

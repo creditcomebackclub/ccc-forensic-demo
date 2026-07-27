@@ -73,6 +73,11 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
   const idDoc = docs.find((d) => d.doc_type === 'id');
   const addressDoc = docs.find((d) => d.doc_type === 'address');
+  // Drives both the enclosure logic in handleSend and the UI copy below —
+  // must stay in sync with lob.cjs's isEscalation and letterPrompt.js's
+  // mail-notation instructions. Phase 4 letters aren't mailed via Lob today,
+  // included here only so this doesn't silently drift if that changes.
+  const isCertified = letter.phase && (letter.phase.startsWith('Phase 3') || letter.phase.startsWith('Phase 4'));
 
   const handleVerify = async () => {
     setVerifying(true);
@@ -250,26 +255,11 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         }
 
       } else {
-        // Phase 1 enclosures: LPOA + ID + Address
-        try {
-          const clientMetaQuery = letter.clientId
-            ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
-            : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
-          const { data: clientMeta } = await clientMetaQuery;
-          if (clientMeta && clientMeta.length > 0 && clientMeta[0].lpoa_signature_data && clientMeta[0].lpoa_signature_data.lpoaUrl) {
-            const lpoaRes = await fetch(clientMeta[0].lpoa_signature_data.lpoaUrl);
-            const lpoaHtml = await lpoaRes.text();
-            const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-            const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
-            const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-            const lpoaBody = stripLpoaHeader(bodyMatch ? bodyMatch[1] : lpoaHtml);
-            enclosurePages += '<div style="page-break-before:always;font-family:Arial,sans-serif;font-size:12px;">'
-              + lpoaStyle
-              + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure 1 of ' + (idDoc ? (addressDoc ? '3' : '2') : '1') + ' — Limited Power of Attorney</div>'
-              + lpoaBody + '</div>';
-          }
-        } catch(e) { console.warn('Could not fetch LPOA:', e); }
-
+        // Phase 1 / Personal Info & Inquiries enclosures: ID + Address only.
+        // LPOA is deliberately NOT attached here — it's reserved for Phase 3+
+        // escalations (see mailing_strategy_plan.md) now that these go First
+        // Class instead of Certified. letterPrompt.js/api.js's enclosures
+        // line must list only what's actually attached below.
         enclosurePages += await buildIdAddressPages();
       }
 
@@ -307,6 +297,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         fromAddress: FROM_ADDRESS,
         remoteUrl: urlData.signedUrl,
         description: letter.clientName + ' — ' + letter.furnisher + ' — ' + letter.phase + (enclosurePages ? ' (w/ enclosures)' : ''),
+        phase: letter.phase,
         // Scoped to this send attempt, not the letter row itself — letter.id
         // alone would make Lob treat a deliberate resend (after a real
         // cancellation) as a duplicate of the ORIGINAL submission, silently
@@ -363,7 +354,14 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
               action: 'send_phase_notification',
               clientName: cp[0].full_name,
               clientEmail: cp[0].email,
-              phase: 'phase1_mailed',
+              // Pre-existing bug: this was hardcoded 'phase1_mailed' for
+              // every send, so a Phase 3 bureau letter's client email said
+              // "Your Phase 1 dispute letter... mailed via Certified Mail"
+              // — wrong phase label even before the mail-class split, and
+              // now also wrong mail method in the other direction (Phase 3
+              // really is certified; the mislabel would call it Phase 1
+              // First Class). isCertified already tracks Phase 3/4 here.
+              phase: isCertified ? 'phase3_mailed' : 'phase1_mailed',
               furnisher: letter.furnisher,
               trackingNumber: res.tracking_number || '',
             }),
@@ -451,7 +449,9 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
               <div className="border border-border rounded-sm p-3 bg-amber-50">
                 <div className="text-[11px] text-amber-800 leading-relaxed">
-                  <strong>USPS Certified Mail</strong> — Letter will be printed and mailed by Lob. Mail date and tracking number saved automatically. Verify address before sending.
+                  {isCertified
+                    ? <><strong>USPS Certified Mail + Return Receipt</strong> — Letter will be printed and mailed by Lob. Mail date and tracking number saved automatically. Verify address before sending.</>
+                    : <><strong>USPS First Class Mail</strong> — Letter will be printed and mailed by Lob. Mail date and tracking number saved automatically. No certified/return-receipt service on this phase. Verify address before sending.</>}
                 </div>
               </div>
 
@@ -465,7 +465,9 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             <div className="text-center py-6">
               <CheckCircle size={36} className="text-green-600 mx-auto mb-3" strokeWidth={1.5} />
               <div className="text-[14px] text-ink font-medium ccc-display mb-1">Letter Sent</div>
-              <div className="text-[12px] text-ink-muted mb-4">Lob is printing and mailing your certified letter with return receipt</div>
+              <div className="text-[12px] text-ink-muted mb-4">
+                {isCertified ? 'Lob is printing and mailing your certified letter with return receipt' : 'Lob is printing and mailing your letter via USPS First Class'}
+              </div>
               <div className="border border-border rounded-sm p-4 text-left space-y-2">
                 <div className="text-[11px]">
                   <span className="text-ink-faint uppercase tracking-wider">Lob ID: </span>
@@ -533,7 +535,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
                 style={{ backgroundColor: (sending || !verified || !toAddr.line1 || letter.enclosureParseBlocked) ? '#B5BBC9' : '#1B2A4A', color: (sending || !verified || !toAddr.line1 || letter.enclosureParseBlocked) ? '#FFFFFF' : '#C9A84C' }}
               >
                 <Send size={13} strokeWidth={2} />
-                {sending ? 'Sending…' : 'Send Certified Mail'}
+                {sending ? 'Sending…' : (isCertified ? 'Send Certified Mail' : 'Send First Class Mail')}
               </button>
             </div>
           )}
