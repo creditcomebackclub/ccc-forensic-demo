@@ -467,6 +467,12 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // record is the one exception: its local letter row still needs repair.
       const alreadyRecorded = res.duplicate && res.mail_submission_status === 'submitted';
 
+      // Show the irreversible-send confirmation before asking the parent to
+      // refresh its letter list. That refresh can remount this modal; doing
+      // it first made a successful send look like it had reset to Verify.
+      setResult(res);
+      setStep('sent');
+
       // The letter IS mailed at this point — persist the record with retries,
       // and never let a save failure look like a send failure (resend = double postage)
       let saveErr = null;
@@ -487,8 +493,6 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         }
       }
 
-      setResult(res);
-      setStep('sent');
       if (saveErr) {
         setError('The letter WAS mailed (Lob ID ' + res.id + '), but saving the mail record failed: '
           + (saveErr.message || saveErr) + '. Do NOT resend — note the Lob ID and set the mail date on the letter manually.');
