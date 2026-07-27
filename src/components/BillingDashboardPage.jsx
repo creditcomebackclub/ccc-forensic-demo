@@ -268,7 +268,6 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   const [commissionPayouts, setCommissionPayouts] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showLobModal, setShowLobModal] = useState(false);
   const [overheadMonth, setOverheadMonth] = useState(null); // null = current month
   const [lettersMailedThisMonth, setLettersMailedThisMonth] = useState(null);
   const currentMonth = ym(new Date().toISOString());
@@ -717,12 +716,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
               <div className="text-[18px] font-bold" style={{ color: netThisMonth >= 0 ? T.green : T.red }}>{money(netThisMonth)}</div>
             </div>
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1 flex items-center gap-2">
-                Letters Mailed
-                <button onClick={() => setShowLobModal(true)} className="text-navy hover:text-gold transition-colors bg-slate-100 px-1.5 py-0.5 rounded cursor-pointer" title="Reconcile Lob CSV">
-                  Reconcile
-                </button>
-              </div>
+              <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Letters Mailed</div>
               <div className="text-[18px] font-bold" style={{ color: T.ink }}>{lettersMailedThisMonth ?? '—'}</div>
             </div>
           </div>
@@ -808,104 +802,6 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
             </table>
           </div>
         </Panel>
-      </div>
-      
-      {showLobModal && <LobReconciliationModal onClose={() => setShowLobModal(false)} month={effectiveOverheadMonth} />}
-    </div>
-  );
-}
-
-function LobReconciliationModal({ onClose, month }) {
-  const [csv, setCsv] = useState('');
-  const [results, setResults] = useState(null);
-
-  const analyze = () => {
-    const lines = csv.split('\n');
-    const duplicates = [];
-    const letterCounts = {};
-    let lobTotal = 0;
-    
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      lobTotal++;
-      
-      const match = line.match(/"letter_id":""([^"]+)""/);
-      if (match && match[1]) {
-        const id = match[1];
-        if (letterCounts[id]) {
-          letterCounts[id]++;
-          if (letterCounts[id] === 2) duplicates.push(id);
-        } else {
-          letterCounts[id] = 1;
-        }
-      }
-    }
-    
-    setResults({ lobTotal, distinctLetters: Object.keys(letterCounts).length, duplicates });
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="px-5 py-4 border-b flex justify-between items-center bg-slate-50">
-          <h2 className="text-[14px] font-bold uppercase tracking-wider" style={{ color: T.navy }}>Lob CSV Reconciliation — {month}</h2>
-          <button onClick={onClose} className="text-faint hover:text-ink"><X size={16} /></button>
-        </div>
-        <div className="p-5 flex-1 overflow-y-auto">
-          {!results ? (
-            <>
-              <p className="text-[13px] text-muted mb-4">Paste your Lob Mailings CSV export here. We will parse the metadata to find duplicate API submissions (retries).</p>
-              <textarea 
-                className="w-full h-64 border rounded-md p-3 text-[12px] font-mono whitespace-pre focus:outline-none focus:border-navy"
-                placeholder="id,description,url,to.id...&#10;ltr_109ae...,Thomas Andrew...,...,""{""""letter_id"""":""""thomas-andrew...""""}"""
-                value={csv}
-                onChange={(e) => setCsv(e.target.value)}
-              />
-              <div className="mt-4 flex justify-end">
-                <button onClick={analyze} disabled={!csv.trim()} className="px-4 py-2 rounded-lg text-[12px] uppercase tracking-wider font-bold transition-colors" style={{ backgroundColor: csv.trim() ? T.navy : '#E5E7EB', color: csv.trim() ? T.gold : '#9CA3AF' }}>Analyze CSV</button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="flex gap-4 mb-6">
-                <div className="flex-1 bg-slate-50 border p-3 rounded-lg text-center">
-                  <div className="text-[10px] uppercase tracking-wider text-faint mb-1">Total Lob Rows</div>
-                  <div className="text-[24px] font-bold" style={{ color: T.navy }}>{results.lobTotal}</div>
-                </div>
-                <div className="flex-1 bg-slate-50 border p-3 rounded-lg text-center">
-                  <div className="text-[10px] uppercase tracking-wider text-faint mb-1">Distinct Letters</div>
-                  <div className="text-[24px] font-bold" style={{ color: T.green }}>{results.distinctLetters}</div>
-                </div>
-                <div className="flex-1 bg-red-50 border border-red-100 p-3 rounded-lg text-center">
-                  <div className="text-[10px] uppercase tracking-wider text-red-500 mb-1">Duplicates (API Retries)</div>
-                  <div className="text-[24px] font-bold text-red-600">{results.duplicates.length}</div>
-                </div>
-              </div>
-              
-              {results.duplicates.length > 0 ? (
-                <div>
-                  <h3 className="text-[12px] font-bold uppercase tracking-wider text-navy mb-2">Duplicate Submissions Detected</h3>
-                  <p className="text-[12px] text-muted mb-4">The following database letters were billed multiple times by Lob (likely due to API retries when a timeout occurred but the job actually succeeded). You can cross-reference these IDs in Lob to request credits.</p>
-                  <div className="flex flex-col gap-2">
-                    {results.duplicates.map(d => (
-                      <div key={d} className="p-2 bg-slate-50 border rounded text-[11px] font-mono text-ink overflow-hidden text-ellipsis">
-                        {d}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center text-[13px] text-muted py-8">No duplicate submissions found. If the numbers still differ, check if Lob's billing date range spans a different window than the calendar month.</div>
-              )}
-              
-              <div className="mt-6 flex justify-end">
-                <button onClick={() => setResults(null)} className="px-4 py-2 text-[12px] text-navy font-bold mr-2">Reset</button>
-                <button onClick={onClose} className="px-4 py-2 rounded-lg text-[12px] uppercase tracking-wider font-bold" style={{ backgroundColor: T.navy, color: T.gold }}>Close</button>
-              </div>
-            </>
-          )}
-        </div>
       </div>
     </div>
   );
