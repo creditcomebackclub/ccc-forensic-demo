@@ -8,10 +8,12 @@
 //
 // Commission is genuinely recurring — 20% (or a per-client override) of the
 // First Work Fee AND every month of ongoing revenue, for as long as the
-// client keeps paying. "Paid" is therefore a ledger of payout events
-// (commission_payouts), each covering specific ledger transaction ids, never
-// a single permanent boolean — a boolean can't represent "paid through some
-// point, still accruing."
+// client keeps paying. "Paid" is therefore the sum of durable payout events,
+// never a single permanent boolean. The old implementation treated an entire
+// transaction as paid merely because its id appeared in covered_tx_ids. That
+// made a $1 partial payout appear to settle every transaction it referenced.
+// Dollar amounts are now the source of truth; covered_tx_ids remains only a
+// legacy/audit hint while manual billing is still backed by the JSON ledger.
 
 function isRecognized(tx) {
   return tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid');
@@ -39,24 +41,28 @@ export function commissionRate(client, affiliate) {
 // client (caller filters by client_id before calling).
 export function computeClientCommission(client, affiliate, payoutsForClient) {
   const rate = commissionRate(client, affiliate);
-  const coveredTxIds = new Set((payoutsForClient || []).flatMap((p) => p.covered_tx_ids || []));
+  const rows = recognizedTransactions(client)
+    .map((tx) => ({ tx, commission: (parseFloat(tx.amount) || 0) * rate }))
+    .sort((a, b) => String(a.tx.date || '').localeCompare(String(b.tx.date || '')) || String(a.tx.id || '').localeCompare(String(b.tx.id || '')));
+  const earned = rows.reduce((sum, row) => sum + row.commission, 0);
 
-  let earned = 0;
-  let paid = 0;
+  // A payout row represents cash actually paid to the affiliate. Clamp its
+  // aggregate to earned commission so a legacy over-entry can never make the
+  // dashboard show a negative payable. New UI writes reject overpayments.
+  const payoutTotal = (payoutsForClient || []).reduce((sum, payout) => sum + Math.max(0, parseFloat(payout.amount) || 0), 0);
+  const paid = Math.min(earned, payoutTotal);
+  const owed = Math.max(0, earned - paid);
+
+  // Allocate payout credit oldest-first solely to retain a useful legacy
+  // covered_tx_ids audit trail on the next manual payout. Financial totals do
+  // not depend on this list anymore, which is what makes partial payouts safe.
+  let remainingCredit = paid;
   const unpaidTxIds = [];
-
-  for (const tx of recognizedTransactions(client)) {
-    const commission = (parseFloat(tx.amount) || 0) * rate;
-    earned += commission;
-    // A transaction with no stable id can never be marked covered — it
-    // always shows as owed rather than being silently treated as paid.
-    if (tx.id && coveredTxIds.has(tx.id)) {
-      paid += commission;
-    } else {
-      paid += 0;
-      unpaidTxIds.push(tx.id || null);
-    }
+  for (const row of rows) {
+    const settled = Math.min(row.commission, remainingCredit);
+    remainingCredit -= settled;
+    if (row.commission - settled > 0.005 && row.tx.id) unpaidTxIds.push(row.tx.id);
   }
 
-  return { earned, paid, owed: earned - paid, unpaidTxIds: unpaidTxIds.filter(Boolean) };
+  return { earned, paid, owed, unpaidTxIds };
 }

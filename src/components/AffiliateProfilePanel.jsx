@@ -53,13 +53,16 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
     if (isNaN(amount) || amount <= 0) { alert('Enter a valid amount before confirming.'); return; }
     if (!payDate) { alert('Pick a paid-on date before confirming.'); return; }
     try {
-      const { unpaidTxIds } = computeClientCommission(client, affiliate, payoutsFor(client.id));
+      const { owed, unpaidTxIds } = computeClientCommission(client, affiliate, payoutsFor(client.id));
+      if (amount > owed + 0.01) { alert(`This payout exceeds the $${owed.toFixed(2)} currently owed.`); return; }
       const { data: { user } } = await supabase.auth.getUser();
       const { error } = await supabase.from('commission_payouts').insert({
         affiliate_id: affiliate.id,
         client_id: client.id,
         client_name: client.name,
-        covered_tx_ids: unpaidTxIds,
+        // Keep the old field only as an audit hint. A partial payout must not
+        // mark every still-open commission source as paid.
+        covered_tx_ids: amount >= owed - 0.01 ? unpaidTxIds : [],
         amount,
         paid_at: new Date(payDate + 'T12:00:00').toISOString(),
         paid_by: user?.id || null,

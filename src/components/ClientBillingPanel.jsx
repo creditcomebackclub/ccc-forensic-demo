@@ -410,6 +410,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
           const payCommission = async () => {
             const amount = parseFloat(commissionPayAmount);
             if (isNaN(amount) || amount <= 0) { alert('Enter a valid amount before confirming.'); return; }
+            if (amount > owed + 0.01) { alert(`This payout exceeds the $${owed.toFixed(2)} currently owed.`); return; }
             if (!commissionPayDate) { alert('Pick a paid-on date before confirming.'); return; }
             try {
               const { data: { user } } = await supabase.auth.getUser();
@@ -417,7 +418,10 @@ export default function ClientBillingPanel({ client, onChanged }) {
                 affiliate_id: client.referredBy,
                 client_id: client.id,
                 client_name: client.name,
-                covered_tx_ids: unpaidTxIds,
+                // Financial reporting uses amount as the source of truth.
+                // This is retained only as a legacy audit hint, and never
+                // claims a partially-paid transaction is fully settled.
+                covered_tx_ids: amount >= owed - 0.01 ? unpaidTxIds : [],
                 amount,
                 paid_at: new Date(commissionPayDate + 'T12:00:00').toISOString(),
                 paid_by: user?.id || null,
