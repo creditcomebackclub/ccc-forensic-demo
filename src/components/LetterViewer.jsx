@@ -27,20 +27,25 @@ export default function LetterViewer({ account, client, onClose }) {
         if (cp && cp.length > 0 && cp[0].signature_data) {
           enrichedClient.signatureData = cp[0].signature_data;
         }
-        if (!enrichedClient.signatureData) {
-          const clientsQuery = client.id
-            ? supabase.from('clients').select('lpoa_signature_data,name,address').eq('id', client.id).limit(1)
-            : supabase.from('clients').select('lpoa_signature_data,name,address').eq('name', client.name).limit(1);
-          const { data: c } = await clientsQuery;
-          if (c && c.length > 0 && c[0].lpoa_signature_data && c[0].lpoa_signature_data.signatureUrl) {
+        // Always fetch clients table: it holds the profile-tab address (the
+        // permanent address of record) AND the fallback LPOA signature.
+        // The profile address must override whatever the audit extracted,
+        // regardless of where the signature came from.
+        const clientsQuery = client.id
+          ? supabase.from('clients').select('lpoa_signature_data,name,address').eq('id', client.id).limit(1)
+          : supabase.from('clients').select('lpoa_signature_data,name,address').eq('name', client.name).limit(1);
+        const { data: c } = await clientsQuery;
+        if (c && c.length > 0) {
+          if (!enrichedClient.signatureData && c[0].lpoa_signature_data && c[0].lpoa_signature_data.signatureUrl) {
             enrichedClient.signatureData = c[0].lpoa_signature_data.signatureUrl;
           }
-          // Use manually edited address if available
-          if (c && c.length > 0) {
-            enrichedClient.address = c[0].address || enrichedClient.address;
+          // Profile-tab address is the permanent address of record — always
+          // wins over any address extracted from the credit report.
+          if (c[0].address) {
+            enrichedClient.address = c[0].address;
           }
         }
-      } catch(e) { console.warn('Could not fetch signature:', e); }
+      } catch(e) { console.warn('Could not fetch signature or address:', e); }
       return generateLetter(account, enrichedClient);
     };
     fetchSigAndGenerate()

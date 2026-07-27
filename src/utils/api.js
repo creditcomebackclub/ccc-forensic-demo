@@ -139,20 +139,37 @@ export async function generateCombinedCleanupLetter(client, inquiries) {
   const lpoaSigned = !!(client && client.lpoaSigned);
   
   let signatureData = null;
+  let profileAddress = null;
   try {
     const { data: cp } = await supabase.from('client_profiles').select('signature_data').eq('full_name', client.name).limit(1);
     if (cp && cp.length > 0 && cp[0].signature_data) {
       signatureData = cp[0].signature_data;
     }
-    if (!signatureData) {
-      const { data: cm } = await supabase.from('clients').select('lpoa_signature_data').eq('name', client.name).limit(1);
-      if (cm && cm.length > 0 && cm[0].lpoa_signature_data?.signatureUrl) {
+    // Always fetch the clients table: it holds the profile-tab address (the
+    // permanent address of record set by staff) AND the fallback LPOA signature.
+    const clientIdFilter = client.id
+      ? supabase.from('clients').select('lpoa_signature_data,address').eq('id', client.id).limit(1)
+      : supabase.from('clients').select('lpoa_signature_data,address').eq('name', client.name).limit(1);
+    const { data: cm } = await clientIdFilter;
+    if (cm && cm.length > 0) {
+      if (!signatureData && cm[0].lpoa_signature_data?.signatureUrl) {
         signatureData = cm[0].lpoa_signature_data.signatureUrl;
       }
+      // Profile-tab address wins over any address extracted from the credit
+      // report — this is the permanent address of record for the letter header.
+      if (cm[0].address) {
+        profileAddress = cm[0].address;
+      }
     }
-  } catch(e) { console.warn('Could not look up signature:', e); }
+  } catch(e) { console.warn('Could not look up signature or address:', e); }
+
+  // Merge the profile address into the client object so the AI generates the
+  // letter header with the correct sender address of record.
+  const clientWithAddress = profileAddress
+    ? { ...client, address: profileAddress }
+    : client;
   
-  const data = JSON.stringify({ client, personalInfo: hasPersonalInfo ? personalInfo : undefined, inquiries: hasInquiries ? eligibleInquiries : undefined, bureau, lpoaSigned, clientSignature: signatureData }, null, 2);
+  const data = JSON.stringify({ client: clientWithAddress, personalInfo: hasPersonalInfo ? personalInfo : undefined, inquiries: hasInquiries ? eligibleInquiries : undefined, bureau, lpoaSigned, clientSignature: signatureData }, null, 2);
   
   const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting a Personal Information & Inquiry Reinvestigation Demand addressed directly to ${bureau}, NOT to any furnisher. This letter disputes both the accuracy of identifying information in the consumer's file AND unverified hard inquiries. It does NOT dispute any tradeline, account balance, or payment history.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department.\n2. Cite 15 U.S.C. §1681e(b) for the maximum possible accuracy standard regarding the personal information (if any is provided).\n3. Cite 15 U.S.C. §1681i for the reinvestigation duty and 15 U.S.C. §1681b for the permissible purpose requirement for each inquiry listed (if any are provided).\n4. For personal info: List each specific former address, name variant, and former employer provided in the data, and demand each one be removed or updated to reflect only current, verified information.\n5. For inquiries: For each inquiry listed, state the furnisher name and date, and state that the consumer does not recognize or cannot verify a permissible purpose for this specific inquiry. Demand the bureau contact each listed subscriber to verify permissible purpose, and demand deletion of any inquiry the subscriber cannot verify within 30 days per 15 U.S.C. §1681i(a)(5)(A).\n6. Do NOT state or imply fraud or identity theft unless that is explicitly present in the provided data.\n7. Do NOT dispute any account, balance, or payment history in this letter.\n8. Demand written confirmation of the results within 30 days.\n9. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, statements and demands only.\n10. ALWAYS include a signature block at the bottom of the letter. Print the consumer's full name. If \`clientSignature\` is provided in the data, embed it using an <img> tag above the printed name with a style like \`max-height: 60px;\`. If \`clientSignature\` is null, simply leave a few blank lines above the printed name for a physical signature. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n11. ALWAYS include an "Enclosures:" section below the signature block. If \`lpoaSigned\` is true, list: "Limited Power of Attorney", "Government-Issued Photo ID", and "Proof of Current Address (Bank Statement)". If \`lpoaSigned\` is false, list ONLY: "Government-Issued Photo ID" and "Proof of Current Address (Bank Statement)".\n12. CRITICAL CONCISENESS RULE: Do NOT generate a separate 'STATUTORY OBLIGATIONS' or 'LEGAL BASIS' table or section. Incorporate all legal citations directly inline in the brief introductory paragraphs. Do NOT generate any CSS, <style> block, or inline style attributes. Output plain HTML using these exact classes: class='id-table', class='list-table', class='demands-table', class='signature-block', class='enclosures', class='mail-notation'. This is required to prevent the API output from truncating.\n\nOutput complete HTML only. No prose. No fences.`;
 
