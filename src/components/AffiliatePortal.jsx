@@ -42,6 +42,18 @@ export default function AffiliatePortal({ session, onSignOut }) {
 
   const isSwiftedly = affiliate?.company?.toLowerCase().includes('swiftedly') || affiliate?.name?.toLowerCase().includes('swiftedly');
   const accentColor = isSwiftedly ? '#FF6900' : brandColor; // Action Orange for Swiftedly
+  
+  const getContrastText = (hex) => {
+    let c = hex.replace('#', '');
+    if (c.length === 3) c = c.split('').map(x => x + x).join('');
+    const r = parseInt(c.substring(0, 2), 16);
+    const g = parseInt(c.substring(2, 4), 16);
+    const b = parseInt(c.substring(4, 6), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.5 ? '#000000' : '#FFFFFF';
+  };
+  const accentTextColor = getContrastText(accentColor);
+
   const brandName = affiliate?.brand_name || affiliate?.company || 'Partner Portal';
   const brandLogo = affiliate?.brand_logo_url || null;
 
@@ -318,7 +330,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Manual Referral</div>
                   <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>Submit client info directly and we'll handle the onboarding.</div>
                 </div>
-                <button onClick={() => setShowReferForm(true)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: accentColor, color: '#000', border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 24, alignSelf: 'flex-start' }}>
+                <button onClick={() => setShowReferForm(true)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: accentColor, color: accentTextColor, border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 24, alignSelf: 'flex-start' }}>
                   <Plus size={14} strokeWidth={2.5} /> Submit Info
                 </button>
               </div>
@@ -453,7 +465,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                 <button onClick={handleExportCSV} disabled={clients.length === 0} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#111', color: '#fff', border: '1px solid #2A2A2A', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: clients.length === 0 ? 'not-allowed' : 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: clients.length === 0 ? 0.5 : 1 }}>
                   Export CSV
                 </button>
-                <button onClick={() => setShowReferForm(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, background: accentColor, color: '#000', border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                <button onClick={() => setShowReferForm(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, background: accentColor, color: accentTextColor, border: 'none', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                   <Plus size={14} strokeWidth={2.5} /> Refer Client
                 </button>
               </div>
@@ -664,7 +676,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                     )}
                   </div>
                 ))}
-                <button onClick={handleRefer} disabled={referLoading} style={{ width: '100%', background: referLoading ? '#1A1A1A' : accentColor, color: referLoading ? 'rgba(255,255,255,0.3)' : '#000', border: 'none', borderRadius: 6, padding: '12px 0', fontSize: 13, fontWeight: 700, cursor: referLoading ? 'not-allowed' : 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 8 }}>
+                <button onClick={handleRefer} disabled={referLoading} style={{ width: '100%', background: referLoading ? '#1A1A1A' : accentColor, color: referLoading ? 'rgba(255,255,255,0.3)' : accentTextColor, border: 'none', borderRadius: 6, padding: '12px 0', fontSize: 13, fontWeight: 700, cursor: referLoading ? 'not-allowed' : 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 8 }}>
                   {referLoading ? 'Submitting…' : 'Submit Referral'}
                 </button>
               </>
