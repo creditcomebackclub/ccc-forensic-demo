@@ -1,16 +1,15 @@
 import React, { useState } from 'react';
 import { X, Upload, FileText, AlertCircle, CheckCircle, Zap } from 'lucide-react';
 import { supabase } from '../utils/supabase';
+import { saveLetter } from '../utils/storage';
 import { runPhase2Job } from '../utils/phase2Jobs';
-import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED_TYPE_MESSAGE, uploadResponseBatch, validateBatch } from '../utils/responseFiles';
+import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED_TYPE_MESSAGE, validateBatch } from '../utils/responseFiles';
 import { normalizeFurnisher, lastFour } from '../utils/diffEngine';
+import { uploadResponseEvidence } from '../utils/responseEvidence';
 
 async function savePhase3Letters(analysis, clientName, furnisher, accountId, clientAccountId, clientId) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
-
-  const today = new Date().toISOString().slice(0, 10);
-  const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
 
   // Resolve which bureaus this account actually reports on. A CRA can't
   // reinvestigate a tradeline it doesn't carry, so Phase 3 letters must only
@@ -137,31 +136,17 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId, cli
       html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>' + escaped + '</pre></body></html>';
     }
 
-    // id embeds clientId when known — two same-named clients getting a
-    // Phase 3 letter for the same furnisher/bureau on the same day used to
-    // collide on this literal primary key. See the client_id migration plan.
-    const id = clientId
-      ? slug(clientName) + '__' + clientId + '__' + slug(furnisher) + '__phase3-' + bureau + '__' + today
-      : slug(clientName) + '__' + slug(furnisher) + '__phase3-' + bureau + '__' + today;
-    const { error } = await supabase.from('letters').upsert({
-      id,
-      user_id: user.id,
-      created_by: user.id,
-      client_id: clientId || null,
-      client_name: clientName,
-      furnisher,
-      account_id: accountId,
-      phase: 'Phase 3 — ' + bureau.charAt(0).toUpperCase() + bureau.slice(1),
-      type: null,
-      saved_at: new Date().toISOString(),
-      date: today,
+    // Route every new Phase 3 draft through the same immutable-mail guard as
+    // Phase 1. A retry may refresh an unmailed draft, but it can never reset
+    // a mailed letter's tracking, response state, or exact mailed HTML.
+    await saveLetter(
+      { furnisher, id: accountId, clientAccountId: clientAccountId || null, type: null },
+      { id: clientId || null, name: clientName },
       html,
-      summary: analysis.summary || null,
-      mailed_date: null,
-      response_outcome: null,
-      response_date: null,
-    });
-    if (error) throw error;
+      analysis.summary || null,
+      'Phase 3 — ' + bureau.charAt(0).toUpperCase() + bureau.slice(1),
+      '__phase3-' + bureau
+    );
   }
 }
 
@@ -240,11 +225,9 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
   const handleDrop = (e) => { e.preventDefault(); handleFiles(e.dataTransfer.files); };
 
   // Analysis itself now runs server-side (netlify/functions/phase2-analyze-
-  // background.mjs) — the Anthropic key lives only in the server env, never
-  // in the browser. This function's job is just getting the response file(s)
-  // into the `responses` bucket (if they aren't already) and handing the
-  // resulting storage paths to the job; the server downloads and analyzes
-  // them, and persists the result onto the letter row itself.
+  // background.mjs) — the Anthropic key lives only in the server env. New
+  // uploads first become a private response-evidence record; the analysis job
+  // then receives only the server-validated storage paths.
   const handleAnalyze = async () => {
     if (!useStoredPaths && !files.length) return;
     if (!useStoredPaths) {
@@ -254,18 +237,17 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
     setAnalyzing(true);
     setError(null);
     try {
-      const { data: cp } = await supabase.from('client_profiles').select('user_id').eq('full_name', letter.clientName).limit(1);
-      const clientUserId = cp && cp.length > 0 ? cp[0].user_id : null;
-      const basePath = clientUserId && letter.id ? clientUserId + '/' + letter.id : null;
-
       let analyzeFilePaths = useStoredPaths ? letter._analyzeFilePaths : null;
+      let evidenceId = useStoredPaths ? (letter._responseEvidenceId || null) : null;
       if (!useStoredPaths) {
-        if (!basePath) throw new Error('Could not resolve where to store this response — client profile not found.');
-        // Manual upload — not yet in storage. Save as one page-ordered batch
-        // (PDFs and images share the same path, single-PDF batches included)
-        // so re-analysis overwrites instead of accumulating duplicates.
-        analyzeFilePaths = await uploadResponseBatch(supabase, basePath, files);
+        const evidence = await uploadResponseEvidence(letter.id, files);
+        analyzeFilePaths = evidence.storagePaths;
+        evidenceId = evidence.id;
       }
+
+      const basePath = analyzeFilePaths?.[0]
+        ? analyzeFilePaths[0].slice(0, analyzeFilePaths[0].lastIndexOf('/'))
+        : null;
 
       // A single-PDF response is also converted to JPEG pages for Lob exhibit
       // embedding — unrelated to the Claude call, still done client-side
@@ -302,7 +284,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
       }
 
       const result = await runPhase2Job(
-        { letterId: letter.id, kind: 'response', filePaths: analyzeFilePaths },
+        { letterId: letter.id, kind: 'response', filePaths: analyzeFilePaths, evidenceId },
         setProgressTokens
       );
       setAnalysis(result);

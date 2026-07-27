@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, TrendingUp, Clock, Zap, Star, Activity, FileText, Mail, ChevronRight, Upload, CheckCircle, X, BarChart2, Award, Target, Timer, Users, Table2 } from 'lucide-react';
-import { listClients, adminListClients, updateLetter } from '../utils/storage';
+import { listClientSummaries, updateLetter } from '../utils/storage';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_HOURS = 24;
@@ -12,6 +12,11 @@ const STD_RESPONSE_DAYS = 3;
 // own escalation-readiness clock needs 45 days, not the 30 used for Phase 1
 // (furnisher-directed — no such statutory prerequisite applies there).
 const CRA_WINDOW_DAYS = 45;
+// The dashboard refreshes automatically, so it must never retrieve the full
+// historical CRM payload every minute. This is a deliberately bounded
+// "most recently active" working set. The UI calls out when the business has
+// more clients than this, rather than silently presenting partial totals.
+const DASHBOARD_CLIENT_LIMIT = 100;
 
 // Brand + chart tokens. Chart mark colors are validated steps of the brand
 // hues (navy/gold are chrome colors — too dark / low-contrast for marks).
@@ -103,17 +108,19 @@ function computeDashboard(clients) {
   for (const c of clients) {
     if (c.status === 'lead') continue;
     if (c.portalOnboarded === true) portal.active++;
-    else if (c.portalOnboarded === false) portal.pending.push({ name: c.name, email: c.email });
+    else if (c.portalOnboarded === false) portal.pending.push({ id: c.id, name: c.name, email: c.email });
     else if (c.email) portal.notInvited++;
   }
 
   for (const c of clients) {
     if (c.status === 'lead') continue;
+    const letters = c.letters || [];
+    const audits = c.audits || [];
 
-    const hasActiveLetters = c.letters.some((l) => !l.phase?.startsWith('Phase 3'));
+    const hasActiveLetters = letters.some((l) => !l.phase?.startsWith('Phase 3'));
     if (hasActiveLetters) active++;
 
-    for (const l of c.letters) {
+    for (const l of letters) {
       weeklyData.forEach((w) => {
         const saved = new Date(l.savedAt);
         if (saved >= w.start && saved < w.end) w.letters++;
@@ -164,15 +171,25 @@ function computeDashboard(clients) {
           if (st3.code === 'window_closed' || st3.code === 'no_response') {
             readyForPhase4++;
             actions.push({
-              type: 'escalate_phase4', priority: c.isVip ? 0 : 1, client: c.name, furnisher: l.furnisher, isVip: c.isVip,
+              type: 'escalate_phase4', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip,
               label: st3.code === 'no_response' ? 'Bureau confirmed no response — ready for CFPB/AG' : '45-day CRA window closed — ready for CFPB/AG',
               tone: 'red', savedAt: l.savedAt, filter: 'phase4', letter: l,
             });
           } else if (st3.code === 'received') {
-            readyForPhase4++;
             actions.push({
-              type: 'escalate_phase4', priority: c.isVip ? 0 : 1, client: c.name, furnisher: l.furnisher, isVip: c.isVip,
-              label: 'Bureau responded — review for CFPB/AG escalation', tone: 'amber', savedAt: l.responseDate || l.savedAt, filter: 'phase4', letter: l,
+              type: l.bureauResponseStatus === 'review_ready' ? 'review_bureau' : 'analyze_bureau',
+              priority: c.isVip ? 0 : 1,
+              client: c.name,
+              clientId: c.id,
+              furnisher: l.furnisher,
+              isVip: c.isVip,
+              label: l.bureauResponseStatus === 'review_ready'
+                ? 'Bureau response analyzed — record next action'
+                : 'Bureau response received — analyze before deciding',
+              tone: 'amber',
+              savedAt: l.responseDate || l.savedAt,
+              filter: 'phase4',
+              letter: l,
             });
           }
         }
@@ -186,24 +203,24 @@ function computeDashboard(clients) {
 
       const st = letterStatus(l);
       if (st.code === 'deleted') {
-        recentActivity.push({ client: c.name, furnisher: l.furnisher, phase: l.phase, savedAt: l.responseDate || l.savedAt, type: 'deletion', auditorName: l.auditorName });
+        recentActivity.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, phase: l.phase, savedAt: l.responseDate || l.savedAt, type: 'deletion', auditorName: l.auditorName });
         continue;
       }
-      const hasPhase3 = c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
+      const hasPhase3 = letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
 
       if (st.code === 'awaiting') {
         awaiting++;
-        windowCountdown.push({ client: c.name, furnisher: l.furnisher, isVip: c.isVip, remaining: st.remaining, mailedDate: l.mailedDate });
+        windowCountdown.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, remaining: st.remaining, mailedDate: l.mailedDate });
       }
 
       if (st.code === 'window_closed' && !hasPhase3) {
         escalate++;
-        const item = { type: 'escalate', priority: c.isVip ? 0 : 1, client: c.name, furnisher: l.furnisher, isVip: c.isVip, label: 'Window closed — ready to escalate', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
+        const item = { type: 'escalate', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'Window closed — ready to escalate', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
         actions.push(item);
       }
 
       if (st.code === 'no_response' && !hasPhase3) {
-        const item = { type: 'no_response', priority: c.isVip ? 0 : 1, client: c.name, furnisher: l.furnisher, isVip: c.isVip, label: 'No response — generate Phase 3', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
+        const item = { type: 'no_response', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'No response — generate Phase 3', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
         actions.push(item);
       }
 
@@ -213,16 +230,26 @@ function computeDashboard(clients) {
         if (hoursLeft < deadline) {
           const label = hoursLeft <= 0 ? 'Phase 3 overdue' : (c.isVip ? Math.max(0, Math.round(hoursLeft)) + 'h to respond (VIP)' : Math.ceil(hoursLeft / 24) + 'd to respond');
           const tone = hoursLeft <= 0 ? 'red' : c.isVip ? 'red' : 'amber';
-          const item = { type: 'respond', priority: c.isVip ? 0 : 1, client: c.name, furnisher: l.furnisher, isVip: c.isVip, label, tone, savedAt: l.responseDate || l.savedAt, filter: 'received', letter: l };
+          const item = { type: 'respond', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label, tone, savedAt: l.responseDate || l.savedAt, filter: 'received', letter: l };
           actions.push(item);
         }
       }
 
-      recentActivity.push({ client: c.name, furnisher: l.furnisher, phase: l.phase, savedAt: l.savedAt, type: 'letter', auditorName: l.auditorName });
+      recentActivity.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, phase: l.phase, savedAt: l.savedAt, type: 'letter', auditorName: l.auditorName });
     }
 
-    for (const a of c.audits) {
-      recentActivity.push({ client: c.name, accounts: (a.audit && a.audit.accountsTargeted) || 0, violations: (a.audit && a.audit.totalViolations) || 0, savedAt: a.savedAt, type: 'audit', auditorName: a.auditorName });
+    for (const a of audits) {
+      // Client summaries intentionally omit the full audit JSON. Keep this
+      // event useful without displaying a misleading "0 accounts" value.
+      recentActivity.push({
+        client: c.name,
+        clientId: c.id,
+        accounts: a.audit?.accountsTargeted ?? null,
+        violations: a.audit?.totalViolations ?? null,
+        savedAt: a.savedAt,
+        type: 'audit',
+        auditorName: a.auditorName,
+      });
     }
   }
 
@@ -541,7 +568,7 @@ function PortalAdoption({ portal, onNavigate }) {
       {portal.pending.length > 0 && (
         <div className="space-y-0">
           {portal.pending.slice(0, 5).map((p) => (
-            <div key={p.name} onClick={() => onNavigate('clients', { jumpTo: p.name })}
+            <div key={p.id || p.name} onClick={() => onNavigate('clients', { jumpTo: p.id || p.name })}
               className="flex items-center justify-between py-1.5 border-b last:border-b-0 cursor-pointer hover:bg-gray-50 rounded px-1 transition-colors group"
               style={{ borderColor: T.grid }}>
               <span className="text-[12px] font-medium group-hover:text-navy" style={{ color: T.ink }}>{p.name}</span>
@@ -593,9 +620,9 @@ function QuickActionPanel({ action, onDone, onCancel, onNavigate }) {
       )}
       {mode === null && (
         <div className="flex items-center gap-2 flex-wrap">
-          {(action.type === 'escalate' || action.type === 'no_response' || action.type === 'escalate_phase4') && (
+          {(action.type === 'escalate' || action.type === 'no_response' || action.type === 'escalate_phase4' || action.type === 'analyze_bureau' || action.type === 'review_bureau') && (
             <button
-              onClick={() => onNavigate('clients', { jumpTo: action.client })}
+              onClick={() => onNavigate('clients', { jumpTo: action.clientId || action.client })}
               className="text-[11px] uppercase tracking-wider text-navy hover:text-gold"
             >
               Go to Client Profile
@@ -619,13 +646,25 @@ function QuickActionPanel({ action, onDone, onCancel, onNavigate }) {
 export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
   const [dash, setDash] = useState(null);
   const [activeAction, setActiveAction] = useState(null);
+  const loadInFlightRef = useRef(false);
 
   const load = async () => {
+    // Polling can overlap on a slow connection. Skip the second request rather
+    // than queueing another copy of the same bounded dashboard read.
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
     try {
-      const list = isAdmin ? await adminListClients() : await listClients();
-      setDash(computeDashboard(list));
+      const page = await listClientSummaries({ limit: DASHBOARD_CLIENT_LIMIT });
+      setDash({
+        ...computeDashboard(page.clients),
+        displayedClientCount: page.clients.length,
+        totalClientCount: page.totalCount,
+        isTruncated: !!page.nextCursor,
+      });
     } catch (e) {
-      setDash(computeDashboard([]));
+      setDash({ ...computeDashboard([]), displayedClientCount: 0, totalClientCount: 0, isTruncated: false });
+    } finally {
+      loadInFlightRef.current = false;
     }
   };
 
@@ -647,6 +686,17 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
     <div className="max-w-6xl mx-auto space-y-5" style={{ padding: '20px 32px 32px' }}>
 
       <HeroHeader displayName={displayName} dash={dash} />
+
+      {dash.isTruncated && (
+        <div className="flex items-center justify-between gap-3 rounded-lg px-3 py-2" style={{ background: '#F8FAFC', border: '1px solid ' + T.border }}>
+          <span className="text-[11px]" style={{ color: T.muted }}>
+            Dashboard metrics are based on the {dash.displayedClientCount} most recently active of {dash.totalClientCount} clients. Open Clients to search the full roster.
+          </span>
+          <button onClick={() => onNavigate('clients')} className="shrink-0 text-[10px] uppercase tracking-wider" style={{ color: T.navy }}>
+            View clients
+          </button>
+        </div>
+      )}
 
       {dash.actions.length > 0 && (
         <div>
@@ -711,7 +761,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
             {dash.recentActivity.length === 0 && <div className="text-[12px] text-ink-muted py-2">No activity yet</div>}
             <div className="space-y-0">
               {dash.recentActivity.map((a, i) => (
-                <div key={i} onClick={() => onNavigate('clients', { jumpTo: a.client })}
+                <div key={i} onClick={() => onNavigate('clients', { jumpTo: a.clientId || a.client })}
                   className="flex items-start gap-3 py-2 border-b border-border last:border-b-0 cursor-pointer hover:bg-gray-50 rounded transition-colors group">
                   <div className="shrink-0 mt-0.5">
                     {a.type === 'audit' ? <FileText size={13} strokeWidth={1.75} className="text-navy" />
@@ -721,7 +771,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
                   <div className="flex-1 min-w-0">
                     <div className="text-[12px] text-ink font-medium truncate group-hover:text-navy">{a.client}</div>
                     <div className="text-[11px] text-ink-muted truncate">
-                      {a.type === 'audit' ? `${a.accounts} accounts · ${a.violations} violations`
+                      {a.type === 'audit' ? (a.accounts == null ? 'Report imported' : `${a.accounts} accounts · ${a.violations ?? 0} violations`)
                         : a.type === 'deletion' ? `DELETED — ${a.furnisher}`
                         : `${a.furnisher} · ${a.phase}`}
                       {isAdmin && a.auditorName && <span className="ml-1 text-gold">· {a.auditorName}</span>}
@@ -746,7 +796,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
                   const ripe = openLetters.filter((l) => letterStatus(l).code === 'window_closed').length;
                   const needsPhase3 = openLetters.filter((l) => l.responseOutcome === 'received').length;
                   return (
-                    <div key={i} onClick={() => onNavigate('clients', { jumpTo: c.name })}
+                    <div key={c.id || i} onClick={() => onNavigate('clients', { jumpTo: c.id || c.name })}
                       className="flex items-center justify-between py-2 border-b last:border-b-0 cursor-pointer hover:bg-amber-50 rounded px-1 transition-colors group"
                       style={{ borderColor: '#F4F1E8' }}>
                       <div className="flex items-center gap-2">
@@ -773,7 +823,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
                   const pct = Math.max(0, Math.min(100, ((WINDOW_DAYS - w.remaining) / WINDOW_DAYS) * 100));
                   const color = w.remaining <= 3 ? '#DC2626' : w.remaining <= 7 ? '#D97706' : '#15803D';
                   return (
-                    <div key={i} onClick={() => onNavigate('clients', { jumpTo: w.client })}
+                    <div key={i} onClick={() => onNavigate('clients', { jumpTo: w.clientId || w.client })}
                       className="cursor-pointer hover:bg-gray-50 rounded p-1 transition-colors group">
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2 min-w-0">

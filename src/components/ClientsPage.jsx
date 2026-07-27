@@ -2,11 +2,12 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X, Send, MoreHorizontal, Search, Pencil } from 'lucide-react';
-import { listClients, adminListClients, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, revertClientToLead, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage, markLeadViewed } from '../utils/storage';
+import { listClientSummaries, getClientDetails, findClientIdByLegacyReference, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, revertClientToLead, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage, markLeadViewed } from '../utils/storage';
 import { getReturnReceiptUrl } from '../utils/api';
 import { archiveHistoricalMailpiece, getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
+import BureauResponseAnalyzer from './BureauResponseAnalyzer';
 import EscalationPanel from './EscalationPanel';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
@@ -21,6 +22,7 @@ const WINDOW_DAYS = 30;
 const CRA_WINDOW_DAYS = 45;
 const VIP_RESPONSE_DAYS = 1;
 const STD_RESPONSE_DAYS = 3;
+const CLIENT_PAGE_SIZE = 50;
 
 // Brand tokens — matches the dashboard card system
 const T = {
@@ -107,7 +109,7 @@ function importDueInfo(c) {
   return { code: 'due', label: 'Import due', tone: 'amber' };
 }
 
-function clientMatchesFilter(c, filter, unanalyzedNames) {
+function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
   if (!filter) return true;
   const openLetters = c.letters.filter((l) => !l.phase?.startsWith('Phase 3'));
   switch (filter) {
@@ -123,12 +125,12 @@ function clientMatchesFilter(c, filter, unanalyzedNames) {
       if (!l.phase?.startsWith('Phase 3')) return false;
       const st3 = letterStatus(l, CRA_WINDOW_DAYS);
       const hasBureauDecision = l.bureauReviewStatus && l.bureauReviewStatus !== 'not_reviewed';
-      return !hasBureauDecision && (st3.code === 'window_closed' || st3.code === 'no_response' || st3.code === 'received');
+      return !hasBureauDecision && (st3.code === 'window_closed' || st3.code === 'no_response');
     });
     case 'received': return openLetters.some((l) => l.responseOutcome === 'received');
     case 'noemail': return !c.email;
     case 'vip': return !!c.isVip;
-    case 'unanalyzed': return !!unanalyzedNames && unanalyzedNames.has(c.name);
+    case 'unanalyzed': return !!unanalyzedClientIds?.has(c.id) || !!unanalyzedNames?.has(c.name);
     default: return true;
   }
 }
@@ -184,7 +186,7 @@ function StatusBadge({ label, tone }) {
 
 // One pill per client — only the most urgent state, so rows stay scannable
 function primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
-  const clientUploaded = c.letters.some(l => l.responseOutcome === 'received' && l.responseFileUrl);
+  const clientUploaded = c.letters.some(l => l.responseOutcome === 'received' && (l.responseFileUrl || l.hasResponseFile));
   if (clientUploaded) return { label: 'Response Uploaded', tone: 'green' };
 
   if (ripe > 0) return { label: ripe + ' to escalate', tone: 'red' };
@@ -310,7 +312,7 @@ function ArchiveMailpieceButton({ letter, onArchived }) {
   </button>;
 }
 
-function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onLobMail, onOpenAccount, onEdit, onEscalate, onReviewBureau }) {
+function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onAnalyzeBureau, onLobMail, onOpenAccount, onEdit, onEscalate, onReviewBureau }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
@@ -369,10 +371,10 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
       </button>
     );
     if (needsBureauReview) return (
-      <button onClick={() => onReviewBureau(l)}
+      <button onClick={() => status3.code === 'received' ? onAnalyzeBureau(l) : onReviewBureau(l)}
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0"
         style={{ backgroundColor: l.bureauReviewStatus === 'escalated' ? '#6B7280' : T.navy, color: '#fff' }}>
-        <Zap size={10} strokeWidth={2} /> {l.bureauReviewStatus === 'escalated' ? 'View decision' : 'Review response'}
+        <Zap size={10} strokeWidth={2} /> {status3.code === 'received' ? (l.bureauResponseStatus === 'review_ready' ? 'View analysis' : 'Analyze response') : (l.bureauReviewStatus === 'escalated' ? 'View decision' : 'Review response')}
       </button>
     );
     if (l.mailedDate && !l.responseOutcome) return (
@@ -392,23 +394,14 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     'divider',
     !l.mailedDate && !l.lobId && { label: 'Mark as mailed…', onClick: () => { setDateVal(todayISO()); setMode('mailing'); } },
     l.mailedDate && !l.lobId && { label: 'Clear mail date', onClick: () => save({ mailedDate: null }) },
-    // A real Lob submission (lobId set) normally shouldn't be cleared —
-    // it's proof a mailing actually happened. But a submission that was
-    // canceled on Lob's side before printing (confirmed via Lob's API,
-    // not something this UI can verify itself) needs a way back to
-    // "unsent" so Send reappears for a real re-submission — otherwise
-    // the only edit available is the mail date itself, which doesn't
-    // let you actually mail it again.
     l.mailedDate && l.lobId && {
-      label: 'Mark canceled — allow resend…',
-      onClick: () => {
-        if (window.confirm('Only use this if you\'ve confirmed on Lob\'s side that this letter was canceled before printing (no real postage used). This clears the mail date, tracking, and Lob ID so "Send" reappears for a fresh submission. Continue?')) {
-          save({ mailedDate: null, lobId: null, trackingNumber: null, trackingStatus: null, deliveredAt: null });
-        }
-      },
+      label: 'Resend requires reviewed revision',
+      title: 'A mailed letter is immutable evidence. Generate or save a reviewed revision before mailing again.',
+      onClick: () => toast('This mailing remains immutable evidence. Make a reviewed revision of the letter before sending another copy.', { icon: 'ℹ️' }),
     },
     l.mailedDate && !l.responseOutcome && { label: 'Log response…', onClick: () => { setDateVal(todayISO()); setMode('responding'); } },
     l.mailedDate && !l.responseOutcome && { label: 'Mark no response', onClick: () => save({ responseOutcome: 'no_response' }) },
+    isPhase3 && l.responseOutcome === 'received' && { label: 'Analyze bureau response…', onClick: () => onAnalyzeBureau(l) },
     isPhase3 && l.responseOutcome && { label: 'Review bureau response…', onClick: () => onReviewBureau(l) },
     isPhase3 && needsBureauReview && { label: 'Prepare CFPB / State AG escalation…', onClick: () => onEscalate(l) },
     l.mailedDate && { label: 'Edit mail date…', onClick: () => { setDateVal(l.mailedDate); setMode('mailing'); } },
@@ -544,11 +537,16 @@ function parseFurnisherAddress(furnisher) {
   }
   return null;
 }
-export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, forceTab, unanalyzedNames, onLeadsChanged }) {
+export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, forceTab, unanalyzedNames, unanalyzedClientIds, onLeadsChanged }) {
   const [clients, setClients] = useState(null);
-  const [selectedClientName, setSelectedClientName] = useState(null);
+  const [selectedClientId, setSelectedClientId] = useState(null);
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [selectedClientError, setSelectedClientError] = useState(null);
+  const [pageInfo, setPageInfo] = useState({ nextCursor: null, totalCount: 0 });
+  const [loadingMore, setLoadingMore] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [analyzingLetter, setAnalyzingLetter] = useState(null);
+  const [analyzingBureauLetter, setAnalyzingBureauLetter] = useState(null); // { letter, client }
   const [reviewingBureauLetter, setReviewingBureauLetter] = useState(null); // { letter, client }
   const [escalatingLetter, setEscalatingLetter] = useState(null); // { letter, client }
   const [lobMailerQueue, setLobMailerQueue] = useState([]);
@@ -580,42 +578,124 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [showAddLead, setShowAddLead] = useState(false);
   const [convertingLead, setConvertingLead] = useState(null);
   const clientRefs = useRef({});
+  const listRequestRef = useRef(0);
+  const detailRequestRef = useRef(0);
+  const jumpResolutionRef = useRef(null);
 
-  const load = async () => {
+  const load = async ({ append = false, cursor = null, searchTerm = debouncedSearch, throwOnError = false } = {}) => {
+    const requestId = ++listRequestRef.current;
+    if (!append) setClients(null);
     try {
-      const list = isAdmin ? await adminListClients() : await listClients();
-      // Evidence archival is additive. If the migration has not reached a
-      // preview environment yet, clients/letters still load normally.
+      const page = await listClientSummaries({
+        limit: CLIENT_PAGE_SIZE,
+        cursor: append ? (cursor || pageInfo.nextCursor) : null,
+        search: searchTerm,
+      });
+      if (requestId !== listRequestRef.current) return page;
+      setClients((current) => {
+        if (!append) return page.clients;
+        const existing = new Set((current || []).map((client) => client.id));
+        return [...(current || []), ...page.clients.filter((client) => !existing.has(client.id))];
+      });
+      setPageInfo({ nextCursor: page.nextCursor, totalCount: page.totalCount });
+      return page;
+    } catch (e) {
+      if (requestId === listRequestRef.current) {
+        console.error('Failed to load client summaries', e);
+        setClients([]);
+        setPageInfo({ nextCursor: null, totalCount: 0 });
+      }
+      if (throwOnError) throw e;
+      return null;
+    }
+  };
+
+  const hydrateSelectedClient = async (clientId) => {
+    if (!clientId) return null;
+    const requestId = ++detailRequestRef.current;
+    setSelectedClient(null);
+    setSelectedClientError(null);
+    try {
+      const detail = await getClientDetails(clientId);
+      // Exact Lob artifacts only belong on the selected client's detail view;
+      // loading them for every list row was an N+1-sized bulk request.
       try {
-        const ids = list.flatMap((client) => (client.letters || []).map((letter) => letter.id));
-        const artifacts = await listMailArtifacts(ids);
+        const artifacts = await listMailArtifacts(detail.letters.map((letter) => letter.id));
         const byLetter = new Map();
         for (const artifact of artifacts) {
           const current = byLetter.get(artifact.letter_id) || [];
           current.push(artifact);
           byLetter.set(artifact.letter_id, current);
         }
-        for (const client of list) {
-          client.letters = (client.letters || []).map((letter) => ({ ...letter, mailArtifacts: byLetter.get(letter.id) || [] }));
-        }
+        detail.letters = detail.letters.map((letter) => ({ ...letter, mailArtifacts: byLetter.get(letter.id) || [] }));
       } catch (artifactError) {
         console.warn('Mail artifacts unavailable in this environment:', artifactError.message || artifactError);
       }
-      setClients(list);
+      if (requestId === detailRequestRef.current) setSelectedClient(detail);
+      return detail;
     } catch (e) {
-      console.error('Failed to load clients', e);
-      setClients([]);
+      if (requestId === detailRequestRef.current) {
+        console.error('Failed to load client detail', e);
+        setSelectedClientError(e.message || 'Could not load this client.');
+      }
+      throw e;
     }
   };
 
-  useEffect(() => { load(); }, [isAdmin]);
+  const refreshSelectedClient = async () => {
+    const clientId = selectedClientId;
+    try {
+      await Promise.all([
+        load(),
+        clientId ? hydrateSelectedClient(clientId) : Promise.resolve(),
+      ]);
+    } catch (e) {
+      toast.error('Could not refresh this client: ' + (e.message || e));
+    }
+  };
+
+  const loadMore = async () => {
+    if (!pageInfo.nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      await load({ append: true, throwOnError: true });
+    } catch (e) {
+      toast.error('Could not load more clients: ' + (e.message || e));
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    load().catch(() => {});
+  }, [isAdmin, debouncedSearch]);
 
   useEffect(() => { if (forceTab) setViewTab(forceTab); }, [forceTab]);
 
   useEffect(() => {
+    if (!selectedClientId) return;
+    hydrateSelectedClient(selectedClientId).catch(() => {});
+  }, [selectedClientId]);
+
+  useEffect(() => {
     if (!jumpTo || !clients) return;
     if (jumpTo.startsWith('lead:')) return;
-    setSelectedClientName(jumpTo);
+    if (jumpResolutionRef.current === jumpTo) return;
+    jumpResolutionRef.current = jumpTo;
+    let cancelled = false;
+    findClientIdByLegacyReference(jumpTo).then(({ id, ambiguous }) => {
+      if (cancelled) return;
+      if (ambiguous) {
+        toast.error('More than one client has that name. Open the correct client from the Clients list.');
+      } else if (id) {
+        setSelectedClientId(id);
+      } else {
+        toast.error('That client could not be found.');
+      }
+    }).catch((e) => {
+      if (!cancelled) toast.error('Could not open client: ' + (e.message || e));
+    });
+    return () => { cancelled = true; };
   }, [jumpTo, clients]);
 
   useEffect(() => {
@@ -635,17 +715,34 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     if (!w) { toast.error('Popup blocked — allow popups to view letters.'); return; }
   };
 
+  const openAuditFromSummary = async (clientId, auditId) => {
+    try {
+      const detail = await getClientDetails(clientId);
+      const audit = detail.audits.find((record) => record.id === auditId);
+      if (!audit?.audit) throw new Error('The full audit record is unavailable.');
+      onOpenAudit(audit.clientId ? { ...audit.audit, client: { ...audit.audit.client, id: audit.clientId } } : audit.audit);
+    } catch (e) {
+      toast.error('Could not open this audit: ' + (e.message || e));
+    }
+  };
+
   const handleDelete = async (name, clientId) => {
     await deleteClient(name, clientId);
     setConfirmDelete(null);
-    load();
+    if (clientId === selectedClientId) {
+      detailRequestRef.current += 1;
+      setSelectedClientId(null);
+      setSelectedClient(null);
+    }
+    await load();
   };
 
   const handleVipToggle = async (clientName, currentVip, clientId) => {
-    setTogglingVip(clientName);
+    setTogglingVip(clientId || clientName);
     try {
       await toggleVip(clientName, !currentVip, clientId);
-      await load();
+      if (clientId === selectedClientId) await refreshSelectedClient();
+      else await load();
     } catch (e) {
       toast.error('Could not update VIP status: ' + (e.message || e));
     } finally {
@@ -655,7 +752,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   const handleSendInvite = async (c) => {
     if (!c.email) { toast.error('Add client email first'); return; }
-    setSendingLpoa(c.name);
+    setSendingLpoa(c.id || c.name);
     try {
       const { supabase } = await import('../utils/supabase.js');
       const { data: { session: _cpSess } } = await supabase.auth.getSession();
@@ -690,12 +787,30 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   // generate on demand. 'inquiry' swaps the Fee Structure section for
   // personal-info/inquiry-only removal clients (flat per-bureau rate, no
   // First Work Fee/monthly service) — see public/sign-lpoa.html.
-  const copySignatureLink = (c, lpoaType = 'standard') => {
-    if (!c.signToken) { toast.error('No signing token on this client yet — refresh and try again.'); return; }
-    const url = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(c.name) + '&token=' + c.signToken
-      + (lpoaType === 'inquiry' ? '&type=inquiry' : '');
-    navigator.clipboard.writeText(url);
-    toast.success('Signature link copied');
+  const copySignatureLink = async (c, lpoaType = 'standard') => {
+    try {
+      // Summary rows deliberately omit signing tokens. Fetching one selected
+      // record on demand keeps the board payload free of reusable tokens.
+      const detail = c.signToken ? c : await getClientDetails(c.id);
+      if (!detail.signToken) { toast.error('No signing token on this client yet — refresh and try again.'); return; }
+      const url = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(detail.name) + '&token=' + detail.signToken
+        + (lpoaType === 'inquiry' ? '&type=inquiry' : '');
+      await navigator.clipboard.writeText(url);
+      toast.success('Signature link copied');
+    } catch (e) {
+      toast.error('Could not load the signature link: ' + (e.message || e));
+    }
+  };
+
+  const viewSignedLpoa = async (c) => {
+    try {
+      const detail = c.lpoaSignatureData ? c : await getClientDetails(c.id);
+      const url = detail.lpoaSignatureData?.lpoaUrl;
+      if (!url) { toast.error('No signed LPOA is available for this client.'); return; }
+      window.open(url, '_blank');
+    } catch (e) {
+      toast.error('Could not load the signed LPOA: ' + (e.message || e));
+    }
   };
 
   // Render modal at top level
@@ -713,7 +828,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     />
   ) : null;
 
-  if (clients === null) {
+  if (clients === null && !selectedClientId) {
     return (
       <div className="max-w-3xl mx-auto text-center py-20 text-ink-muted">
         <RefreshCw size={20} className="mx-auto mb-3 animate-spin" strokeWidth={1.5} />
@@ -722,7 +837,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     );
   }
 
-  if (clients.length === 0) {
+  if (clients && clients.length === 0 && !selectedClientId) {
     return (
       <div className="max-w-3xl mx-auto text-center py-20">
         <Users size={28} className="mx-auto mb-3 text-ink-faint" strokeWidth={1.5} />
@@ -732,12 +847,20 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     );
   }
 
-  if (selectedClientName) {
-    const c = clients.find((c) => c.name === selectedClientName);
-    if (!c) {
-      setSelectedClientName(null);
-      return null;
+  if (selectedClientId) {
+    if (!selectedClient) {
+      return (
+        <div className="max-w-3xl mx-auto text-center py-20 text-ink-muted">
+          <RefreshCw size={20} className="mx-auto mb-3 animate-spin" strokeWidth={1.5} />
+          <p className="text-[13px]">Loading client details…</p>
+          <button onClick={() => { detailRequestRef.current += 1; setSelectedClientId(null); }} className="mt-4 text-[12px] font-medium hover:underline" style={{ color: T.navy }}>
+            ← Back to Clients
+          </button>
+          {selectedClientError && <p className="mt-3 text-[12px] text-red-600">{selectedClientError}</p>}
+        </div>
+      );
     }
+    const c = selectedClient;
     
     const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
     const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
@@ -751,26 +874,26 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     const lpoaUrl = c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl;
     
     const clientMenu = [
-      { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
+      { label: 'Edit email', onClick: () => { setEditingEmail(c.id); setEmailVal(c.email || ''); } },
       'divider',
       { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
       { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
-      c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
+      c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => viewSignedLpoa(c) },
       'divider',
       {
         label: 'Revert to lead…', onClick: async () => {
           if (window.confirm(c.name + ' will move back to the Leads pipeline (existing audits, letters, and documents stay untouched in case they come back). Continue?')) {
             await revertClientToLead(c.name, c.id);
-            load();
+            refreshSelectedClient();
           }
         },
       },
-      { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
+      { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.id) },
     ].filter(Boolean);
 
     return (
       <div className="max-w-5xl mx-auto" style={{ padding: '20px 32px 32px' }}>
-        <button onClick={() => setSelectedClientName(null)} className="flex items-center gap-1.5 text-[12px] font-medium mb-6 hover:underline underline-offset-2" style={{ color: T.navy }}>
+        <button onClick={() => { detailRequestRef.current += 1; setSelectedClientId(null); setSelectedClient(null); }} className="flex items-center gap-1.5 text-[12px] font-medium mb-6 hover:underline underline-offset-2" style={{ color: T.navy }}>
           ← Back to Clients
         </button>
         
@@ -816,12 +939,12 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                </div>
                
                <div className="flex items-center gap-2 mt-2">
-                 <button onClick={() => handleVipToggle(c.name, c.isVip, c.id)} disabled={togglingVip === c.name} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md border transition-colors hover:bg-gray-50 disabled:opacity-50" style={{ borderColor: T.border, color: T.ink }}>
-                   {togglingVip === c.name ? 'Updating…' : (c.isVip ? 'Remove VIP' : 'Set as VIP')}
+                 <button onClick={() => handleVipToggle(c.name, c.isVip, c.id)} disabled={togglingVip === c.id} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md border transition-colors hover:bg-gray-50 disabled:opacity-50" style={{ borderColor: T.border, color: T.ink }}>
+                   {togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP' : 'Set as VIP')}
                  </button>
                  {!c.portalOnboarded && (
-                   <button onClick={() => handleSendInvite(c)} disabled={!c.email || sendingLpoa === c.name} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-50" style={{ backgroundColor: T.navy, color: T.gold }}>
-                     {sendingLpoa === c.name ? 'Sending…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Invite & LPOA')}
+                   <button onClick={() => handleSendInvite(c)} disabled={!c.email || sendingLpoa === c.id} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-50" style={{ backgroundColor: T.navy, color: T.gold }}>
+                     {sendingLpoa === c.id ? 'Sending…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Invite & LPOA')}
                    </button>
                  )}
                  <Menu items={clientMenu} />
@@ -829,18 +952,18 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             </div>
           </div>
           
-          {editingEmail === c.name && (
+          {editingEmail === c.id && (
             <div className="pt-4 mt-4 flex items-center gap-2" style={{ borderTop: '1px solid ' + T.grid }}>
               <input type="email" value={emailVal} onChange={(e) => setEmailVal(e.target.value)}
                 className="text-[11px] border border-border rounded-sm px-2 py-1 w-56"
                 placeholder="client@email.com" autoFocus
-                onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal, c.id).then(load); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
-              <button onClick={() => { updateClientEmail(c.name, emailVal, c.id).then(load); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm">Save</button>
+                onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal, c.id).then(refreshSelectedClient); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
+              <button onClick={() => { updateClientEmail(c.name, emailVal, c.id).then(refreshSelectedClient); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm">Save</button>
               <button onClick={() => setEditingEmail(null)} className="text-[10px] text-ink-muted">Cancel</button>
             </div>
           )}
 
-          {confirmDelete === c.name && (
+          {confirmDelete === c.id && (
             <div className="pt-4 mt-4 flex items-center gap-3" style={{ borderTop: '1px solid ' + T.grid }}>
               <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
               <button onClick={() => handleDelete(c.name, c.id)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
@@ -858,7 +981,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               </div>
               {c.audits.length >= 2 && (
                 <button onClick={async () => {
-                    setDiffLoading(c.name);
+                    setDiffLoading(c.id);
                     try {
                       const result = await runProgressDiff(c.name, c.id);
                       setDiffResult({ clientName: c.name, letters: c.letters, ...result });
@@ -867,8 +990,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     } finally {
                       setDiffLoading(null);
                     }
-                  }} disabled={diffLoading === c.name} className="text-[10px] uppercase tracking-wider text-navy hover:text-gold disabled:opacity-50">
-                  {diffLoading === c.name ? 'Comparing…' : 'Compare Latest Reports'}
+                  }} disabled={diffLoading === c.id} className="text-[10px] uppercase tracking-wider text-navy hover:text-gold disabled:opacity-50">
+                  {diffLoading === c.id ? 'Comparing…' : 'Compare Latest Reports'}
                 </button>
               )}
             </div>
@@ -891,10 +1014,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           <div>
             <div className="flex gap-2 mb-4">
               {['Letters', 'Profile', 'Billing', 'Documents'].map((tab) => {
-                const isActiveTab = (activeTab[c.name] || 'Letters') === tab;
+                const isActiveTab = (activeTab[c.id] || 'Letters') === tab;
                 return (
                   <button key={tab}
-                    onClick={() => setActiveTab((p) => ({ ...p, [c.name]: tab }))}
+                    onClick={() => setActiveTab((p) => ({ ...p, [c.id]: tab }))}
                     className="rounded-full px-4 py-1.5 text-[11px] uppercase tracking-wider transition-colors"
                     style={{
                       background: isActiveTab ? T.navy : 'transparent',
@@ -908,7 +1031,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               })}
             </div>
 
-            {(activeTab[c.name] || 'Letters') === 'Letters' && (
+            {(activeTab[c.id] || 'Letters') === 'Letters' && (
               <div>
                 {c.letters.length === 0 ? (
                   <p className="text-[12.5px] text-ink-muted py-6 text-center bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>No letters yet — run an audit to generate Phase 1 letters.</p>
@@ -946,9 +1069,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                           {letters.map((l) => (
                             <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
                               hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
-                              onView={openLetter} onChange={load} onAnalyze={setAnalyzingLetter} onLobMail={(l) => setLobMailerQueue([l])}
+                              onView={openLetter} onChange={refreshSelectedClient} onAnalyze={setAnalyzingLetter} onLobMail={(l) => setLobMailerQueue([l])}
                               onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount}
                               onEscalate={(letter) => setEscalatingLetter({ letter, client: c })}
+                              onAnalyzeBureau={(letter) => setAnalyzingBureauLetter({ letter, client: c })}
                               onReviewBureau={(letter) => setReviewingBureauLetter({ letter, client: c })} />
                           ))}
                         </div>
@@ -959,16 +1083,16 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               </div>
             )}
 
-            {(activeTab[c.name] || 'Letters') === 'Profile' && (
-              <ClientProfilePanel client={c} onChanged={load} onBatchMail={setLobMailerQueue} />
+            {(activeTab[c.id] || 'Letters') === 'Profile' && (
+              <ClientProfilePanel client={c} onChanged={refreshSelectedClient} onBatchMail={setLobMailerQueue} />
             )}
 
-            {(activeTab[c.name] || 'Letters') === 'Billing' && (
-              <ClientBillingPanel client={c} onChanged={load} />
+            {(activeTab[c.id] || 'Letters') === 'Billing' && (
+              <ClientBillingPanel client={c} onChanged={refreshSelectedClient} />
             )}
 
-            {(activeTab[c.name] || 'Letters') === 'Documents' && (
-              <DocumentManager clientId={c.id} clientName={c.name} letters={c.letters || []} onChanged={load} setAnalyzingLetter={setAnalyzingLetter} />
+            {(activeTab[c.id] || 'Letters') === 'Documents' && (
+              <DocumentManager clientId={c.id} clientName={c.name} letters={c.letters || []} onChanged={refreshSelectedClient} setAnalyzingLetter={setAnalyzingLetter} />
             )}
           </div>
         </div>
@@ -990,7 +1114,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   deliveredAt: null,
                   lobId: data.lobId,
                 });
-                load();
+                refreshSelectedClient();
               }}
             />
           );
@@ -999,14 +1123,27 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           <ResponseAnalyzer
             letter={analyzingLetter}
             onClose={() => setAnalyzingLetter(null)}
-            onSaved={() => { setAnalyzingLetter(null); load(); }}
+            onSaved={() => { setAnalyzingLetter(null); refreshSelectedClient(); }}
+          />
+        )}
+        {analyzingBureauLetter && (
+          <BureauResponseAnalyzer
+            letter={analyzingBureauLetter.letter}
+            onClose={() => setAnalyzingBureauLetter(null)}
+            onSaved={refreshSelectedClient}
+            onReview={(evidence) => {
+              const next = analyzingBureauLetter;
+              setAnalyzingBureauLetter(null);
+              setReviewingBureauLetter({ ...next, evidence });
+            }}
           />
         )}
         {reviewingBureauLetter && (
           <BureauResponseReview
             letter={reviewingBureauLetter.letter}
+            evidence={reviewingBureauLetter.evidence || null}
             onClose={() => setReviewingBureauLetter(null)}
-            onSaved={load}
+            onSaved={refreshSelectedClient}
             onEscalate={() => {
               const next = reviewingBureauLetter;
               setReviewingBureauLetter(null);
@@ -1019,11 +1156,11 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             letter={escalatingLetter.letter}
             client={escalatingLetter.client}
             onClose={() => setEscalatingLetter(null)}
-            onSaved={load}
+            onSaved={refreshSelectedClient}
           />
         )}
         <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />
-        <LetterEditModal letter={editingLetterHtml} onClose={() => setEditingLetterHtml(null)} onSaved={load} />
+        <LetterEditModal letter={editingLetterHtml} onClose={() => setEditingLetterHtml(null)} onSaved={refreshSelectedClient} />
         <DiffResultModal result={diffResult} onClose={() => setDiffResult(null)} onOpenAudit={onOpenAudit} />
       </div>
     );
@@ -1054,7 +1191,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const baseFiltered = activeFilter
     ? sortedClients.filter((c) => viewTab === 'leads'
         ? (activeFilter === 'unviewed' ? !c.leadViewedAt : activeFilter === 'recent' ? isLeadRecent(c) : activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6) : true)
-        : clientMatchesFilter(c, activeFilter, unanalyzedNames))
+        : clientMatchesFilter(c, activeFilter, unanalyzedNames, unanalyzedClientIds))
     : sortedClients;
   const q = debouncedSearch.trim().toLowerCase();
   const filteredClients = q
@@ -1075,7 +1212,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         { key: 'awaiting', label: 'Awaiting', count: activeClients.filter((c) => clientMatchesFilter(c, 'awaiting')).length },
         { key: 'escalate', label: 'To escalate', count: activeClients.filter((c) => clientMatchesFilter(c, 'escalate')).length },
         { key: 'received', label: 'Needs Phase 3', count: activeClients.filter((c) => clientMatchesFilter(c, 'received')).length },
-        { key: 'unanalyzed', label: 'Action Items', count: activeClients.filter((c) => unanalyzedNames.has(c.name)).length },
+        { key: 'unanalyzed', label: 'Action Items', count: activeClients.filter((c) => !!unanalyzedClientIds?.has(c.id) || !!unanalyzedNames?.has(c.name)).length },
         { key: 'attention', label: 'Needs attention', count: activeClients.filter((c) => c.status === 'attention').length },
         { key: 'active', label: 'Active', count: activeClients.filter((c) => c.status === 'active').length },
         { key: 'completed', label: 'Completed', count: activeClients.filter((c) => c.status === 'completed').length },
@@ -1102,6 +1239,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               {viewTab === 'leads'
                 ? leadClients.length + ' prospect' + (leadClients.length === 1 ? '' : 's') + ' in the pipeline — not yet signed or paid'
                 : activeClients.length + ' client' + (activeClients.length === 1 ? '' : 's') + ' · ' + totalAudits + ' audit' + (totalAudits === 1 ? '' : 's') + ' · ' + totalLetters + ' letter' + (totalLetters === 1 ? '' : 's')}
+              {pageInfo.nextCursor && <span> · first {clients.length} of {pageInfo.totalCount} loaded</span>}
             </p>
           </div>
         </div>
@@ -1166,7 +1304,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           return (
             <button key={chip.label}
               onClick={() => setActiveFilter(chip.key)}
-              disabled={chip.count === 0 && chip.key !== null}
+              disabled={chip.count === 0 && chip.key !== null && !pageInfo.nextCursor}
+              title={pageInfo.nextCursor ? 'Counts reflect the currently loaded pages. Load more to expand them.' : undefined}
               className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] transition-colors disabled:opacity-40"
               style={{
                 background: isActive ? T.navy : '#fff',
@@ -1198,10 +1337,11 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           if (c.status === 'lead') {
             return (
               <LeadCard
-                key={c.name}
+                key={c.id}
                 c={c}
                 isAdmin={isAdmin}
                 onOpenAudit={onOpenAudit}
+                onOpenSummaryAudit={openAuditFromSummary}
                 onViewed={async () => {
                   if (c.leadViewedAt) return;
                   try {
@@ -1213,7 +1353,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   }
                 }}
                 onConvert={async () => {
-                  setConvertingLead(c.name);
+                  setConvertingLead(c.id);
                   try {
                     await convertLeadToClient(c.name, c.id);
                     await load();
@@ -1223,7 +1363,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     setConvertingLead(null);
                   }
                 }}
-                converting={convertingLead === c.name}
+                converting={convertingLead === c.id}
                 onDelete={async () => {
                   if (!window.confirm('Delete lead ' + c.name + '? This cannot be undone.')) return;
                   try {
@@ -1248,15 +1388,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           ].filter(Boolean))] : [];
 
           const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
-          const lpoaUrl = c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl;
           const clientMenu = [
-            { label: togglingVip === c.name ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip, c.id), disabled: togglingVip === c.name },
-            { label: 'Edit email', onClick: () => { setEditingEmail(c.name); setEmailVal(c.email || ''); } },
+            { label: togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip, c.id), disabled: togglingVip === c.id },
+            { label: 'Edit email', onClick: () => { setEditingEmail(c.id); setEmailVal(c.email || ''); } },
             'divider',
-            !c.portalOnboarded && { label: sendingLpoa === c.name ? 'Sending Invite…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Portal Invite & LPOA'), onClick: () => handleSendInvite(c), disabled: !c.email || sendingLpoa === c.name, title: !c.email ? 'Add email first' : undefined },
+            !c.portalOnboarded && { label: sendingLpoa === c.id ? 'Sending Invite…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Portal Invite & LPOA'), onClick: () => handleSendInvite(c), disabled: !c.email || sendingLpoa === c.id, title: !c.email ? 'Add email first' : undefined },
             { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
       { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
-            c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => window.open(lpoaUrl, '_blank') },
+            c.lpoaSigned && { label: 'View signed LPOA', onClick: () => viewSignedLpoa(c) },
             'divider',
             {
               label: 'Revert to lead…', onClick: async () => {
@@ -1266,23 +1405,23 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 }
               },
             },
-            { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.name) },
+            { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.id) },
           ];
 
           return (
             <div
-              key={c.name}
-              ref={(el) => { clientRefs.current[c.name] = el; }}
+              key={c.id}
+              ref={(el) => { clientRefs.current[c.id] = el; }}
               className="bg-white overflow-visible transition-shadow"
               style={{
                 borderRadius: 14,
-                boxShadow: c.name === jumpTo ? '0 0 0 3px rgba(201,168,76,0.18)' : T.cardShadow,
-                border: c.name === jumpTo ? '2px solid ' + T.gold : (c.isVip ? '1px solid ' + T.gold : '1px solid ' + T.border),
+                boxShadow: c.id === selectedClientId ? '0 0 0 3px rgba(201,168,76,0.18)' : T.cardShadow,
+                border: c.id === selectedClientId ? '2px solid ' + T.gold : (c.isVip ? '1px solid ' + T.gold : '1px solid ' + T.border),
               }}
             >
               {/* Row header — a div, not a button, so inner controls stay valid HTML */}
               <div className="flex items-center gap-3 px-4 py-3.5 cursor-pointer select-none" role="button"
-                onClick={() => setSelectedClientName(c.name)}>
+                onClick={() => setSelectedClientId(c.id)}>
                 <Avatar name={c.name} isVip={c.isVip} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
@@ -1322,7 +1461,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 </div>
               </div>
 
-              {editingEmail === c.name && (
+              {editingEmail === c.id && (
                 <div className="px-4 pb-3 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                   <input type="email" value={emailVal} onChange={(e) => setEmailVal(e.target.value)}
                     className="text-[11px] border border-border rounded-sm px-2 py-1 w-56"
@@ -1333,7 +1472,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 </div>
               )}
 
-              {confirmDelete === c.name && (
+              {confirmDelete === c.id && (
                 <div className="px-4 pb-3 flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
                   <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
                   <button onClick={() => handleDelete(c.name, c.id)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
@@ -1346,6 +1485,16 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           );
         })}
       </div>
+
+      {pageInfo.nextCursor && (
+        <div className="flex justify-center pt-5">
+          <button onClick={loadMore} disabled={loadingMore}
+            className="px-4 py-2 rounded-lg border text-[11px] uppercase tracking-wider transition-colors disabled:opacity-50"
+            style={{ borderColor: T.border, color: T.navy, background: '#fff' }}>
+            {loadingMore ? 'Loading…' : 'Load more ' + (viewTab === 'leads' ? 'records' : 'clients') + ' (' + clients.length + ' of ' + pageInfo.totalCount + ')'}
+          </button>
+        </div>
+      )}
 
       {lobMailerQueue.length > 0 && (() => {
         const currentLetter = lobMailerQueue[0];
@@ -1553,7 +1702,7 @@ function AddLeadModal({ onClose, onCreated }) {
   );
 }
 
-function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, onChanged, onViewed }) {
+function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, onOpenSummaryAudit, onChanged, onViewed }) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [editing, setEditing] = React.useState(false);
   const [emailVal, setEmailVal] = React.useState(c.email || '');
@@ -1742,10 +1891,13 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
             <div key={a.id} className="flex items-center justify-between py-1.5 flex-wrap gap-2">
               <div className="text-[12px] text-ink">
                 Report {a.reportDate}
-                <span className="text-ink-muted"> · {(a.audit && a.audit.accountsTargeted) || 0} accounts · {(a.audit && a.audit.totalViolations) || 0} violations</span>
+                {a.audit && <span className="text-ink-muted"> · {a.audit.accountsTargeted || 0} accounts · {a.audit.totalViolations || 0} violations</span>}
                 {isAdmin && a.auditorName && <span className="text-[10px] text-ink-faint ml-2">· {a.auditorName}</span>}
               </div>
-              <button onClick={() => onOpenAudit(a.clientId ? { ...a.audit, client: { ...a.audit.client, id: a.clientId } } : a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
+              <button onClick={() => {
+                if (a.audit) onOpenAudit(a.clientId ? { ...a.audit, client: { ...a.audit.client, id: a.clientId } } : a.audit);
+                else if (onOpenSummaryAudit) onOpenSummaryAudit(c.id, a.id);
+              }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
             </div>
           ))}
         </div>
@@ -1901,7 +2053,7 @@ function ViolationDetail({ a }) {
 function DiffResultModal({ result, onClose, onOpenAudit }) {
   const [expandedKey, setExpandedKey] = React.useState(null);
   if (!result) return null;
-  const { clientName, fromReportDate, toReportDate, diff, newerAudit, letters } = result;
+  const { clientName, fromReportDate, toReportDate, diff, phaseProgress = [], newerAudit, letters } = result;
 
   // The diff only carries a lightweight summary per account (furnisher,
   // masked number, balance, status) — letter generation needs the full
@@ -1966,6 +2118,23 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
         </div>
 
         <div className="p-5 space-y-5">
+          {phaseProgress.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-navy font-medium mb-2">Campaign status across phases</div>
+              <div className="overflow-hidden rounded-sm border border-border bg-white">
+                {phaseProgress.map((item) => (
+                  <div key={item.accountKey} className="flex items-start justify-between gap-3 px-3 py-2.5 border-t border-border first:border-t-0">
+                    <div className="min-w-0">
+                      <div className="text-[12px] font-medium text-ink truncate">{item.furnisher} {item.accountNumberMasked && <span className="text-ink-faint font-normal">{item.accountNumberMasked}</span>}</div>
+                      <div className="text-[11px] text-ink-muted mt-0.5">{item.reportLabel} · {item.label}</div>
+                    </div>
+                    <span className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-blue-50 text-navy">Phase {item.phase}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {diff.deleted.length > 0 && (
             <div>
               <div className="text-[10px] uppercase tracking-wider text-green-700 font-medium mb-2">Deleted ({diff.deleted.length})</div>

@@ -21,12 +21,38 @@ async function sendViaSendGrid(sgKey, to, subject, htmlBody, attachments) {
   if (res.status >= 400) throw new Error('SendGrid error ' + res.status + ': ' + res.body);
 }
 
+// An affiliate may request an internal "new referral" alert, but the email
+// must be built from records the server verifies—not names, companies, or
+// client details supplied by the browser. This keeps the endpoint useful
+// without turning it into a generic authenticated email relay.
+async function loadVerifiedAffiliateReferral(userId, clientEmail) {
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceKey || !clientEmail) return null;
+
+  const headers = { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey };
+  const affiliateUrl = supabaseUrl + '/rest/v1/affiliates?user_id=eq.'
+    + encodeURIComponent(userId) + '&select=id,name,company&limit=1';
+  const affiliateResponse = await fetch(affiliateUrl, { headers });
+  if (!affiliateResponse.ok) return null;
+  const affiliates = await affiliateResponse.json();
+  const affiliate = Array.isArray(affiliates) ? affiliates[0] : null;
+  if (!affiliate?.id) return null;
+
+  const clientUrl = supabaseUrl + '/rest/v1/clients?referred_by=eq.'
+    + encodeURIComponent(affiliate.id) + '&email=eq.' + encodeURIComponent(String(clientEmail).trim().toLowerCase())
+    + '&select=name,email,phone,notes,created_at&order=created_at.desc&limit=1';
+  const clientResponse = await fetch(clientUrl, { headers });
+  if (!clientResponse.ok) return null;
+  const clients = await clientResponse.json();
+  const client = Array.isArray(clients) ? clients[0] : null;
+  return client ? { affiliate, client } : null;
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
 
   const sgKey = process.env.SENDGRID_API_KEY;
-  const supabaseUrl = process.env.VITE_SUPABASE_URL;
-  const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
 
   let payload;
   try { payload = JSON.parse(event.body); }
@@ -34,32 +60,33 @@ exports.handler = async (event) => {
 
   const { action } = payload;
 
-  // Auth gate: client_response_uploaded is called from the portal by a logged-in
-  // client — just require any valid session. All other actions are admin-only.
-  const ADMIN_ACTIONS = ['send', 'send_audit_email', 'send_phase_notification', 'send_campaign_update', 'send_lead_drip', 'send_onboarding_reminder', 'send_lead_nurture', 'admin_new_lead', 'send_educational', 'affiliate_welcome', 'affiliate_new_referral'];
-  if (ADMIN_ACTIONS.includes(action)) {
+  // This function sends privileged email. Client response uploads are now
+  // recorded by response-evidence.cjs and surfaced in the admin action queue;
+  // do not leave a generic client-authenticated email endpoint that can be
+  // used to spoof arbitrary client/furnisher details to staff.
+  const STAFF_ACTIONS = ['send_audit_email', 'send_phase_notification'];
+  const ADMIN_ACTIONS = ['send', 'send_onboarding_welcome', 'send_campaign_update', 'send_lead_drip', 'send_onboarding_reminder', 'send_lead_nurture', 'send_report_refresh', 'admin_new_lead', 'send_educational', 'affiliate_welcome'];
+  const AFFILIATE_ACTIONS = ['affiliate_new_referral'];
+  if (!STAFF_ACTIONS.includes(action) && !ADMIN_ACTIONS.includes(action) && !AFFILIATE_ACTIONS.includes(action)) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'Unknown action' }) };
+  }
+  if (STAFF_ACTIONS.includes(action)) {
+    const { requireStaffOrSystem } = require('./_requireAuth.cjs');
+    try { await requireStaffOrSystem(event); }
+    catch (e) { if (e.statusCode) return e; throw e; }
+  } else if (ADMIN_ACTIONS.includes(action)) {
     const { requireAdmin } = require('./_requireAdmin.cjs');
     try { await requireAdmin(event); }
     catch (e) { if (e.statusCode) return e; throw e; }
-  } else if (action === 'client_response_uploaded') {
-    // Verify any valid Supabase session (client or admin)
-    const authHeader = (event.headers.authorization || event.headers.Authorization || '');
-    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-    if (!token) return { statusCode: 401, body: JSON.stringify({ error: 'Missing Authorization token' }) };
-    // We trust Supabase RLS for data isolation; just confirm the session is real
-    const https = require('https');
-    const sessionOk = await new Promise((resolve) => {
-      const u = new URL((supabaseUrl || '') + '/auth/v1/user');
-      const req = https.request({ hostname: u.hostname, port: 443, path: u.pathname, method: 'GET',
-        headers: { apikey: supabaseKey, Authorization: 'Bearer ' + token } }, (res) => {
-        resolve(res.statusCode === 200);
-      });
-      req.on('error', () => resolve(false));
-      req.end();
-    });
-    if (!sessionOk) return { statusCode: 401, body: JSON.stringify({ error: 'Invalid or expired session' }) };
   } else {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Unknown action' }) };
+    const { requireAuth } = require('./_requireAuth.cjs');
+    let caller;
+    try { caller = await requireAuth(event); }
+    catch (e) { if (e.statusCode) return e; throw e; }
+    if (caller.isSystem) return { statusCode: 403, body: JSON.stringify({ error: 'Affiliate session required' }) };
+    const referral = await loadVerifiedAffiliateReferral(caller.userId, payload.clientEmail);
+    if (!referral) return { statusCode: 403, body: JSON.stringify({ error: 'Verified affiliate referral required' }) };
+    payload._verifiedAffiliateReferral = referral;
   }
 
   if (action === 'send') {
@@ -74,6 +101,22 @@ exports.handler = async (event) => {
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       console.error('Email error:', e.message);
+      return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
+    }
+  }
+
+  if (action === 'send_onboarding_welcome') {
+    const { clientName, clientEmail, magicLink } = payload;
+    if (!clientEmail || !magicLink) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail and magicLink required' }) };
+    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#111827;">
+      <div style="background:#1B2A4A;padding:20px 24px;border-radius:6px 6px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Welcome to your client portal</p></div>
+      <div style="border:1px solid #E5E7EB;border-top:none;padding:24px;border-radius:0 0 6px 6px;"><p>Hi ${clientName},</p><p>Your client portal is ready. Use the secure sign-in link below to complete onboarding, review your audit, and follow your campaign.</p><p style="text-align:center;margin:28px 0;"><a href="${magicLink}" style="background:#1B2A4A;color:#fff;padding:12px 22px;border-radius:4px;text-decoration:none;font-weight:700;">Open Your Portal</a></p><p style="font-size:12px;color:#6B7280;">For your security, access is protected by a sign-in link sent to this email address.</p><hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;"><p style="font-size:11px;color:#9CA3AF;">Credit Comeback Club | creditcomebackclub.com</p></div>
+    </body></html>`;
+    try {
+      await sendViaSendGrid(sgKey, clientEmail, 'Welcome to Your Credit Comeback Club Portal', html);
+      return { statusCode: 200, body: JSON.stringify({ sent: true }) };
+    } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
     }
   }
@@ -142,7 +185,7 @@ exports.handler = async (event) => {
       phase2_analyzed: `<p>We have analyzed <strong>${furnisher}</strong>'s response to your dispute letter.</p>
         <p>${details || 'Phase 3 escalation letters have been prepared and will be mailed to the credit bureaus shortly.'}</p>`,
       phase3_mailed: `<p>Phase 3 escalation letters have been mailed to Equifax, Experian, and TransUnion regarding <strong>${furnisher}</strong>.</p>
-        <p>The bureaus now have 30 days to investigate and respond. Deletions typically occur within this window when the furnisher failed to conduct a reasonable investigation.</p>`,
+        <p>The bureaus now have 45 days to investigate and respond. We will track the outcome and document the next campaign step.</p>`,
     };
 
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
@@ -634,40 +677,16 @@ exports.handler = async (event) => {
   }
 
   if (action === 'affiliate_new_referral') {
-    const { affiliateName, companyName, clientName, clientEmail, clientPhone, clientNotes } = payload;
-    const sgKey = process.env.SENDGRID_API_KEY;
+    const referral = payload._verifiedAffiliateReferral;
+    const affiliateName = referral.affiliate.name || 'Affiliate';
+    const companyName = referral.affiliate.company || null;
+    const clientName = referral.client.name || 'New client';
+    const clientEmail = referral.client.email || '';
+    const clientPhone = referral.client.phone || null;
+    const clientNotes = referral.client.notes || null;
     if (!sgKey) return { statusCode: 400, body: JSON.stringify({ error: 'Missing SendGrid key' }) };
     const subject = 'New Referral from ' + (companyName || affiliateName) + ' — ' + clientName;
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;"><div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">New Partner Referral</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">${companyName || affiliateName} → Credit Comeback Club</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;"><p><strong>${affiliateName}${companyName ? ' (' + companyName + ')' : ''}</strong> just submitted a new client referral:</p><table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;"><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;width:140px;">Name</td><td style="padding:10px 14px;">${clientName}</td></tr><tr><td style="padding:10px 14px;font-weight:600;">Email</td><td style="padding:10px 14px;">${clientEmail}</td></tr><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Phone</td><td style="padding:10px 14px;">${clientPhone || '—'}</td></tr><tr><td style="padding:10px 14px;font-weight:600;">Notes</td><td style="padding:10px 14px;">${clientNotes || '—'}</td></tr></table><p style="font-size:13px;color:#444;">Log in to your admin dashboard to run their audit and kick off onboarding.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
-    await sendViaSendGrid(sgKey, 'creditcomebackclub@gmail.com', subject, html);
-    return { statusCode: 200, body: JSON.stringify({ sent: true }) };
-  }
-
-  if (action === 'client_response_uploaded') {
-    const { clientName, furnisher, phase, storagePath, pageCount } = payload;
-    const sgKey = process.env.SENDGRID_API_KEY;
-    if (!sgKey) return { statusCode: 400, body: JSON.stringify({ error: 'Missing SendGrid key' }) };
-    const subject = 'Client Uploaded Response — ' + clientName + ' / ' + furnisher;
-    const pages = pageCount > 1 ? pageCount + ' pages' : '1 page';
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Client Response Uploaded</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Action Required</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p><strong>${clientName}</strong> just uploaded a furnisher response (${pages}) from their client portal.</p>
-        <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">
-          <tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;width:120px;">Client</td><td style="padding:10px 14px;">${clientName}</td></tr>
-          <tr><td style="padding:10px 14px;font-weight:600;">Furnisher</td><td style="padding:10px 14px;">${furnisher}</td></tr>
-          <tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Phase</td><td style="padding:10px 14px;">${phase || 'Phase 1'}</td></tr>
-          <tr><td style="padding:10px 14px;font-weight:600;">Pages</td><td style="padding:10px 14px;">${pages}</td></tr>
-          <tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">First file</td><td style="padding:10px 14px;font-size:11px;color:#6B7280;">${storagePath}</td></tr>
-        </table>
-        <p style="font-size:13px;color:#444;">Log in to your admin dashboard and run Phase 2 analysis in the Response Analyzer — all pages will be analyzed together as one document.</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;"><div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">New Partner Referral</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">${companyName || affiliateName} → Credit Comeback Club</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;"><p><strong>${affiliateName}${companyName ? ' (' + companyName + ')' : ''}</strong> just submitted a new client referral:</p><table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;"><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;width:140px;">Name</td><td style="padding:10px 14px;">${clientName}</td></tr><tr><td style="padding:10px 14px;font-weight:600;">Email</td><td style="padding:10px 14px;">${clientEmail}</td></tr><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Phone</td><td style="padding:10px 14px;">${clientPhone || '—'}</td></tr><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Notes</td><td style="padding:10px 14px;">${clientNotes || '—'}</td></tr></table><p style="font-size:13px;color:#444;">Log in to your admin dashboard to run their audit and kick off onboarding.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
     await sendViaSendGrid(sgKey, 'creditcomebackclub@gmail.com', subject, html);
     return { statusCode: 200, body: JSON.stringify({ sent: true }) };
   }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, CheckCircle, FileText, X } from 'lucide-react';
 import { updateLetter } from '../utils/storage';
+import { updateResponseEvidenceReview } from '../utils/responseEvidence';
 
 const OPTIONS = [
   {
@@ -33,9 +34,9 @@ const OPTIONS = [
   },
 ];
 
-export default function BureauResponseReview({ letter, onClose, onSaved, onEscalate }) {
-  const [choice, setChoice] = useState(letter.bureauReviewStatus || 'not_reviewed');
-  const [notes, setNotes] = useState(letter.bureauReviewNotes || '');
+export default function BureauResponseReview({ letter, evidence, onClose, onSaved, onEscalate }) {
+  const [choice, setChoice] = useState(evidence?.review_status || letter.bureauReviewStatus || 'not_reviewed');
+  const [notes, setNotes] = useState(evidence?.review_notes || letter.bureauReviewNotes || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -46,11 +47,23 @@ export default function BureauResponseReview({ letter, onClose, onSaved, onEscal
     setSaving(true);
     setError(null);
     try {
+      const reviewedAt = new Date().toISOString();
+      // The rationale is staff-only evidence. Do not persist newly written
+      // notes onto letters, which the client portal can read as part of its
+      // campaign timeline.
+      if (evidence?.id) {
+        await updateResponseEvidenceReview(evidence.id, {
+          reviewStatus: chosen.key,
+          reviewNotes: notes.trim() || null,
+          reviewedAt,
+        });
+      }
       await updateLetter(letter.id, {
         bureauReviewStatus: chosen.key,
         bureauNextAction: chosen.action,
-        bureauReviewNotes: notes.trim() || null,
-        bureauReviewedAt: new Date().toISOString(),
+        bureauReviewNotes: evidence?.id ? null : (notes.trim() || null),
+        bureauReviewedAt: reviewedAt,
+        bureauResponseStatus: 'reviewed',
       });
       onSaved && onSaved();
       if (openEscalation) onEscalate && onEscalate();

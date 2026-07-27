@@ -28,6 +28,18 @@ async function pollForLetter(id) {
 
 const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
+// Letter generation is a staff-only, paid server operation. The endpoint
+// verifies the role itself; this only forwards the current Supabase session
+// so the established staff UI can authenticate that request.
+async function staffJsonHeaders() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not signed in.');
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${session.access_token}`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Audits and Phase 2 run SERVER-SIDE
 // Letters now ALSO run SERVER-SIDE. The client inserts a placeholder 'GENERATING...'
@@ -67,7 +79,7 @@ export async function generateLetter(account, client) {
 
     const res = await fetch('/.netlify/functions/generate-letter-background', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await staffJsonHeaders(),
       body: JSON.stringify({
         jobs: [
           {
@@ -100,7 +112,7 @@ export async function generateLetter(account, client) {
   const id = await saveLetter(account, client, 'GENERATING...', null);
   const res = await fetch('/.netlify/functions/generate-letter-background', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await staffJsonHeaders(),
     body: JSON.stringify({
       jobs: [{ id, account, generateSummary: true, instructions }]
     })
@@ -149,7 +161,7 @@ export async function generateCombinedCleanupLetter(client, inquiries) {
   
   const res = await fetch('/.netlify/functions/generate-letter-background', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await staffJsonHeaders(),
     body: JSON.stringify({
       jobs: [{ id, account: null, generateSummary: false, instructions }]
     })

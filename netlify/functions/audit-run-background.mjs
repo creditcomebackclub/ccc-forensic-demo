@@ -15,16 +15,34 @@ import { AUDIT_SCHEMA, BUREAU_SCHEMA, ACCOUNT_ENRICHMENT_SCHEMA } from '../../sr
 import { resolveAuditIdentities } from '../../src/utils/accountIdentity.js';
 import { normalizeFurnisher } from '../../src/utils/diffEngine.js';
 import { randomUUID } from 'crypto';
+import { requireStaff } from './_requireAuth.cjs';
 import {
   buildReportContent, combinedAuditPrompt, singleBureauAuditPrompt,
   bureauParsePrompt, mergeAuditPrompt, accountEnrichmentPrompt, todayLong,
 } from '../../src/utils/auditPrompts.js';
 
-const MODEL = 'claude-sonnet-5';
+// This is deliberately a pinned application choice, not an environment
+// fallback. A future model change must be reviewed in code and will be
+// rejected at runtime if Anthropic routes the request anywhere else.
+const AUDIT_MODEL = 'claude-sonnet-5';
+const AUDIT_EFFORT = 'high';
+const ANTHROPIC_OPTIONS = {
+  // Bound automatic retries so a transient 429/5xx gets a second chance
+  // without a background function spending its whole 15-minute window
+  // retrying one request.
+  maxRetries: 2,
+  timeout: 8 * 60 * 1000,
+};
 const SYSTEM = [{ type: 'text', text: MASTER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
 // Sonnet 5 intro pricing (per MTok) — valid through 2026-08-31
 const PRICE = { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 };
+
+// A credit report rarely approaches this, but the cap keeps base64 request
+// bodies below the provider's transport limit even when an uploaded PDF is a
+// scan rather than a normal text export. HTML/text also has the separate
+// post-cleanup character cap in reportText.js.
+const MAX_TOTAL_REPORT_BYTES = 15 * 1024 * 1024;
 
 function slug(s) {
   return String(s || 'unknown')
@@ -51,6 +69,73 @@ function parseAuditJSON(text) {
   const obj = text.match(/\{[\s\S]*\}/);
   if (obj) { try { return JSON.parse(obj[0]); } catch (e) { /* fall through */ } }
   throw new Error('Could not parse JSON from response');
+}
+
+function nonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function assertAuditOutput(audit, label = 'Audit') {
+  if (!audit || typeof audit !== 'object' || Array.isArray(audit)) {
+    throw new Error(`${label} returned an invalid JSON object`);
+  }
+  if (!audit.client || !nonEmptyString(audit.client.name)) {
+    throw new Error(`${label} did not include a client name`);
+  }
+  if (!Array.isArray(audit.accounts) || !Array.isArray(audit.inquiries)) {
+    throw new Error(`${label} is missing required account or inquiry data`);
+  }
+  if (!audit.accounts.every((account) => account && nonEmptyString(account.id)
+      && nonEmptyString(account.furnisher) && Array.isArray(account.violations))) {
+    throw new Error(`${label} contains an invalid account record`);
+  }
+  return audit;
+}
+
+function assertBureauOutput(report, bureau) {
+  if (!report || typeof report !== 'object' || Array.isArray(report)
+      || !report.client || !nonEmptyString(report.client.name)
+      || !Array.isArray(report.accounts) || !Array.isArray(report.inquiries)) {
+    throw new Error(`${bureau} parsing returned an invalid audit object`);
+  }
+  return report;
+}
+
+function assertEnrichmentOutput(enrichment) {
+  if (!enrichment || typeof enrichment !== 'object' || Array.isArray(enrichment)
+      || !Array.isArray(enrichment.accounts)) {
+    throw new Error('Account enrichment returned an invalid JSON object');
+  }
+  return enrichment;
+}
+
+function textFromVerifiedModelMessage(message, operation) {
+  if (!message || message.model !== AUDIT_MODEL) {
+    throw new Error(`${operation} model mismatch — expected ${AUDIT_MODEL}, received ${message?.model || 'no model id'}`);
+  }
+  if (message.stop_reason !== 'end_turn') {
+    if (message.stop_reason === 'max_tokens') {
+      throw new Error('The analysis hit the output limit before finishing — the report may be too large for one pass. Try Individual mode with one file per bureau.');
+    }
+    if (message.stop_reason === 'refusal') {
+      throw new Error('The model declined this request. Check the report content and try again.');
+    }
+    throw new Error(`${operation} did not finish cleanly (${message.stop_reason || 'unknown stop reason'})`);
+  }
+  const text = (message.content || []).filter((block) => block.type === 'text').map((block) => block.text).join('');
+  if (!text.trim()) throw new Error(`${operation} returned no text output`);
+  return text;
+}
+
+function normalizedMediaType(value) {
+  return String(value || '').split(';', 1)[0].trim().toLowerCase();
+}
+
+function isSupportedAuditMediaType(value) {
+  const mediaType = normalizedMediaType(value);
+  return mediaType === 'application/pdf' || mediaType === 'application/x-pdf'
+    || mediaType === 'text/plain' || mediaType === 'text/html'
+    || mediaType === 'application/xhtml+xml';
 }
 
 // Groups accounts[].violations by field, counting occurrences and keeping
@@ -180,10 +265,38 @@ export function applyDofdDirectionalGuard(accounts) {
   return suppressed;
 }
 
+function isOwnedAuditUpload(path, userId, jobId) {
+  if (typeof path !== 'string' || !path || path.includes('..') || path.startsWith('/')) return false;
+  return path.startsWith(`${userId}/audit-jobs/${jobId}/`);
+}
+
+function hasExpectedAuditFiles(job, userId, jobId) {
+  const files = Array.isArray(job?.files) ? job.files : [];
+  if (!files.length || !files.every((file) => isOwnedAuditUpload(file?.path, userId, jobId))) return false;
+  if (!['combined', 'single', 'individual'].includes(job?.mode)) return false;
+  if (job.mode !== 'individual') return files.length === 1;
+
+  if (files.length !== 3) return false;
+  const bureaus = files.map((file) => String(file?.bureau || '').toLowerCase());
+  return bureaus.length === new Set(bureaus).size
+    && ['equifax', 'experian', 'transunion'].every((bureau) => bureaus.includes(bureau));
+}
+
 export const handler = async (event) => {
+  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
+
+  let caller;
+  try {
+    caller = await requireStaff(event);
+  } catch (e) {
+    if (e && e.statusCode) return e;
+    console.error('audit-run: could not authenticate caller', e);
+    return { statusCode: 500, body: 'authentication failed' };
+  }
+
   let jobId = null;
   try { jobId = JSON.parse(event.body || '{}').jobId; } catch (e) { /* handled below */ }
-  if (!jobId) return { statusCode: 400, body: 'jobId required' };
+  if (typeof jobId !== 'string' || !jobId) return { statusCode: 400, body: 'jobId required' };
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -204,13 +317,64 @@ export const handler = async (event) => {
     realtime: { transport: ws },
   });
 
-  // Atomic claim — only proceeds if the row exists and is still 'queued'.
-  // Job rows can only be created by authenticated auditors (RLS), so this is
-  // also the gate that stops anonymous calls from burning API credits.
+  // A process can be terminated after claiming a job (deployment, provider
+  // outage, or the background-function limit). Mark abandoned work terminal
+  // before accepting new work from the same staff member so it is visible and
+  // retryable instead of remaining "running" forever. Active streams refresh
+  // updated_at continuously, so this does not touch a live job.
+  const staleCutoff = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const { error: staleRecoveryErr } = await db
+    .from('audit_jobs')
+    .update({
+      status: 'error',
+      stage: 'Interrupted — retry required',
+      error: 'Audit worker stopped before completing. Please retry the audit.',
+      finished_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('user_id', caller.userId)
+    .eq('status', 'running')
+    .lt('updated_at', staleCutoff);
+  if (staleRecoveryErr) console.warn('audit-run: stale-job recovery failed', staleRecoveryErr.message);
+
+  // Confirm the queued job belongs to the authenticated staff member and
+  // only references that member's transient upload directory before any
+  // service-role mutation or model call.
+  const { data: queuedJob, error: queuedJobErr } = await db
+    .from('audit_jobs')
+    .select('id, mode, files')
+    .eq('id', jobId)
+    .eq('user_id', caller.userId)
+    .eq('status', 'queued')
+    .maybeSingle();
+  if (queuedJobErr || !queuedJob) {
+    console.warn('audit-run: job not available to caller', jobId, queuedJobErr?.message);
+    return { statusCode: 409, body: 'job not claimable' };
+  }
+  if (!hasExpectedAuditFiles(queuedJob, caller.userId, jobId)) {
+    // Fail closed rather than leaving a malformed caller-owned job queued
+    // indefinitely. Only validated owned paths are removed.
+    const now = new Date().toISOString();
+    const { error: rejectErr } = await db.from('audit_jobs').update({
+      status: 'error', stage: 'Rejected invalid report upload',
+      error: 'Audit job contains invalid report files or mode.',
+      finished_at: now, updated_at: now,
+    }).eq('id', jobId).eq('user_id', caller.userId).eq('status', 'queued');
+    if (rejectErr) console.warn('audit-run: could not mark invalid job failed', rejectErr.message);
+    const ownedPaths = (queuedJob.files || []).map((file) => file?.path)
+      .filter((path) => isOwnedAuditUpload(path, caller.userId, jobId));
+    if (ownedPaths.length) await db.storage.from('documents').remove(ownedPaths).catch(() => {});
+    return { statusCode: 400, body: 'job contains invalid report upload paths' };
+  }
+
+  // Atomic claim — only proceeds if the caller owns a row that is still
+  // queued. Authenticated clients cannot reach this point, and one staff
+  // member cannot consume another staff member's queued job.
   const { data: claimed, error: claimErr } = await db
     .from('audit_jobs')
     .update({ status: 'running', started_at: new Date().toISOString(), updated_at: new Date().toISOString(), stage: 'Starting analysis', pct: null, tokens: 0 })
     .eq('id', jobId)
+    .eq('user_id', caller.userId)
     .eq('status', 'queued')
     .select();
   if (claimErr || !claimed || claimed.length === 0) {
@@ -219,7 +383,7 @@ export const handler = async (event) => {
   }
   const job = claimed[0];
 
-  const anthropic = new Anthropic({ apiKey: anthropicKey, maxRetries: 5 });
+  const anthropic = new Anthropic({ apiKey: anthropicKey, ...ANTHROPIC_OPTIONS });
   const usageLog = [];
   let lastWrite = 0;
 
@@ -227,7 +391,10 @@ export const handler = async (event) => {
     const now = Date.now();
     if (!force && now - lastWrite < 1200) return; // throttle progress writes
     lastWrite = now;
-    await db.from('audit_jobs').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', jobId);
+    const { error } = await db.from('audit_jobs')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('id', jobId);
+    if (error) throw new Error('Could not persist audit job state: ' + error.message);
   };
 
   const progress = (stage, pct) => (tokens) =>
@@ -235,25 +402,33 @@ export const handler = async (event) => {
 
   async function claudeCall(userContent, { maxTokens = 64000, schema = null, onTokens = null } = {}) {
     const params = {
-      model: MODEL,
+      model: AUDIT_MODEL,
       max_tokens: maxTokens,
       system: SYSTEM,
       messages: [{ role: 'user', content: userContent }],
+      output_config: { effort: AUDIT_EFFORT },
     };
-    if (schema) params.output_config = { format: { type: 'json_schema', schema } };
+    if (schema) params.output_config.format = { type: 'json_schema', schema };
 
     const stream = anthropic.messages.stream(params);
     if (onTokens) {
       let chars = 0;
       stream.on('text', (delta) => {
         chars += delta.length;
-        onTokens(Math.round(chars / 4)); // ~4 chars/token readout
+        // Progress is operational telemetry; an intermittent write must not
+        // crash an otherwise-valid model stream through an unhandled promise.
+        void onTokens(Math.round(chars / 4)).catch((e) => {
+          console.warn('audit-run: progress write failed', e.message);
+        }); // ~4 chars/token readout
       });
     }
     const msg = await stream.finalMessage();
+    const text = textFromVerifiedModelMessage(msg, 'Audit analysis');
 
     const u = msg.usage || {};
     usageLog.push({
+      model: msg.model,
+      effort: AUDIT_EFFORT,
       input: u.input_tokens || 0,
       output: u.output_tokens || 0,
       cache_read: u.cache_read_input_tokens || 0,
@@ -263,19 +438,34 @@ export const handler = async (event) => {
     });
     console.log('[audit-usage]', JSON.stringify(usageLog[usageLog.length - 1]));
 
-    if (msg.stop_reason === 'max_tokens') {
-      throw new Error('The analysis hit the output limit before finishing — the report may be too large for one pass. Try Individual mode with one file per bureau.');
-    }
-    if (msg.stop_reason === 'refusal') {
-      throw new Error('The model declined this request. Check the report content and try again.');
-    }
-    return msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+    return text;
   }
 
-  async function downloadBase64(path) {
-    const { data, error } = await db.storage.from('documents').download(path);
+  const downloadedReports = new Map();
+  let downloadedReportBytes = 0;
+  async function downloadReport(file) {
+    if (downloadedReports.has(file.path)) return downloadedReports.get(file.path);
+    const { data, error } = await db.storage.from('documents').download(file.path);
     if (error || !data) throw new Error('Could not read uploaded report (' + (error?.message || 'missing file') + ')');
-    return Buffer.from(await data.arrayBuffer()).toString('base64');
+    const bytes = Buffer.from(await data.arrayBuffer());
+    if (!bytes.length) throw new Error('Uploaded report is empty.');
+    if (downloadedReportBytes + bytes.length > MAX_TOTAL_REPORT_BYTES) {
+      throw new Error('The uploaded report files exceed the 15 MB server processing limit. Export a smaller report or use Individual mode with lighter bureau files.');
+    }
+
+    // Prefer Storage's content type when it is usable, otherwise retain the
+    // original browser declaration. The latter covers a few browsers that
+    // upload HTML/TXT with application/octet-stream.
+    const storageType = normalizedMediaType(data.type);
+    const declaredType = normalizedMediaType(file.type);
+    const mediaType = isSupportedAuditMediaType(storageType) ? storageType : declaredType;
+    if (!isSupportedAuditMediaType(mediaType)) {
+      throw new Error('Unsupported report format. Upload a PDF, HTML, or plain-text credit report.');
+    }
+    const report = { base64: bytes.toString('base64'), mediaType };
+    downloadedReportBytes += bytes.length;
+    downloadedReports.set(file.path, report);
+    return report;
   }
 
   // Mirrors client-side saveAudit(): starting-score auto-populate, audits
@@ -581,12 +771,12 @@ export const handler = async (event) => {
       if (!f) throw new Error('No report file attached to this job.');
       const stage = job.mode === 'single' ? 'Analyzing ' + (f.bureau || 'bureau') + ' report' : 'Analyzing 3-bureau report';
       await progress(stage, null)(0);
-      const b64 = await downloadBase64(f.path);
+      const report = await downloadReport(f);
       const prompt = job.mode === 'single' ? singleBureauAuditPrompt(t, f.bureau) : combinedAuditPrompt(t);
-      const raw = await claudeCall(buildReportContent(b64, prompt, f.type), {
+      const raw = await claudeCall(buildReportContent(report.base64, prompt, report.mediaType), {
         schema: AUDIT_SCHEMA, onTokens: progress(stage, null),
       });
-      audit = parseAuditJSON(raw);
+      audit = assertAuditOutput(parseAuditJSON(raw));
     } else if (job.mode === 'individual') {
       const byBureau = {};
       for (const f of files) byBureau[(f.bureau || '').toLowerCase()] = f;
@@ -600,19 +790,19 @@ export const handler = async (event) => {
         const f = byBureau[key];
         if (!f) throw new Error('Missing ' + key + ' file on this job.');
         await progress(stage, pct)(0);
-        const b64 = await downloadBase64(f.path);
+        const report = await downloadReport(f);
         const bureauName = key === 'equifax' ? 'Equifax' : key === 'experian' ? 'Experian' : 'TransUnion';
-        const raw = await claudeCall(buildReportContent(b64, bureauParsePrompt(t, bureauName), f.type), {
+        const raw = await claudeCall(buildReportContent(report.base64, bureauParsePrompt(t, bureauName), report.mediaType), {
           schema: BUREAU_SCHEMA, onTokens: progress(stage, pct),
         });
-        parsed[key] = parseAuditJSON(raw);
+        parsed[key] = assertBureauOutput(parseAuditJSON(raw), bureauName);
       }
       await progress('Cross-bureau reconciliation & ranking', 80)(0);
       const mergeRaw = await claudeCall(
         [{ type: 'text', text: mergeAuditPrompt(t, parsed.equifax, parsed.experian, parsed.transunion) }],
         { schema: AUDIT_SCHEMA, onTokens: progress('Cross-bureau reconciliation & ranking', 80) },
       );
-      audit = parseAuditJSON(mergeRaw);
+      audit = assertAuditOutput(parseAuditJSON(mergeRaw));
       if (audit && audit.client) {
         audit.client.scores = audit.client.scores || {};
         if (parsed.equifax?.client?.score) audit.client.scores.equifax = parsed.equifax.client.score;
@@ -658,15 +848,15 @@ export const handler = async (event) => {
     try {
       const enrichmentContent = [];
       for (const f of files) {
-        const b64 = await downloadBase64(f.path);
-        enrichmentContent.push(buildReportContent(b64, '', f.type)[0]);
+        const report = await downloadReport(f);
+        enrichmentContent.push(buildReportContent(report.base64, '', report.mediaType)[0]);
       }
       enrichmentContent.push({ type: 'text', text: accountEnrichmentPrompt(t, audit.accounts) });
 
       const enrichRaw = await claudeCall(enrichmentContent, {
         schema: ACCOUNT_ENRICHMENT_SCHEMA, maxTokens: 4000, onTokens: progress('Enriching account details', 90),
       });
-      const enrichment = parseAuditJSON(enrichRaw);
+      const enrichment = assertEnrichmentOutput(parseAuditJSON(enrichRaw));
       const byId = new Map((enrichment?.accounts || []).map((e) => [e.id, e]));
       for (const acct of audit.accounts || []) {
         const e = byId.get(acct.id);
@@ -719,15 +909,31 @@ export const handler = async (event) => {
 
     await updateJob({
       status: 'done', stage: 'Complete', pct: 100, result: audit,
-      usage: { calls: usageLog, totals }, finished_at: new Date().toISOString(),
+      usage: {
+        model: AUDIT_MODEL,
+        effort: AUDIT_EFFORT,
+        calls: usageLog,
+        totals,
+      },
+      finished_at: new Date().toISOString(),
     }, true);
   } catch (e) {
     console.error('audit-run failed:', e);
-    await updateJob({
-      status: 'error', error: e.message || 'Audit failed',
-      usage: usageLog.length ? { calls: usageLog } : null,
-      finished_at: new Date().toISOString(),
-    }, true);
+    try {
+      await updateJob({
+        status: 'error', error: e.message || 'Audit failed',
+        usage: usageLog.length ? {
+          model: AUDIT_MODEL,
+          effort: AUDIT_EFFORT,
+          calls: usageLog,
+        } : null,
+        finished_at: new Date().toISOString(),
+      }, true);
+    } catch (jobWriteErr) {
+      // Stale-job recovery at the start of the next request makes a failed
+      // terminal write observable/retryable instead of silently stranding it.
+      console.error('audit-run: could not persist failed job state', jobWriteErr.message);
+    }
   } finally {
     // Uploaded report files are transient — remove them either way
     if (filePaths.length) {

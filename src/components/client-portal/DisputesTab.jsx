@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { getReturnReceiptUrl } from '../../utils/api';
 
 const RESPONSE_WINDOW_DAYS = 30;
+const BUREAU_RESPONSE_WINDOW_DAYS = 45;
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function daysBetween(aIso, bIso) {
   const a = new Date(aIso + 'T00:00:00');
@@ -12,26 +13,43 @@ function daysBetween(aIso, bIso) {
 }
 function responseCountdown(l) {
   if (l.response_outcome === 'deleted' || l.response_outcome === 'received' || l.response_outcome === 'no_response') return null;
+  const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
+  const windowDays = isPhase3 ? BUREAU_RESPONSE_WINDOW_DAYS : RESPONSE_WINDOW_DAYS;
   if (l.mailed_date && !l.delivered_at) {
-    return { label: 'In Transit — 30-day window begins upon delivery', tone: 'text-gray-600 bg-gray-50 border-gray-200' };
+    return { label: `In Transit — ${windowDays}-day window begins upon delivery`, tone: 'text-gray-600 bg-gray-50 border-gray-200' };
   }
   const clockStart = l.delivered_at ? l.delivered_at.slice(0, 10) : l.mailed_date;
   if (!clockStart) return null;
   const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = RESPONSE_WINDOW_DAYS - elapsed;
-  const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
+  const remaining = windowDays - elapsed;
   
   if (remaining > 0) {
     if (isPhase3) {
-      return { label: 'Day ' + elapsed + ' of 30 — Bureau investigation in progress', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
+      return { label: 'Day ' + elapsed + ' of ' + windowDays + ' — Bureau investigation in progress', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
     }
-    return { label: 'Day ' + elapsed + ' of 30 — ' + remaining + ' day' + (remaining === 1 ? '' : 's') + ' remaining', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
+    return { label: 'Day ' + elapsed + ' of ' + windowDays + ' — ' + remaining + ' day' + (remaining === 1 ? '' : 's') + ' remaining', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
   }
   
   if (isPhase3) {
     return { label: 'Bureau investigation window closed — final review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
   }
   return { label: 'Response window closed — ready for escalation', tone: 'text-red-700 bg-red-50 border-red-200' };
+}
+
+function responseBadge(l) {
+  const isBureau = l.phase && l.phase.startsWith('Phase 3');
+  if (l.response_outcome === 'deleted') return { label: '🏆 Deleted', tone: 'bg-green-50 text-green-700 border-green-200' };
+  if (l.response_outcome === 'no_response') return { label: isBureau ? 'Bureau window closed' : 'No Response — Escalated', tone: 'bg-red-50 text-red-700 border-red-200' };
+  if (l.response_outcome === 'received' && isBureau) {
+    if (l.bureau_response_status === 'analyzing') return { label: 'Bureau Response Under Review', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
+    if (l.bureau_response_status === 'review_ready') return { label: 'Bureau Review Ready', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
+    if (l.bureau_response_status === 'reviewed') return { label: 'Next Step Recorded', tone: 'bg-green-50 text-green-700 border-green-200' };
+    return { label: 'Bureau Response Received', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
+  }
+  if (l.response_outcome === 'received') return { label: 'Response Received', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
+  if (l.tracking_status === 'Delivered') return { label: 'Delivered', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
+  if (l.mailed_date) return { label: 'In Transit', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
+  return { label: 'Pending', tone: 'bg-gray-50 text-gray-500 border-gray-200' };
 }
 
 function ReturnReceiptButton({ lobId, returnReceiptUrl }) {
@@ -91,6 +109,9 @@ export default function DisputesTab({
         <div className="space-y-4">
           {letters.map(l => (
             <div key={l.id} className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
+              {(() => {
+                const badge = responseBadge(l);
+                return <>
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="text-sm font-bold text-slate-900">
@@ -100,15 +121,8 @@ export default function DisputesTab({
                     {l.phase && l.phase.startsWith('Phase 3') ? 'Phase 3 Escalation' : l.phase}{l.type ? ' · Type ' + l.type : ''}
                   </div>
                 </div>
-                <span className={`text-[10px] px-2.5 py-1 rounded-md whitespace-nowrap uppercase tracking-[0.05em] font-semibold border ${
-                  l.response_outcome === 'deleted' ? 'bg-green-50 text-green-700 border-green-200'
-                  : l.response_outcome === 'no_response' ? 'bg-red-50 text-red-700 border-red-200'
-                  : l.response_outcome === 'received' ? 'bg-blue-50 text-blue-700 border-blue-200'
-                  : l.tracking_status === 'Delivered' ? 'bg-blue-50 text-blue-700 border-blue-200'
-                  : l.mailed_date ? 'bg-amber-50 text-amber-700 border-amber-200'
-                  : 'bg-gray-50 text-gray-500 border-gray-200'
-                }`}>
-                  {l.response_outcome === 'deleted' ? '🏆 Deleted' : l.response_outcome === 'no_response' ? 'No Response — Escalated' : l.response_outcome === 'received' ? 'Response Received' : l.tracking_status === 'Delivered' ? 'Delivered' : l.mailed_date ? 'In Transit' : 'Pending'}
+                <span className={`text-[10px] px-2.5 py-1 rounded-md whitespace-nowrap uppercase tracking-[0.05em] font-semibold border ${badge.tone}`}>
+                  {badge.label}
                 </span>
               </div>
               
@@ -204,6 +218,8 @@ export default function DisputesTab({
                   )}
                 </div>
               )}
+              </>;
+              })()}
             </div>
           ))}
         </div>

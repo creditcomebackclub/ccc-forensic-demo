@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { getLetterSystemPrompt } from '../../src/prompts/letterPrompt.js';
 import { validateFieldCitations, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
+import { requireStaff } from './_requireAuth.cjs';
 
 // Provenance guard (2026-07-24): fails fast at cold start if any Metro 2
 // entry lacks a source citation, so an unsourced field number can never be
@@ -10,8 +11,31 @@ import { validateFieldCitations, assertMapFullySourced } from '../../src/constan
 assertMapFullySourced();
 
 const MODEL = 'claude-sonnet-5';
+const MAX_JOBS_PER_REQUEST = 2;
+const MAX_INSTRUCTION_CHARS = 120000;
+
+function validLetterJob(job) {
+  return !!job
+    && typeof job.id === 'string'
+    && job.id.length > 0
+    && job.id.length <= 255
+    && typeof job.instructions === 'string'
+    && job.instructions.trim().length > 0
+    && job.instructions.length <= MAX_INSTRUCTION_CHARS;
+}
 
 export const handler = async (event) => {
+  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
+
+  let caller;
+  try {
+    caller = await requireStaff(event);
+  } catch (e) {
+    if (e && e.statusCode) return e;
+    console.error('generate-letter: could not authenticate caller', e);
+    return { statusCode: 500, body: 'authentication failed' };
+  }
+
   let payload = null;
   try {
     let bodyText = event.body || '{}';
@@ -21,8 +45,15 @@ export const handler = async (event) => {
     return { statusCode: 400, body: 'Invalid JSON payload' };
   }
 
-  if (!payload || !payload.jobs || !Array.isArray(payload.jobs)) {
+  if (!payload || !Array.isArray(payload.jobs)) {
     return { statusCode: 400, body: 'Valid JSON with jobs array required' };
+  }
+  if (!payload.jobs.length || payload.jobs.length > MAX_JOBS_PER_REQUEST || !payload.jobs.every(validLetterJob)) {
+    return { statusCode: 400, body: 'One or two valid letter jobs are required' };
+  }
+  const jobIds = payload.jobs.map((job) => job.id);
+  if (new Set(jobIds).size !== jobIds.length) {
+    return { statusCode: 400, body: 'Letter job IDs must be unique' };
   }
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
@@ -39,9 +70,31 @@ export const handler = async (event) => {
     realtime: { transport: ws },
   });
 
-  // Debug immediately before Anthropic!
-  if (payload.jobs && payload.jobs[0]) {
-    await supabase.from('letters').update({ html: 'DEBUG: Supabase client created successfully' }).eq('id', payload.jobs[0].id);
+  // The browser may send only IDs and prompt input, never authority to write
+  // arbitrary letters. Resolve every row first and require ownership for an
+  // auditor (admins retain their existing oversight access) before the
+  // service-role client reads settings or calls Anthropic.
+  const { data: letters, error: lettersErr } = await supabase
+    .from('letters')
+    .select('id, user_id, html')
+    .in('id', jobIds);
+  if (lettersErr) {
+    console.error('generate-letter: could not validate letter ownership', lettersErr);
+    return { statusCode: 500, body: 'Could not validate letter jobs' };
+  }
+  const lettersById = new Map((letters || []).map((letter) => [letter.id, letter]));
+  for (const job of payload.jobs) {
+    const letter = lettersById.get(job.id);
+    if (!letter) return { statusCode: 404, body: 'Letter job not found' };
+    if (caller.role !== 'admin' && letter.user_id !== caller.userId) {
+      return { statusCode: 403, body: 'Not authorized for this letter' };
+    }
+    // Generation is only allowed for a placeholder just created by the
+    // staff workflow. This prevents an authenticated request from replacing
+    // an existing saved, mailed, or replied-to letter.
+    if (letter.html !== 'GENERATING...') {
+      return { statusCode: 409, body: 'Letter is not awaiting generation' };
+    }
   }
 
   // Settings' "Default Aggressiveness" previously had zero effect on letter
@@ -64,8 +117,6 @@ export const handler = async (event) => {
 
   for (const job of payload.jobs) {
     try {
-      await supabase.from('letters').update({ html: 'DEBUG: Function started in loop' }).eq('id', job.id);
-      
       // 1. Generate Letter HTML
       const msg = await client.messages.create({
         model: MODEL,
@@ -151,7 +202,7 @@ export const handler = async (event) => {
       if (summary) updateData.summary = summary;
       
       const { error } = await supabase.from('letters').update(updateData).eq('id', job.id);
-      if (error) console.error(`Failed to update letter ${job.id} in DB:`, error);
+      if (error) throw new Error(`Failed to update generated letter: ${error.message}`);
       
     } catch (e) {
       console.error(`Failed to generate letter for job ${job.id}:`, e);

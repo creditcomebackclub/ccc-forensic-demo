@@ -3,6 +3,7 @@ import { Upload, FileText, Trash2, Eye, CheckCircle, Zap } from 'lucide-react';
 import { uploadDocument, uploadArbitraryDocument, getDocuments, getDocumentUrl, deleteDocument } from '../utils/documents';
 import { supabase } from '../utils/supabase';
 import { CONVERTED_PREFIX, groupResponseFiles } from '../utils/responseFiles';
+import { listResponseEvidence } from '../utils/responseEvidence';
 
 // Brand tokens — matches the dashboard / clients card system
 const T = {
@@ -269,22 +270,50 @@ function OtherDocumentsSection({ clientId, clientName, onChanged }) {
   );
 }
 
-function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
+function ResponsesSection({ clientId, clientName, letters, setAnalyzingLetter }) {
   const [responses, setResponses] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
 
-  React.useEffect(() => { loadResponses(); }, [clientName]);
+  React.useEffect(() => { loadResponses(); }, [clientId, clientName]);
 
   const loadResponses = async () => {
     try {
+      // Durable records are the source of truth for new uploads: unlike the
+      // legacy folder scan, they preserve response kind, exact letter link,
+      // file order, and analysis status.
+      const allResponses = [];
+      try {
+        const evidence = await listResponseEvidence({ clientId, clientName });
+        for (const record of evidence.filter((item) => item.upload_status === 'received')) {
+          const matchedLetter = letters.find((letter) => letter.id === record.letter_id);
+          allResponses.push({
+            id: record.id,
+            files: (record.storage_paths || []).map((path, index) => ({ path, fileName: (record.file_names || [])[index] || path.split('/').pop() })),
+            letterId: record.letter_id,
+            furnisher: matchedLetter ? matchedLetter.furnisher : record.client_name,
+            phase: matchedLetter ? matchedLetter.phase : (record.response_kind === 'bureau' ? 'Phase 3' : 'Phase 1'),
+            createdAt: record.received_at || record.created_at,
+            letter: matchedLetter,
+            hasPhase3: matchedLetter ? letters.some((item) => item.furnisher === matchedLetter.furnisher && item.phase?.startsWith('Phase 3')) : false,
+            responseKind: record.response_kind,
+            evidenceId: record.id,
+            analysisStatus: record.analysis_status,
+          });
+        }
+      } catch (e) {
+        // Migration may not yet be present in a preview database. Legacy
+        // responses below remain available rather than breaking the page.
+        console.warn('Response evidence table unavailable:', e.message || e);
+      }
+
       // Get the user_id for this client from client_profiles
-      const { data: cp } = await supabase
-        .from('client_profiles')
-        .select('user_id')
-        .eq('full_name', clientName)
-        .limit(1);
+      const profileQuery = clientId
+        ? supabase.from('client_profiles').select('user_id').eq('client_id', clientId).limit(1)
+        : supabase.from('client_profiles').select('user_id').eq('full_name', clientName).limit(1);
+      const { data: cp } = await profileQuery;
 
       if (!cp || cp.length === 0 || !cp[0].user_id) {
+        setResponses(allResponses);
         setLoading(false);
         return;
       }
@@ -294,13 +323,12 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
         .from('responses')
         .list(userId, { limit: 50, sortBy: { column: 'created_at', order: 'desc' } });
 
-      if (!files || files.length === 0) { setLoading(false); return; }
+      if (!files || files.length === 0) { setResponses(allResponses); setLoading(false); return; }
 
       // For each folder (letter ID), list files inside and group multi-page
       // uploads into a single response entry — a 3-photo response should be
       // one row with one Analyze button, not three
-      const allResponses = [];
-      for (const folder of files) {
+      for (const folder of files.filter((folder) => folder.name !== 'response-evidence')) {
         const { data: folderFiles } = await supabase.storage
           .from('responses')
           .list(userId + '/' + folder.name, { limit: 50 });
@@ -319,12 +347,13 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
               phase: matchedLetter ? matchedLetter.phase : 'Phase 1',
               createdAt: batch.createdAt,
               letter: matchedLetter,
-              hasPhase3
+              hasPhase3,
+              responseKind: matchedLetter?.phase?.startsWith('Phase 3') ? 'bureau' : 'furnisher',
             });
           });
         }
       }
-      setResponses(allResponses);
+      setResponses(allResponses.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))));
     } catch(e) { console.error('Could not load responses:', e); }
     finally { setLoading(false); }
   };
@@ -349,6 +378,7 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
       ...resp.letter,
       _preloadedFiles: resp.files.map(f => ({ name: f.fileName })),
       _analyzeFilePaths: resp.files.map(f => f.path),
+      _responseEvidenceId: resp.evidenceId || null,
       _fromStorage: true,
     });
   };
@@ -378,7 +408,7 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
                 )}
               </div>
               <div className="text-[10px] truncate" style={{ color: T.muted }}>
-                {resp.phase} · {resp.createdAt ? new Date(resp.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown date'}
+                {resp.phase} · {resp.responseKind === 'bureau' ? 'Bureau response' : 'Furnisher response'} · {resp.createdAt ? new Date(resp.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Unknown date'}
               </div>
             </div>
           </div>
@@ -388,12 +418,17 @@ function ResponsesSection({ clientName, letters, setAnalyzingLetter }) {
               style={{ borderColor: T.border, color: T.muted }}>
               <Eye size={11} strokeWidth={1.75} /> View
             </button>
-            {resp.letter && !resp.hasPhase3 && (
+            {resp.letter && resp.responseKind !== 'bureau' && !resp.hasPhase3 && (
               <button onClick={() => handleAnalyze(resp)}
                 className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md"
                 style={{ background: T.navy, color: T.gold }}>
                 <Zap size={10} strokeWidth={2} /> Analyze
               </button>
+            )}
+            {resp.responseKind === 'bureau' && (
+              <span className="text-[10px] uppercase tracking-wider" style={{ color: T.faint }}>
+                {resp.analysisStatus === 'analyzed' ? 'Analyzed' : 'Use Phase 3 row'}
+              </span>
             )}
           </div>
         </div>
@@ -430,7 +465,7 @@ export default function DocumentManager({ clientId, clientName, letters, onChang
       </div>
       <div>
         <SectionLabel>Client-Uploaded Responses</SectionLabel>
-        <ResponsesSection clientName={clientName} letters={letters || []} setAnalyzingLetter={setAnalyzingLetter} />
+        <ResponsesSection clientId={clientId} clientName={clientName} letters={letters || []} setAnalyzingLetter={setAnalyzingLetter} />
       </div>
     </div>
   );

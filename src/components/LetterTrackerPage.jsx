@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Clock, ChevronRight, AlertTriangle, Mail } from 'lucide-react';
-import { adminListClients } from '../utils/storage';
-import { inFlightLettersForClient } from '../utils/inFlightLetters';
+import { listInFlightLetterRows } from '../utils/storage';
 
 const T = {
   navy: '#1B2A4A',
@@ -34,49 +33,83 @@ function daysLabel(row) {
   return row.daysRemaining + 'd left';
 }
 
+function decorateInFlightRow(row) {
+  const deadline = row.deadline ? new Date(row.deadline + 'T00:00:00') : null;
+  const daysRemaining = deadline ? Math.ceil((deadline - new Date()) / 86400000) : null;
+  let status;
+  if (!deadline) status = 'in_transit';
+  else if (daysRemaining <= 0) status = 'overdue';
+  else if (daysRemaining <= 5) status = 'due_soon';
+  else status = 'awaiting';
+  return { ...row, daysRemaining, status };
+}
+
+function groupInFlightRows(rows) {
+  const byClient = new Map();
+  for (const row of rows) {
+    const key = row.clientId ? 'id:' + row.clientId : 'legacy:' + row.letterId;
+    if (!byClient.has(key)) byClient.set(key, []);
+    byClient.get(key).push(row);
+  }
+
+  const sortAsc = (a, b) => {
+    if (a.daysRemaining === null && b.daysRemaining === null) return 0;
+    if (a.daysRemaining === null) return 1;
+    if (b.daysRemaining === null) return -1;
+    return a.daysRemaining - b.daysRemaining;
+  };
+
+  const groups = [...byClient.values()].map((letters) => {
+    const sorted = [...letters].sort(sortAsc);
+    return { clientId: sorted[0].clientId, clientName: sorted[0].clientName, letters: sorted, soonest: sorted[0] };
+  });
+  return groups.sort((a, b) => sortAsc(a.soonest, b.soonest));
+}
+
 export default function LetterTrackerPage({ onNavigate, isAdmin }) {
   const [groups, setGroups] = useState([]);
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [totalCount, setTotalCount] = useState(0);
   const [counts, setCounts] = useState({ overdue: 0, dueSoon: 0, awaiting: 0, inTransit: 0 });
 
-  useEffect(() => {
-    adminListClients().then((clients) => {
-      const rows = [];
-      for (const c of clients) {
-        const latestAccounts = (c.audits && c.audits[0] && c.audits[0].audit && c.audits[0].audit.accounts) || [];
-        rows.push(...inFlightLettersForClient(c.name, c.letters, latestAccounts));
-      }
-
-      const byClient = new Map();
-      for (const r of rows) {
-        if (!byClient.has(r.clientName)) byClient.set(r.clientName, []);
-        byClient.get(r.clientName).push(r);
-      }
-
-      const sortAsc = (a, b) => {
-        if (a.daysRemaining === null && b.daysRemaining === null) return 0;
-        if (a.daysRemaining === null) return 1;
-        if (b.daysRemaining === null) return -1;
-        return a.daysRemaining - b.daysRemaining;
-      };
-
-      const groupList = [...byClient.entries()].map(([clientName, letters]) => {
-        const sorted = [...letters].sort(sortAsc);
-        return { clientName, letters: sorted, soonest: sorted[0] };
-      });
-      // Group by client, ordered by that client's soonest deadline.
-      groupList.sort((a, b) => sortAsc(a.soonest, b.soonest));
-
-      setGroups(groupList);
+  const load = async (append = false) => {
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+    try {
+      const page = await listInFlightLetterRows({ limit: 200, cursor: append ? nextCursor : null });
+      const incoming = page.rows.map(decorateInFlightRow);
+      const nextRows = append
+        ? [...rows, ...incoming.filter((row) => !rows.some((existing) => existing.letterId === row.letterId))]
+        : incoming;
+      setRows(nextRows);
+      setGroups(groupInFlightRows(nextRows));
       setCounts({
-        overdue: rows.filter((r) => r.status === 'overdue').length,
-        dueSoon: rows.filter((r) => r.status === 'due_soon').length,
-        awaiting: rows.filter((r) => r.status === 'awaiting').length,
-        inTransit: rows.filter((r) => r.status === 'in_transit').length,
+        overdue: nextRows.filter((r) => r.status === 'overdue').length,
+        dueSoon: nextRows.filter((r) => r.status === 'due_soon').length,
+        awaiting: nextRows.filter((r) => r.status === 'awaiting').length,
+        inTransit: nextRows.filter((r) => r.status === 'in_transit').length,
       });
+      setNextCursor(page.nextCursor);
+      setTotalCount(page.totalCount);
+    } catch (error) {
+      console.error('Could not load in-flight letters:', error);
+      if (!append) {
+        setRows([]);
+        setGroups([]);
+        setCounts({ overdue: 0, dueSoon: 0, awaiting: 0, inTransit: 0 });
+      }
+    } finally {
       setLoading(false);
-    });
-  }, []);
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin) load();
+  }, [isAdmin]);
 
   if (!isAdmin) {
     return <div className="p-8 text-center text-muted">Access Denied. Admins only.</div>;
@@ -100,7 +133,10 @@ export default function LetterTrackerPage({ onNavigate, isAdmin }) {
       <div>
         <h1 className="text-2xl font-bold ccc-display" style={{ color: T.navy }}>Letter Tracker</h1>
         <p className="text-[13px] mt-1" style={{ color: T.muted }}>
-          All mailed, unresolved letters across every client — {totalInFlight} in flight. Display only; nothing here triggers analysis.
+          {totalCount > rows.length
+            ? `Showing ${rows.length} of ${totalCount} mailed, unresolved letters — ordered by deadline.`
+            : `All mailed, unresolved letters across every client — ${totalInFlight} in flight.`}
+          {' '}Display only; nothing here triggers analysis.
         </p>
       </div>
 
@@ -108,7 +144,7 @@ export default function LetterTrackerPage({ onNavigate, isAdmin }) {
         <div className="bg-white p-4 rounded-xl border" style={{ borderColor: counts.overdue > 0 ? '#FECACA' : T.border }}>
           <div className="text-[11px] font-bold uppercase tracking-wider" style={{ color: T.muted }}>Overdue</div>
           <div className="text-2xl font-bold mt-1" style={{ color: counts.overdue > 0 ? T.red : T.ink }}>{counts.overdue}</div>
-          <div className="text-[11px]" style={{ color: T.faint }}>§1681s-2(b) non-response — Phase 3 eligible</div>
+          <div className="text-[11px]" style={{ color: T.faint }}>Past the applicable response window</div>
         </div>
         <div className="bg-white p-4 rounded-xl border" style={{ borderColor: T.border }}>
           <div className="text-[11px] font-bold uppercase tracking-wider" style={{ color: T.muted }}>Due soon</div>
@@ -135,9 +171,9 @@ export default function LetterTrackerPage({ onNavigate, isAdmin }) {
       ) : (
         <div className="flex flex-col gap-4">
           {groups.map((g) => (
-            <div key={g.clientName} className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: T.border }}>
+            <div key={g.clientId || g.soonest.letterId} className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: T.border }}>
               <button
-                onClick={() => onNavigate('clients', { jumpTo: g.clientName })}
+                onClick={() => onNavigate('clients', { jumpTo: g.clientId || g.clientName })}
                 className="w-full flex items-center justify-between px-5 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
               >
                 <span className="text-[13px] font-bold" style={{ color: T.navy }}>{g.clientName}</span>
@@ -176,6 +212,16 @@ export default function LetterTrackerPage({ onNavigate, isAdmin }) {
               </div>
             </div>
           ))}
+          {nextCursor && (
+            <button
+              onClick={() => load(true)}
+              disabled={loadingMore}
+              className="self-center mt-2 px-4 py-2 rounded-md border text-[11px] font-semibold uppercase tracking-wider disabled:opacity-50"
+              style={{ borderColor: T.border, color: T.navy }}
+            >
+              {loadingMore ? 'Loading…' : `Load next ${Math.min(200, Math.max(0, totalCount - rows.length))} letters`}
+            </button>
+          )}
         </div>
       )}
     </div>

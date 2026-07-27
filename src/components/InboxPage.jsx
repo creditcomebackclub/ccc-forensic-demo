@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Star, ChevronRight, Send, Clock, Inbox as InboxIcon, FileSignature, FileSearch, MapPinned, Mail as MailIcon, Zap } from 'lucide-react';
-import { adminListClients, updateLetter } from '../utils/storage';
+import { getLetterForMail, listAllClientSummaries, updateLetter } from '../utils/storage';
 import { getUnanalyzedResponseStats } from '../utils/actionItems';
 import { normalizeFurnisher } from '../utils/diffEngine';
 import LobMailer from './LobMailer';
@@ -48,7 +48,7 @@ function fmtTime(iso) {
 // client can have an account awaiting address confirmation AND a different
 // letter ready to mail AND an unanalyzed response, all at once — that's
 // real and each needs its own card.
-function computeInboxColumns(clients, unanalyzedNames) {
+function computeInboxColumns(clients, unanalyzedNames, unanalyzedClientIds) {
   const newLeads = [];
   const needsLpoa = [];
   const auditComplete = [];
@@ -58,15 +58,15 @@ function computeInboxColumns(clients, unanalyzedNames) {
 
   for (const c of clients) {
     if (c.status === 'lead') {
-      newLeads.push({ name: c.name, isVip: c.isVip, createdAt: c.leadCreatedAt, source: c.leadSource });
+      newLeads.push({ clientId: c.id, name: c.name, isVip: c.isVip, createdAt: c.leadCreatedAt, source: c.leadSource });
       continue;
     }
 
     if (!c.lpoaSigned) {
-      needsLpoa.push({ name: c.name, isVip: c.isVip, hasAudit: c.audits.length > 0, enrollmentDate: c.enrollmentDate });
+      needsLpoa.push({ clientId: c.id, name: c.name, isVip: c.isVip, hasAudit: c.audits.length > 0, enrollmentDate: c.enrollmentDate });
     } else if (c.audits.length > 0 && c.letters.length === 0) {
       const latest = c.audits[0] && c.audits[0].audit;
-      auditComplete.push({ name: c.name, isVip: c.isVip, accountsTargeted: (latest && latest.accountsTargeted) || 0, savedAt: c.audits[0].savedAt });
+      auditComplete.push({ clientId: c.audits[0].clientId || c.id, name: c.name, isVip: c.isVip, accountsTargeted: (latest && latest.accountsTargeted) || 0, savedAt: c.audits[0].savedAt });
     }
 
     const latestAccounts = (c.audits[0] && c.audits[0].audit && c.audits[0].audit.accounts) || [];
@@ -77,19 +77,19 @@ function computeInboxColumns(clients, unanalyzedNames) {
       // resolves. CONFIRM ones are a single approve-click, not a lookup, so
       // status rides along for the UI to distinguish.
       if (acct.addressStatus === 'PENDING' || acct.addressStatus === 'CONFIRM') {
-        addressConfirm.push({ client: c.name, isVip: c.isVip, furnisher: acct.furnisher, accountId: acct.id, status: acct.addressStatus });
+        addressConfirm.push({ clientId: c.id, client: c.name, isVip: c.isVip, furnisher: acct.furnisher, accountId: acct.id, status: acct.addressStatus });
       }
     }
 
     for (const l of c.letters) {
       if (l.phase?.startsWith('Phase 3')) continue;
       if (!l.mailedDate) {
-        readyToMail.push({ client: c.name, isVip: c.isVip, furnisher: l.furnisher, savedAt: l.savedAt, ageDays: l.savedAt ? daysBetween(l.savedAt, todayISO()) : 0, letter: l });
+        readyToMail.push({ clientId: l.clientId || c.id, client: l.clientName || c.name, isVip: c.isVip, furnisher: l.furnisher, savedAt: l.savedAt, ageDays: l.savedAt ? daysBetween(l.savedAt, todayISO()) : 0, letter: l });
       }
     }
 
-    if (unanalyzedNames.has(c.name)) {
-      phase2Inbox.push({ name: c.name, isVip: c.isVip });
+    if (unanalyzedClientIds?.has(c.id) || unanalyzedNames.has(c.name)) {
+      phase2Inbox.push({ clientId: c.id, name: c.name, isVip: c.isVip });
     }
   }
 
@@ -174,17 +174,44 @@ export default function InboxPage({ isAdmin, onNavigate }) {
   const [columns, setColumns] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
+  const [openingLetterId, setOpeningLetterId] = useState(null);
+  const [truncated, setTruncated] = useState(false);
 
   const load = async () => {
-    const [clients, unanalyzed] = await Promise.all([
-      adminListClients(),
-      getUnanalyzedResponseStats(),
-    ]);
-    setColumns(computeInboxColumns(clients, unanalyzed.clientNames));
-    setLoading(false);
+    setLoading(true);
+    try {
+      const [summary, unanalyzed] = await Promise.all([
+        listAllClientSummaries(),
+        getUnanalyzedResponseStats(),
+      ]);
+      setColumns(computeInboxColumns(summary.clients, unanalyzed.clientNames, unanalyzed.clientIds));
+      setTruncated(summary.truncated);
+    } catch (error) {
+      console.error('Could not load inbox work items:', error);
+      setColumns(computeInboxColumns([], new Set(), new Set()));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (isAdmin) load();
+  }, [isAdmin]);
+
+  const openMailer = async (letterId) => {
+    if (!letterId || openingLetterId) return;
+    setOpeningLetterId(letterId);
+    try {
+      // Summary rows deliberately omit HTML. LobMailer receives this exact
+      // row only after a just-in-time, RLS-protected detail fetch.
+      setLobMailerLetter(await getLetterForMail(letterId));
+    } catch (error) {
+      console.error('Could not open letter for mailing:', error);
+      window.alert('Could not load this letter for mailing. Please open the client record and try again.');
+    } finally {
+      setOpeningLetterId(null);
+    }
+  };
 
   if (!isAdmin) {
     return <div className="p-8 text-center text-muted">Access Denied. Admins only.</div>;
@@ -201,33 +228,34 @@ export default function InboxPage({ isAdmin, onNavigate }) {
     );
   }
 
-  const goto = (name) => onNavigate('clients', { jumpTo: name });
+  const goto = (clientId, fallbackName) => onNavigate('clients', { jumpTo: clientId || fallbackName });
 
   return (
     <div style={{ padding: '20px 32px 32px' }}>
       <div className="mb-5">
         <h1 className="text-2xl font-bold ccc-display" style={{ color: T.navy }}>Inbox</h1>
         <p className="text-[13px] mt-1" style={{ color: T.muted }}>Every client and letter that needs a decision, in one place — organized by what's blocking it.</p>
+        {truncated && <p className="text-[11px] mt-1 text-amber-700">Showing the first 10,000 client summaries. Refine the CRM before adding more operating queues.</p>}
       </div>
 
       <div className="flex gap-4 overflow-x-auto pb-2">
         <Column icon={InboxIcon} title="New Leads" hint="Not yet converted" count={columns.newLeads.length} empty="No new leads">
           {columns.newLeads.map((l, i) => (
-            <ItemCard key={i} onClick={() => goto(l.name)} isVip={l.isVip} title={l.name}
+            <ItemCard key={i} onClick={() => goto(l.clientId, l.name)} isVip={l.isVip} title={l.name}
               subtitle={l.source || (l.createdAt ? fmtTime(l.createdAt) : null)} />
           ))}
         </Column>
 
         <Column icon={FileSignature} title="Needs LPOA" hint="Can't dispute until signed" count={columns.needsLpoa.length} empty="Everyone's signed">
           {columns.needsLpoa.map((c, i) => (
-            <ItemCard key={i} onClick={() => goto(c.name)} isVip={c.isVip} title={c.name}
+            <ItemCard key={i} onClick={() => goto(c.clientId, c.name)} isVip={c.isVip} title={c.name}
               subtitle={c.hasAudit ? 'Audit on file, awaiting signature' : 'No audit yet'} />
           ))}
         </Column>
 
         <Column icon={Zap} title="Audit Complete" hint="No letters generated yet" count={columns.auditComplete.length} empty="Nothing waiting">
           {columns.auditComplete.map((c, i) => (
-            <ItemCard key={i} onClick={() => goto(c.name)} isVip={c.isVip} title={c.name}
+            <ItemCard key={i} onClick={() => goto(c.clientId, c.name)} isVip={c.isVip} title={c.name}
               subtitle={c.accountsTargeted + ' account' + (c.accountsTargeted === 1 ? '' : 's') + ' targeted'} />
           ))}
         </Column>
@@ -241,7 +269,7 @@ export default function InboxPage({ isAdmin, onNavigate }) {
               </div>
               <div className="space-y-1.5 mb-2">
                 {g.items.map((a, i) => (
-                  <ItemCard key={i} onClick={() => goto(a.client)} isVip={a.isVip} title={a.client}
+                  <ItemCard key={i} onClick={() => goto(a.clientId, a.client)} isVip={a.isVip} title={a.client}
                     subtitle={a.status === 'CONFIRM' ? 'Suggested address — 1 click to approve' : 'No address on file yet'} />
                 ))}
               </div>
@@ -251,15 +279,15 @@ export default function InboxPage({ isAdmin, onNavigate }) {
 
         <Column icon={MailIcon} title="Ready to Mail" hint="Generated, not yet sent" count={columns.readyToMail.length} empty="Nothing waiting to mail">
           {columns.readyToMail.map((r, i) => (
-            <ItemCard key={i} onClick={() => goto(r.client)} isVip={r.isVip} title={r.client}
+            <ItemCard key={i} onClick={() => goto(r.clientId, r.client)} isVip={r.isVip} title={r.client}
               subtitle={r.furnisher + ' · generated ' + fmtTime(r.savedAt)}
               right={
                 <>
                   <AgeBadge days={r.ageDays} />
-                  <button onClick={(e) => { e.stopPropagation(); setLobMailerLetter(r.letter); }}
-                    className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm shrink-0 transition-colors"
+                  <button onClick={(e) => { e.stopPropagation(); openMailer(r.letter.id); }} disabled={openingLetterId === r.letter.id}
+                    className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm shrink-0 transition-colors disabled:opacity-60"
                     style={{ backgroundColor: T.navy, color: T.gold }}>
-                    <Send size={10} strokeWidth={2} /> Send
+                    <Send size={10} strokeWidth={2} /> {openingLetterId === r.letter.id ? 'Opening…' : 'Send'}
                   </button>
                 </>
               }
@@ -269,7 +297,7 @@ export default function InboxPage({ isAdmin, onNavigate }) {
 
         <Column icon={FileSearch} title="Phase 2 Inbox" hint="Response uploaded, not analyzed" count={columns.phase2Inbox.length} empty="Nothing to triage">
           {columns.phase2Inbox.map((c, i) => (
-            <ItemCard key={i} onClick={() => goto(c.name)} isVip={c.isVip} title={c.name} subtitle="Open Documents tab to analyze" />
+            <ItemCard key={i} onClick={() => goto(c.clientId, c.name)} isVip={c.isVip} title={c.name} subtitle="Open Documents tab to analyze" />
           ))}
         </Column>
       </div>

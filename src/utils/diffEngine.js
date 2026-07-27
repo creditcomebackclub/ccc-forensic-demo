@@ -80,6 +80,10 @@ function isNegativeAccount(acct) {
 
 function accountSummary(acct) {
   return {
+    // Assigned at audit ingest and stable across report re-runs. The
+    // cross-phase lifecycle uses it before falling back to weaker name/mask
+    // matching, so two same-furnisher tradelines never share a status.
+    clientAccountId: acct.clientAccountId || null,
     furnisher: acct.furnisher,
     accountNumberMasked: acct.accountNumberMasked,
     balance: acct.balance,
@@ -185,6 +189,7 @@ export function diffAuditAccounts(oldAudit, newAudit) {
 
     if (fieldChanges.length > 0 || violationsChanged) {
       changed.push({
+        clientAccountId: newAcct.clientAccountId || oldAcct.clientAccountId || null,
         furnisher: newAcct.furnisher,
         accountNumberMasked: newAcct.accountNumberMasked,
         changes: Object.fromEntries(fieldChanges.map(([k, o, n]) => [k, { old: o, new: n }])),
@@ -201,7 +206,11 @@ export function diffAuditAccounts(oldAudit, newAudit) {
         newBalance: newAcct.balance,
       });
     } else {
-      unchanged.push({ furnisher: newAcct.furnisher, accountNumberMasked: newAcct.accountNumberMasked });
+      unchanged.push({
+        clientAccountId: newAcct.clientAccountId || oldAcct.clientAccountId || null,
+        furnisher: newAcct.furnisher,
+        accountNumberMasked: newAcct.accountNumberMasked,
+      });
     }
   }
 

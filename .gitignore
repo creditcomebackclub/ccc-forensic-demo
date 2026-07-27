@@ -7,6 +7,7 @@ agents/__pycache__
 .env.*.save
 *.save
 .netlify
+supabase/.temp/
 deno.lock
 *.log
 .DS_Store

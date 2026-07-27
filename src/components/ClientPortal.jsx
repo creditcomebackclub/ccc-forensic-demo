@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
-import { inferMediaType, isAnalyzable, transcodeImageToJpeg, uploadResponseBatch, validateBatch, RESPONSE_ACCEPT } from '../utils/responseFiles';
+import { inferMediaType, isAnalyzable, transcodeImageToJpeg, validateBatch, RESPONSE_ACCEPT } from '../utils/responseFiles';
+import { uploadResponseEvidence } from '../utils/responseEvidence';
 import { LogOut } from 'lucide-react';
 import { Toaster, toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getSettings } from '../utils/settings';
 
 import OverviewTab from './client-portal/OverviewTab';
 import ProgressTab from './client-portal/ProgressTab';
@@ -26,7 +26,6 @@ export default function ClientPortal({ session, onSignOut }) {
   const [uploadingLetter, setUploadingLetter] = useState(null);
   const [clientDocs, setClientDocs] = useState({ id: null, address: null, other: [] });
   const [uploadingDoc, setUploadingDoc] = useState(null);
-  const [settings, setSettings] = useState(null);
   
   const [monitoringForm, setMonitoringForm] = useState({ service: '', email: '', password: '', ssnLast4: '' });
   const [monitoringStep, setMonitoringStep] = useState('view'); // view | edit
@@ -43,9 +42,6 @@ export default function ClientPortal({ session, onSignOut }) {
 
   const loadData = async () => {
     try {
-      const s = await getSettings();
-      setSettings(s);
-
       const { data: cpRows } = await supabase.from('client_profiles').select('*').eq('user_id', session.user.id).limit(1);
       let cp = cpRows && cpRows.length > 0 ? cpRows[0] : null;
       if (!cp) {
@@ -71,9 +67,13 @@ export default function ClientPortal({ session, onSignOut }) {
         const documentsQuery = cp.client_id
           ? supabase.from('documents').select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_id', cp.client_id)
           : supabase.from('documents').select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_name', cp.full_name);
+        // The client portal needs campaign state, not staff-only model output
+        // or response-review notes. Keep the browser query intentionally
+        // narrow; raw response evidence remains private to the staff UI.
+        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status';
         const lettersQuery = cp.client_id
-          ? supabase.from('letters').select('*').eq('client_id', cp.client_id).order('saved_at', { ascending: true })
-          : supabase.from('letters').select('*').eq('client_name', cp.full_name).order('saved_at', { ascending: true });
+          ? supabase.from('letters').select(portalLetterColumns).eq('client_id', cp.client_id).order('saved_at', { ascending: true })
+          : supabase.from('letters').select(portalLetterColumns).eq('client_name', cp.full_name).order('saved_at', { ascending: true });
         const auditsQuery = cp.client_id
           ? supabase.from('audits').select('audit,saved_at').eq('client_id', cp.client_id).order('saved_at', { ascending: false }).limit(5)
           : supabase.from('audits').select('audit,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5);
@@ -199,37 +199,11 @@ export default function ClientPortal({ session, onSignOut }) {
     setSubmitError(prev => ({ ...prev, [letter.id]: null }));
     const toastId = toast.loading('Submitting response...');
     try {
-      const basePath = session.user.id + '/' + letter.id;
-      const paths = await uploadResponseBatch(supabase, basePath, files);
-
-      // Get the public URL of the first uploaded page so the portal can display it
-      const { data: urlData } = supabase.storage.from('client-docs').getPublicUrl(paths[0]);
-      const responseFileUrl = urlData?.publicUrl || null;
-
-      // Save the URL and mark the letter as responded
-      await supabase.from('letters').update({
-        response_outcome: 'received',
-        response_date: new Date().toISOString().slice(0, 10),
-        ...(responseFileUrl ? { response_file_url: responseFileUrl } : {}),
-      }).eq('id', letter.id);
-
-      if (settings?.notifications?.emailClientUploads !== false) {
-        await fetch('/.netlify/functions/send-lpoa', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-          },
-          body: JSON.stringify({
-            action: 'client_response_uploaded',
-            clientName: profile.full_name,
-            furnisher: letter.furnisher,
-            phase: letter.phase,
-            storagePath: paths[0],
-            pageCount: paths.length,
-          }),
-        });
-      }
+      // The server verifies this session owns this exact letter, writes the
+      // private evidence record, and then marks only the response state. The
+      // portal never receives a public file URL or general letter update
+      // permission.
+      const evidence = await uploadResponseEvidence(letter.id, files);
 
       setStagedFiles(prev => ({ ...prev, [letter.id]: [] }));
       setUploadSuccess(letter.id);
@@ -311,11 +285,21 @@ export default function ClientPortal({ session, onSignOut }) {
     if (l.tracking_status === 'Out for Delivery' && l.mailed_date)
       timeline.push({ date: l.mailed_date, icon: '📬', title: 'Out for Delivery — ' + l.furnisher, subtitle: 'Expected delivery today', tone: 'gold' });
 
-    if (l.tracking_status === 'Delivered') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '✅', title: 'Delivered — ' + l.furnisher, subtitle: '30-day response window started', tone: 'green', lobId: l.lob_id, trackingNumber: l.tracking_number });
+    if (l.tracking_status === 'Delivered') {
+      const responseWindow = l.phase?.startsWith('Phase 3') ? '45-day' : '30-day';
+      timeline.push({ date: l.delivered_at || l.mailed_date, icon: '✅', title: 'Delivered — ' + l.furnisher, subtitle: responseWindow + ' response window started', tone: 'green', lobId: l.lob_id, trackingNumber: l.tracking_number });
+    }
     if (l.tracking_status === 'Returned to Sender') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '↩️', title: 'Returned to Sender — ' + l.furnisher, subtitle: 'Letter returned — address may need to be verified', tone: 'red' });
     if (l.tracking_status === 'Available for Pickup') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '🏢', title: 'Available for Pickup — ' + l.furnisher, subtitle: 'Awaiting pickup at post office', tone: 'gold' });
 
-    if (l.response_outcome === 'received') timeline.push({ date: l.response_date, icon: '📬', title: 'Response received — ' + l.furnisher, tone: 'gold', responseUrl: l.response_file_url || null });
+    if (l.response_outcome === 'received') {
+      const bureauUpdate = l.phase?.startsWith('Phase 3');
+      const bureauStatus = l.bureau_response_status;
+      const subtitle = bureauUpdate
+        ? (bureauStatus === 'analyzing' ? 'Staff is reviewing the bureau response' : bureauStatus === 'review_ready' ? 'Staff review is ready for the next decision' : bureauStatus === 'reviewed' ? 'Next campaign step recorded' : 'Response received and queued for staff review')
+        : null;
+      timeline.push({ date: l.response_date, icon: '📬', title: (bureauUpdate ? 'Bureau response received — ' : 'Response received — ') + l.furnisher, subtitle, tone: 'gold' });
+    }
     if (l.response_outcome === 'no_response') timeline.push({ date: l.response_date || l.mailed_date, icon: '⚠️', title: 'No response — Phase 3 escalation triggered', subtitle: l.furnisher, tone: 'red' });
     if (l.response_outcome === 'deleted') timeline.push({ date: l.response_date, icon: '🏆', title: 'DELETED — ' + l.furnisher, subtitle: 'Account removed from your credit report', tone: 'green', responseUrl: l.response_file_url || null });
   });

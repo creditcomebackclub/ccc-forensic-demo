@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DollarSign, TrendingUp, TrendingDown, AlertCircle, Clock, CheckCircle, ChevronRight, Activity, Users, Layers, Repeat, UserMinus, Percent, CalendarClock, Timer, Landmark, Receipt, Plus, X } from 'lucide-react';
-import { adminListClients, listExpenses, addExpense, deleteExpense } from '../utils/storage';
+import { listExpenses, addExpense, deleteExpense } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { computeClientCommission, commissionRate } from '../utils/affiliateCommission';
 import { DEFAULT_TIER_PRICING } from '../utils/pricing';
@@ -41,6 +41,51 @@ const recognizedAmount = (tx) => {
 // Date revenue is recognized on: payment date, or an invoice's paid_at (fallback to its date).
 const recognitionDate = (tx) => (tx.type === 'Invoice' ? (tx.paid_at || tx.date) : tx.date);
 const isFwf = (tx) => /first\s*work|fwf|setup\s*fee|initial\s*fee/i.test(tx.description || '');
+
+// This screen is a financial rollup. It does not need the audit payload,
+// rendered letters, portal profiles, or client-sensitive fields brought in by
+// adminListClients(). Keep its snapshot intentionally narrow and page through
+// it so Supabase's default response cap cannot silently omit ledger rows.
+const BILLING_CLIENT_COLUMNS = [
+  'id', 'name', 'billing_status', 'billing_type', 'billing_start_date',
+  'billing_tier', 'referred_by', 'referral_fee', 'ledger', 'status_changed_at',
+].join(',');
+
+async function loadBillingClients() {
+  const pageSize = 250;
+  const clients = [];
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from('clients')
+      .select(BILLING_CLIENT_COLUMNS)
+      .order('id', { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+
+    for (const row of data || []) {
+      clients.push({
+        id: row.id,
+        name: row.name || 'Unnamed client',
+        billingStatus: row.billing_status || null,
+        billingType: row.billing_type || null,
+        billingStartDate: row.billing_start_date || null,
+        billingTier: row.billing_tier || null,
+        referredBy: row.referred_by || null,
+        referralFee: row.referral_fee || null,
+        ledger: Array.isArray(row.ledger) ? row.ledger : [],
+        statusChangedAt: row.status_changed_at || null,
+      });
+    }
+
+    if (!data || data.length < pageSize) return clients;
+  }
+}
+
+function nextMonthStart(month) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  return `${monthNumber === 12 ? year + 1 : year}-${String(monthNumber === 12 ? 1 : monthNumber + 1).padStart(2, '0')}-01`;
+}
 
 function MetricCard({ title, value, icon: Icon, subtitle, highlight = false, alert = false, tone }) {
   const accent = tone === 'good' ? T.green : tone === 'warn' ? T.amber : null;
@@ -192,16 +237,29 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [overheadMonth, setOverheadMonth] = useState(null); // null = current month
+  const [lettersMailedThisMonth, setLettersMailedThisMonth] = useState(null);
+  const currentMonth = ym(new Date().toISOString());
+  const selectedOverheadMonth = overheadMonth || currentMonth;
 
   const loadExpenses = () => listExpenses().then(setExpenses);
   const handleAddExpense = async (payload) => { await addExpense(payload); loadExpenses(); };
   const handleDeleteExpense = async (id) => { await deleteExpense(id); loadExpenses(); };
 
   useEffect(() => {
-    adminListClients().then(data => {
-      setClients(data);
-      setLoading(false);
-    });
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await loadBillingClients();
+        if (!cancelled) setClients(data);
+      } catch (error) {
+        console.error('Could not load billing dashboard clients:', error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    if (isAdmin) load();
+    else setLoading(false);
     loadExpenses();
     // Raw rows keyed by id — affiliateCommission.js reads .commission_rate
     // directly, and .name/.company are used for display where needed.
@@ -215,7 +273,28 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
     supabase.from('commission_payouts').select('client_id, covered_tx_ids, amount').then(({ data }) => {
       if (data) setCommissionPayouts(data);
     });
-  }, []);
+    return () => { cancelled = true; };
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return undefined;
+    let cancelled = false;
+    const monthStart = `${selectedOverheadMonth}-01`;
+    supabase
+      .from('letters')
+      .select('id', { count: 'exact', head: true })
+      .gte('mailed_date', monthStart)
+      .lt('mailed_date', nextMonthStart(selectedOverheadMonth))
+      .then(({ count, error }) => {
+        if (error) {
+          console.error('Could not count mailed letters for billing dashboard:', error);
+          if (!cancelled) setLettersMailedThisMonth(null);
+        } else if (!cancelled) {
+          setLettersMailedThisMonth(count || 0);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [isAdmin, selectedOverheadMonth]);
 
   if (!isAdmin) {
     return <div className="p-8 text-center text-muted">Access Denied. Admins only.</div>;
@@ -349,7 +428,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
     }
 
     if (clientBalance > 0) {
-      overdueAccounts.push({ name: c.name, balance: clientBalance, hasOverdue30, status: c.billingStatus });
+      overdueAccounts.push({ clientId: c.id, name: c.name, balance: clientBalance, hasOverdue30, status: c.billingStatus });
     }
 
     // Commission liability — shared module (src/utils/affiliateCommission.js),
@@ -368,7 +447,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
       if (owed > 0.01) {
         const affLabel = affiliate ? (affiliate.name + (affiliate.company ? ' (' + affiliate.company + ')' : '')) : 'Unknown';
         const rate = commissionRate({ referral_fee: c.referralFee }, affiliate);
-        commissionPayables.push({ name: c.name, affiliate: affLabel, pending: owed, rate });
+        commissionPayables.push({ clientId: c.id, name: c.name, affiliate: affLabel, pending: owed, rate });
       }
     }
   });
@@ -417,7 +496,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   // month they were entered against. Every variable expense is already
   // saved permanently under its own month regardless of which month is
   // being viewed right now — overheadMonth only changes what's displayed.
-  const effectiveOverheadMonth = overheadMonth || thisMonth;
+  const effectiveOverheadMonth = selectedOverheadMonth;
   const overheadMonthEntry = months.find(m => m.ym === effectiveOverheadMonth);
   const collectedThisMonth = overheadMonthEntry ? overheadMonthEntry.value : 0;
   const recurringExpenses = expenses.filter(e => e.category === 'subscription');
@@ -427,8 +506,6 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   const totalExpensesThisMonth = recurringTotal + variableTotal;
   const overheadPct = collectedThisMonth > 0 ? (totalExpensesThisMonth / collectedThisMonth) * 100 : 0;
   const netThisMonth = collectedThisMonth - totalExpensesThisMonth;
-  const lettersMailedThisMonth = clients.reduce((sum, c) => sum + (c.letters || []).filter(l => ym(l.mailedDate) === effectiveOverheadMonth).length, 0);
-
   const tierRows = [
     { key: 'VIP', label: 'VIP', color: T.gold, count: tierMix.VIP },
     { key: 'Standard', label: 'Standard', color: T.navy, count: tierMix.Standard },
@@ -539,7 +616,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
             ) : (
               <div className="flex flex-col gap-1">
                 {commissionPayables.map((p, i) => (
-                  <button key={i} onClick={() => onNavigate('clients', { jumpTo: p.name })}
+                  <button key={i} onClick={() => onNavigate('clients', { jumpTo: p.clientId || p.name })}
                     className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg text-left transition-colors border border-transparent hover:border-gray-100 group">
                     <div>
                       <div className="text-[13px] font-semibold text-ink group-hover:text-blue-600">{p.name}</div>
@@ -607,7 +684,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
             </div>
             <div>
               <div className="text-[10px] uppercase tracking-wider text-faint font-medium mb-1">Letters Mailed</div>
-              <div className="text-[18px] font-bold" style={{ color: T.ink }}>{lettersMailedThisMonth}</div>
+              <div className="text-[18px] font-bold" style={{ color: T.ink }}>{lettersMailedThisMonth ?? '—'}</div>
             </div>
           </div>
           <div className="flex flex-col md:flex-row gap-6">
@@ -631,7 +708,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
             ) : (
               <div className="flex flex-col gap-1">
                 {overdueAccounts.map((account, i) => (
-                  <button key={i} onClick={() => onNavigate('clients', { jumpTo: account.name })}
+                  <button key={i} onClick={() => onNavigate('clients', { jumpTo: account.clientId || account.name })}
                     className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-lg text-left transition-colors border border-transparent hover:border-gray-100 group">
                     <div>
                       <div className="text-[13px] font-semibold text-ink group-hover:text-blue-600">{account.name}</div>
@@ -667,7 +744,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
                 {allTransactions.slice(0, 50).map((tx, i) => (
                   <tr key={tx.id || i} className="border-b last:border-0 hover:bg-slate-50" style={{ borderColor: T.grid }}>
                     <td className="px-5 py-3 text-[12px] text-muted whitespace-nowrap">{tx.date}</td>
-                    <td className="px-5 py-3 text-[13px] font-medium text-navy cursor-pointer hover:text-blue-600 hover:underline" onClick={() => onNavigate('clients', { jumpTo: tx.clientName })}>
+                    <td className="px-5 py-3 text-[13px] font-medium text-navy cursor-pointer hover:text-blue-600 hover:underline" onClick={() => onNavigate('clients', { jumpTo: tx.clientId || tx.clientName })}>
                       {tx.clientName}
                     </td>
                     <td className="px-5 py-3">

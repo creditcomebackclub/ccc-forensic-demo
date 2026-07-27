@@ -306,10 +306,12 @@ export default function App() {
   const [actionItemCount, setActionItemCount] = useState(0);
   const [newLeadsCount, setNewLeadsCount] = useState(0);
   const [unanalyzedClientNames, setUnanalyzedClientNames] = useState(new Set());
+  const [unanalyzedClientIds, setUnanalyzedClientIds] = useState(new Set());
   const refreshActionItems = () => {
-    getUnanalyzedResponseStats().then(({ count, clientNames }) => {
+    getUnanalyzedResponseStats().then(({ count, clientNames, clientIds }) => {
       setActionItemCount(count);
       setUnanalyzedClientNames(clientNames);
+      setUnanalyzedClientIds(clientIds);
     }).catch(() => {});
     import('./utils/actionItems').then(m => m.getNewLeadsCount()).then(c => setNewLeadsCount(c)).catch(() => {});
   };
@@ -490,23 +492,14 @@ export default function App() {
       }
 
       if (!prof) {
-        // No role evidence anywhere. Only accounts that explicitly signed up
-        // through AuthPage may get an auditor profile — never guess a role
-        // for an unrecognized account; show the retry screen instead.
-        if (session.user.user_metadata?.account_type === 'auditor') {
-          const fullName = session.user.user_metadata?.full_name || email;
-          await supabase.from('profiles').upsert(
-            { id: session.user.id, full_name: fullName, role: 'auditor' },
-            { onConflict: 'id', ignoreDuplicates: true }
-          );
-          setProfile({ id: session.user.id, full_name: fullName, role: 'auditor' });
-        } else {
-          setProfileLoadFailed(true);
-          return;
-        }
-      } else {
-        setProfile(prof);
+        // Staff roles are provisioned by an admin/backend before first login.
+        // Never derive an auditor role from user-editable auth metadata or let
+        // a browser create a profiles row — that would make the paid AI
+        // endpoints privilege-escalatable by any new account.
+        setProfileLoadFailed(true);
+        return;
       }
+      setProfile(prof);
       setIsClient(false);
     } catch (e) {
       console.error('loadUser error:', e);
@@ -639,7 +632,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-bg flex">
       <Toaster position="bottom-right" />
-      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={actionItemCount} newLeadsCount={newLeadsCount} hasUnanalyzed={unanalyzedClientNames.size > 0} />
+      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={actionItemCount} newLeadsCount={newLeadsCount} hasUnanalyzed={unanalyzedClientIds.size > 0 || unanalyzedClientNames.size > 0} />
       <main className="flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
@@ -652,7 +645,7 @@ export default function App() {
               <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} displayName={displayName} />
             )}
             {view === VIEW.CLIENTS && (
-              <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" unanalyzedNames={unanalyzedClientNames} />
+              <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" unanalyzedNames={unanalyzedClientNames} unanalyzedClientIds={unanalyzedClientIds} />
             )}
             {view === VIEW.LEADS && (
               <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={null} filter={clientsContext?.filter || null} forceTab="leads" onLeadsChanged={refreshActionItems} />

@@ -1,6 +1,6 @@
 const https = require('https');
 
-function supabaseRequest(path, method, body, url, key) {
+function supabaseRequest(path, method, body, url, key, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const u = new URL(url + path);
@@ -11,6 +11,7 @@ function supabaseRequest(path, method, body, url, key) {
         'apikey': key,
         'Authorization': 'Bearer ' + key,
         'Prefer': 'return=representation',
+        ...extraHeaders,
       },
     };
     if (data) options.headers['Content-Length'] = Buffer.byteLength(data);
@@ -18,14 +19,145 @@ function supabaseRequest(path, method, body, url, key) {
       let raw = '';
       res.on('data', c => raw += c);
       res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: raw ? JSON.parse(raw) : {} }); }
-        catch (e) { resolve({ status: res.statusCode, body: raw }); }
+        try { resolve({ status: res.statusCode, body: raw ? JSON.parse(raw) : {}, headers: res.headers }); }
+        catch (e) { resolve({ status: res.statusCode, body: raw, headers: res.headers }); }
       });
     });
     req.on('error', reject);
     if (data) req.write(data);
     req.end();
   });
+}
+
+// PostgREST caps un-ranged responses (often at 1,000 rows). A cron that
+// silently receives only its first page is worse than one that takes an
+// extra request: older in-flight letters would stop receiving reminders.
+// Keep each page comfortably below the hosted API's default maximum.
+const REST_PAGE_SIZE = 250;
+
+function isSuccessful(response) {
+  return response && response.status >= 200 && response.status < 300;
+}
+
+async function listAllRows(path, url, key, pageSize = REST_PAGE_SIZE) {
+  const rows = [];
+  for (let from = 0; ; from += pageSize) {
+    const response = await supabaseRequest(path, 'GET', null, url, key, {
+      'Range-Unit': 'items',
+      'Range': from + '-' + (from + pageSize - 1),
+    });
+    if (!isSuccessful(response)) {
+      throw new Error('Supabase list failed (' + response.status + ') for ' + path.split('?')[0]);
+    }
+    const page = Array.isArray(response.body) ? response.body : [];
+    // A proxy which ignored Range could return its own default (for example
+    // 1,000 rows) on every pass. Refuse to loop over duplicated pages.
+    if (page.length > pageSize) {
+      throw new Error('Supabase ignored the requested page size for ' + path.split('?')[0]);
+    }
+    const contentRange = response.headers && response.headers['content-range'];
+    const rangeMatch = contentRange && String(contentRange).match(/^(\d+)-\d+\/(?:\d+|\*)$/);
+    if (page.length && rangeMatch && Number(rangeMatch[1]) !== from) {
+      throw new Error('Supabase returned the wrong page for ' + path.split('?')[0]);
+    }
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+  }
+}
+
+async function countRows(path, url, key) {
+  const response = await supabaseRequest(path, 'HEAD', null, url, key, { Prefer: 'count=exact' });
+  if (!isSuccessful(response)) {
+    throw new Error('Supabase count failed (' + response.status + ') for ' + path.split('?')[0]);
+  }
+  const range = response.headers && response.headers['content-range'];
+  const match = range && String(range).match(/\/(\d+|\*)$/);
+  return match && match[1] !== '*' ? Number(match[1]) : 0;
+}
+
+function chunks(values, size = 100) {
+  const out = [];
+  for (let i = 0; i < values.length; i += size) out.push(values.slice(i, i + size));
+  return out;
+}
+
+// PostgREST's `in.(...)` syntax needs quotes for names/emails. Encode the
+// complete parenthesized value so a comma, ampersand, or quote in an email
+// cannot change the surrounding REST query.
+function inFilter(values) {
+  const members = values.map((value) => '"' + String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"');
+  return 'in.' + encodeURIComponent('(' + members.join(',') + ')');
+}
+
+function rememberUnique(map, key, row) {
+  if (!key) return;
+  if (!map.has(key)) {
+    map.set(key, row);
+  } else {
+    const current = map.get(key);
+    // The same profile can arrive once through the client-id batch and again
+    // through the email batch. That is not ambiguity; a different profile is.
+    const sameProfile = current && row
+      && current.client_id === row.client_id
+      && String(current.email || '').toLowerCase() === String(row.email || '').toLowerCase();
+    if (sameProfile || current === null) return;
+    // An email/name fallback that matches more than one portal profile is
+    // unsafe. Preserve the ambiguity explicitly rather than selecting an
+    // arbitrary client to email.
+    map.set(key, null);
+  }
+}
+
+async function loadClientProfiles({ clientIds = [], emails = [] }, url, key) {
+  const byClientId = new Map();
+  const byEmail = new Map();
+  const uniqueIds = [...new Set(clientIds.filter(Boolean))];
+  const uniqueEmails = [...new Set(emails.filter(Boolean).map((email) => String(email).toLowerCase()))];
+  const fields = 'client_id,email,onboarding_complete,agreement_signed_at,signature_data';
+
+  for (const part of chunks(uniqueIds)) {
+    const rows = await listAllRows('/rest/v1/client_profiles?select=' + fields + '&client_id=' + inFilter(part) + '&order=client_id.asc', url, key);
+    for (const row of rows) {
+      rememberUnique(byClientId, row.client_id, row);
+      rememberUnique(byEmail, row.email && String(row.email).toLowerCase(), row);
+    }
+  }
+  for (const part of chunks(uniqueEmails)) {
+    const rows = await listAllRows('/rest/v1/client_profiles?select=' + fields + '&email=' + inFilter(part) + '&order=email.asc', url, key);
+    for (const row of rows) {
+      rememberUnique(byClientId, row.client_id, row);
+      rememberUnique(byEmail, row.email && String(row.email).toLowerCase(), row);
+    }
+  }
+  return { byClientId, byEmail };
+}
+
+async function loadClientsByIds(ids, fields, url, key) {
+  const byId = new Map();
+  for (const part of chunks([...new Set(ids.filter(Boolean))])) {
+    const rows = await listAllRows('/rest/v1/clients?select=' + fields + '&id=' + inFilter(part) + '&order=id.asc', url, key);
+    for (const row of rows) byId.set(row.id, row);
+  }
+  return byId;
+}
+
+async function loadLatestAuditSummariesByClientIds(ids, url, key) {
+  const latestByClientId = new Map();
+  for (const part of chunks([...new Set(ids.filter(Boolean))])) {
+    const rows = await listAllRows(
+      '/rest/v1/audits?select=client_id,audit,saved_at,report_date&client_id=' + inFilter(part) + '&order=saved_at.desc',
+      url,
+      key
+    );
+    for (const row of rows) {
+      if (!row.client_id) continue;
+      const current = latestByClientId.get(row.client_id);
+      const currentDate = current && (current.saved_at || current.report_date) || '';
+      const rowDate = row.saved_at || row.report_date || '';
+      if (!current || rowDate > currentDate) latestByClientId.set(row.client_id, row);
+    }
+  }
+  return latestByClientId;
 }
 
 function sendgridEmail(to, subject, html, apiKey) {
@@ -124,11 +256,22 @@ exports.handler = async () => {
   }
 
   // --- 1. Process tracked delivery clocks and client updates ---
-  const lettersRes = await supabaseRequest(
-    '/rest/v1/letters?select=id,client_id,client_name,furnisher,phase,mailed_date,delivered_at,response_outcome,notifications_sent&response_outcome=is.null',
-    'GET', null, supabaseUrl, supabaseKey
+  const letters = await listAllRows(
+    '/rest/v1/letters?select=id,client_id,client_name,furnisher,phase,mailed_date,delivered_at,response_outcome,notifications_sent,bureau_review_status&response_outcome=is.null&order=id.asc',
+    supabaseUrl,
+    supabaseKey
   );
-  const letters = Array.isArray(lettersRes.body) ? lettersRes.body : [];
+  let profilesByClientId = new Map();
+  if (sgKey) {
+    try {
+      const profiles = await loadClientProfiles({ clientIds: letters.map((letter) => letter.client_id) }, supabaseUrl, supabaseKey);
+      profilesByClientId = profiles.byClientId;
+    } catch (e) {
+      // Delivery clocks and admin alerts must still run if a non-critical
+      // client-email lookup fails. Never fall back to an ambiguous name.
+      console.error('Could not batch-load client profiles for delivery notices:', e.message);
+    }
+  }
   const adminDigestItems = [];
 
   for (const letter of letters) {
@@ -147,17 +290,11 @@ exports.handler = async () => {
 
     let clientEmail = null;
     if (sgKey) {
-      try {
-        // client_id preferred — client_profiles isn't firm-scoped at all
-        // (full_name is the only match key it has besides email), so a
-        // same-named client at a different firm could otherwise get this
-        // email about someone else's dispute.
-        const cpPath = letter.client_id
-          ? '/rest/v1/client_profiles?client_id=eq.' + letter.client_id + '&select=email&limit=1'
-          : '/rest/v1/client_profiles?full_name=eq.' + encodeURIComponent(letter.client_name) + '&select=email&limit=1';
-        const cpRes = await supabaseRequest(cpPath, 'GET', null, supabaseUrl, supabaseKey);
-        clientEmail = cpRes.body && cpRes.body[0] && cpRes.body[0].email;
-      } catch (e) { /* non-fatal */ }
+      const profile = letter.client_id ? profilesByClientId.get(letter.client_id) : null;
+      // Legacy rows without client_id deliberately do not use full_name as a
+      // fallback. `client_profiles` is not firm-scoped by name, and choosing
+      // one same-named person would email the wrong consumer.
+      clientEmail = profile && profile.email || null;
     }
 
     if (sgKey && clientEmail && daysElapsed >= 7 && daysElapsed < 8 && !sent.includes('day7')) {
@@ -218,8 +355,11 @@ exports.handler = async () => {
   let reportRefreshDripsCount = 0;
   if (sgKey) {
     try {
-      const auditsRes = await supabaseRequest('/rest/v1/audits?select=id,client_id,client_name,user_id,saved_at,report_date', 'GET', null, supabaseUrl, supabaseKey);
-      const audits = Array.isArray(auditsRes.body) ? auditsRes.body : [];
+      const audits = await listAllRows(
+        '/rest/v1/audits?select=id,client_id,client_name,user_id,saved_at,report_date&order=saved_at.desc,id.asc',
+        supabaseUrl,
+        supabaseKey
+      );
 
       // Group by client_id when available (falls back to user_id+client_name
       // for rows not yet backfilled — see the client_id migration plan).
@@ -239,18 +379,31 @@ exports.handler = async () => {
         }
       }
 
-      for (const audit of latestAudits.values()) {
+      const dueAudits = [...latestAudits.values()].filter((audit) => {
+        const dateStr = audit.saved_at || audit.report_date;
+        return !!dateStr && daysBetween(dateStr.slice(0, 10), today) >= 35;
+      });
+      const clientsById = await loadClientsByIds(
+        dueAudits.map((audit) => audit.client_id),
+        'id,email,lead_drips_sent',
+        supabaseUrl,
+        supabaseKey
+      );
+
+      for (const audit of dueAudits) {
         const clientName = audit.client_name;
         const dateStr = audit.saved_at || audit.report_date;
         const daysElapsed = daysBetween(dateStr.slice(0, 10), today);
 
-        if (daysElapsed === 35) {
-          // Check if we already sent a reminder for this specific audit ID to prevent duplicate emails
-          // We'll store it in the client's lead_drips_sent array with a unique prefix
-          const clientsRes = audit.client_id
-            ? await supabaseRequest(`/rest/v1/clients?id=eq.${audit.client_id}&select=email,lead_drips_sent`, 'GET', null, supabaseUrl, supabaseKey)
-            : await supabaseRequest(`/rest/v1/clients?name=eq.${encodeURIComponent(clientName)}&user_id=eq.${audit.user_id}&select=email,lead_drips_sent`, 'GET', null, supabaseUrl, supabaseKey);
-          const clientRow = Array.isArray(clientsRes.body) && clientsRes.body[0] ? clientsRes.body[0] : null;
+        if (daysElapsed >= 35) {
+          // A client id is mandatory for automation. The migration backfills
+          // unambiguous legacy records; an unresolved duplicate name is a
+          // staff-reconciliation case, never a reason to guess a recipient.
+          if (!audit.client_id) {
+            console.warn('Skipping 35-day report reminder for legacy audit without client_id:', audit.id);
+            continue;
+          }
+          const clientRow = clientsById.get(audit.client_id) || null;
 
           if (clientRow && clientRow.email) {
             const sentDrips = clientRow.lead_drips_sent || [];
@@ -260,10 +413,7 @@ exports.handler = async () => {
               try {
                 await fetch_send('send_report_refresh', { clientName, clientEmail: clientRow.email });
                 const newDrips = [...sentDrips, dripKey];
-                const patchPath = audit.client_id
-                  ? `/rest/v1/clients?id=eq.${audit.client_id}`
-                  : `/rest/v1/clients?name=eq.${encodeURIComponent(clientName)}&user_id=eq.${audit.user_id}`;
-                await supabaseRequest(patchPath, 'PATCH', { lead_drips_sent: newDrips }, supabaseUrl, supabaseKey);
+                await supabaseRequest('/rest/v1/clients?id=eq.' + encodeURIComponent(audit.client_id), 'PATCH', { lead_drips_sent: newDrips }, supabaseUrl, supabaseKey);
                 reportRefreshDripsCount++;
               } catch (e) {
                 console.error('Report refresh email failed:', e);
@@ -294,11 +444,29 @@ exports.handler = async () => {
   let onboardingDripsCount = 0;
   let nurtureDripsCount = 0;
   if (sgKey) {
-    const leadsRes = await supabaseRequest(
-      '/rest/v1/clients?select=id,user_id,name,email,lead_created_at,lead_drips_sent,tags&status=eq.lead',
-      'GET', null, supabaseUrl, supabaseKey
+    const leads = await listAllRows(
+      '/rest/v1/clients?select=id,user_id,name,email,lead_created_at,lead_drips_sent,tags&status=eq.lead&order=lead_created_at.asc,id.asc',
+      supabaseUrl,
+      supabaseKey
     );
-    const leads = Array.isArray(leadsRes.body) ? leadsRes.body : [];
+    let leadProfiles = null;
+    try {
+      leadProfiles = await loadClientProfiles({
+        clientIds: leads.map((lead) => lead.id),
+        emails: leads.map((lead) => lead.email),
+      }, supabaseUrl, supabaseKey);
+    } catch (e) {
+      // Do not accidentally send Track A to an already-invited client when
+      // we cannot establish their portal state.
+      console.error('Skipping lead drips because client profiles could not be batch-loaded:', e.message);
+    }
+    let latestLeadAudits = new Map();
+    try {
+      latestLeadAudits = await loadLatestAuditSummariesByClientIds(leads.map((lead) => lead.id), supabaseUrl, supabaseKey);
+    } catch (e) {
+      // Audit facts only personalize the email; generic copy remains safe.
+      console.error('Could not batch-load lead audit summaries:', e.message);
+    }
 
     // Track B — invited, hasn't finished signing LPOA / connecting monitoring.
     const onboardingSchedule = [
@@ -319,13 +487,12 @@ exports.handler = async () => {
     ];
 
     for (const lead of leads) {
+      if (!leadProfiles) break;
       if (!lead.email || !lead.lead_created_at) continue;
 
-      const profileRes = await supabaseRequest(
-        '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(lead.email) + '&select=onboarding_complete,signature_data&limit=1',
-        'GET', null, supabaseUrl, supabaseKey
-      );
-      const profile = Array.isArray(profileRes.body) && profileRes.body[0] ? profileRes.body[0] : null;
+      const profile = leadProfiles.byClientId.get(lead.id)
+        || leadProfiles.byEmail.get(String(lead.email).toLowerCase())
+        || null;
       const wasInvited = !!profile;
       const isOnboarded = profile && (profile.onboarding_complete || profile.signature_data);
       if (isOnboarded) continue; // fully signed up — neither track applies
@@ -361,31 +528,16 @@ exports.handler = async () => {
         for (const d of nurtureSchedule) {
           if (daysSince >= d.day && !sentDrips.includes(d.key)) {
             let auditSummary = null;
-            try {
-              // lead is itself a clients row, so lead.id IS the client_id to
-              // match on — no name-guessing needed here at all. Falls back
-              // to the old name+user_id match (scoped by user_id, unlike
-              // before, to avoid pulling a same-named client's audit from a
-              // different firm) only for audits rows not yet backfilled.
-              let auditRes = await supabaseRequest(
-                '/rest/v1/audits?client_id=eq.' + lead.id + '&select=audit,saved_at,report_date&order=saved_at.desc&limit=1',
-                'GET', null, supabaseUrl, supabaseKey
-              );
-              if (!Array.isArray(auditRes.body) || auditRes.body.length === 0) {
-                auditRes = await supabaseRequest(
-                  '/rest/v1/audits?client_name=eq.' + encodeURIComponent(lead.name) + '&user_id=eq.' + lead.user_id + '&select=audit,saved_at,report_date&order=saved_at.desc&limit=1',
-                  'GET', null, supabaseUrl, supabaseKey
-                );
-              }
-              const latest = Array.isArray(auditRes.body) && auditRes.body[0] ? auditRes.body[0].audit : null;
-              if (latest && latest.totalViolations != null) {
-                auditSummary = {
-                  totalViolations: latest.totalViolations,
-                  accountsTargeted: latest.accountsTargeted,
-                  accountsScanned: latest.accountsScanned,
-                };
-              }
-            } catch (e) { /* personalization is best-effort; fall back to generic copy */ }
+            // Audit `client_id` is the only acceptable association here. A
+            // same-named legacy audit is not safe personalization data.
+            const latest = latestLeadAudits.get(lead.id)?.audit || null;
+            if (latest && latest.totalViolations != null) {
+              auditSummary = {
+                totalViolations: latest.totalViolations,
+                accountsTargeted: latest.accountsTargeted,
+                accountsScanned: latest.accountsScanned,
+              };
+            }
 
             try {
               await fetch_send('send_lead_nurture', { clientName: lead.name, clientEmail: lead.email, day: d.day, auditSummary });
@@ -402,9 +554,10 @@ exports.handler = async () => {
 
       if (touched) {
         await supabaseRequest(
-          '/rest/v1/clients?name=eq.' + encodeURIComponent(lead.name),
+          '/rest/v1/clients?id=eq.' + encodeURIComponent(lead.id),
           'PATCH', { lead_drips_sent: newDrips }, supabaseUrl, supabaseKey
         );
+        leadsDrippedCount++;
       }
     }
   }
@@ -421,23 +574,33 @@ exports.handler = async () => {
     try {
       const { inFlightLettersForClient } = await import('../../src/utils/inFlightLetters.js');
 
-      const pausedRes = await supabaseRequest(
-        '/rest/v1/clients?billing_status=eq.Paused&select=id,name,status_changed_at,winback_notifications_sent',
-        'GET', null, supabaseUrl, supabaseKey
+      const pausedClients = await listAllRows(
+        '/rest/v1/clients?billing_status=eq.Paused&select=id,name,status_changed_at,winback_notifications_sent&order=status_changed_at.asc,id.asc',
+        supabaseUrl,
+        supabaseKey
       );
-      const pausedClients = Array.isArray(pausedRes.body) ? pausedRes.body : [];
+      let pausedProfilesByClientId = new Map();
+      try {
+        const profiles = await loadClientProfiles({ clientIds: pausedClients.map((client) => client.id) }, supabaseUrl, supabaseKey);
+        pausedProfilesByClientId = profiles.byClientId;
+      } catch (e) {
+        console.error('Could not batch-load paused-client profiles:', e.message);
+      }
 
       // Reuse the `letters` array already fetched above (all unresolved,
       // response_outcome is null) instead of a second per-client query.
-      // client_id preferred — client_name alone could pull a same-named
-      // client's in-flight letters into the wrong paused client's count.
+      // Only client_id may associate an operational letter with a paused
+      // client. A name fallback could disclose another same-named client's
+      // deadline in this status email.
       const lettersByClient = new Map();
       for (const l of letters) {
-        const key = l.client_id || l.client_name;
+        const key = l.client_id;
+        if (!key) continue;
         if (!lettersByClient.has(key)) lettersByClient.set(key, []);
         lettersByClient.get(key).push({
           id: l.id, furnisher: l.furnisher, phase: l.phase,
           mailedDate: l.mailed_date, deliveredAt: l.delivered_at, responseOutcome: l.response_outcome,
+          bureauReviewStatus: l.bureau_review_status || 'not_reviewed',
         });
       }
 
@@ -457,16 +620,10 @@ exports.handler = async () => {
         else if (daysPaused >= 21 && !sentMarkers.includes(step1Marker)) step = 1;
         if (!step) continue;
 
-        const inFlight = inFlightLettersForClient(c.name, lettersByClient.get(c.id) || lettersByClient.get(c.name) || [], []);
+        const inFlight = inFlightLettersForClient(c.name, lettersByClient.get(c.id) || [], []);
         if (inFlight.length === 0) continue; // nothing worth sending — same rule for both steps
 
-        // client_id preferred — client_profiles isn't firm-scoped, so a
-        // same-named client at a different firm could otherwise get this.
-        const cpPath = c.id
-          ? '/rest/v1/client_profiles?client_id=eq.' + c.id + '&select=email&limit=1'
-          : '/rest/v1/client_profiles?full_name=eq.' + encodeURIComponent(c.name) + '&select=email&limit=1';
-        const cpRes = await supabaseRequest(cpPath, 'GET', null, supabaseUrl, supabaseKey);
-        const clientEmail = cpRes.body && cpRes.body[0] && cpRes.body[0].email;
+        const clientEmail = pausedProfilesByClientId.get(c.id)?.email || null;
         if (!clientEmail) continue;
 
         const remainLabel = (r) => r.daysRemaining === null ? 'In transit' : (r.daysRemaining <= 0 ? Math.abs(r.daysRemaining) + 'd overdue' : r.daysRemaining + 'd');
@@ -529,8 +686,11 @@ exports.handler = async () => {
   // --- 4. Run Automated Billing Sweep ---
   let billingAlerts = [];
   try {
-    const clientsRes = await supabaseRequest('/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date,billing_tier', 'GET', null, supabaseUrl, supabaseKey);
-    const activeClients = Array.isArray(clientsRes.body) ? clientsRes.body : [];
+    const activeClients = await listAllRows(
+      '/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date,billing_tier&order=id.asc',
+      supabaseUrl,
+      supabaseKey
+    );
     
     for (const c of activeClients) {
       const ledger = Array.isArray(c.ledger) ? c.ledger : [];
@@ -602,7 +762,7 @@ exports.handler = async () => {
             balanceDue = round2(balanceDue + amount);
             
             await supabaseRequest(
-              '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
+              '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),
               'PATCH', { ledger }, supabaseUrl, supabaseKey
             );
 
@@ -628,7 +788,7 @@ exports.handler = async () => {
             await sendgridEmail(c.email, 'Final Notice: Service Paused', '<p>Hi ' + c.name + ',</p><p>Your service has been paused due to non-payment. Please remit payment immediately to resume services.</p>', sgKey);
           }
           await supabaseRequest(
-            '/rest/v1/clients?name=eq.' + encodeURIComponent(c.name),
+            '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),
             'PATCH', { billing_status: 'Paused', exit_reason: 'non_payment' }, supabaseUrl, supabaseKey
           );
           isPausedNow = true;
@@ -647,33 +807,24 @@ exports.handler = async () => {
   }
 
   try {
-    // Unmailed letters
-    const unmailedRes = await supabaseRequest('/rest/v1/letters?mailed_date=is.null&select=id', 'GET', null, supabaseUrl, supabaseKey);
-    unmailedCount = Array.isArray(unmailedRes.body) ? unmailedRes.body.length : 0;
-    
-    // New leads (last 24h)
-    const newLeadsRes = await supabaseRequest(`/rest/v1/clients?status=eq.lead&lead_created_at=gte.${yesterday}&select=id`, 'GET', null, supabaseUrl, supabaseKey);
-    newLeadsCount = Array.isArray(newLeadsRes.body) ? newLeadsRes.body.length : 0;
-
-    // New clients (last 24h)
-    const newClientsRes = await supabaseRequest(`/rest/v1/clients?status=eq.client&created_at=gte.${yesterday}&select=id`, 'GET', null, supabaseUrl, supabaseKey);
-    newClientsCount = Array.isArray(newClientsRes.body) ? newClientsRes.body.length : 0;
+    // Metrics are counts, not lists. HEAD + Content-Range avoids loading
+    // every matching id merely to call `.length`.
+    unmailedCount = await countRows('/rest/v1/letters?mailed_date=is.null', supabaseUrl, supabaseKey);
+    newLeadsCount = await countRows(`/rest/v1/clients?status=eq.lead&lead_created_at=gte.${yesterday}`, supabaseUrl, supabaseKey);
+    newClientsCount = await countRows(`/rest/v1/clients?status=eq.client&created_at=gte.${yesterday}`, supabaseUrl, supabaseKey);
 
     // Pending audits
     // Assuming audits table exists (based on typical use in this system)
     // Actually wait, audits are stored in the client_profiles table or where?
     // Let's just catch error if audits table doesn't exist
-    const auditsRes = await supabaseRequest('/rest/v1/audits?status=eq.pending&select=id', 'GET', null, supabaseUrl, supabaseKey);
-    if (auditsRes.status === 200) {
-      pendingAuditsCount = Array.isArray(auditsRes.body) ? auditsRes.body.length : 0;
-    } else {
+    try {
+      pendingAuditsCount = await countRows('/rest/v1/audits?status=eq.pending', supabaseUrl, supabaseKey);
+    } catch (e) {
       // Maybe audits is not a table? In this app, audits are often JSON in client_profiles or just letters?
       pendingAuditsCount = 'N/A';
     }
-    
-    // Lob Deliveries (delivered_at in last 24h)
-    const deliveredRes = await supabaseRequest(`/rest/v1/letters?delivered_at=gte.${yesterday.slice(0,10)}&select=id`, 'GET', null, supabaseUrl, supabaseKey);
-    lobDeliveriesCount = Array.isArray(deliveredRes.body) ? deliveredRes.body.length : 0;
+
+    lobDeliveriesCount = await countRows(`/rest/v1/letters?delivered_at=gte.${yesterday.slice(0,10)}`, supabaseUrl, supabaseKey);
   } catch (e) {
     console.warn('Failed to fetch some metrics for daily digest:', e);
   }

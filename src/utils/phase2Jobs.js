@@ -10,8 +10,10 @@ const RUN_STALL_MS = 3 * 60 * 1000; // running but no row updates
 const MAX_READ_FAILURES = 15;       // consecutive poll read errors
 
 // filePaths: storage paths in the `responses` bucket, in page order. Omit
-// (or pass []) for kind: 'non_response'.
-export async function runPhase2Job({ letterId, kind, filePaths, mailedDate }, onProgress) {
+// (or pass []) for kind: 'non_response'. evidenceId is optional for legacy
+// uploads but required by the bureau-response path so the server can verify
+// the evidence-to-letter relationship before reading it.
+export async function runPhase2Job({ letterId, kind, filePaths, mailedDate, evidenceId }, onProgress) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not signed in.');
 
@@ -21,6 +23,7 @@ export async function runPhase2Job({ letterId, kind, filePaths, mailedDate }, on
   const { error: insErr } = await supabase.from('phase2_jobs').insert({
     id: jobId, user_id: user.id, letter_id: letterId, kind,
     files: (filePaths || []).map((path) => ({ path })),
+    response_evidence_id: evidenceId || null,
   });
   if (insErr) throw new Error('Could not create analysis job: ' + insErr.message);
 

@@ -305,6 +305,64 @@ export const PHASE2_SCHEMA = {
   required: ['classification', 'summary', 'demandAnalysis', 'admissions', 'phase3Leverage', 'documentQuality', 'letters'],
 };
 
+// Bureau-response review — unlike Phase 2 it never drafts another legal
+// letter. It records what the CRA says happened and gives staff a structured
+// decision aid before the existing review/escalation workflow is opened.
+export const BUREAU_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    classification: {
+      type: 'string',
+      enum: [
+        'DELETED_OR_CORRECTED',
+        'PARTIAL_CORRECTION',
+        'VERIFIED_WITHOUT_SUBSTANCE',
+        'PROCEDURAL_OR_STALLED',
+        'INSUFFICIENT_EVIDENCE',
+      ],
+    },
+    summary: { type: 'string' },
+    issueAnalysis: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          issue: { type: 'string' },
+          outcome: { type: 'string', enum: ['ADDRESSED', 'IGNORED', 'PARTIALLY_ADDRESSED', 'UNCLEAR'] },
+          notes: { type: 'string' },
+        },
+        required: ['issue', 'outcome', 'notes'],
+      },
+    },
+    reportedChanges: { type: 'array', items: { type: 'string' } },
+    keyFindings: { type: 'array', items: { type: 'string' } },
+    recommendedNextAction: {
+      type: 'string',
+      enum: ['resolved', 'follow_up', 'needs_documents', 'escalated'],
+    },
+    documentQuality: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        enclosureLegible: { type: 'boolean' },
+        issues: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['enclosureLegible', 'issues'],
+    },
+  },
+  required: [
+    'classification',
+    'summary',
+    'issueAnalysis',
+    'reportedChanges',
+    'keyFindings',
+    'recommendedNextAction',
+    'documentQuality',
+  ],
+};
+
 // Phase 4 (CFPB / state-AG escalation) narrative — mirrors the JSON contract
 // in src/prompts/phase4Prompt.js field-for-field. cfpbCategory/cfpbSubIssue
 // are free-text, not an enum: CFPB's own picklist already changed once

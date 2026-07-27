@@ -14,14 +14,17 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { PHASE2_SYSTEM_PROMPT } from '../../src/prompts/phase2Prompt.js';
-import { PHASE2_SCHEMA } from '../../src/utils/auditSchemas.js';
+import { BUREAU_RESPONSE_SYSTEM_PROMPT } from '../../src/prompts/bureauResponsePrompt.js';
+import { BUREAU_RESPONSE_SCHEMA, PHASE2_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { inferMediaType, isAnalyzable } from '../../src/utils/responseFiles.js';
 import { validateFieldCitations, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
+import { requireStaff } from './_requireAuth.cjs';
 
 assertMapFullySourced();
 
 const MODEL = 'claude-sonnet-5';
-const SYSTEM = [{ type: 'text', text: PHASE2_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
+const FURNISHER_SYSTEM = [{ type: 'text', text: PHASE2_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
+const BUREAU_SYSTEM = [{ type: 'text', text: BUREAU_RESPONSE_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
 const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -32,14 +35,37 @@ function responseFileBlock(base64, mediaType) {
   return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } };
 }
 
+function isResponsePathForLetter(path, letterId) {
+  if (typeof path !== 'string' || !path || path.includes('..') || path.startsWith('/')) return false;
+  const segments = path.split('/');
+  return segments.length >= 3 && segments[1] === letterId && segments.every(Boolean);
+}
+
+function isResponsePathForEvidence(path, evidence) {
+  if (typeof path !== 'string' || !path || path.includes('..') || path.startsWith('/')) return false;
+  const prefix = `${evidence.firm_user_id}/response-evidence/${evidence.id}/`;
+  return path.startsWith(prefix) && path.length > prefix.length;
+}
+
 export const handler = async (event) => {
+  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
+
+  let caller;
+  try {
+    caller = await requireStaff(event);
+  } catch (e) {
+    if (e && e.statusCode) return e;
+    console.error('phase2-analyze: could not authenticate caller', e);
+    return { statusCode: 500, body: 'authentication failed' };
+  }
+
   let jobId = null, mailedDateOverride = null;
   try {
     const body = JSON.parse(event.body || '{}');
     jobId = body.jobId;
     mailedDateOverride = body.mailedDate || null;
   } catch (e) { /* handled below */ }
-  if (!jobId) return { statusCode: 400, body: 'jobId required' };
+  if (typeof jobId !== 'string' || !jobId) return { statusCode: 400, body: 'jobId required' };
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -57,11 +83,79 @@ export const handler = async (event) => {
     realtime: { transport: ws },
   });
 
-  // Atomic claim — only proceeds if the row exists and is still 'queued'.
+  // Read and validate the queued job under the caller's identity before the
+  // service role can touch a response file or call the model.
+  const { data: queuedJob, error: queuedJobErr } = await db
+    .from('phase2_jobs')
+    .select('id, letter_id, kind, files, response_evidence_id')
+    .eq('id', jobId)
+    .eq('user_id', caller.userId)
+    .eq('status', 'queued')
+    .maybeSingle();
+  if (queuedJobErr || !queuedJob) {
+    console.warn('phase2-analyze: job not available to caller', jobId, queuedJobErr?.message);
+    return { statusCode: 409, body: 'job not claimable' };
+  }
+  if (typeof queuedJob.letter_id !== 'string' || !queuedJob.letter_id
+      || !['response', 'non_response', 'bureau_response'].includes(queuedJob.kind)) {
+    return { statusCode: 400, body: 'job contains invalid analysis data' };
+  }
+  const responseFiles = Array.isArray(queuedJob.files) ? queuedJob.files : [];
+  if ((queuedJob.kind === 'non_response' && responseFiles.length)
+      || (queuedJob.kind === 'bureau_response' && !queuedJob.response_evidence_id)
+      || (queuedJob.kind === 'response' && !queuedJob.response_evidence_id
+          && (!responseFiles.length || !responseFiles.every((file) => isResponsePathForLetter(file?.path, queuedJob.letter_id))))) {
+    return { statusCode: 400, body: 'job contains invalid response upload paths' };
+  }
+
+  const { data: targetLetter, error: targetLetterErr } = await db
+    .from('letters')
+    .select('id, user_id, client_id')
+    .eq('id', queuedJob.letter_id)
+    .maybeSingle();
+  if (targetLetterErr || !targetLetter) return { statusCode: 404, body: 'letter not found' };
+  if (caller.role !== 'admin' && targetLetter.user_id !== caller.userId) {
+    return { statusCode: 403, body: 'not authorized for this letter' };
+  }
+
+  // New uploads are bound to an immutable evidence row before a service-role
+  // function reads them. This closes the old path-injection shape where a
+  // browser-created job could point a paid model call at another file.
+  let evidence = null;
+  let filesForAnalysis = responseFiles;
+  if (queuedJob.response_evidence_id) {
+    const { data: evidenceRow, error: evidenceErr } = await db
+      .from('response_evidence')
+      .select('id,firm_user_id,client_id,letter_id,response_kind,storage_bucket,storage_paths,upload_status')
+      .eq('id', queuedJob.response_evidence_id)
+      .maybeSingle();
+    if (evidenceErr || !evidenceRow) return { statusCode: 400, body: 'response evidence not found' };
+
+    const expectedKind = queuedJob.kind === 'bureau_response' ? 'bureau' : 'furnisher';
+    const evidencePaths = Array.isArray(evidenceRow.storage_paths) ? evidenceRow.storage_paths : [];
+    if (
+      evidenceRow.letter_id !== targetLetter.id
+      || evidenceRow.firm_user_id !== targetLetter.user_id
+      || (targetLetter.client_id && evidenceRow.client_id && evidenceRow.client_id !== targetLetter.client_id)
+      || evidenceRow.response_kind !== expectedKind
+      || evidenceRow.upload_status !== 'received'
+      || !evidencePaths.length
+      || !evidencePaths.every((path) => isResponsePathForEvidence(path, evidenceRow))
+    ) {
+      return { statusCode: 400, body: 'response evidence does not match this analysis job' };
+    }
+    evidence = evidenceRow;
+    filesForAnalysis = evidencePaths.map((path) => ({ path }));
+  }
+
+  // Atomic claim — only proceeds if the authenticated staff caller owns a
+  // queued job. This prevents both client-triggered runs and cross-user job
+  // consumption.
   const { data: claimed, error: claimErr } = await db
     .from('phase2_jobs')
     .update({ status: 'running', started_at: new Date().toISOString(), updated_at: new Date().toISOString(), stage: 'Starting analysis', tokens: 0 })
     .eq('id', jobId)
+    .eq('user_id', caller.userId)
     .eq('status', 'queued')
     .select();
   if (claimErr || !claimed || claimed.length === 0) {
@@ -84,6 +178,16 @@ export const handler = async (event) => {
     const { data: letter, error: letterErr } = await db.from('letters').select('*').eq('id', job.letter_id).single();
     if (letterErr || !letter) throw new Error('Could not find the Phase 1 letter for this job.');
 
+    if (evidence) {
+      await db.from('response_evidence').update({
+        analysis_status: 'running',
+        updated_at: new Date().toISOString(),
+      }).eq('id', evidence.id);
+    }
+    if (job.kind === 'bureau_response') {
+      await db.from('letters').update({ bureau_response_status: 'analyzing' }).eq('id', job.letter_id);
+    }
+
     let messages;
     if (job.kind === 'non_response') {
       const mailedDate = mailedDateOverride || letter.mailed_date;
@@ -98,11 +202,11 @@ export const handler = async (event) => {
         }],
       }];
     } else {
-      const files = job.files || [];
+      const files = filesForAnalysis || [];
       if (!files.length) throw new Error('No response file attached to this job.');
       const pageBlocks = [];
       for (const f of files) {
-        const { data: blob, error: dlErr } = await db.storage.from('responses').download(f.path);
+        const { data: blob, error: dlErr } = await db.storage.from(evidence?.storage_bucket || 'responses').download(f.path);
         if (dlErr || !blob) throw new Error('Could not read uploaded response (' + (dlErr?.message || 'missing file') + ')');
         const buf = Buffer.from(await blob.arrayBuffer());
         const fileName = f.path.split('/').pop();
@@ -113,20 +217,24 @@ export const handler = async (event) => {
       const pageNote = pageBlocks.length > 1
         ? ` — ${pageBlocks.length} pages/photos of the same response, attached in order. Read them as one continuous document.`
         : ' (attached document):';
+      const bureauResponse = job.kind === 'bureau_response';
       messages = [{
         role: 'user',
         content: [
           {
             type: 'text',
-            text: `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — FURNISHER RESPONSE${pageNote}`,
+            text: bureauResponse
+              ? `Today: ${today()}\nClient: ${letter.client_name}\nBureau target: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 3 BUREAU DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`
+              : `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — FURNISHER RESPONSE${pageNote}`,
           },
           ...pageBlocks,
-          { type: 'text', text: 'Perform Phase 2 analysis.' },
+          { type: 'text', text: bureauResponse ? 'Perform the bureau-response staff review analysis.' : 'Perform Phase 2 analysis.' },
         ],
       }];
     }
 
-    await updateJob({ stage: 'Analyzing response against Phase 1 demands' }, true);
+    const isBureauResponse = job.kind === 'bureau_response';
+    await updateJob({ stage: isBureauResponse ? 'Analyzing bureau response against Phase 3 dispute' : 'Analyzing response against Phase 1 demands' }, true);
 
     const stream = anthropic.messages.stream({
       model: MODEL,
@@ -138,10 +246,10 @@ export const handler = async (event) => {
       // experian and transunion even when the account reports to only one
       // bureau; a future optimization is to generate only the bureaus the
       // account is actually on.
-      max_tokens: 64000,
-      system: SYSTEM,
+      max_tokens: isBureauResponse ? 12000 : 64000,
+      system: isBureauResponse ? BUREAU_SYSTEM : FURNISHER_SYSTEM,
       messages,
-      output_config: { format: { type: 'json_schema', schema: PHASE2_SCHEMA } },
+      output_config: { format: { type: 'json_schema', schema: isBureauResponse ? BUREAU_RESPONSE_SCHEMA : PHASE2_SCHEMA } },
     });
     let chars = 0;
     stream.on('text', (delta) => { chars += delta.length; onTokens(Math.round(chars / 4)); });
@@ -163,7 +271,9 @@ export const handler = async (event) => {
     const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     const analysis = JSON.parse(text);
 
-    // Inject standard letter CSS server-side to save AI tokens and prevent truncation
+    // Inject standard letter CSS only for the furnisher workflow, which is
+    // the one that generates Phase 3 letters. Bureau analysis records facts
+    // and a staff recommendation; it never drafts another letter.
     const baseCss = `
       body { font-family: Arial, sans-serif; line-height: 1.5; margin: 1in; color: #333333; }
       .date-line { margin-bottom: 20px; }
@@ -189,7 +299,7 @@ export const handler = async (event) => {
       .enclosures { margin-top: 14px; }
     `;
 
-    if (analysis && analysis.letters) {
+    if (!isBureauResponse && analysis && analysis.letters) {
       for (const bureau of ['equifax', 'experian', 'transunion']) {
         if (analysis.letters[bureau]) {
           let html = analysis.letters[bureau];
@@ -226,28 +336,67 @@ export const handler = async (event) => {
     // isn't a guarantee the model won't slip and cite it anyway, so this
     // scans the actual generated HTML and blocks the letter the same way an
     // unparsed enclosure does, rather than trusting the instruction blindly.
-    for (const bureau of ['equifax', 'experian', 'transunion']) {
-      const html = analysis && analysis.letters && analysis.letters[bureau];
-      for (const p of validateFieldCitations(html)) {
-        blockIssues.push(`The generated ${bureau} letter has a Metro 2 field citation error: ${p}`);
-      }
-      if (html && html.includes('1681s-2(a)')) {
-        blockIssues.push(`The generated ${bureau} letter cites 15 U.S.C. §1681s-2(a), which must never appear in a Phase 3 CRA letter — this is the furnisher's duty, not the CRA's, and citing it here re-exposes a flank opposing counsel has already used. Rebuild this argument on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead.`);
+    if (!isBureauResponse) {
+      for (const bureau of ['equifax', 'experian', 'transunion']) {
+        const html = analysis && analysis.letters && analysis.letters[bureau];
+        for (const p of validateFieldCitations(html)) {
+          blockIssues.push(`The generated ${bureau} letter has a Metro 2 field citation error: ${p}`);
+        }
+        if (html && html.includes('1681s-2(a)')) {
+          blockIssues.push(`The generated ${bureau} letter cites 15 U.S.C. §1681s-2(a), which must never appear in a Phase 3 CRA letter — this is the furnisher's duty, not the CRA's, and citing it here re-exposes a flank opposing counsel has already used. Rebuild this argument on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead.`);
+        }
       }
     }
     const parseBlocked = blockIssues.length > 0;
 
-    // Persist onto the letter row so a closed tab loses nothing — same
-    // contract as the old client-side persistAnalysis().
-    await db.from('letters').update({
-      phase2_analysis: analysis, phase2_analyzed_at: new Date().toISOString(),
-      enclosure_parse_blocked: parseBlocked,
-      enclosure_parse_issues: blockIssues,
-    }).eq('id', job.letter_id);
+    const analyzedAt = new Date().toISOString();
+    if (isBureauResponse) {
+      // The full analysis stays private in response_evidence. The linked
+      // letter gets only a safe lifecycle status used by staff/dashboard and
+      // the client portal; no staff notes or raw model output leak to client.
+      await db.from('response_evidence').update({
+        analysis,
+        analysis_status: 'analyzed',
+        analyzed_at: analyzedAt,
+        document_quality: dq || null,
+        updated_at: analyzedAt,
+      }).eq('id', evidence.id);
+      await db.from('letters').update({
+        bureau_response_status: 'review_ready',
+        bureau_response_analyzed_at: analyzedAt,
+      }).eq('id', job.letter_id);
+    } else {
+      // Preserve the established Phase 2 contract for legacy UI and Phase 3
+      // generation, while also attaching the immutable evidence record when
+      // this analysis came through the new intake path.
+      await db.from('letters').update({
+        phase2_analysis: analysis, phase2_analyzed_at: analyzedAt,
+        enclosure_parse_blocked: parseBlocked,
+        enclosure_parse_issues: blockIssues,
+      }).eq('id', job.letter_id);
+      if (evidence) {
+        await db.from('response_evidence').update({
+          analysis,
+          analysis_status: 'analyzed',
+          analyzed_at: analyzedAt,
+          document_quality: dq || null,
+          updated_at: analyzedAt,
+        }).eq('id', evidence.id);
+      }
+    }
 
     await updateJob({ status: 'done', stage: 'Complete', result: analysis, usage: u, finished_at: new Date().toISOString() }, true);
   } catch (e) {
     console.error('phase2-analyze failed:', e);
+    if (evidence) {
+      await db.from('response_evidence').update({
+        analysis_status: 'error',
+        updated_at: new Date().toISOString(),
+      }).eq('id', evidence.id).catch(() => {});
+      if (job.kind === 'bureau_response') {
+        await db.from('letters').update({ bureau_response_status: 'received' }).eq('id', job.letter_id).catch(() => {});
+      }
+    }
     await updateJob({ status: 'error', error: e.message || 'Analysis failed', finished_at: new Date().toISOString() }, true);
   }
 

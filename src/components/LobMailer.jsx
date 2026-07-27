@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Send, CheckCircle, AlertCircle, MapPin } from 'lucide-react';
 import { getDocuments, getDocumentBase64 } from '../utils/documents';
 import { listMailArtifacts } from '../utils/mailArtifacts';
+import { inferMediaType } from '../utils/responseFiles';
 import { supabase } from '../utils/supabase';
 
 const LOB_FUNCTION_URL = '/.netlify/functions/lob';
@@ -121,8 +122,14 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // immutable PDF as evidence, render each original PDF page to an image
       // and embed it in the outgoing HTML. The archived source PDF remains
       // untouched in private storage for CFPB/AG portal uploads and audit.
-      const renderPdfPages = async (storagePath, heading) => {
-        const b64 = await getDocumentBase64(storagePath);
+      const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const renderPdfBase64 = async (b64, heading) => {
         const binary = atob(b64);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -141,6 +148,32 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           html += '<img src="' + canvas.toDataURL('image/jpeg', 0.9) + '" style="max-width:100%;display:block;margin-bottom:10px;" />';
         }
         return html + '</div>';
+      };
+
+      const renderPdfPages = async (storagePath, heading) =>
+        renderPdfBase64(await getDocumentBase64(storagePath), heading);
+
+      // Furnisher-response evidence is kept in the private `responses`
+      // bucket, not the client documents bucket. Read it directly while a
+      // staff member is sending the Phase 3 letter, then turn each original
+      // PDF/image into print-ready Lob HTML. This keeps the response itself
+      // in the mailed record rather than merely linking to a transient URL.
+      const renderResponseFile = async (storagePath, fileName, heading) => {
+        const { data, error: downloadError } = await supabase.storage
+          .from('responses')
+          .download(storagePath);
+        if (downloadError || !data) throw downloadError || new Error('Response file could not be downloaded.');
+
+        const b64 = await blobToBase64(data);
+        const mediaType = inferMediaType(fileName, data.type);
+        if (mediaType === 'application/pdf') return renderPdfBase64(b64, heading);
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)) {
+          throw new Error('Unsupported response evidence type: ' + (fileName || storagePath));
+        }
+        return '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
+          + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">' + heading + '</div>'
+          + '<img src="data:' + mediaType + ';base64,' + b64 + '" style="max-width:100%;display:block;margin-bottom:8px;" />'
+          + '</div>';
       };
 
       const buildDocumentEnclosure = async (doc, heading) => {
@@ -225,7 +258,51 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             + p1Content + '</div>';
         }
 
-        // Exhibit B — furnisher response(s), one section per Phase 1 letter that has one on file
+        // Exhibit B — first use the durable response-evidence records. The
+        // old application stored files directly under `<clientUserId>/<p1Id>`
+        // without a DB record, so retain that folder scan as a migration
+        // fallback. A persisted evidence row is deliberately fail-closed:
+        // never send a Phase 3 packet that says an attached response exists
+        // while silently omitting one of its original files.
+        const p1Ids = phase1Letters.map((p1) => p1.id).filter(Boolean);
+        const durableEvidenceByLetter = new Map();
+        if (p1Ids.length > 0) {
+          const { data: durableEvidence, error: durableEvidenceError } = await supabase
+            .from('response_evidence')
+            .select('id,letter_id,storage_bucket,storage_paths,file_names,received_at,created_at')
+            .in('letter_id', p1Ids)
+            .eq('response_kind', 'furnisher')
+            .eq('upload_status', 'received')
+            .order('received_at', { ascending: true });
+          if (durableEvidenceError) throw durableEvidenceError;
+          for (const record of durableEvidence || []) {
+            const current = durableEvidenceByLetter.get(record.letter_id) || [];
+            current.push(record);
+            durableEvidenceByLetter.set(record.letter_id, current);
+          }
+        }
+
+        for (const p1 of phase1Letters) {
+          const responseHeading = 'EXHIBIT B — Furnisher Response (' + (p1.furnisher || letter.furnisher) + ')';
+          const durableEvidence = durableEvidenceByLetter.get(p1.id) || [];
+          for (const record of durableEvidence) {
+            const paths = Array.isArray(record.storage_paths) ? record.storage_paths : [];
+            const names = Array.isArray(record.file_names) ? record.file_names : [];
+            if (record.storage_bucket !== 'responses' || paths.length === 0) {
+              throw new Error('Received response evidence is incomplete for ' + (p1.furnisher || 'this furnisher') + '. Resolve it before mailing Phase 3.');
+            }
+            for (let index = 0; index < paths.length; index += 1) {
+              const fileName = names[index] || String(paths[index]).split('/').pop();
+              enclosurePages += await renderResponseFile(paths[index], fileName, responseHeading);
+            }
+          }
+        }
+
+        // Legacy response-folder fallback. It intentionally supports PDFs as
+        // well as images so historic original responses are not reduced to a
+        // converted JPEG-only attachment. Missing legacy files stay a
+        // warning (they predate durable evidence), while durable records
+        // above remain a hard stop if any expected file cannot be attached.
         try {
           const cpQuery = letter.clientId
             ? supabase.from('client_profiles').select('user_id').eq('client_id', letter.clientId).limit(1)
@@ -234,30 +311,25 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           const clientUserId = cp && cp.length > 0 ? cp[0].user_id : null;
           if (clientUserId) {
             for (const p1 of phase1Letters) {
-              const { data: responseFiles } = await supabase.storage.from('responses')
+              const { data: responseFiles, error: legacyListError } = await supabase.storage.from('responses')
                 .list(clientUserId + '/' + p1.id, { limit: 20, sortBy: { column: 'name', order: 'asc' } });
-              if (responseFiles && responseFiles.length > 0) {
-                const imgFiles = responseFiles.filter(f => /\.(jpg|jpeg|png)$/i.test(f.name));
-                if (imgFiles.length > 0) {
-                  let exhibitHtml = '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
-                    + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">EXHIBIT B — Furnisher Response (' + (p1.furnisher || letter.furnisher) + ')</div>';
-                  for (const imgFile of imgFiles) {
-                    const respPath = clientUserId + '/' + p1.id + '/' + imgFile.name;
-                    const { data: respUrl } = await supabase.storage.from('responses').createSignedUrl(respPath, 3600);
-                    if (respUrl?.signedUrl) {
-                      const respRes = await fetch(respUrl.signedUrl);
-                      const respBlob = await respRes.blob();
-                      const respB64 = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(respBlob); });
-                      exhibitHtml += '<img src="data:image/jpeg;base64,' + respB64 + '" style="max-width:100%;display:block;margin-bottom:8px;" />';
-                    }
-                  }
-                  exhibitHtml += '</div>';
-                  enclosurePages += exhibitHtml;
+              if (legacyListError) throw legacyListError;
+              for (const responseFile of responseFiles || []) {
+                if (!/\.(pdf|jpg|jpeg|png|webp)$/i.test(responseFile.name)) continue;
+                const responsePath = clientUserId + '/' + p1.id + '/' + responseFile.name;
+                try {
+                  enclosurePages += await renderResponseFile(
+                    responsePath,
+                    responseFile.name,
+                    'EXHIBIT B — Legacy Furnisher Response (' + (p1.furnisher || letter.furnisher) + ')'
+                  );
+                } catch (e) {
+                  console.warn('Could not render legacy furnisher response:', responsePath, e);
                 }
               }
             }
           }
-        } catch(e) { console.warn('Could not fetch furnisher response(s):', e); }
+        } catch(e) { console.warn('Could not fetch legacy furnisher response(s):', e); }
 
         // LPOA still included for Phase 3
         try {
@@ -351,29 +423,35 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         fromAddress: FROM_ADDRESS,
         remoteUrl: urlData.signedUrl,
         description: letter.clientName + ' — ' + letter.furnisher + ' — ' + letter.phase + (enclosurePages ? ' (w/ enclosures)' : ''),
-        // Scoped to this send attempt, not the letter row itself — letter.id
-        // alone would make Lob treat a deliberate resend (after a real
-        // cancellation) as a duplicate of the ORIGINAL submission, silently
-        // replaying its cached response: same lob_id, same old PDF, no new
-        // event, no new email. Still protects against an accidental
-        // double-fire of this exact click (the Send button is also disabled
-        // while `sending` is true).
-        idempotencyKey: letter.id + '-' + Date.now(),
-        // Lets the webhook match this letter even if saving lob_id fails below
+        // The server creates and persists the idempotency key before it asks
+        // Lob to print. A browser timestamp is unsafe: retrying after a
+        // timeout would otherwise create a second physical letter.
         metadata: { letter_id: String(letter.id) },
       });
+
+      // A duplicate response means Lob already accepted this exact durable
+      // submission. Do not overwrite an existing delivered/mail date or send
+      // the client a second "mailed" email. An accepted-but-unreconciled
+      // record is the one exception: its local letter row still needs repair.
+      const alreadyRecorded = res.duplicate && res.mail_submission_status === 'submitted';
 
       // The letter IS mailed at this point — persist the record with retries,
       // and never let a save failure look like a send failure (resend = double postage)
       let saveErr = null;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          await onSent({ lobId: res.id, mailedDate: new Date().toISOString().slice(0, 10), trackingNumber: res.tracking_number || null });
-          saveErr = null;
-          break;
-        } catch (e) {
-          saveErr = e;
-          await new Promise((r) => setTimeout(r, attempt * 1000));
+      if (!alreadyRecorded) {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            await onSent({
+              lobId: res.id,
+              mailedDate: res.mailed_date || new Date().toISOString().slice(0, 10),
+              trackingNumber: res.tracking_number || null,
+            });
+            saveErr = null;
+            break;
+          } catch (e) {
+            saveErr = e;
+            await new Promise((r) => setTimeout(r, attempt * 1000));
+          }
         }
       }
 
@@ -384,42 +462,45 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           + (saveErr.message || saveErr) + '. Do NOT resend — note the Lob ID and set the mail date on the letter manually.');
       }
 
-      // Fire phase notification (non-blocking). clientId preferred — the
+      // Fire phase notification (non-blocking) only for a new physical
+      // submission. clientId is preferred — the
       // ilike match here vs. exact-match elsewhere in the app was a known
       // inconsistency where a case-mismatched client could get this email
       // while other client_name-keyed reads (e.g. the portal) silently
       // returned nothing for them.
-      try {
-        const notifyCpQuery = letter.clientId
-          ? supabase.from('client_profiles').select('email,full_name').eq('client_id', letter.clientId).limit(1)
-          : supabase.from('client_profiles').select('email,full_name').ilike('full_name', letter.clientName).limit(1);
-        const { data: cp } = await notifyCpQuery;
-        if (cp && cp.length > 0 && cp[0].email) {
-          const { data: { session } } = await supabase.auth.getSession();
-          const token = session?.access_token;
-          fetch('/.netlify/functions/send-lpoa', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-            },
-            body: JSON.stringify({
-              action: 'send_phase_notification',
-              clientName: cp[0].full_name,
-              clientEmail: cp[0].email,
-              // Pre-existing bug, independent of mail class: this was
-              // hardcoded 'phase1_mailed' for every send, so a Phase 3
-              // bureau letter's client email said "Your Phase 1 dispute
-              // letter... mailed via Certified Mail" — wrong phase label
-              // regardless of what actually mailed. isPhase3 above already
-              // tracks this correctly for the enclosure logic.
-              phase: isPhase3 ? 'phase3_mailed' : 'phase1_mailed',
-              furnisher: letter.furnisher,
-              trackingNumber: res.tracking_number || '',
-            }),
-          }).catch((e) => console.warn('Phase notification failed:', e));
-        }
-      } catch (e) { console.warn('Phase notification error:', e); }
+      if (!res.duplicate) {
+        try {
+          const notifyCpQuery = letter.clientId
+            ? supabase.from('client_profiles').select('email,full_name').eq('client_id', letter.clientId).limit(1)
+            : supabase.from('client_profiles').select('email,full_name').ilike('full_name', letter.clientName).limit(1);
+          const { data: cp } = await notifyCpQuery;
+          if (cp && cp.length > 0 && cp[0].email) {
+            const { data: { session } } = await supabase.auth.getSession();
+            const token = session?.access_token;
+            fetch('/.netlify/functions/send-lpoa', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+              },
+              body: JSON.stringify({
+                action: 'send_phase_notification',
+                clientName: cp[0].full_name,
+                clientEmail: cp[0].email,
+                // Pre-existing bug, independent of mail class: this was
+                // hardcoded 'phase1_mailed' for every send, so a Phase 3
+                // bureau letter's client email said "Your Phase 1 dispute
+                // letter... mailed via Certified Mail" — wrong phase label
+                // regardless of what actually mailed. isPhase3 above already
+                // tracks this correctly for the enclosure logic.
+                phase: isPhase3 ? 'phase3_mailed' : 'phase1_mailed',
+                furnisher: letter.furnisher,
+                trackingNumber: res.tracking_number || '',
+              }),
+            }).catch((e) => console.warn('Phase notification failed:', e));
+          }
+        } catch (e) { console.warn('Phase notification error:', e); }
+      }
     } catch (e) {
       setError(e.message || 'Send failed');
     } finally {
@@ -514,8 +595,12 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           {step === 'sent' && result && (
             <div className="text-center py-6">
               <CheckCircle size={36} className="text-green-600 mx-auto mb-3" strokeWidth={1.5} />
-              <div className="text-[14px] text-ink font-medium ccc-display mb-1">Letter Sent</div>
-              <div className="text-[12px] text-ink-muted mb-4">Lob is printing and mailing your certified letter with return receipt</div>
+              <div className="text-[14px] text-ink font-medium ccc-display mb-1">{result.duplicate ? 'Already Submitted' : 'Letter Sent'}</div>
+              <div className="text-[12px] text-ink-muted mb-4">
+                {result.duplicate
+                  ? 'Lob had already accepted this letter. No additional mailpiece was created.'
+                  : 'Lob is printing and mailing your certified letter with return receipt'}
+              </div>
               <div className="border border-border rounded-sm p-4 text-left space-y-2">
                 <div className="text-[11px]">
                   <span className="text-ink-faint uppercase tracking-wider">Lob ID: </span>

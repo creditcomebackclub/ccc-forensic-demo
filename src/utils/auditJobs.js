@@ -9,6 +9,7 @@ const POLL_MS = 2000;
 const QUEUE_STALL_MS = 2 * 60 * 1000;  // never picked up by the function
 const RUN_STALL_MS = 10 * 60 * 1000;   // running but no row updates
 const MAX_READ_FAILURES = 15;          // consecutive poll read errors
+const START_RETRIES = 2;               // same job ID: safe with server claim
 
 // Fast local pre-check so an oversized HTML/text report fails in ~1s with the
 // same visible message, before any upload. The server enforces it again.
@@ -51,17 +52,30 @@ export async function runAuditJob({ mode, files, clientSelection }, onProgress) 
   if (insErr) throw new Error('Could not create audit job: ' + insErr.message);
 
   const { data: { session } } = await supabase.auth.getSession();
-  const res = await fetch('/.netlify/functions/audit-run-background', {
-    method: 'POST',
-    headers: { 
-      'Content-Type': 'application/json',
-      ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
-    },
-    body: JSON.stringify({ jobId }),
-  });
-  // Netlify background functions ACK with 202 and run detached
-  if (res.status >= 400) {
-    throw new Error('Could not start the audit on the server (HTTP ' + res.status + '). Check that the audit function is deployed.');
+  let startResponse = null;
+  for (let attempt = 0; attempt <= START_RETRIES; attempt += 1) {
+    try {
+      startResponse = await fetch('/.netlify/functions/audit-run-background', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
+        },
+        body: JSON.stringify({ jobId }),
+      });
+      // Netlify background functions ACK with 202 and run detached. A 409 on
+      // a retry normally means the first request already claimed this exact
+      // job, so polling is the correct idempotent recovery path.
+      if (startResponse.ok || startResponse.status === 409) break;
+      if (startResponse.status < 500 || attempt === START_RETRIES) {
+        const startError = new Error('Could not start the audit on the server (HTTP ' + startResponse.status + '). Check that the audit function is deployed.');
+        startError.nonRetryable = startResponse.status < 500;
+        throw startError;
+      }
+    } catch (error) {
+      if (error?.nonRetryable || attempt === START_RETRIES) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
   }
 
   return pollAuditJob(jobId, onProgress);

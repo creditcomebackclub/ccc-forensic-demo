@@ -1,4 +1,5 @@
 const https = require('https');
+const crypto = require('crypto');
 const { archiveLobArtifact } = require('./_lobArtifacts.cjs');
 
 function lobRequest(path, method, body, apiKey, extraHeaders) {
@@ -31,6 +32,109 @@ function lobRequest(path, method, body, apiKey, extraHeaders) {
   });
 }
 
+// Server-owned writes for an irreversible mail submission.  The browser must
+// never be the durable source of truth for a Lob idempotency key: a timeout,
+// reload, or second tab otherwise generates a new key and can mail twice.
+function supabaseRequest(path, method, body, supabaseUrl, serviceKey, extraHeaders = {}) {
+  return new Promise((resolve, reject) => {
+    const data = body == null ? null : JSON.stringify(body);
+    const u = new URL(supabaseUrl + path);
+    const req = https.request({
+      hostname: u.hostname,
+      port: 443,
+      path: u.pathname + u.search,
+      method,
+      headers: {
+        apikey: serviceKey,
+        Authorization: 'Bearer ' + serviceKey,
+        ...(data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {}),
+        Prefer: 'return=representation',
+        ...extraHeaders,
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', (chunk) => { raw += chunk; });
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: raw ? JSON.parse(raw) : null }); }
+        catch (e) { resolve({ status: res.statusCode, body: raw }); }
+      });
+    });
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+function isSuccess(res) {
+  return res && res.status >= 200 && res.status < 300;
+}
+
+function requestError(res, fallback) {
+  if (!res) return fallback;
+  if (typeof res.body === 'object' && res.body?.message) return res.body.message;
+  if (typeof res.body === 'string' && res.body) return res.body;
+  return fallback;
+}
+
+async function findLetter(letterId, supabaseUrl, serviceKey) {
+  const result = await supabaseRequest(
+    '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
+      + '&select=id,user_id,client_id,client_name,lob_id,mailed_date,tracking_number,enclosure_parse_blocked,enclosure_parse_issues',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
+  return Array.isArray(result.body) ? result.body[0] : null;
+}
+
+async function findSubmission(letterId, supabaseUrl, serviceKey) {
+  const result = await supabaseRequest(
+    '/rest/v1/mail_submissions?letter_id=eq.' + encodeURIComponent(letterId)
+      + '&select=id,letter_id,idempotency_key,status,lob_id,tracking_number,attempt_count,last_error',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load mail submission'));
+  return Array.isArray(result.body) ? result.body[0] : null;
+}
+
+async function getOrCreateSubmission(letter, requestedBy, supabaseUrl, serviceKey) {
+  let submission = await findSubmission(letter.id, supabaseUrl, serviceKey);
+  if (submission) return submission;
+
+  const created = await supabaseRequest(
+    '/rest/v1/mail_submissions?on_conflict=letter_id',
+    'POST',
+    {
+      letter_id: letter.id,
+      user_id: letter.user_id,
+      client_id: letter.client_id || null,
+      requested_by: requestedBy || null,
+      idempotency_key: crypto.randomUUID(),
+      status: 'pending',
+    },
+    supabaseUrl,
+    serviceKey,
+    { Prefer: 'resolution=ignore-duplicates,return=representation' }
+  );
+  if (!isSuccess(created)) throw new Error(requestError(created, 'Could not create durable mail submission'));
+
+  submission = Array.isArray(created.body) ? created.body[0] : null;
+  // A concurrent click may have won the unique(letter_id) insert. Fetch its
+  // key and deliberately reuse it so Lob still sees both requests as one.
+  return submission || findSubmission(letter.id, supabaseUrl, serviceKey);
+}
+
+async function updateSubmission(letterId, patch, supabaseUrl, serviceKey) {
+  const result = await supabaseRequest(
+    '/rest/v1/mail_submissions?letter_id=eq.' + encodeURIComponent(letterId),
+    'PATCH',
+    { ...patch, updated_at: new Date().toISOString() },
+    supabaseUrl,
+    serviceKey
+  );
+  if (!isSuccess(result)) throw new Error(requestError(result, 'Could not update durable mail submission'));
+  return Array.isArray(result.body) ? result.body[0] : null;
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
@@ -38,7 +142,8 @@ exports.handler = async (event) => {
 
   // Only authenticated admins may send letters or verify addresses via Lob.
   const { requireAdmin } = require('./_requireAdmin.cjs');
-  try { await requireAdmin(event); }
+  let admin;
+  try { admin = await requireAdmin(event); }
   catch (e) { if (e.statusCode) return e; throw e; }
 
   // Prefer non-VITE names — VITE_-prefixed vars risk being inlined into the
@@ -51,6 +156,12 @@ exports.handler = async (event) => {
 
   if (!apiKey) {
     return { statusCode: 500, body: JSON.stringify({ error: 'Lob API key not configured' }) };
+  }
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !serviceKey) {
+    return { statusCode: 500, body: JSON.stringify({ error: 'Supabase server configuration is required for Lob operations' }) };
   }
 
   let payload;
@@ -73,40 +184,73 @@ exports.handler = async (event) => {
     }
 
     if (action === 'send_letter') {
-      const { toAddress, fromAddress, remoteUrl, description, idempotencyKey, metadata } = payload;
-
-      // Parse-confidence hard block (2026-07-23 defect report, P0-1):
-      // checked server-side against the DB row, not just the client UI, so
-      // a letter phase2-analyze-background.mjs flagged as built on an
-      // unreadable enclosure can never reach Lob regardless of how the
-      // request got here.
+      const { toAddress, fromAddress, remoteUrl, description, metadata } = payload;
       const letterId = metadata && metadata.letter_id;
-      if (letterId) {
-        const supabaseUrl = process.env.VITE_SUPABASE_URL;
-        const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        if (supabaseUrl && serviceKey) {
-          const checkRes = await new Promise((resolve, reject) => {
-            const u = new URL(supabaseUrl + '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId) + '&select=enclosure_parse_blocked,enclosure_parse_issues');
-            https.get(u, { headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey } }, (res) => {
-              let raw = ''; res.on('data', (c) => raw += c); res.on('end', () => resolve({ status: res.statusCode, body: raw }));
-            }).on('error', reject);
-          });
-          if (checkRes.status === 200) {
-            const rows = JSON.parse(checkRes.body);
-            const row = rows && rows[0];
-            if (row && row.enclosure_parse_blocked) {
-              return {
-                statusCode: 422,
-                body: JSON.stringify({
-                  error: 'ENCLOSURE UNPARSED — MANUAL RECONCILIATION REQUIRED',
-                  issues: row.enclosure_parse_issues || [],
-                  blocked: true,
-                }),
-              };
-            }
-          }
-        }
+      if (!letterId || !remoteUrl || !toAddress || !fromAddress) {
+        return { statusCode: 400, body: JSON.stringify({ error: 'letter_id, rendered letter URL, and complete addresses are required' }) };
       }
+
+      // The database—not browser state—is the authoritative preflight check.
+      // It prevents both a citation/enclosure block bypass and a second send
+      // after a reload, timeout, or a staff member opens the same letter in
+      // another tab.
+      const letter = await findLetter(letterId, supabaseUrl, serviceKey);
+      if (!letter) return { statusCode: 404, body: JSON.stringify({ error: 'Letter not found' }) };
+      if (letter.enclosure_parse_blocked) {
+        return {
+          statusCode: 422,
+          body: JSON.stringify({
+            error: 'ENCLOSURE UNPARSED — MANUAL RECONCILIATION REQUIRED',
+            issues: letter.enclosure_parse_issues || [],
+            blocked: true,
+          }),
+        };
+      }
+
+      let submission = await findSubmission(letterId, supabaseUrl, serviceKey);
+      if (submission && (submission.status === 'submitted' || submission.status === 'accepted_unreconciled') && submission.lob_id) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            id: submission.lob_id,
+            tracking_number: submission.tracking_number || letter.tracking_number || null,
+            mailed_date: letter.mailed_date || null,
+            duplicate: true,
+            mail_submission_status: submission.status,
+          }),
+        };
+      }
+      if (!submission && (letter.lob_id || letter.mailed_date)) {
+        // Historical/manual mail has no durable submission record, but it is
+        // still a real send. Never let a UI retry convert it to duplicate
+        // postage; staff must create a reviewed revision instead.
+        return {
+          statusCode: 409,
+          body: JSON.stringify({ error: 'This letter is already marked mailed. Create a new reviewed revision before sending again.' }),
+        };
+      }
+
+      submission = submission || await getOrCreateSubmission(letter, admin.userId, supabaseUrl, serviceKey);
+      if (!submission) throw new Error('Could not claim a durable mail submission');
+      if ((submission.status === 'submitted' || submission.status === 'accepted_unreconciled') && submission.lob_id) {
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            id: submission.lob_id,
+            tracking_number: submission.tracking_number || letter.tracking_number || null,
+            mailed_date: letter.mailed_date || null,
+            duplicate: true,
+            mail_submission_status: submission.status,
+          }),
+        };
+      }
+
+      await updateSubmission(letterId, {
+        status: 'pending',
+        attempt_count: (submission.attempt_count || 0) + 1,
+        last_attempt_at: new Date().toISOString(),
+        last_error: null,
+      }, supabaseUrl, serviceKey);
 
       const letterPayload = {
         description: description || 'CCC Dispute Letter',
@@ -138,11 +282,59 @@ exports.handler = async (event) => {
         // Letters state "return receipt requested" — the mailing must match
         extra_service: 'certified_return_receipt',
         // Lets the webhook match the letter row even if lob_id never got saved
-        ...(metadata ? { metadata } : {}),
+        metadata: { letter_id: String(letterId) },
       };
-      // Idempotency: a retry of the same letter can never mail twice
-      const headers = idempotencyKey ? { 'Idempotency-Key': String(idempotencyKey) } : undefined;
-      const result = await lobRequest('/v1/letters', 'POST', letterPayload, apiKey, headers);
+      // This key was persisted before the Lob request. A reload or a second
+      // tab therefore hits the same Lob idempotency record rather than
+      // creating another physical mailpiece.
+      const result = await lobRequest('/v1/letters', 'POST', letterPayload, apiKey, {
+        'Idempotency-Key': String(submission.idempotency_key),
+      });
+      if (!isSuccess(result) || !result.body?.id) {
+        await updateSubmission(letterId, {
+          status: 'failed',
+          last_error: requestError(result, 'Lob did not accept the letter'),
+        }, supabaseUrl, serviceKey);
+        return { statusCode: result.status || 502, body: JSON.stringify(result.body || { error: 'Lob did not accept the letter' }) };
+      }
+
+      // Persist Lob's acceptance server-side. If the letters row cannot be
+      // reconciled after an accepted send, retain the Lob ID in the durable
+      // submission and explicitly surface it as a reconciliation task—never
+      // present it as a failed send that someone might retry.
+      const mailedAt = new Date().toISOString().slice(0, 10);
+      const savedLetter = await supabaseRequest(
+        '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId) + '&lob_id=is.null',
+        'PATCH',
+        {
+          lob_id: result.body.id,
+          mailed_date: mailedAt,
+          tracking_number: result.body.tracking_number || null,
+          tracking_status: 'Mailed',
+        },
+        supabaseUrl,
+        serviceKey
+      );
+      let letterWasSaved = isSuccess(savedLetter) && Array.isArray(savedLetter.body) && savedLetter.body.length > 0;
+      // When two browser tabs race with the same durable Lob key, Lob returns
+      // the same accepted mailpiece to both. The losing PATCH sees `lob_id`
+      // already populated, which is a successful reconciliation—not a reason
+      // to downgrade the submission to `accepted_unreconciled`.
+      if (!letterWasSaved) {
+        try {
+          const reconciledLetter = await findLetter(letterId, supabaseUrl, serviceKey);
+          letterWasSaved = reconciledLetter?.lob_id === result.body.id;
+        } catch (recheckError) {
+          console.warn('Could not confirm concurrent letter reconciliation:', letterId, recheckError.message);
+        }
+      }
+      await updateSubmission(letterId, {
+        status: letterWasSaved ? 'submitted' : 'accepted_unreconciled',
+        lob_id: result.body.id,
+        tracking_number: result.body.tracking_number || null,
+        submitted_at: new Date().toISOString(),
+        last_error: letterWasSaved ? null : 'Lob accepted the mailpiece, but the letters row requires reconciliation.',
+      }, supabaseUrl, serviceKey);
       // Archive the immutable, Lob-rendered mailpiece while this request still
       // knows the CCC letter id. This is evidence capture, never a condition
       // of mailing: Lob already accepted the mailpiece, so an archive failure
@@ -156,8 +348,8 @@ exports.handler = async (event) => {
             artifactType: 'mailpiece_pdf',
             sourceUrl: result.body.url || null,
             apiKey,
-            supabaseUrl: process.env.VITE_SUPABASE_URL,
-            serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+            supabaseUrl,
+            serviceKey,
           });
           if (!artifactArchive.archived) console.warn('Lob mailpiece not archived yet:', artifactArchive.reason, result.body.id);
         } catch (archiveErr) {
@@ -168,7 +360,10 @@ exports.handler = async (event) => {
         statusCode: result.status,
         body: JSON.stringify({
           ...(result.body || {}),
+          mailed_date: mailedAt,
           artifact_archive: artifactArchive && artifactArchive.archived ? 'archived' : 'pending',
+          mail_submission_status: letterWasSaved ? 'submitted' : 'accepted_unreconciled',
+          reconciliation_required: !letterWasSaved,
         }),
       };
     }

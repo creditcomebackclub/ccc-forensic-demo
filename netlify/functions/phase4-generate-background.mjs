@@ -15,6 +15,7 @@ import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { PHASE4_SYSTEM_PROMPT } from '../../src/prompts/phase4Prompt.js';
 import { PHASE4_SCHEMA } from '../../src/utils/auditSchemas.js';
+import { requireStaff } from './_requireAuth.cjs';
 
 const MODEL = 'claude-sonnet-5';
 const SYSTEM = [{ type: 'text', text: PHASE4_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
@@ -23,12 +24,23 @@ const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day:
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'unknown date';
 
 export const handler = async (event) => {
+  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
+
+  let caller;
+  try {
+    caller = await requireStaff(event);
+  } catch (e) {
+    if (e && e.statusCode) return e;
+    console.error('phase4-generate: could not authenticate caller', e);
+    return { statusCode: 500, body: 'authentication failed' };
+  }
+
   let jobId = null;
   try {
     const body = JSON.parse(event.body || '{}');
     jobId = body.jobId;
   } catch (e) { /* handled below */ }
-  if (!jobId) return { statusCode: 400, body: 'jobId required' };
+  if (typeof jobId !== 'string' || !jobId) return { statusCode: 400, body: 'jobId required' };
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -47,10 +59,38 @@ export const handler = async (event) => {
     realtime: { transport: ws },
   });
 
+  // Validate both the queued job and its target record while the caller's
+  // identity is known. An auditor can only generate for their own escalation;
+  // an admin retains the existing cross-staff oversight capability.
+  const { data: queuedJob, error: queuedJobErr } = await db
+    .from('phase4_jobs')
+    .select('id, escalation_id')
+    .eq('id', jobId)
+    .eq('user_id', caller.userId)
+    .eq('status', 'queued')
+    .maybeSingle();
+  if (queuedJobErr || !queuedJob) {
+    console.warn('phase4-generate: job not available to caller', jobId, queuedJobErr?.message);
+    return { statusCode: 409, body: 'job not claimable' };
+  }
+  if (typeof queuedJob.escalation_id !== 'string' || !queuedJob.escalation_id) {
+    return { statusCode: 400, body: 'job contains invalid escalation data' };
+  }
+  const { data: targetEscalation, error: targetEscalationErr } = await db
+    .from('escalations')
+    .select('id, user_id')
+    .eq('id', queuedJob.escalation_id)
+    .maybeSingle();
+  if (targetEscalationErr || !targetEscalation) return { statusCode: 404, body: 'escalation not found' };
+  if (caller.role !== 'admin' && targetEscalation.user_id !== caller.userId) {
+    return { statusCode: 403, body: 'not authorized for this escalation' };
+  }
+
   const { data: claimed, error: claimErr } = await db
     .from('phase4_jobs')
     .update({ status: 'running', started_at: new Date().toISOString(), updated_at: new Date().toISOString(), stage: 'Starting generation', tokens: 0 })
     .eq('id', jobId)
+    .eq('user_id', caller.userId)
     .eq('status', 'queued')
     .select();
   if (claimErr || !claimed || claimed.length === 0) {

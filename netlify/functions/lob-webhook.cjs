@@ -28,6 +28,10 @@ function verifyLobSignature(rawBody, timestamp, signature, secret) {
   }
 }
 
+function eventFingerprint(rawBody) {
+  return crypto.createHash('sha256').update(rawBody || '').digest('hex');
+}
+
 function supabaseRequest(path, method, body, url, key) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
@@ -221,6 +225,32 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'missing event_type or lob_id' }) };
   }
 
+  // Keep a compact audit ledger for Lob retries and out-of-order events. The
+  // signed raw body itself is deliberately never persisted because it can
+  // contain client data. This table is additive: if its migration has not
+  // reached an environment yet, tracking still continues and the function
+  // reports the missing ledger only in server logs.
+  try {
+    const eventResult = await supabaseRequest(
+      '/rest/v1/lob_webhook_events?on_conflict=event_key',
+      'POST',
+      {
+        event_key: eventFingerprint(rawBody),
+        event_type: eventType,
+        lob_id: lobId,
+        letter_id: metaLetterId || null,
+        event_occurred_at: payload.date_created || null,
+      },
+      supabaseUrl,
+      supabaseKey
+    );
+    if (eventResult.status < 200 || eventResult.status >= 300) {
+      console.warn('Could not record Lob webhook event:', eventResult.status);
+    }
+  } catch (eventLogError) {
+    console.warn('Could not record Lob webhook event:', eventLogError.message);
+  }
+
   const mode = process.env.LOB_MODE || 'test';
   const lobApiKey = mode === 'live' ? process.env.LOB_LIVE_KEY : process.env.LOB_TEST_KEY;
 
@@ -306,15 +336,20 @@ exports.handler = async (event) => {
 
   // Match by lob_id first; fall back to our own letter id from metadata
   // (covers letters where saving lob_id failed after sending) and heal lob_id
+  // Delivery is a one-way transition. Conditional writes make duplicate
+  // `delivered` webhooks harmless and keep a late in-transit event from
+  // overwriting a confirmed delivery. The client notification is sent only
+  // by the request that wins this transition.
+  const unresolvedFilter = '&delivered_at=is.null';
   let updateRes = await supabaseRequest(
-    '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId),
+    '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId) + unresolvedFilter,
     'PATCH', patch, supabaseUrl, supabaseKey
   );
   let updatedRows = Array.isArray(updateRes.body) ? updateRes.body : [];
 
   if (updatedRows.length === 0 && metaLetterId) {
     updateRes = await supabaseRequest(
-      '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId),
+      '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + unresolvedFilter,
       'PATCH', { ...patch, lob_id: lobId }, supabaseUrl, supabaseKey
     );
     updatedRows = Array.isArray(updateRes.body) ? updateRes.body : [];
@@ -342,15 +377,17 @@ exports.handler = async (event) => {
         // the wrong same-named client's email.
         const clientRes = letter.client_id
           ? await supabaseRequest('/rest/v1/clients?id=eq.' + letter.client_id + '&select=email', 'GET', null, supabaseUrl, supabaseKey)
-          : await supabaseRequest('/rest/v1/clients?name=eq.' + encodeURIComponent(letter.client_name) + '&select=email', 'GET', null, supabaseUrl, supabaseKey);
+          : await supabaseRequest('/rest/v1/clients?name=eq.' + encodeURIComponent(letter.client_name) + '&user_id=eq.' + encodeURIComponent(letter.user_id || '') + '&select=email', 'GET', null, supabaseUrl, supabaseKey);
 
         const clientEmail = clientRes.body && clientRes.body[0] && clientRes.body[0].email;
         if (clientEmail) {
           const furnisher = letter.furnisher || 'your creditor';
           const clientName = letter.client_name.split(' ')[0];
           const tn = letter.tracking_number || trackingNumber;
+          const isBureauDispute = String(letter.phase || '').startsWith('Phase 3');
+          const reviewDays = isBureauDispute ? 45 : 30;
 
-          const subject = 'Dispute Letter Delivered — ' + furnisher + ' Has 30 Days to Respond';
+          const subject = 'Dispute Letter Delivered — ' + furnisher + ' Has ' + reviewDays + ' Days to Respond';
           const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
             <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
               <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
@@ -358,7 +395,7 @@ exports.handler = async (event) => {
             </div>
             <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
               <p>Hi ${clientName},</p>
-              <p>Your dispute letter to <strong>${furnisher}</strong> has been delivered. Their 30-day response window has begun.</p>
+              <p>Your dispute letter to <strong>${furnisher}</strong> has been delivered. Its ${reviewDays}-day review window has begun.</p>
               ${tn ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${tn}" style="color:#1B2A4A;">USPS Tracking ${tn.slice(-8)}</a></p>` : ''}
               <p>We will monitor for their response and prepare Phase 3 escalation letters in advance.</p>
               <p>Log in to your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a> to see full details and tracking.</p>

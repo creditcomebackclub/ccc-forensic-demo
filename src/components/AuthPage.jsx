@@ -6,7 +6,6 @@ export default function AuthPage() {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
@@ -20,17 +19,6 @@ export default function AuthPage() {
       if (mode === 'login') {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-      } else if (mode === 'signup') {
-        // account_type marks explicit auditor signups — loadUser only creates
-        // an auditor profile when this flag is present, never by inference
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { full_name: name, account_type: 'auditor' } },
-        });
-        if (error) throw error;
-        setSuccess('Account created — check your email to confirm, then sign in.');
-        setMode('login');
       } else if (mode === 'reset') {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
           redirectTo: window.location.origin + '/login',
@@ -103,10 +91,10 @@ export default function AuthPage() {
           <div className="bg-white border border-border rounded-2xl p-8 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.04)]">
             <div className="mb-8">
               <h2 className="text-[22px] font-bold text-ink mb-2">
-                {mode === 'login' ? 'Welcome back' : mode === 'signup' ? 'Create an account' : 'Reset password'}
+                {mode === 'login' ? 'Welcome back' : 'Reset password'}
               </h2>
               <p className="text-[13px] text-ink-muted">
-                {mode === 'login' ? 'Please enter your details to sign in.' : mode === 'signup' ? 'Enter your details below to get started.' : 'Enter your email and we will send you a reset link.'}
+                {mode === 'login' ? 'Please enter your details to sign in.' : 'Enter your email and we will send you a reset link.'}
               </p>
             </div>
 
@@ -122,20 +110,6 @@ export default function AuthPage() {
             )}
 
             <div className="space-y-4">
-              {mode === 'signup' && (
-                <div>
-                  <label className="text-[11px] uppercase tracking-wider text-ink-muted font-bold block mb-1.5">Full Name</label>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    onKeyDown={handleKey}
-                    placeholder="Chris Holland"
-                    className="w-full border border-gray-200 rounded-lg px-4 py-3 text-[14px] text-ink focus:outline-none focus:border-[#C9A84C] focus:ring-1 focus:ring-[#C9A84C] transition-all bg-gray-50/50"
-                  />
-                </div>
-              )}
-
               <div>
                 <label className="text-[11px] uppercase tracking-wider text-ink-muted font-bold block mb-1.5">Email Address</label>
                 <input
@@ -173,7 +147,7 @@ export default function AuthPage() {
                 transform: loading ? 'none' : 'translateY(-1px)'
               }}
             >
-              {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : mode === 'signup' ? 'Create Account' : 'Send Reset Link'}
+              {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Send Reset Link'}
             </button>
 
             <div className="mt-6 flex flex-col gap-3">
@@ -193,15 +167,6 @@ export default function AuthPage() {
                   &larr; Back to sign in
                 </button>
               )}
-              
-              {/* Note: In this system, only clients log in. The 'signup' mode is strictly a backdoor for creating Auditor accounts, so we hide it behind a small subtle link if needed, or we can just leave it out of the main UI and rely on magic links. Since the previous UI had it, we'll keep it as a subtle link at the bottom */}
-              <div className="mt-4 pt-4 border-t border-gray-100 text-center">
-                 {mode === 'login' ? (
-                   <button onClick={() => { setMode('signup'); setError(null); setSuccess(null); }} className="text-[12px] text-gray-400 hover:text-gray-600 transition-colors">Team Signup</button>
-                 ) : mode === 'signup' ? (
-                   <button onClick={() => { setMode('login'); setError(null); setSuccess(null); }} className="text-[12px] text-gray-400 hover:text-gray-600 transition-colors">Back to Login</button>
-                 ) : null}
-              </div>
             </div>
           </div>
           

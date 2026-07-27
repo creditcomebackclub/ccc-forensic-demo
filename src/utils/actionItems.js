@@ -1,64 +1,98 @@
-// Counts client-uploaded furnisher responses that haven't been run through
-// Phase 2 analysis yet — drives the sidebar action-item badge. "Unanalyzed"
-// reuses the phase2_analyzed_at signal ResponseAnalyzer already persists, so
-// this needs no new schema: a letter with a response file in storage but no
-// phase2_analyzed_at is an action item.
 import { supabase } from './supabase';
-import { CONVERTED_PREFIX } from './responseFiles';
 
-// Returns both the badge count and the set of client names that have at
-// least one unanalyzed response, so the sidebar badge can link straight to
-// the clients that actually need attention instead of just the count.
-export async function getUnanalyzedResponseStats() {
-  const empty = { count: 0, clientNames: new Set() };
-  const { data: allLetters } = await supabase
-    .from('letters')
-    .select('id, client_name, furnisher, phase, phase2_analyzed_at');
-  if (!allLetters || !allLetters.length) return empty;
+// Global staff navigation must not recursively list every `responses` storage
+// folder just to paint a badge. New uploads live in response_evidence; the
+// database queue below also includes only the two durable legacy signals
+// available before that table existed. The selected client's Documents tab
+// retains its legacy folder discovery flow for staff reconciliation.
+const ACTION_PAGE_SIZE = 250;
+const MAX_ACTION_PAGES = 100;
 
-  // Only consider letters unanalyzed if they have no phase2_analyzed_at AND
-  // there isn't already a Phase 3 letter for this furnisher (which means the
-  // user manually skipped Phase 2 analysis and generated Phase 3 directly).
-  const letters = allLetters.filter(l => 
-    l.phase2_analyzed_at === null && 
-    !allLetters.some(pl => pl.client_name === l.client_name && pl.furnisher === l.furnisher && pl.phase?.startsWith('Phase 3'))
-  );
-  
-  if (!letters.length) return empty;
+function emptyStats() {
+  return { count: 0, clientNames: new Set(), clientIds: new Set(), truncated: false };
+}
 
-  const lettersByClient = new Map();
-  for (const l of letters) {
-    if (!lettersByClient.has(l.client_name)) lettersByClient.set(l.client_name, new Set());
-    lettersByClient.get(l.client_name).add(l.id);
+function addItemTargets(items, clientNames, clientIds) {
+  for (const item of items) {
+    if (item.client_name) clientNames.add(item.client_name);
+    if (item.client_id) clientIds.add(item.client_id);
   }
+}
 
-  const { data: profiles } = await supabase
-    .from('client_profiles')
-    .select('user_id, full_name')
-    .in('full_name', [...lettersByClient.keys()]);
-  if (!profiles || !profiles.length) return empty;
+// Compatibility only for a database that has not received the durable queue
+// migration yet. It intentionally does *not* crawl raw storage folders:
+// doing that globally becomes an N+1 request storm as the client base grows.
+async function fallbackPersistedLegacySignals() {
+  const { data, error, count } = await supabase
+    .from('letters')
+    .select('id,client_id,client_name', { count: 'exact' })
+    .is('phase2_analyzed_at', null)
+    .or('response_file_url.not.is.null,response_outcome.eq.received')
+    .order('saved_at', { ascending: false })
+    .limit(500);
+  if (error) throw error;
 
-  let count = 0;
   const clientNames = new Set();
-  for (const p of profiles) {
-    const letterIds = lettersByClient.get(p.full_name);
-    if (!letterIds || !letterIds.size || !p.user_id) continue;
+  const clientIds = new Set();
+  addItemTargets(data || [], clientNames, clientIds);
+  return {
+    count: Number(count || (data || []).length),
+    clientNames,
+    clientIds,
+    truncated: (data || []).length < Number(count || 0),
+  };
+}
 
-    const { data: folders } = await supabase.storage.from('responses').list(p.user_id, { limit: 100 });
-    if (!folders) continue;
+// Returns both the action-item count and stable client IDs for navigation.
+// Names remain as a narrowly scoped legacy fallback until every historical
+// letter is backfilled with client_id; callers must prefer clientIds.
+export async function getUnanalyzedResponseStats() {
+  const clientNames = new Set();
+  const clientIds = new Set();
+  let cursor = null;
+  let pages = 0;
+  let totalCount = 0;
 
-    for (const folder of folders) {
-      if (!letterIds.has(folder.name)) continue;
-      const { data: files } = await supabase.storage.from('responses').list(p.user_id + '/' + folder.name, { limit: 50 });
-      const visible = (files || []).filter((f) => !f.name.startsWith(CONVERTED_PREFIX));
-      if (visible.length > 0) { 
-        count += 1; 
-        clientNames.add(p.full_name); 
-        console.error(`🔴 UNANALYZED RESPONSE FOUND FOR ${p.full_name}:\n- Letter ID: ${folder.name}\n- Raw Files: ${visible.map(f => f.name).join(', ')}`);
+  try {
+    do {
+      const { data, error } = await supabase.rpc('list_response_action_items', {
+        p_limit: ACTION_PAGE_SIZE + 1,
+        p_cursor_created_at: cursor?.createdAt || null,
+        p_cursor_key: cursor?.sortKey || null,
+      });
+      if (error) throw error;
+
+      const rows = data || [];
+      const page = rows.slice(0, ACTION_PAGE_SIZE);
+      if (page.length) {
+        totalCount = Number(page[0].total_count || totalCount);
+        addItemTargets(page, clientNames, clientIds);
       }
+      const last = page[page.length - 1];
+      cursor = rows.length > ACTION_PAGE_SIZE && last
+        ? { createdAt: last.created_at, sortKey: last.sort_key }
+        : null;
+      pages += 1;
+    } while (cursor && pages < MAX_ACTION_PAGES);
+
+    return {
+      count: totalCount,
+      clientNames,
+      clientIds,
+      truncated: !!cursor,
+    };
+  } catch (error) {
+    // Preview/older databases can temporarily be missing the RPC while the
+    // UI bundle is ahead of the migration. Preserve the durable legacy
+    // signals, but never fall back to a global Storage crawl.
+    console.warn('Response action queue unavailable; using persisted legacy signals only:', error.message || error);
+    try {
+      return await fallbackPersistedLegacySignals();
+    } catch (fallbackError) {
+      console.warn('Could not load response action items:', fallbackError.message || fallbackError);
+      return emptyStats();
     }
   }
-  return { count, clientNames };
 }
 
 export async function countUnanalyzedResponses() {

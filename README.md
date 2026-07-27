@@ -107,7 +107,17 @@ Never expose `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, SendGrid, or Lob 
 
 ## Database and security
 
-Apply the SQL migrations in `supabase/migrations/` to the target Supabase project, in filename order. They establish the application’s schema and include changes for client IDs, sensitive data, documents, letters, audits, billing, lifecycle status, escalations, affiliate commissions, and row-level security.
+The production database is baselined in `supabase/migrations/20260727070242_production_baseline.sql`. Historical SQL that was applied manually before this baseline is preserved in `docs/supabase-legacy-manual-sql/` for reference only; do not replay it.
+
+Future database changes are CLI-managed:
+
+```bash
+npx supabase link --project-ref <project-ref>
+npx supabase db push --linked --dry-run
+npx supabase db push --linked
+```
+
+Create each new migration with `npx supabase migration new <description>`, test it locally when practical, commit it, then run the reviewed push. Never use a Netlify build to push database migrations, and do not make production schema changes in Studio without immediately capturing a migration.
 
 Before deploying to a new environment, verify:
 
@@ -118,6 +128,7 @@ Before deploying to a new environment, verify:
 5. Lob test/live mode, webhook secret, sender address, and return-address configuration.
 6. The scheduled `daily-cron` function, configured in `netlify.toml`.
 7. The `mail_artifacts` migration and private `documents` bucket access. A newly mailed letter should archive its exact Lob-rendered PDF; a return receipt is archived when Lob supplies it.
+8. Staff provisioning: create or invite each new team member through Supabase Auth, then use a trusted admin/backend path (or the Supabase dashboard) to create their `profiles` row with role `admin` or `auditor` before their first sign-in. Public signup never grants a staff role.
 
 ## Build and deploy
 
@@ -134,15 +145,9 @@ Netlify is configured in `netlify.toml`:
 
 The public homepage is served from `public/home.html`; authenticated app routes fall back to the React application.
 
-## Current scaling work
+## Scaling posture
 
-The admin dashboard and client boards currently load full audit JSON and letter HTML for broad client lists. At higher volume, that creates unnecessary browser payload and memory pressure.
-
-[implementation_plan.md](implementation_plan.md) describes the planned remedy:
-
-- fetch lightweight client/audit/letter metadata for dashboard and Kanban views;
-- fetch a client’s full audits and letters only when their detail panel opens;
-- preserve the existing UI while allowing the system to scale to much larger client volumes.
+Staff dashboards use compact, paginated client and in-flight-letter queues; full audits and rendered letters load only for a selected client or letter. Durable response evidence, mail submissions, and webhook events keep the evidence and delivery workflow safe as volume grows.
 
 ## Validation
 
