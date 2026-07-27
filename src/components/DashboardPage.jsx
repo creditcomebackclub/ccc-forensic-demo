@@ -358,7 +358,7 @@ function FunnelChart({ funnel }) {
   const [tip, setTip] = useState(null);
   const stages = [
     { key: 'Generated', value: funnel.generated, hint: 'Letters prepared' },
-    { key: 'Mailed', value: funnel.mailed, hint: 'Sent via USPS' },
+    { key: 'Mailed', value: funnel.mailed, hint: 'Sent via certified mail' },
     { key: 'Responded', value: funnel.responded, hint: 'Furnisher replied' },
     { key: 'Deleted', value: funnel.deleted, hint: 'Removed from report' },
   ];

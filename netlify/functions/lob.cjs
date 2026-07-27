@@ -72,15 +72,7 @@ exports.handler = async (event) => {
     }
 
     if (action === 'send_letter') {
-      const { toAddress, fromAddress, remoteUrl, description, idempotencyKey, metadata, phase } = payload;
-      // Certified + return receipt only for escalation phases (Phase 3
-      // bureau letters, Phase 4 if ever mailed) — Phase 1/Personal Info
-      // disputes go standard First Class. This cut the average per-letter
-      // cost roughly 90%; see mailing_strategy_plan.md. The generated
-      // letter text (letterPrompt.js / api.js instructions) must say the
-      // same thing this actually does — a certified claim on a First Class
-      // mailing is a false statement in a formal FCRA notice.
-      const isEscalation = phase && (phase.startsWith('Phase 3') || phase.startsWith('Phase 4'));
+      const { toAddress, fromAddress, remoteUrl, description, idempotencyKey, metadata } = payload;
 
       // Parse-confidence hard block (2026-07-23 defect report, P0-1):
       // checked server-side against the DB row, not just the client UI, so
@@ -142,9 +134,8 @@ exports.handler = async (event) => {
         double_sided: true,
         address_placement: 'top_first_page',
         mail_type: 'usps_first_class',
-        // Letters state their mail method in the printed text (letterPrompt.js
-        // / phase2Prompt.js) — this must match what's actually requested here.
-        ...(isEscalation ? { extra_service: 'certified_return_receipt' } : {}),
+        // Letters state "return receipt requested" — the mailing must match
+        extra_service: 'certified_return_receipt',
         // Lets the webhook match the letter row even if lob_id never got saved
         ...(metadata ? { metadata } : {}),
       };

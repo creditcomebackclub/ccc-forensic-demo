@@ -136,11 +136,7 @@ export default function DisputesTab({
                     <a href={'https://tools.usps.com/go/TrackConfirmAction?tLabels=' + l.tracking_number} target="_blank" rel="noopener noreferrer"
                       className="ml-2 text-slate-900 font-semibold hover:text-blue-600 transition-colors">Track →</a>
                   )}
-                  {/* Return receipt only exists for certified mail (Phase 3+) —
-                      Phase 1/Personal Info now go First Class and will never
-                      generate a receipt event, so showing this button there
-                      would be a permanent dead end. */}
-                  {l.tracking_status === 'Delivered' && l.lob_id && l.phase && (l.phase.startsWith('Phase 3') || l.phase.startsWith('Phase 4')) && (
+                  {l.tracking_status === 'Delivered' && l.lob_id && (
                     <ReturnReceiptButton lobId={l.lob_id} returnReceiptUrl={l.return_receipt_url} />
                   )}
                 </div>

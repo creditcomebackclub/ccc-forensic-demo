@@ -134,7 +134,7 @@ exports.handler = async (event) => {
     };
 
     const bodies = {
-      phase1_mailed: `<p>Your Phase 1 dispute letter to <strong>${furnisher}</strong> has been mailed via USPS First Class Mail.</p>
+      phase1_mailed: `<p>Your Phase 1 dispute letter to <strong>${furnisher}</strong> has been mailed via USPS Certified Mail.</p>
         ${trackingNumber ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}" style="color:#1B2A4A;">USPS Tracking ${trackingNumber.slice(-8)}</a></p>` : ''}
         <p>The furnisher has 30 days from delivery to respond. We will monitor the response and notify you of next steps.</p>`,
       phase1_delivered: `<p>Your dispute letter to <strong>${furnisher}</strong> has been delivered. Their 30-day response window has begun.</p>
@@ -491,7 +491,7 @@ exports.handler = async (event) => {
         headline: 'From audit to dispute to resolution.',
         content: '<p>Here\'s what the process actually looks like once you start:</p>'
           + '<p><strong>Step 1 — Forensic Audit.</strong> We analyze your 3-bureau report field by field, identifying specific Metro 2 violations — things like charge-off accounts still reporting active past-due balances (a logical impossibility), cross-bureau data conflicts, or missing dispute flags.</p>'
-          + '<p><strong>Step 2 — Direct Furnisher Dispute.</strong> We send letters directly to each creditor citing the exact violations and federal statutes involved. This establishes a legal record and starts a 30-day clock.</p>'
+          + '<p><strong>Step 2 — Direct Furnisher Dispute.</strong> We send certified letters directly to each creditor citing the exact violations and federal statutes involved. This establishes a legal record and starts a 30-day clock.</p>'
           + '<p><strong>Step 3 — Escalation if needed.</strong> If a creditor fails to respond adequately within 30 days — which happens often — we escalate to the credit bureaus using their own inadequate response as evidence, citing Johnson v. MBNA.</p>'
           + '<p>Every step is documented, tracked, and visible to you in a client portal built specifically for this process.</p>',
       },
