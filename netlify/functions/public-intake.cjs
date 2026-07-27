@@ -149,10 +149,9 @@ exports.handler = async (event) => {
     const lead = insertedData[0]; // Prefer return=representation returns an array
 
 
-    // 3. Trigger the magic link email (using service key to bypass admin check)
+    // 3. Send a lead confirmation. Intake creates a CRM lead, not a portal
+    // account; portal access is issued only after staff onboarding.
     const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
-    const portalUrl = `${base}/login`;
-    
     const emailRes = await fetch(base + '/.netlify/functions/send-lpoa', {
       method: 'POST',
       headers: { 
@@ -162,8 +161,8 @@ exports.handler = async (event) => {
       body: JSON.stringify({ 
         action: 'send', 
         clientName: lead.name, 
-        clientEmail: lead.email, 
-        lpoaUrl: portalUrl 
+        clientEmail: lead.email,
+        tier: tier || 'Consultation'
       }),
     });
 

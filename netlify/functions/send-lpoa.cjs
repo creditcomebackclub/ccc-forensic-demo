@@ -90,14 +90,18 @@ exports.handler = async (event) => {
   }
 
   if (action === 'send') {
-    const { clientName, clientEmail, lpoaUrl } = payload;
-    if (!clientEmail || !lpoaUrl) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail and lpoaUrl required' }) };
+    const { clientName, clientEmail, tier } = payload;
+    if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
     if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured — add to Netlify env vars' }) };
-
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:#1B2A4A;padding:20px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Authorization Required</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 4px 4px;"><p>Hi ${clientName},</p><p>Before we begin your credit dispute campaign, we need your authorization. Please review and sign the Limited Power of Attorney by clicking below:</p><div style="text-align:center;margin:32px 0;"><a href="${lpoaUrl}" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Review &amp; Sign Authorization &#8594;</a></div><p style="font-size:12px;color:#666;">Your electronic signature is legally valid under the ESIGN Act (15 U.S.C. §7001).</p><p style="font-size:12px;color:#666;">Questions? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
+    const enrollment = tier && tier !== 'Consultation';
+    const subject = enrollment ? 'Next Step: Choose Your Credit Comeback Club Consultation Time' : 'Your Free Consultation Request — Choose a Time';
+    const intro = enrollment
+      ? `Thanks for your interest in <strong>${tier}</strong>. Your request is in, and the next step is a free consultation so we can review your file, answer questions, and confirm the best path before enrollment.`
+      : 'Thanks for requesting a free consultation. Choose a time below and we\'ll review your goals and the information on your credit report with you.';
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:#1B2A4A;padding:20px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Consultation Request Received</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 4px 4px;"><p>Hi ${clientName},</p><p>${intro}</p><div style="text-align:center;margin:32px 0;"><a href="https://calendly.com/creditcomebackclub/30min" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Choose Your Time &#8594;</a></div><p style="font-size:12px;color:#666;">No portal account, authorization, or payment is created from this request. We\'ll send secure onboarding steps only if you choose to move forward after the consultation.</p><p style="font-size:12px;color:#666;">Questions? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, 'Action Required: Sign Your Credit Dispute Authorization', html);
+      await sendViaSendGrid(sgKey, clientEmail, subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       console.error('Email error:', e.message);
@@ -426,7 +430,7 @@ exports.handler = async (event) => {
           <li><strong>Phone:</strong> ${leadPhone || 'Not provided'}</li>
           <li><strong>Tier:</strong> ${tier || 'Not provided'}</li>
         </ul>
-        <p>They have been added to your CRM and the magic link email has been sent to them.</p>
+        <p>They have been added to your CRM and received a consultation scheduling email.</p>
         <div style="text-align:center;margin:32px 0;">
           <a href="https://ccc-forensic-demo.netlify.app" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Open CRM Dashboard &#8594;</a>
         </div>
