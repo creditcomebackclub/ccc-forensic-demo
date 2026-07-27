@@ -3,7 +3,7 @@ import { Lock, Eye, EyeOff } from 'lucide-react';
 
 const SECTIONS = [
   { id: 'doctrine', label: 'The Setup & Spike Doctrine' },
-  { id: 'phases', label: 'The Three-Phase Pipeline' },
+  { id: 'phases', label: 'The Four-Phase Pipeline' },
   { id: 'classification', label: 'Account Classification (A / B / C)' },
   { id: 'violations', label: 'Violation Catalog' },
   { id: 'metro2', label: 'Metro 2 Field & Status Reference' },
@@ -186,11 +186,9 @@ function Doctrine() {
 function Phases() {
   return (
     <div>
-      <H>The Three-Phase Pipeline</H>
+      <H>The Four-Phase Pipeline</H>
       <Lead>
-        Every campaign moves through three phases in a fixed order. Phase 1 and Phase 3 are never sent
-        simultaneously — the Phase 1 response, or the absence of one, is the leverage point the entire pipeline
-        is built to create.
+        Every campaign moves through four phases in a fixed order. The phases are never sent simultaneously — the preceding response, or the absence of one, is the leverage point the entire pipeline is built to create.
       </Lead>
       <Table
         headers={['Phase', 'Action', 'Statute', 'Purpose']}
@@ -198,11 +196,11 @@ function Phases() {
           ['Phase 1 — Setup', 'Direct furnisher dispute, sent certified mail', '§1681s-2(a)', 'Build the evidentiary record. No private right of action here — this phase exists to document.'],
           ['Phase 2 — Analysis', 'Read the furnisher response against the original violations', 'Johnson v. MBNA standard', 'Classify the response: form letter, wrong framework, partial fix, or non-response. Each failure mode becomes Phase 3 fuel.'],
           ['Phase 3 — Spike', 'CRA-triggered dispute referencing the failed Phase 1 response', '§1681s-2(b)', 'Where the damages live. Statutory and punitive exposure under §1681n once the furnisher is on notice and the investigation was inadequate.'],
+          ['Phase 4 — Escalation', 'CFPB and State AG regulatory complaint', '§1681i(a)&(e) / §1681s-2(b)', 'Regulatory pressure. Two strict tracks: Furnisher failure (failed to resolve after Phase 1 and 3) or Bureau failure (CRA failed their own reinvestigation duty).'],
         ]}
       />
       <Note>
-        Non-response is itself a violation. A furnisher that lets the 30-day window close has handed you an automatic
-        §1681s-2(b) record. A form letter is evidence of inadequate reinvestigation under Johnson v. MBNA.
+        Phase 4 is strictly bifurcated. <strong>Furnisher Track:</strong> Escalates after the furnisher fails their §1681s-2(b) duty following Phase 3. <strong>Bureau Track:</strong> Escalates when the CRA fails their §1681i duty (requires the 45-day statutory window or no-longer-pending status to have cleared).
       </Note>
     </div>
   );
@@ -373,6 +371,9 @@ function Letters() {
         numbered required corrections, a failure-to-comply section citing CFPB, state AG, and §1681n exposure, the
         documentation demand, and the signature block with certified-mail and enclosures notations.
       </p>
+      <Note>
+        <strong>Recent Rule Updates:</strong> Every letter MUST use the profile-tab address as the sender address of record, regardless of where they currently live. Additionally, PI/Inquiry letters strictly mandate an ID table for all bureaus, and must never enclose an LPOA.
+      </Note>
     </div>
   );
 }
@@ -393,6 +394,7 @@ function HardStops() {
         <li>Never build a letter on a placeholder or unconfirmed furnisher address — address verification is a hard gate.</li>
         <li>Never assume a letter was mailed until it is confirmed mailed.</li>
         <li>Never put CCC branding in a letter header, and never thank the furnisher.</li>
+        <li><strong>No Hallucinated Metro 2 Fields:</strong> The system actively parses raw AI output post-generation (<code>validateFieldCitations</code>). If an unsourced or misattributed Metro 2 field is cited, the middleware throws a fatal error before the letter is ever saved.</li>
       </ul>
     </div>
   );
