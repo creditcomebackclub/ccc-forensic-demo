@@ -972,6 +972,12 @@ export async function addExpense({ name, amount, category, month = null }) {
   if (error) throw error;
 }
 
+export async function updateExpense(id, { amount }) {
+  const userId = await getUserId();
+  const { error } = await supabase.from('business_expenses').update({ amount }).eq('id', id).eq('user_id', userId);
+  if (error) throw error;
+}
+
 export async function deleteExpense(id) {
   const { error } = await supabase.from('business_expenses').delete().eq('id', id);
   if (error) throw error;
