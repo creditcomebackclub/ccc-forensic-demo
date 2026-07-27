@@ -683,7 +683,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
   );
 
   return (
-    <div className="max-w-6xl mx-auto space-y-5" style={{ padding: '20px 32px 32px' }}>
+    <div className="max-w-6xl mx-auto space-y-5 px-4 pt-5 pb-8 sm:px-8">
 
       <HeroHeader displayName={displayName} dash={dash} />
 
@@ -733,7 +733,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
       )}
 
       {/* Pipeline state */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={Activity} label="Active campaigns" value={dash.active} sub="accounts in dispute" tone="navy" clickable={dash.active > 0} onClick={() => handleStatClick('active')} />
         <StatTile icon={Clock} label="Awaiting response" value={dash.awaiting} sub={WINDOW_DAYS + '-day windows open'} tone={dash.awaiting > 0 ? 'amber' : 'navy'} clickable={dash.awaiting > 0} onClick={() => handleStatClick('awaiting')} />
         <StatTile icon={Zap} label="Ready to escalate" value={dash.escalate} sub="windows closed" tone={dash.escalate > 0 ? 'red' : 'navy'} clickable={dash.escalate > 0} onClick={() => handleStatClick('escalate')} />
@@ -742,7 +742,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
       </div>
 
       {/* Results — what clients pay for */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={Award} label="Deletions this month" value={dash.deletedThisMonth} delta={dash.deletedThisMonth - dash.deletedLastMonth} sub={'vs ' + dash.deletedLastMonth + ' last month'} goldChip />
         <StatTile icon={CheckCircle} label="All-time deletions" value={dash.deletedAll} sub="accounts removed" goldChip />
         <StatTile icon={Target} label="Win rate" value={dash.winRate != null ? dash.winRate + '%' : '—'} sub={dash.outcomeCount > 0 ? 'of ' + dash.outcomeCount + ' letters with an outcome' : 'no outcomes recorded yet'} goldChip />
@@ -750,13 +750,13 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
       </div>
 
       {/* The pipeline story — replaces the old "Pipeline Velocity" chart */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <FunnelChart funnel={dash.funnel} />
         <WeeklyChart data={dash.weeklyData} />
       </div>
 
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-5 space-y-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        <div className="space-y-4 lg:col-span-5">
           <Card title="Recent Activity">
             {dash.recentActivity.length === 0 && <div className="text-[12px] text-ink-muted py-2">No activity yet</div>}
             <div className="space-y-0">
@@ -787,7 +787,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
           </Card>
         </div>
 
-        <div className="col-span-7 space-y-4">
+        <div className="space-y-4 lg:col-span-7">
           {dash.vipClients.length > 0 && (
             <Card title="VIP Clients" style={{ border: '1px solid ' + T.gold }}>
               <div className="space-y-0">

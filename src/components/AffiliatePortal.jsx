@@ -205,11 +205,29 @@ export default function AffiliatePortal({ session, onSignOut }) {
   );
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0C0C0C', fontFamily: 'Arial, sans-serif' }}>
+    <div className="affiliate-portal" style={{ minHeight: '100vh', background: '#0C0C0C', fontFamily: 'Arial, sans-serif' }}>
+      <style>{`
+        .affiliate-portal .affiliate-shell { max-width: 960px; margin: 0 auto; padding-left: 24px; padding-right: 24px; }
+        .affiliate-portal .affiliate-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 28px; }
+        .affiliate-portal .affiliate-cta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 28px; }
+        .affiliate-portal .affiliate-commission-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 28px; }
+        .affiliate-portal .affiliate-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        @media (max-width: 700px) {
+          .affiliate-portal .affiliate-shell { padding-left: 16px; padding-right: 16px; }
+          .affiliate-portal .affiliate-header-name { display: none; }
+          .affiliate-portal .affiliate-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+          .affiliate-portal .affiliate-tabs button { flex: 0 0 auto; }
+          .affiliate-portal .affiliate-stats, .affiliate-portal .affiliate-commission-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+          .affiliate-portal .affiliate-cta-grid { grid-template-columns: 1fr; gap: 10px; }
+          .affiliate-portal .affiliate-actions { flex-wrap: wrap; }
+          .affiliate-portal .affiliate-client-metrics { gap: 14px; flex-wrap: wrap; }
+          .affiliate-portal .affiliate-table { min-width: 620px; }
+        }
+      `}</style>
 
       {/* Header */}
       <div style={{ background: '#111', borderBottom: '1px solid #1E1E1E', padding: '0 24px' }}>
-        <div style={{ maxWidth: 960, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64 }}>
+        <div className="affiliate-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64, gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             {brandLogo && (
               <img src={brandLogo} alt={brandName} style={{ height: 36, width: 'auto', objectFit: 'contain' }} />
@@ -221,7 +239,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>{affiliate.name}</span>
+            <span className="affiliate-header-name" style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>{affiliate.name}</span>
             <button onClick={onSignOut} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: '1px solid #2A2A2A', borderRadius: 4, padding: '6px 12px', color: 'rgba(255,255,255,0.4)', fontSize: 11, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               <LogOut size={11} strokeWidth={1.75} /> Sign Out
             </button>
@@ -231,7 +249,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
 
       {/* Tab bar */}
       <div style={{ background: '#111', borderBottom: '1px solid #1E1E1E' }}>
-        <div style={{ maxWidth: 960, margin: '0 auto', padding: '0 24px', display: 'flex' }}>
+        <div className="affiliate-shell affiliate-tabs" style={{ display: 'flex' }}>
           {['dashboard', 'clients', 'commissions'].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} style={{
               padding: '14px 16px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', cursor: 'pointer', background: 'none',
@@ -245,7 +263,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
         </div>
       </div>
 
-      <div style={{ maxWidth: 960, margin: '0 auto', padding: '32px 24px' }}>
+      <div className="affiliate-shell" style={{ paddingTop: 32, paddingBottom: 32 }}>
 
         {/* DASHBOARD TAB */}
         {activeTab === 'dashboard' && (
@@ -260,7 +278,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
             </div>
 
             {/* Stats */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
+            <div className="affiliate-stats">
               {[
                 { label: 'Clients Referred', value: clients.length, icon: <Users size={16} style={{ color: brandColor }} strokeWidth={1.75} /> },
                 { label: 'Active Campaigns', value: clients.filter(c => getClientStatus(c.name).tone !== 'neutral').length, icon: <TrendingUp size={16} style={{ color: brandColor }} strokeWidth={1.75} /> },
@@ -276,7 +294,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
             </div>
 
             {/* Refer a client CTA */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 }}>
+            <div className="affiliate-cta-grid">
               <div style={{ background: '#111', border: `1px solid ${brandColor}33`, borderRadius: 8, padding: 24, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Manual Referral</div>
@@ -361,7 +379,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                 <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Your Referred Clients</h2>
                 <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>{clients.length} client{clients.length !== 1 ? 's' : ''} total</p>
               </div>
-              <div style={{ display: 'flex', gap: 12 }}>
+              <div className="affiliate-actions" style={{ display: 'flex', gap: 12 }}>
                 <button onClick={handleExportCSV} disabled={clients.length === 0} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#111', color: '#fff', border: '1px solid #2A2A2A', borderRadius: 6, padding: '10px 20px', fontSize: 12, fontWeight: 700, cursor: clients.length === 0 ? 'not-allowed' : 'pointer', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: clients.length === 0 ? 0.5 : 1 }}>
                   Export CSV
                 </button>
@@ -400,7 +418,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                         </span>
                       </div>
 
-                      <div style={{ display: 'flex', gap: 24 }}>
+                      <div className="affiliate-client-metrics" style={{ display: 'flex', gap: 24 }}>
                         {[
                           { label: 'Letters Sent', value: mailed },
                           { label: 'Delivered', value: delivered },
@@ -435,7 +453,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
               <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>{Math.round((affiliate?.commission_rate || 0.20) * 100)}% of the total revenue per referred client.</p>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
+            <div className="affiliate-commission-grid">
               <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
                 <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Total Revenue</div>
                 <div style={{ color: '#fff', fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${totalRevenue.toFixed(2)}</div>
@@ -454,7 +472,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
               </div>
             </div>
 
-            <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, overflow: 'hidden' }}>
+            <div className="affiliate-table-wrap" style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, overflow: 'hidden' }}>
               <div style={{ padding: '14px 20px', borderBottom: '1px solid #1E1E1E', background: '#0A0A0A' }}>
                 <span style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'rgba(255,255,255,0.5)' }}>Commission Ledger</span>
               </div>
@@ -463,7 +481,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)' }}>No referrals yet — commissions will appear here once clients are enrolled.</p>
                 </div>
               ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <table className="affiliate-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom: '1px solid #1A1A1A' }}>
                       <th style={{ padding: '12px 20px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Client</th>

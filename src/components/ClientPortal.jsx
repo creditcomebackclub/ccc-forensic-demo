@@ -329,12 +329,12 @@ export default function ClientPortal({ session, onSignOut }) {
       
       {/* Header */}
       <div className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-sm">
-        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="Credit Comeback Club"
               className="w-12 h-12 rounded-xl object-cover border-2 border-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.3)]" />
-            <div>
-              <div className="text-amber-400 font-bold text-[15px] tracking-wide">Credit Comeback Club</div>
+            <div className="min-w-0">
+              <div className="text-amber-400 font-bold text-[15px] tracking-wide truncate">Credit Comeback Club</div>
               <div className="text-white/50 text-[10px] uppercase tracking-[0.1em] font-medium mt-0.5">
                 Client Portal {isVip ? '· ⭐ VIP' : ''}
               </div>
@@ -351,10 +351,10 @@ export default function ClientPortal({ session, onSignOut }) {
 
       {/* Navigation */}
       <div className="bg-white/70 backdrop-blur-md border-b border-gray-200 sticky top-[80px] z-30">
-        <div className="max-w-4xl mx-auto px-6 flex gap-2">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 flex gap-1 overflow-x-auto scrollbar-none">
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`relative px-4 py-3.5 text-xs uppercase tracking-wider font-bold transition-colors ${activeTab === tab.id ? 'text-slate-900' : 'text-gray-400 hover:text-gray-700'}`}>
+              className={`relative shrink-0 px-3 sm:px-4 py-3.5 text-xs uppercase tracking-wider font-bold transition-colors ${activeTab === tab.id ? 'text-slate-900' : 'text-gray-400 hover:text-gray-700'}`}>
               {tab.label}
               {activeTab === tab.id && (
                 <motion.div layoutId="activeTabIndicator" className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-400" />
@@ -365,7 +365,7 @@ export default function ClientPortal({ session, onSignOut }) {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-4xl mx-auto px-6 py-8">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
