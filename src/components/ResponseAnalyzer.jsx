@@ -139,7 +139,7 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId, cli
     // Route every new Phase 3 draft through the same immutable-mail guard as
     // Phase 1. A retry may refresh an unmailed draft, but it can never reset
     // a mailed letter's tracking, response state, or exact mailed HTML.
-    await saveLetter(
+    const phase3LetterId = await saveLetter(
       { furnisher, id: accountId, clientAccountId: clientAccountId || null, type: null },
       { id: clientId || null, name: clientName },
       html,
@@ -147,6 +147,15 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId, cli
       'Phase 3 — ' + bureau.charAt(0).toUpperCase() + bureau.slice(1),
       '__phase3-' + bureau
     );
+    // This bureau letter was generated from exactly this Phase 1 furnisher.
+    // Persist the scope with the draft so LobMailer can attach only the
+    // matching original dispute and response, never the client's full file.
+    const { error: coverageError } = await supabase
+      .from('letters')
+      .update({ covered_furnishers: [furnisher] })
+      .eq('id', phase3LetterId)
+      .eq('user_id', user.id);
+    if (coverageError) throw new Error('Could not save Phase 3 furnisher coverage: ' + coverageError.message);
   }
 }
 
