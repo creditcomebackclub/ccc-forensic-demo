@@ -112,6 +112,11 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       setError('ENCLOSURE UNPARSED — MANUAL RECONCILIATION REQUIRED. This letter cannot be sent until the enclosure is re-uploaded and re-analyzed.');
       return;
     }
+    if (String(letter.phase || '').startsWith('Phase 3')
+      && (!Array.isArray(letter.coveredFurnishers) || letter.coveredFurnishers.length === 0)) {
+      setError('PHASE 3 COVERAGE MISSING — assign the specific furnisher(s) this bureau letter covers before mailing. Nothing was sent.');
+      return;
+    }
     setSending(true);
     setError(null);
     try {
@@ -250,9 +255,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             : supabase.from('letters').select('id, furnisher, html, saved_at, lob_id').eq('client_name', letter.clientName).ilike('phase', 'Phase 1%').order('saved_at', { ascending: true });
           const { data } = await phase1Query;
           allPhase1Letters = data || [];
-          phase1Letters = (letter.coveredFurnishers && letter.coveredFurnishers.length > 0)
-            ? allPhase1Letters.filter((p1) => letter.coveredFurnishers.includes(p1.furnisher))
-            : allPhase1Letters;
+          phase1Letters = allPhase1Letters.filter((p1) => letter.coveredFurnishers.includes(p1.furnisher));
+          if (phase1Letters.length === 0) {
+            throw new Error('No matching Phase 1 letter exists for this Phase 3 coverage. Review the covered furnisher before mailing.');
+          }
         } catch(e) { console.warn('Could not fetch Phase 1 letters:', e); }
 
         // Exhibit A — use the immutable Lob mailpiece whenever it was

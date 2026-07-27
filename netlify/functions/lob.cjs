@@ -79,7 +79,7 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_name,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues',
+      + '&select=id,user_id,client_id,client_name,phase,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
@@ -241,6 +241,16 @@ exports.handler = async (event) => {
             issues: letter.enclosure_parse_issues || [],
             blocked: true,
           }),
+        };
+      }
+      // A bureau-facing Phase 3 packet must identify the exact furnishers it
+      // covers. Never use a client-wide fallback here: it can attach unrelated
+      // Phase 1 disputes and responses to the wrong bureau reinvestigation.
+      if (String(letter.phase || '').startsWith('Phase 3')
+        && (!Array.isArray(letter.covered_furnishers) || letter.covered_furnishers.length === 0)) {
+        return {
+          statusCode: 422,
+          body: JSON.stringify({ error: 'PHASE 3 COVERAGE MISSING — assign the specific furnisher(s) this bureau letter covers before mailing.', blocked: true }),
         };
       }
 
