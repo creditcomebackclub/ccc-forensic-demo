@@ -63,6 +63,7 @@ function AffiliatesPage() {
   const [showCreate, setShowCreate] = React.useState(false);
   const [form, setForm] = React.useState({ name: '', email: '', company: '', brand_name: '', brand_color: '#22C55E', brand_logo_url: '', commission_rate: '0.20' });
   const [creating, setCreating] = React.useState(false);
+  const [sendingInviteId, setSendingInviteId] = React.useState(null);
   const [error, setError] = React.useState(null);
   // Settings' "Default Commission Rate" previously only displayed itself —
   // nothing that creates an affiliate ever read it, so it was cosmetic.
@@ -137,6 +138,29 @@ function AffiliatesPage() {
     }
   };
 
+  const handleResendInvite = async (affiliate, event) => {
+    event.stopPropagation();
+    if (!affiliate.email) { alert('Add an email address before sending an invite.'); return; }
+    setSendingInviteId(affiliate.id);
+    try {
+      const { data: { session: adminSession } } = await supabase.auth.getSession();
+      const adminToken = adminSession?.access_token;
+      if (!adminToken) throw new Error('Your admin session has expired. Please sign in again.');
+      const response = await fetch('/.netlify/functions/provision-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
+        body: JSON.stringify({ email: affiliate.email.trim().toLowerCase(), fullName: affiliate.name, kind: 'affiliate' }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Could not resend affiliate invitation');
+      alert('A new secure partner portal invite was sent to ' + affiliate.email);
+    } catch (error) {
+      alert(error.message || 'Could not resend affiliate invitation');
+    } finally {
+      setSendingInviteId(null);
+    }
+  };
+
   if (loading) return <div className="p-8 text-ink-muted text-[13px]">Loading affiliates…</div>;
 
   return (
@@ -198,6 +222,14 @@ function AffiliatesPage() {
                       <div className="text-[18px] font-bold" style={{ color: '#D97706' }}>${pendingComm.toFixed(2)}</div>
                       <div className="text-[10px] uppercase tracking-wider text-ink-faint">Pending</div>
                     </div>
+                    <button
+                      onClick={(event) => handleResendInvite(aff, event)}
+                      disabled={sendingInviteId === aff.id || !aff.email}
+                      className="flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider rounded-sm border transition-colors disabled:opacity-50"
+                      style={{ borderColor: '#E7EAF0', color: '#6B7280' }}
+                    >
+                      {sendingInviteId === aff.id ? 'Sending…' : 'Resend Invite'}
+                    </button>
                     <CopyReferralLinkButton affiliate={aff} />
                   </div>
                 </div>
