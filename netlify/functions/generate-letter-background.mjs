@@ -130,6 +130,36 @@ export const handler = async (event) => {
 
       if (!html || html.trim().length < 100) throw new Error('Generated letter is empty or too short');
 
+      // Enforce date-before-sender-address deterministically. The prompt
+      // (letterPrompt.js's class allowlist + api.js's explicit "date leads"
+      // instruction) has twice failed to reliably stop the model putting
+      // the sender's address block before the date-line — confirmed live
+      // on regenerated Personal Info & Inquiries letters (2026-07-29). A
+      // wording fix isn't reliable enough for something this mechanical;
+      // fix it in code instead of hoping a third prompt phrasing works.
+      // Swaps via placeholder tokens so everything else in the document
+      // (blank lines, the recipient block, etc.) stays exactly where it
+      // was — only these two elements' positions trade places.
+      {
+        const extractDiv = (className) => {
+          const re = new RegExp("<div\\s+class=['\"]" + className + "['\"][^>]*>[\\s\\S]*?<\\/div>", 'i');
+          const m = html.match(re);
+          return m ? m[0] : null;
+        };
+        const dateDiv = extractDiv('date-line');
+        const senderDiv = extractDiv('sender-block');
+        if (dateDiv && senderDiv) {
+          const dateIdx = html.indexOf(dateDiv);
+          const senderIdx = html.indexOf(senderDiv);
+          if (senderIdx < dateIdx) {
+            const DATE_TOKEN = '__DATE_LINE_SWAP__';
+            const SENDER_TOKEN = '__SENDER_BLOCK_SWAP__';
+            html = html.replace(senderDiv, SENDER_TOKEN).replace(dateDiv, DATE_TOKEN);
+            html = html.replace(SENDER_TOKEN, dateDiv).replace(DATE_TOKEN, senderDiv);
+          }
+        }
+      }
+
       // No unsourced or misattributed Metro 2 field number may reach a
       // generated letter. Real letters shipped citing "Field 30 — Amount
       // Past Due", "Field 4 — Date Opened" and "Field 19 — Compliance
