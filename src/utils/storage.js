@@ -97,16 +97,6 @@ export async function toggleVip(clientName, isVip, clientId) {
   if (error) throw error;
 }
 
-async function getClientMeta(userId) {
-  const { data } = await supabase
-    .from('clients')
-    .select('name,is_vip')
-    .eq('user_id', userId);
-  const map = new Map();
-  for (const c of (data || [])) map.set(c.name, c);
-  return map;
-}
-
 // Fire-and-forget: kicks the server-side progress-narrative background
 // function (Retention Build 1b) when a client has picked up their 2nd+
 // audit. Never awaited by its callers and never throws outward — a failure
@@ -603,188 +593,6 @@ export async function findClientIdByLegacyReference(reference) {
   return { id: data?.[0]?.id || null, ambiguous: false };
 }
 
-function buildClientMap(audits, letters, profiles) {
-  const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
-  const map = new Map();
-  const ensure = (name) => {
-    if (!map.has(name)) {
-      map.set(name, { name, address: null, audits: [], letters: [], lastActivity: '', isVip: false });
-    }
-    return map.get(name);
-  };
-
-  for (const a of audits) {
-    const c = ensure(a.clientName);
-    c.address = c.address || a.clientAddress;
-    const profile = profileMap.get(a.createdBy);
-    c.audits.push({ ...a, auditorName: profile ? (profile.full_name || profile.email) : null });
-    if (a.savedAt > c.lastActivity) c.lastActivity = a.savedAt;
-  }
-
-  for (const l of letters) {
-    const c = ensure(l.clientName);
-    const profile = profileMap.get(l.createdBy);
-    c.letters.push({ ...l, auditorName: profile ? (profile.full_name || profile.email) : null });
-    if (l.savedAt > c.lastActivity) c.lastActivity = l.savedAt;
-  }
-
-  const out = Array.from(map.values());
-  out.sort((x, y) => (y.lastActivity || '').localeCompare(x.lastActivity || ''));
-  return out;
-}
-
-export async function listClients() {
-  const userId = await getUserId();
-  const [auditsRes, lettersRes, metaMap] = await Promise.all([
-    supabase.from('audits').select('*').eq('user_id', userId).order('saved_at', { ascending: false }),
-    supabase.from('letters').select('*').eq('user_id', userId).order('saved_at', { ascending: false }),
-    getClientMeta(userId),
-  ]);
-  if (auditsRes.error) throw auditsRes.error;
-  if (lettersRes.error) throw lettersRes.error;
-
-  const out = buildClientMap(
-    (auditsRes.data || []).map(normalizeAudit),
-    (lettersRes.data || []).map(normalizeLetter),
-    []
-  );
-  out.forEach((c) => { const meta = metaMap.get(c.name); c.isVip = meta ? !!meta.is_vip : false; });
-  return out;
-}
-
-export async function adminListClients() {
-  const userId = await getUserId();
-  const [auditsRes, lettersRes, profilesRes, metaRes, portalRes] = await Promise.all([
-    supabase.from('audits').select('*').order('saved_at', { ascending: false }),
-    supabase.from('letters').select('*').order('saved_at', { ascending: false }),
-    supabase.from('profiles').select('*'),
-    // ssn_last4 / monitoring_password are intentionally excluded — they're
-    // encrypted at rest in client_sensitive_data and only ever fetched
-    // on-demand (decrypted server-side) via ClientProfilePanel, never as
-    // part of this bulk dashboard load.
-    supabase.from('clients').select('id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at'),
-    supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at'),
-  ]);
-  if (auditsRes.error) throw auditsRes.error;
-  if (lettersRes.error) throw lettersRes.error;
-  if (profilesRes.error) throw profilesRes.error;
-
-  const out = buildClientMap(
-    (auditsRes.data || []).map(normalizeAudit),
-    (lettersRes.data || []).map(normalizeLetter),
-    profilesRes.data || []
-  );
-
-  const vipSet = new Set((metaRes.data || []).filter((c) => c.is_vip).map((c) => c.name));
-  const metaMap2 = new Map((metaRes.data || []).map((c) => [c.name, c]));
-  const portalMap = new Map((portalRes.data || []).map((p) => [p.full_name, p]));
-  out.forEach((c) => {
-    c.isVip = vipSet.has(c.name);
-    // Auto-populate from client_profiles if clients table is missing data
-    const portal = portalMap.get(c.name);
-    if (portal) {
-      if (!c.email && portal.email) c.email = portal.email;
-      c.portalOnboarded = portal.onboarding_complete || false;
-      c.signatureData = portal.signature_data || null;
-      c.agreementSigned = !!portal.agreement_signed_at;
-    }
-    const meta = metaMap2.get(c.name);
-    if (meta) {
-      c.id = meta.id;
-      // clients.address was missing from this whole merge block, so it was
-      // never read for any client that has an audit or letter — buildClientMap
-      // only ever sets c.address from an AUDIT row (c.address ||
-      // a.clientAddress), and the row-level fallback further down only runs
-      // for clients with no audits AND no letters. A client with letters but
-      // zero audits (Stefani Bryant, David A. Roberts) therefore had no
-      // source for address at all: the profile panel's save wrote
-      // clients.address successfully (200, no RLS/trigger interference) and
-      // the UI kept showing "Not set" forever, which reads as "it won't let
-      // me save." Manually-set clients.address wins over the audit-derived
-      // value — an admin correcting an address by hand must not be silently
-      // overridden by whatever the last credit report happened to list
-      // (audit-run-background.mjs only seeds clients.address when it's blank,
-      // so these agree for everyone who hasn't been hand-edited).
-      if (meta.address) c.address = meta.address;
-      c.email = meta.email || null;
-      c.lpoaSigned = meta.lpoa_signed || false;
-      c.lpoaSignedAt = meta.lpoa_signed_at || null;
-      c.lpoaSignatureData = meta.lpoa_signature_data || null;
-      c.signToken = meta.sign_token || null;
-      c.phone = meta.phone || null;
-      c.dateOfBirth = meta.date_of_birth || null;
-      c.monitoringService = meta.monitoring_service || 'Privacy Guard';
-      c.monitoringEmail = meta.monitoring_email || null;
-      c.monitoringEnrolled = meta.monitoring_enrolled || false;
-      c.monitoringPortalUrl = meta.monitoring_portal_url || 'https://www.privacyguard.com';
-      c.referralSource = meta.referral_source || null;
-      c.notes = meta.notes || null;
-      c.tags = meta.tags || [];
-      c.enrollmentDate = meta.enrollment_date || null;
-      c.scoreEqStart = meta.score_eq_start || null;
-      c.scoreExpStart = meta.score_exp_start || null;
-      c.scoreTuStart = meta.score_tu_start || null;
-      c.monitoringNotRequired = meta.monitoring_not_required || false;
-      c.status = meta.status || 'active';
-      c.leadSource = meta.lead_source || null;
-      c.leadPhone = meta.lead_phone || null;
-      c.leadNotes = meta.lead_notes || null;
-      c.leadCreatedAt = meta.lead_created_at || null;
-      c.leadViewedAt = meta.lead_viewed_at || null;
-      c.billingStatus = meta.billing_status || null;
-      c.billingType = meta.billing_type || null;
-      c.billingStartDate = meta.billing_start_date || null;
-      c.billingTier = meta.billing_tier || null;
-      c.exitReason = meta.exit_reason || null;
-      c.statusChangedAt = meta.status_changed_at || null;
-      c.referredBy = meta.referred_by || null;
-      c.referralFee = meta.referral_fee || null;
-      c.commissionPaid = meta.commission_paid || false;
-      c.ledger = meta.ledger || [];
-    } else {
-      c.status = 'lead';
-    }
-  });
-
-  // Leads (and any client rows) that have no audits/letters yet won't exist in `out` —
-  // buildClientMap only creates entries from audit/letter rows. Add them here.
-  const existingNames = new Set(out.map((c) => c.name));
-  for (const row of (metaRes.data || [])) {
-    if (existingNames.has(row.name)) continue;
-    out.push({
-      id: row.id,
-      name: row.name,
-      address: row.address || null,
-      audits: [],
-      letters: [],
-      lastActivity: row.lead_created_at || '',
-      isVip: !!row.is_vip,
-      email: row.email || null,
-      phone: row.phone || null,
-      status: row.status || 'active',
-      leadSource: row.lead_source || null,
-      leadPhone: row.lead_phone || null,
-      leadNotes: row.lead_notes || null,
-      leadCreatedAt: row.lead_created_at || null,
-      leadViewedAt: row.lead_viewed_at || null,
-      referralSource: row.referral_source || null,
-      billingStatus: row.billing_status || null,
-      billingType: row.billing_type || null,
-      billingStartDate: row.billing_start_date || null,
-      billingTier: row.billing_tier || null,
-      exitReason: row.exit_reason || null,
-      statusChangedAt: row.status_changed_at || null,
-      referredBy: row.referred_by || null,
-      referralFee: row.referral_fee || null,
-      commissionPaid: row.commission_paid || false,
-      ledger: row.ledger || [],
-      notes: row.notes || null,
-      tags: row.tags || [],
-    });
-  }
-  return out;
-}
-
 // clientId is optional and preferred over clientName when present — see
 // the client_id migration plan; clients.name has no unique constraint.
 export async function deleteClient(clientName, clientId) {
@@ -931,8 +739,8 @@ export async function revertClientToLead(clientName, clientId) {
 export async function deleteLead(clientName, clientId) {
   const userId = await getUserId();
   // A "lead" in the dashboard can be a clients row, or purely synthesized
-  // from orphan audits/letters with no clients row at all (buildClientMap
-  // treats any client_name with no matching clients row as a lead). Only
+  // from orphan audits/letters with no clients row at all (any client_name
+  // with no matching clients row reads as a lead). Only
   // deleting from clients left those orphan-only leads undeletable — the
   // delete matched zero rows, threw no error, and the lead reappeared on
   // reload. Clear all three, same as deleteClient().

@@ -43,9 +43,10 @@ const recognitionDate = (tx) => (tx.type === 'Invoice' ? (tx.paid_at || tx.date)
 const isFwf = (tx) => /first\s*work|fwf|setup\s*fee|initial\s*fee/i.test(tx.description || '');
 
 // This screen is a financial rollup. It does not need the audit payload,
-// rendered letters, portal profiles, or client-sensitive fields brought in by
-// adminListClients(). Keep its snapshot intentionally narrow and page through
-// it so Supabase's default response cap cannot silently omit ledger rows.
+// rendered letters, portal profiles, or client-sensitive fields that the old
+// eager adminListClients() (removed) used to bring in. Keep its snapshot
+// intentionally narrow and page through it so Supabase's default response
+// cap cannot silently omit ledger rows.
 const BILLING_CLIENT_COLUMNS = [
   'id', 'name', 'billing_status', 'billing_type', 'billing_start_date',
   'billing_tier', 'referred_by', 'referral_fee', 'ledger', 'status_changed_at',
