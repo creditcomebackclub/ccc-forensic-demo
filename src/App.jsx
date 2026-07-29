@@ -126,25 +126,6 @@ function AffiliatesPage() {
         throw new Error(out.error || 'Could not provision affiliate account');
       }
 
-      // Send magic link
-      await supabase.auth.signInWithOtp({ email: normEmail, options: {
-        emailRedirectTo: window.location.origin + '/login',
-        data: { role: 'affiliate' }
-      }});
-
-      // Send branded welcome email
-      await fetch('/.netlify/functions/send-lpoa', {
-        method: 'POST',
-        headers: _adminHeaders,
-        body: JSON.stringify({
-          action: 'affiliate_welcome',
-          affiliateName: form.name.trim(),
-          affiliateEmail: form.email.trim().toLowerCase(),
-          companyName: form.company.trim(),
-          commissionRate: parseFloat(form.commission_rate) || 0.20,
-        }),
-      });
-
       setShowCreate(false);
       setForm({ name: '', email: '', company: '', brand_name: '', brand_color: '#22C55E', brand_logo_url: '', commission_rate: defaultCommissionRate });
       loadData();

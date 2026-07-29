@@ -767,7 +767,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           'Content-Type': 'application/json',
           ...(_cpTok ? { Authorization: `Bearer ${_cpTok}` } : {}),
         },
-        body: JSON.stringify({ email: c.email.trim().toLowerCase(), fullName: c.name.trim(), kind: 'client' }),
+        body: JSON.stringify({ email: c.email.trim().toLowerCase(), fullName: c.name.trim(), kind: 'client', clientId: c.id }),
       });
       if (!provRes.ok) {
         const out = await provRes.json().catch(() => ({}));
@@ -1563,6 +1563,28 @@ function CreateClientModal({ onClose, onCreated }) {
       const { supabase } = await import('../utils/supabase');
       const normEmail = email.trim().toLowerCase();
 
+      // A portal profile must always point at a real CRM client. Creating
+      // this record first gives the invitation service the durable client ID
+      // it needs and avoids the old name-only portal association.
+      const { data: { user: adminUser } } = await supabase.auth.getUser();
+      if (!adminUser) throw new Error('Your admin session has expired. Please sign in again.');
+      const { data: sameEmail } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('user_id', adminUser.id)
+        .eq('email', normEmail)
+        .limit(1);
+      let clientId = sameEmail?.[0]?.id || null;
+      if (!clientId) {
+        const { data: createdClient, error: clientError } = await supabase
+          .from('clients')
+          .insert({ user_id: adminUser.id, name: name.trim(), email: normEmail, status: 'active' })
+          .select('id')
+          .single();
+        if (clientError) throw new Error(clientError.message || 'Could not create client record');
+        clientId = createdClient.id;
+      }
+
       // Provision the auth user + linked client_profiles row server-side
       // (service role) so both exist, with user_id set, before the magic
       // link is sent — first login must never find a half-created account
@@ -1574,7 +1596,7 @@ function CreateClientModal({ onClose, onCreated }) {
           'Content-Type': 'application/json',
           ...(_cpTok ? { Authorization: `Bearer ${_cpTok}` } : {}),
         },
-        body: JSON.stringify({ email: normEmail, fullName: name.trim(), kind: 'client' }),
+        body: JSON.stringify({ email: normEmail, fullName: name.trim(), kind: 'client', clientId }),
       });
       if (!provRes.ok) {
         const out = await provRes.json().catch(() => ({}));

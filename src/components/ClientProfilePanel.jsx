@@ -447,30 +447,12 @@ function OnboardingButton({ client, onChanged }) {
       const provRes = await fetch('/.netlify/functions/provision-user', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({ email: normEmail, fullName: client.name, kind: 'client' }),
+        body: JSON.stringify({ email: normEmail, fullName: client.name, kind: 'client', clientId: client.id }),
       });
       if (!provRes.ok) {
         const out = await provRes.json().catch(() => ({}));
         throw new Error(out.error || 'Could not provision client account');
       }
-
-      const { error } = await supabase.auth.signInWithOtp({
-        email: normEmail,
-        options: { emailRedirectTo: window.location.origin + '/portal' }
-      });
-      if (error) throw error;
-
-      // Send branded welcome email
-      await fetch('/.netlify/functions/send-lpoa', {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({
-          action: 'send_onboarding_welcome',
-          clientName: client.name,
-          clientEmail: normEmail,
-          magicLink: window.location.origin + '/portal',
-        }),
-      });
 
       setSent(true);
       setTimeout(() => setSent(false), 4000);

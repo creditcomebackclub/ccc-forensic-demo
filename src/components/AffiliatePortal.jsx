@@ -123,35 +123,16 @@ export default function AffiliatePortal({ session, onSignOut }) {
     setReferLoading(true);
     setError(null);
     try {
-      const { error: insertError } = await supabase.from('clients').insert({
-        name: referForm.name.trim(),
-        email: referForm.email.trim().toLowerCase(),
-        phone: referForm.phone.trim() || null,
-        notes: referForm.notes.trim() || null,
-        referred_by: affiliate.id,
-        referral_fee: null,
-        commission_paid: false,
+      const referralRes = await fetch('/.netlify/functions/affiliate-refer-client', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ ...referForm, notifyAdmin: settings?.notifications?.emailNewLeads !== false }),
       });
-      if (insertError) throw insertError;
-      // Notify Chris of new referral if setting is enabled
-      if (settings?.notifications?.emailNewLeads !== false) {
-        await fetch('/.netlify/functions/send-lpoa', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {})
-          },
-          body: JSON.stringify({
-            action: 'affiliate_new_referral',
-            affiliateName: affiliate.name,
-            companyName: affiliate.company,
-            clientName: referForm.name.trim(),
-            clientEmail: referForm.email.trim(),
-            clientPhone: referForm.phone.trim(),
-            clientNotes: referForm.notes.trim(),
-          }),
-        });
-      }
+      const referral = await referralRes.json().catch(() => ({}));
+      if (!referralRes.ok) throw new Error(referral.error || 'Could not create referral');
       setReferSuccess(true);
       setReferForm({ name: '', email: '', phone: '', notes: '' });
       setTimeout(() => { setReferSuccess(false); setShowReferForm(false); loadData(); }, 2500);

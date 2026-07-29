@@ -73,15 +73,16 @@ exports.handler = async (event) => {
       console.warn('Rate-limit check failed (non-fatal):', e.message);
     }
 
-    // 1. Fetch the admin user_id from an existing client
-    const userRes = await fetch(`${supabaseUrl}/rest/v1/clients?select=user_id&limit=1`, {
+    // 1. Assign every public lead to the actual administrator, never an
+    // arbitrary existing client row (which could be owned by an auditor).
+    const userRes = await fetch(`${supabaseUrl}/rest/v1/profiles?role=eq.admin&select=id&limit=1`, {
       headers: {
         'apikey': serviceKey,
         'Authorization': `Bearer ${serviceKey}`
       }
     });
     const users = await userRes.json();
-    const adminUserId = users.length > 0 ? users[0].user_id : null;
+    const adminUserId = users.length > 0 ? users[0].id : null;
 
     if (!adminUserId) {
       console.error('No admin user found to assign lead to');

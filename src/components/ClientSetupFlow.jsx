@@ -103,23 +103,23 @@ function ClientOnboardingModal({ session, onComplete }) {
         const s = await getSettings();
         setSettings(s);
 
-        const { data, error } = await supabase
-          .from('audits')
-          .select('id')
-          .eq('user_id', session.user.id)
-          .limit(1);
-        if (!error && data && data.length > 0) {
-          setHasAudit(true);
-        }
-
         // Real fee schedule for the LPOA/agreement depends on which service
         // tier this client was actually assigned (set separately in the
         // Billing panel) — never a single flat number, since Standard/VIP/
         // Paid In Full have genuinely different real fees.
-        const { data: cpRows } = await supabase.from('client_profiles').select('full_name').eq('email', session.user.email).limit(1);
-        const fullName = cpRows && cpRows[0] && cpRows[0].full_name;
-        if (fullName) {
-          const { data: clientRows } = await supabase.from('clients').select('billing_tier,monitoring_service').eq('name', fullName).limit(1);
+        const { data: cpRows } = await supabase.from('client_profiles').select('full_name,client_id').eq('user_id', session.user.id).limit(1);
+        const clientProfile = cpRows && cpRows[0];
+        if (clientProfile) {
+          const auditQuery = clientProfile.client_id
+            ? supabase.from('audits').select('id').eq('client_id', clientProfile.client_id).limit(1)
+            : supabase.from('audits').select('id').eq('client_name', clientProfile.full_name).limit(1);
+          const { data: auditRows, error: auditError } = await auditQuery;
+          if (!auditError && auditRows?.length) setHasAudit(true);
+
+          const clientQuery = clientProfile.client_id
+            ? supabase.from('clients').select('billing_tier,monitoring_service').eq('id', clientProfile.client_id).limit(1)
+            : supabase.from('clients').select('billing_tier,monitoring_service').eq('name', clientProfile.full_name).limit(1);
+          const { data: clientRows } = await clientQuery;
           const clientRow = clientRows && clientRows[0];
           if (clientRow) {
             setBillingTier(clientRow.billing_tier || null);

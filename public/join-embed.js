@@ -126,8 +126,8 @@
       '<div class="ccc-success" data-ccc-success>' +
       '  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>' +
       '  <h2>You\'re In!</h2>' +
-      '  <p>We\'ll reach out shortly — or lock in your free consultation now.</p>' +
-      '  <a class="ccc-schedule-link" href="https://calendly.com/creditcomebackclub/30min" target="_blank" rel="noopener">Schedule Now →</a>' +
+      '  <p>Choose a time now and we\'ll email your preparation steps once your appointment is confirmed.</p>' +
+      '  <div data-ccc-calendly style="min-width:280px;height:430px"></div>' +
       '</div>';
 
     if (refValid) {
@@ -164,6 +164,33 @@
     var form = container.querySelector('[data-ccc-form]');
     var submitBtn = container.querySelector('[data-ccc-submit]');
     var errorMsg = container.querySelector('[data-ccc-error]');
+    var intakeLeadId = null;
+
+    function showCalendly() {
+      var mount = container.querySelector('[data-ccc-calendly]');
+      if (!mount) return;
+      var init = function () {
+        if (!window.Calendly || !window.Calendly.initInlineWidget) return;
+        mount.innerHTML = '';
+        window.Calendly.initInlineWidget({
+          url: 'https://calendly.com/creditcomebackclub/30min?hide_event_type_details=1&hide_gdpr_banner=1',
+          parentElement: mount
+        });
+      };
+      if (window.Calendly && window.Calendly.initInlineWidget) {
+        init();
+      } else {
+        var script = document.querySelector('script[data-ccc-calendly-widget]');
+        if (!script) {
+          script = document.createElement('script');
+          script.src = 'https://assets.calendly.com/assets/external/widget.js';
+          script.async = true;
+          script.setAttribute('data-ccc-calendly-widget', '1');
+          document.head.appendChild(script);
+        }
+        script.addEventListener('load', init, { once: true });
+      }
+    }
 
     form.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -185,12 +212,27 @@
         body: JSON.stringify(payload)
       }).then(function (res) {
         if (!res.ok) throw new Error('Something went wrong — please try again.');
+        return res.json();
+      }).then(function (intake) {
+        intakeLeadId = intake && intake.leadId || null;
         formStep.style.display = 'none';
         successStep.style.display = 'block';
+        showCalendly();
       }).catch(function (err) {
         errorMsg.textContent = (err && err.message) || 'Something went wrong — please try again.';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Get My Free Consultation';
+      });
+    });
+
+    window.addEventListener('message', function (event) {
+      if (event.origin !== 'https://calendly.com' || !event.data || event.data.event !== 'calendly.event_scheduled' || !intakeLeadId) return;
+      fetch(BASE + '/api/intake-booked', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: intakeLeadId })
+      }).catch(function (err) {
+        console.error('Could not send consultation preparation email:', err);
       });
     });
   }
