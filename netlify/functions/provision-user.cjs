@@ -1,6 +1,17 @@
 // Creates or resolves a portal identity, links it to its business record,
 // then sends exactly one branded, short-lived sign-in invitation.
 const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
+
+// Netlify's Node 20 runtime has no global WebSocket, and supabase-js always
+// constructs a RealtimeClient in createClient() even though this function
+// only uses Auth — without a real transport it throws synchronously.
+// Mutating global.WebSocket (the previous approach here) does NOT reliably
+// prevent this — confirmed live 2026-07-29 (a client portal invite failed
+// with "Node.js 20 detected without native WebSocket support"). Same
+// workaround already proven across audit-run-background.mjs,
+// client-sensitive-data.mjs, and phase2-analyze-background.mjs: pass a real
+// WebSocket implementation via the realtime.transport option directly.
 
 function escapeHtml(value) {
   return String(value || '').replace(/[&<>'"]/g, (char) => ({
@@ -89,7 +100,10 @@ exports.handler = async (event) => {
       existingPortalUserId = affiliateRows[0].user_id || null;
     }
 
-    const supabase = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+    const supabase = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      realtime: { transport: ws },
+    });
     // An explicit resend from the admin screen doubles as a deliberate
     // reactivation of a previously revoked portal identity.
     if (existingPortalUserId) {

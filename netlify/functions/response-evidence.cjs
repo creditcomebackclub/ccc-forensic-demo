@@ -7,6 +7,7 @@
 // a response received.
 
 const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
 const crypto = require('crypto');
 const { requireAuth } = require('./_requireAuth.cjs');
 
@@ -252,7 +253,14 @@ exports.handler = async (event) => {
   try { body = JSON.parse(event.body || '{}'); }
   catch (e) { return response(400, { error: 'Invalid JSON.' }); }
 
-  const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  // Netlify's Node 20 runtime has no global WebSocket, and supabase-js
+  // always constructs a RealtimeClient in createClient() even for pure
+  // REST usage — without a real transport it throws synchronously. Same
+  // fix as audit-run-background.mjs / provision-user.cjs.
+  const db = createClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    realtime: { transport: ws },
+  });
   try {
     if (body.action === 'prepare') {
       const prepared = await prepareUpload(db, session.userId, body);
