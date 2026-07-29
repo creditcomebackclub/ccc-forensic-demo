@@ -113,7 +113,17 @@ exports.handler = async (event) => {
     const { error: createError } = await supabase.auth.admin.createUser({
       email: normEmail, email_confirm: true, user_metadata: fullName ? { full_name: fullName } : {},
     });
-    if (createError && !/already (registered|exists)/i.test(createError.message || '')) throw new Error(createError.message || 'Could not create portal user');
+    // Supabase's real message is "A user with this email address has
+    // already been registered" — the old regex required "already" to be
+    // immediately followed by "registered"/"exists", so "already been
+    // registered" never matched. That made this guard throw on the exact
+    // case it exists to swallow, permanently blocking any client whose
+    // auth identity was created (e.g. by an earlier attempt that died
+    // partway through, such as the WebSocket crash fixed above) but never
+    // finished onboarding. Confirmed live 2026-07-29 — David Roberts.
+    if (createError && !/already\s+(been\s+)?(registered|exists)|email[_ ]exists/i.test(createError.message || '')) {
+      throw new Error(createError.message || 'Could not create portal user');
+    }
 
     const configuredOrigin = process.env.APP_URL || event.headers.origin || 'https://ccc-forensic-demo.netlify.app';
     const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
