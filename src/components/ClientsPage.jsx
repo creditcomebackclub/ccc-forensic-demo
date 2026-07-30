@@ -1929,8 +1929,20 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
                 {isAdmin && a.auditorName && <span className="text-[10px] text-ink-faint ml-2">· {a.auditorName}</span>}
               </div>
               <button onClick={() => {
-                if (a.audit) onOpenAudit(a.clientId ? { ...a.audit, client: { ...a.audit.client, id: a.clientId } } : a.audit);
-                else if (onOpenSummaryAudit) onOpenSummaryAudit(c.id, a.id);
+                // a.audit here is NEVER a full audit. list_client_summaries
+                // builds a stub for the newest audit only (row_number = 1):
+                // accountsTargeted + totalViolations + an accounts array
+                // trimmed to PENDING/CONFIRM entries carrying just
+                // id/furnisher/addressStatus. It exists for this card's own
+                // counts, nothing else. Opening it rendered "Unknown Client"
+                // with blank scores, $0 balance and an empty batch table,
+                // because the stub has no client object, no scores and no
+                // real account rows. Older audits got audit: null and so
+                // fell through to the detail fetch and worked — only the
+                // newest one was broken, which is why this looked random.
+                // Always hydrate through getClientDetails instead.
+                if (onOpenSummaryAudit) onOpenSummaryAudit(c.id, a.id);
+                else if (a.audit) onOpenAudit(a.clientId ? { ...a.audit, client: { ...a.audit.client, id: a.clientId } } : a.audit);
               }} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
             </div>
           ))}
