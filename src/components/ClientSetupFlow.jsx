@@ -5,6 +5,7 @@ import { Toaster, toast } from 'react-hot-toast';
 import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-react';
 import { getSettings } from '../utils/settings';
 import { getTierPricing, describeTierFee } from '../utils/pricing';
+import { uploadDocument } from '../utils/documents';
 
 export default function ClientSetupFlow({ session, onComplete, initialStep = 'password' }) {
   const [step, setStep] = useState(initialStep); // password | onboarding
@@ -227,8 +228,30 @@ function ClientOnboardingModal({ session, onComplete }) {
       if (signature) {
         sigUrl = await labeled('Upload signature', () => uploadSignature(signature, `${userId}/signature.png`));
       }
-      if (idFile) await labeled('Upload ID', () => uploadFile(idFile, `${userId}/id.${idFile.name.split('.').pop()}`));
-      if (addressFile) await labeled('Upload address doc', () => uploadFile(addressFile, `${userId}/address.${addressFile.name.split('.').pop()}`));
+      // Resolve the client record so id/address docs land in the `documents`
+      // table too (not just storage) — otherwise they're invisible in the
+      // admin CRM's DocumentManager, which reads that table keyed on
+      // client_id + the owning staff user_id, not just a storage path.
+      let docsClientId = null, docsOwnerUserId = null, docsClientName = userEmail;
+      try {
+        const { data: cpForDocs } = await supabase.from('client_profiles').select('full_name,client_id').eq('email', userEmail).single();
+        if (cpForDocs) {
+          docsClientName = cpForDocs.full_name || userEmail;
+          const clientRowQuery = cpForDocs.client_id
+            ? supabase.from('clients').select('id,user_id').eq('id', cpForDocs.client_id).limit(1)
+            : supabase.from('clients').select('id,user_id').eq('name', cpForDocs.full_name).limit(1);
+          const { data: clientRows } = await clientRowQuery;
+          const clientRow = clientRows && clientRows[0];
+          if (clientRow) { docsClientId = clientRow.id; docsOwnerUserId = clientRow.user_id; }
+        }
+      } catch (e) { console.warn('Could not resolve client record for document upload:', e); }
+
+      if (idFile) await labeled('Upload ID', () => (docsClientId && docsOwnerUserId)
+        ? uploadDocument(docsClientId, docsClientName, 'id', idFile, docsOwnerUserId)
+        : uploadFile(idFile, `${userId}/id.${idFile.name.split('.').pop()}`));
+      if (addressFile) await labeled('Upload address doc', () => (docsClientId && docsOwnerUserId)
+        ? uploadDocument(docsClientId, docsClientName, 'address', addressFile, docsOwnerUserId)
+        : uploadFile(addressFile, `${userId}/address.${addressFile.name.split('.').pop()}`));
 
       // Always mark onboarding complete in DB — do this even if subsequent steps fail
       await labeled('Save enrollment record', () =>
