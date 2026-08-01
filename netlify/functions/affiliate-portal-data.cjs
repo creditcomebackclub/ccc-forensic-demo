@@ -59,7 +59,7 @@ exports.handler = async (event, context) => {
     // server-side via the shared module (same one BillingDashboardPage.jsx,
     // AffiliateProfilePanel.jsx etc. use) — single source of truth, and it
     // means the affiliate's own portal can never drift from what staff see.
-    const { computeClientCommission } = await import('../../src/utils/affiliateCommission.js');
+    const { computeClientCommission, recognizedTotal } = await import('../../src/utils/affiliateCommission.js');
     const payoutsData = await fetchWithKey(
       `${supabaseUrl}/rest/v1/commission_payouts?affiliate_id=eq.${affiliateId}&select=client_id,covered_tx_ids,amount`
     );
@@ -77,10 +77,7 @@ exports.handler = async (event, context) => {
         payoutsByClient.get(c.id) || []
       );
       const ratePct = c.referral_fee !== null && c.referral_fee !== undefined ? c.referral_fee : Math.round((affiliate.commission_rate || 0.20) * 100);
-      const totalPaid = (Array.isArray(c.ledger) ? c.ledger : []).reduce((sum, tx) => {
-        if (tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid')) return sum + (parseFloat(tx.amount) || 0);
-        return sum;
-      }, 0);
+      const totalPaid = recognizedTotal({ ledger: c.ledger });
       return {
         id: c.id,
         name: c.name,

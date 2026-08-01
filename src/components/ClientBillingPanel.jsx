@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { Check, X, DollarSign, Edit2, Link, CreditCard } from 'lucide-react';
-import { computeClientCommission } from '../utils/affiliateCommission';
+import { computeClientCommission, recognizedTotal } from '../utils/affiliateCommission';
 import NmiCollectForm from './NmiCollectForm';
 import { activateBillingCharge, chargeDue, fetchCardOnFile, vaultCard, nmiConfigured } from '../utils/billingApi';
 
@@ -208,12 +208,8 @@ export default function ClientBillingPanel({ client, onChanged }) {
     return sum;
   }, 0);
 
-  const totalPaid = ledger.reduce((sum, tx) => {
-    if (tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid')) {
-      return sum + (parseFloat(tx.amount) || 0);
-    }
-    return sum;
-  }, 0);
+  // Cash-in once per event (NMI marks Invoice Paid + appends Payment).
+  const totalPaid = recognizedTotal({ ledger });
 
   const save = async (fields) => {
     try {
