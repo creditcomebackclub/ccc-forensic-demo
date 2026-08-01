@@ -17,3 +17,6 @@ e2e-runner.local.mjs
 e2e-individual-retest.local.mjs
 .claude/settings.local.json
 repomix-output.xml
+
+# Fieldwork reel capture intermediates (regenerate with scripts/render-fieldwork-reel.mjs)
+public/videos/reel-frames/

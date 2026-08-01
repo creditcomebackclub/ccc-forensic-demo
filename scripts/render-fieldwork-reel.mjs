@@ -5,7 +5,7 @@
  * Requires: Vite on FIELDWORK_REEL_BASE, Playwright Chromium, ffmpeg.
  */
 import { chromium } from 'playwright';
-import { mkdirSync, existsSync, writeFileSync, rmSync } from 'fs';
+import { mkdirSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
 
@@ -14,15 +14,16 @@ const OUT_DIR = join(process.cwd(), 'public/videos/reel-frames');
 const OUT_MP4 = join(process.cwd(), 'public/videos/fieldwork-product-demo.mp4');
 const POSTER = join(process.cwd(), 'public/videos/fieldwork-demo-poster.jpg');
 const SCENE_COUNT = 9;
-const HOLD_SECONDS = 2.8;
-const FADE = 0.65;
+const HOLD_SECONDS = 2.6;
+const FADE = 0.55;
 const FPS = 30;
+const FRAMES = Math.round(HOLD_SECONDS * FPS);
 
 mkdirSync(OUT_DIR, { recursive: true });
 
 function run(cmd, args) {
   const res = spawnSync(cmd, args, { stdio: 'inherit' });
-  if (res.status !== 0) throw new Error(`${cmd} ${args[0]} failed (${res.status})`);
+  if (res.status !== 0) throw new Error(`${cmd} failed (${res.status})`);
 }
 
 console.log('Launching Chromium…');
@@ -36,7 +37,6 @@ const page = await browser.newPage({
   deviceScaleFactor: 1,
 });
 
-// Hide scrollbars / reduce motion noise during capture settle
 await page.addInitScript(() => {
   document.documentElement.style.overflow = 'hidden';
 });
@@ -45,39 +45,40 @@ for (let i = 0; i < SCENE_COUNT; i++) {
   const url = `${BASE}#/reel/${i}`;
   console.log(`Capture ${i + 1}/${SCENE_COUNT}`, url);
   await page.goto(url, { waitUntil: 'networkidle' });
-  // Let Framer Motion entrances settle into the composed frame
-  await page.waitForTimeout(1100);
+  await page.evaluate(() => document.fonts.ready);
+  // Let Framer Motion entrances finish (do NOT disable animations —
+  // that freezes motion variants at opacity 0).
+  await page.waitForTimeout(1400);
   const file = join(OUT_DIR, `scene-${String(i).padStart(2, '0')}.png`);
-  await page.screenshot({ path: file, type: 'png', animations: 'disabled' });
+  await page.screenshot({ path: file, type: 'png' });
 }
 
 await browser.close();
 
-// Build slideshow: soft fade + subtle Ken Burns zoom on each still
+// One still → FRAMES of gentle Ken Burns (do NOT -loop/-t the input or
+// zoompan multiplies duration by every decoded frame).
 const inputs = [];
 const filters = [];
 for (let i = 0; i < SCENE_COUNT; i++) {
-  inputs.push('-loop', '1', '-t', String(HOLD_SECONDS), '-i', join(OUT_DIR, `scene-${String(i).padStart(2, '0')}.png`));
+  inputs.push('-i', join(OUT_DIR, `scene-${String(i).padStart(2, '0')}.png`));
 }
 
-const frames = Math.round(HOLD_SECONDS * FPS);
-// Gentle zoom 1.0 → 1.06 over the hold (Apple-style drift)
-const zoomExpr = `'min(1.06,1+0.06*on/${frames})'`;
-
+const zoom = `'min(1.05,1+0.05*on/${FRAMES})'`;
 let prev = '[v0]';
 filters.push(
-  `[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,` +
-    `zoompan=z=${zoomExpr}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1920x1080:fps=${FPS},` +
+  `[0:v]scale=2200:1238:force_original_aspect_ratio=increase,` +
+    `zoompan=z=${zoom}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${FRAMES}:s=1920x1080:fps=${FPS},` +
     `format=yuv420p,setsar=1[v0]`
 );
 
 for (let i = 1; i < SCENE_COUNT; i++) {
   filters.push(
-    `[${i}:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,` +
-      `zoompan=z=${zoomExpr}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1920x1080:fps=${FPS},` +
+    `[${i}:v]scale=2200:1238:force_original_aspect_ratio=increase,` +
+      `zoompan=z=${zoom}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${FRAMES}:s=1920x1080:fps=${FPS},` +
       `format=yuv420p,setsar=1[s${i}]`
   );
   const out = i === SCENE_COUNT - 1 ? '[vout]' : `[v${i}]`;
+  // Each zoompan clip is HOLD_SECONDS long; xfade shortens by FADE each join
   const offset = (HOLD_SECONDS - FADE) * i;
   filters.push(
     `${prev}[s${i}]xfade=transition=fadeblack:duration=${FADE}:offset=${offset.toFixed(3)}${out}`
@@ -88,7 +89,10 @@ for (let i = 1; i < SCENE_COUNT; i++) {
 const filterPath = join(OUT_DIR, 'filter.txt');
 writeFileSync(filterPath, filters.join(';\n'));
 
-const ffArgs = [
+const expectedSec = HOLD_SECONDS * SCENE_COUNT - FADE * (SCENE_COUNT - 1);
+console.log(`Assembling Keynote reel (~${expectedSec.toFixed(1)}s)…`);
+
+run('ffmpeg', [
   '-y',
   ...inputs,
   '-filter_complex_script', filterPath,
@@ -100,16 +104,16 @@ const ffArgs = [
   '-movflags', '+faststart',
   '-an',
   OUT_MP4,
-];
+]);
 
-console.log('Assembling Keynote reel…');
-run('ffmpeg', ffArgs);
-
-// Poster from the "source" title card
-run('ffmpeg', ['-y', '-i', join(OUT_DIR, 'scene-01.png'), '-frames:v', '1', '-q:v', '2', POSTER]);
+run('ffmpeg', [
+  '-y',
+  '-i', join(OUT_DIR, 'scene-01.png'),
+  '-frames:v', '1',
+  '-update', '1',
+  '-q:v', '2',
+  POSTER,
+]);
 
 console.log('Wrote', OUT_MP4);
 if (!existsSync(OUT_MP4)) process.exit(1);
-
-// Keep frames for re-assemble; uncomment to prune:
-// rmSync(OUT_DIR, { recursive: true, force: true });

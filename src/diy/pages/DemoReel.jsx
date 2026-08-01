@@ -21,14 +21,14 @@ const rise = {
 
 function SceneShell({ children, className = '', atmosphere = false }) {
   return (
-    <div className={`relative flex h-full w-full overflow-hidden ${className}`}>
+    <div className="relative h-full w-full overflow-hidden">
       {atmosphere ? (
         <>
           <div className="absolute inset-0 fw-atmosphere" />
           <div className="absolute inset-0 fw-grid-overlay opacity-45" />
         </>
       ) : null}
-      <div className="relative z-10 flex h-full w-full flex-col">{children}</div>
+      <div className={`relative z-10 flex h-full w-full flex-col ${className}`}>{children}</div>
     </div>
   );
 }
