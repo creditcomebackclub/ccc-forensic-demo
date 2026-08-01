@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle, Loader2, X } from 'lucide-react';
 import { runPhase2Job } from '../utils/phase2Jobs';
 import { saveLetter } from '../utils/storage';
@@ -31,69 +31,81 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
   const [result, setResult] = useState(null);
   const [savedLetterId, setSavedLetterId] = useState(null);
   const [phase, setPhase] = useState('starting'); // starting | running | done | error
-  const started = useRef(false);
+  const [runKey, setRunKey] = useState(0);
+  const running = useRef(false);
 
   const classification = evidence?.analysis?.classification || null;
   const warnClassification = classification && !AUTO_OK.has(classification);
 
-  useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-
-    (async () => {
-      try {
-        if (!evidence?.id) throw new Error('Missing bureau response evidence for follow-up generation.');
-        if (evidence.analysis_status !== 'analyzed' || !evidence.analysis) {
-          throw new Error('Analyze the bureau response before generating a follow-up letter.');
-        }
-        setPhase('running');
-        const draft = await runPhase2Job({
-          letterId: letter.id,
-          kind: 'bureau_follow_up',
-          evidenceId: evidence.id,
-        }, setTokens);
-
-        if (!draft?.letterHtml) throw new Error('Follow-up job finished without letter HTML.');
-        if (draft.enclosure_parse_blocked) {
-          const issues = (draft.enclosure_parse_issues || []).join(' ');
-          throw new Error(issues || 'Follow-up letter failed quality/citation checks. Review the response and try again.');
-        }
-
-        const bureau = draft.bureau || bureauFromPhase(letter.phase);
-        if (!bureau) throw new Error('Could not determine bureau for the follow-up letter.');
-
-        const phaseLabel = `Phase 3 — ${bureauLabel(bureau)} (Follow-up)`;
-        const letterId = await saveLetter(
-          {
-            furnisher: letter.furnisher,
-            id: letter.account_id || '',
-            clientAccountId: letter.client_account_id || letter.clientAccountId || null,
-            type: letter.type || null,
-          },
-          { id: client?.id || letter.client_id || null, name: client?.name || letter.client_name },
-          draft.letterHtml,
-          draft.summary || `Bureau follow-up to ${bureauLabel(bureau)}`,
-          phaseLabel,
-          `__phase3-${bureau}-followup`
-        );
-
-        await supabase.from('letters').update({
-          covered_furnishers: [letter.furnisher],
-          enclosure_parse_blocked: !!draft.enclosure_parse_blocked,
-          enclosure_parse_issues: draft.enclosure_parse_issues || [],
-        }).eq('id', letterId);
-
-        setResult(draft);
-        setSavedLetterId(letterId);
-        setPhase('done');
-        onSaved && onSaved({ letterId, draft });
-      } catch (e) {
-        console.error('Bureau follow-up failed:', e);
-        setError(e.message || 'Follow-up generation failed');
-        setPhase('error');
+  const runDraft = useCallback(async () => {
+    if (running.current) return;
+    running.current = true;
+    setError(null);
+    setResult(null);
+    setSavedLetterId(null);
+    setTokens(0);
+    setPhase('running');
+    try {
+      if (!evidence?.id) throw new Error('Missing bureau response evidence for follow-up generation.');
+      if (evidence.analysis_status !== 'analyzed' || !evidence.analysis) {
+        throw new Error('Analyze the bureau response before generating a follow-up letter.');
       }
-    })();
+      const draft = await runPhase2Job({
+        letterId: letter.id,
+        kind: 'bureau_follow_up',
+        evidenceId: evidence.id,
+      }, setTokens);
+
+      if (!draft?.letterHtml) throw new Error('Follow-up job finished without letter HTML.');
+      if (draft.enclosure_parse_blocked) {
+        const issues = (draft.enclosure_parse_issues || []).join(' ');
+        throw new Error(issues || 'Follow-up letter failed quality/citation checks. Review the response and try again.');
+      }
+
+      const bureau = draft.bureau || bureauFromPhase(letter.phase);
+      if (!bureau) throw new Error('Could not determine bureau for the follow-up letter.');
+
+      const phaseLabel = `Phase 3 — ${bureauLabel(bureau)} (Follow-up)`;
+      const letterId = await saveLetter(
+        {
+          furnisher: letter.furnisher,
+          id: letter.account_id || '',
+          clientAccountId: letter.client_account_id || letter.clientAccountId || null,
+          type: letter.type || null,
+        },
+        { id: client?.id || letter.client_id || null, name: client?.name || letter.client_name },
+        draft.letterHtml,
+        draft.summary || `Bureau follow-up to ${bureauLabel(bureau)}`,
+        phaseLabel,
+        `__phase3-${bureau}-followup`
+      );
+
+      await supabase.from('letters').update({
+        covered_furnishers: letter.coveredFurnishers?.length
+          ? letter.coveredFurnishers
+          : [letter.furnisher],
+        enclosure_parse_blocked: !!draft.enclosure_parse_blocked,
+        enclosure_parse_issues: draft.enclosure_parse_issues || [],
+      }).eq('id', letterId);
+
+      setResult(draft);
+      setSavedLetterId(letterId);
+      setPhase('done');
+      onSaved && onSaved({ letterId, draft });
+    } catch (e) {
+      console.error('Bureau follow-up failed:', e);
+      setError(e.message || 'Follow-up generation failed');
+      setPhase('error');
+    } finally {
+      running.current = false;
+    }
   }, [letter, client, evidence, onSaved]);
+
+  useEffect(() => {
+    runDraft();
+    // Only re-run when staff clicks Retry (runKey), not when parent re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runKey]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50" onClick={(e) => { if (e.target === e.currentTarget && phase !== 'running') onClose(); }}>
@@ -155,6 +167,16 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
         )}
 
         <div className="flex justify-end gap-2 mt-5">
+          {phase === 'error' && (
+            <button
+              type="button"
+              onClick={() => setRunKey((k) => k + 1)}
+              className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md text-white"
+              style={{ backgroundColor: '#1B2A4A' }}
+            >
+              Retry draft
+            </button>
+          )}
           <button onClick={onClose} disabled={phase === 'running'}
             className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border border-border text-ink-muted disabled:opacity-40">
             {phase === 'done' ? 'Close' : 'Cancel'}
