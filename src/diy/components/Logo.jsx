@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 
-/** Fieldwork brand mark — grid field with signal cell. */
+/** Fieldwork brand mark — target / dispute-at-the-source. */
 export function FieldworkMark({ size = 28, className = '' }) {
   return (
     <svg
@@ -12,11 +12,14 @@ export function FieldworkMark({ size = 28, className = '' }) {
       className={className}
       aria-hidden="true"
     >
-      <rect width="64" height="64" rx="12" fill="#07131F" />
-      <g stroke="#2A4A58" strokeWidth="1.5">
-        <path d="M16 22h32M16 32h32M16 42h32M22 16v32M32 16v32M42 16v32" />
-      </g>
-      <rect x="28" y="28" width="8" height="8" fill="#2EE6A6" />
+      <rect width="64" height="64" rx="14" fill="#07131F" />
+      <circle cx="32" cy="32" r="18" stroke="#E8EEF2" strokeWidth="2" />
+      <circle cx="32" cy="32" r="11" stroke="#E8EEF2" strokeWidth="1.75" />
+      <line x1="32" y1="10" x2="32" y2="22" stroke="#E8EEF2" strokeWidth="2" strokeLinecap="round" />
+      <line x1="32" y1="42" x2="32" y2="54" stroke="#E8EEF2" strokeWidth="2" strokeLinecap="round" />
+      <line x1="10" y1="32" x2="22" y2="32" stroke="#E8EEF2" strokeWidth="2" strokeLinecap="round" />
+      <line x1="42" y1="32" x2="54" y2="32" stroke="#E8EEF2" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="32" cy="32" r="4" fill="#2EE6A6" />
     </svg>
   );
 }
