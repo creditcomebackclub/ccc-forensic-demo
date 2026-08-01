@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle, FileText, X } from 'lucide-react';
 import { updateLetter } from '../utils/storage';
-import { updateResponseEvidenceReview } from '../utils/responseEvidence';
+import { listResponseEvidence, updateResponseEvidenceReview } from '../utils/responseEvidence';
 
 const OPTIONS = [
   {
@@ -34,15 +34,36 @@ const OPTIONS = [
   },
 ];
 
-export default function BureauResponseReview({ letter, evidence, onClose, onSaved, onEscalate }) {
-  const [choice, setChoice] = useState(evidence?.review_status || letter.bureauReviewStatus || 'not_reviewed');
-  const [notes, setNotes] = useState(evidence?.review_notes || letter.bureauReviewNotes || '');
+export default function BureauResponseReview({ letter, evidence: evidenceProp, onClose, onSaved, onEscalate, onFollowUp }) {
+  const [evidence, setEvidence] = useState(evidenceProp || null);
+  const [choice, setChoice] = useState(evidenceProp?.review_status || letter.bureauReviewStatus || 'not_reviewed');
+  const [notes, setNotes] = useState(evidenceProp?.review_notes || letter.bureauReviewNotes || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
-  const chosen = OPTIONS.find((o) => o.key === choice);
+  useEffect(() => {
+    if (evidenceProp?.id) {
+      setEvidence(evidenceProp);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await listResponseEvidence({ letterId: letter.id });
+        const bureau = (rows || []).find((r) => r.response_kind === 'bureau' && r.upload_status === 'received');
+        if (!cancelled && bureau) setEvidence(bureau);
+      } catch (e) {
+        console.warn('Could not load bureau evidence for review:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [letter.id, evidenceProp]);
 
-  const save = async (openEscalation = false) => {
+  const chosen = OPTIONS.find((o) => o.key === choice);
+  const classification = evidence?.analysis?.classification || null;
+  const canDraftFollowUp = !!(evidence?.id && evidence?.analysis_status === 'analyzed' && evidence?.analysis);
+
+  const save = async (openEscalation = false, startFollowUp = false) => {
     if (!chosen) { setError('Choose the next action before saving.'); return; }
     setSaving(true);
     setError(null);
@@ -67,6 +88,7 @@ export default function BureauResponseReview({ letter, evidence, onClose, onSave
       });
       onSaved && onSaved();
       if (openEscalation) onEscalate && onEscalate();
+      else if (startFollowUp) onFollowUp && onFollowUp(evidence);
       else onClose();
     } catch (e) {
       setError(e.message || 'Could not save the bureau-response review.');
@@ -88,7 +110,12 @@ export default function BureauResponseReview({ letter, evidence, onClose, onSave
 
         <div className="flex gap-2 p-3 rounded-md bg-blue-50 border border-blue-100 text-[12px] text-blue-900 mb-4">
           <FileText size={15} className="shrink-0 mt-0.5" />
-          <span>A bureau response is a staff decision point—not an automatic escalation. Record the next action before moving the case forward.</span>
+          <span>
+            A bureau response is a staff decision point—not an automatic escalation.
+            Choosing <strong>Continue with bureau follow-up</strong> drafts a supplemental Phase 3 letter
+            from the unresolved issues in this analysis.
+            {classification ? <> Current classification: <strong>{classification}</strong>.</> : null}
+          </span>
         </div>
 
         <div className="space-y-2 mb-4">
@@ -116,10 +143,31 @@ export default function BureauResponseReview({ letter, evidence, onClose, onSave
         <div className="flex items-center justify-between gap-3 pt-1">
           <button onClick={onClose} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
           <div className="flex gap-2">
-            <button onClick={() => save(false)} disabled={saving || !chosen}
-              className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border border-navy text-navy disabled:opacity-40">
-              {saving ? 'Saving…' : 'Save decision'}
-            </button>
+            {choice === 'follow_up' ? (
+              <>
+                <button onClick={() => save(false, false)} disabled={saving || !chosen}
+                  className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border border-navy text-navy disabled:opacity-40">
+                  {saving ? 'Saving…' : 'Save only'}
+                </button>
+                <button
+                  onClick={() => save(false, true)}
+                  disabled={saving || !chosen || !onFollowUp || !canDraftFollowUp}
+                  title={!canDraftFollowUp ? 'Analyze the bureau response first' : undefined}
+                  className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md text-white disabled:opacity-40"
+                  style={{ backgroundColor: '#1B2A4A' }}>
+                  {saving
+                    ? 'Saving…'
+                    : (evidence?.review_status === 'follow_up' || letter.bureauReviewStatus === 'follow_up')
+                      ? 'Draft / regenerate follow-up letter'
+                      : 'Save & draft follow-up letter'}
+                </button>
+              </>
+            ) : (
+              <button onClick={() => save(false)} disabled={saving || !chosen}
+                className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border border-navy text-navy disabled:opacity-40">
+                {saving ? 'Saving…' : 'Save decision'}
+              </button>
+            )}
             {choice === 'escalated' && (
               <button onClick={() => save(true)} disabled={saving}
                 className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md text-white bg-red-700 disabled:opacity-40">

@@ -15,9 +15,10 @@ import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { PHASE2_SYSTEM_PROMPT } from '../../src/prompts/phase2Prompt.js';
 import { BUREAU_RESPONSE_SYSTEM_PROMPT } from '../../src/prompts/bureauResponsePrompt.js';
-import { BUREAU_RESPONSE_SCHEMA, PHASE2_SCHEMA } from '../../src/utils/auditSchemas.js';
+import { BUREAU_FOLLOW_UP_SYSTEM_PROMPT } from '../../src/prompts/bureauFollowUpPrompt.js';
+import { BUREAU_FOLLOW_UP_SCHEMA, BUREAU_RESPONSE_SCHEMA, PHASE2_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { inferMediaType, isAnalyzable } from '../../src/utils/responseFiles.js';
-import { validateFieldCitations, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
+import { collectPhase3CitationProblems, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
 import { requireStaff } from './_requireAuth.cjs';
 
 assertMapFullySourced();
@@ -25,6 +26,31 @@ assertMapFullySourced();
 const MODEL = 'claude-sonnet-5';
 const FURNISHER_SYSTEM = [{ type: 'text', text: PHASE2_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 const BUREAU_SYSTEM = [{ type: 'text', text: BUREAU_RESPONSE_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
+const BUREAU_FOLLOW_UP_SYSTEM = [{ type: 'text', text: BUREAU_FOLLOW_UP_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
+
+const PHASE2_KINDS = ['response', 'non_response', 'bureau_response', 'bureau_follow_up'];
+
+function bureauFromPhase(phase) {
+  const p = String(phase || '').toLowerCase();
+  if (p.includes('equifax')) return 'equifax';
+  if (p.includes('experian')) return 'experian';
+  if (p.includes('transunion') || p.includes('trans union')) return 'transunion';
+  return null;
+}
+
+function injectLetterCss(html, baseCss) {
+  if (!html) return html;
+  if (html.includes('</head>')) {
+    return html.replace('</head>', `<meta charset="UTF-8"><style>${baseCss}</style></head>`);
+  }
+  if (html.includes('<head>')) {
+    return html.replace('<head>', `<head><meta charset="UTF-8"><style>${baseCss}</style>`);
+  }
+  if (html.includes('<body>')) {
+    return html.replace('<body>', `<head><meta charset="UTF-8"><style>${baseCss}</style></head><body>`);
+  }
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${baseCss}</style></head><body>${html}</body></html>`;
+}
 
 const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -97,12 +123,12 @@ export const handler = async (event) => {
     return { statusCode: 409, body: 'job not claimable' };
   }
   if (typeof queuedJob.letter_id !== 'string' || !queuedJob.letter_id
-      || !['response', 'non_response', 'bureau_response'].includes(queuedJob.kind)) {
+      || !PHASE2_KINDS.includes(queuedJob.kind)) {
     return { statusCode: 400, body: 'job contains invalid analysis data' };
   }
   const responseFiles = Array.isArray(queuedJob.files) ? queuedJob.files : [];
   if ((queuedJob.kind === 'non_response' && responseFiles.length)
-      || (queuedJob.kind === 'bureau_response' && !queuedJob.response_evidence_id)
+      || ((queuedJob.kind === 'bureau_response' || queuedJob.kind === 'bureau_follow_up') && !queuedJob.response_evidence_id)
       || (queuedJob.kind === 'response' && !queuedJob.response_evidence_id
           && (!responseFiles.length || !responseFiles.every((file) => isResponsePathForLetter(file?.path, queuedJob.letter_id))))) {
     return { statusCode: 400, body: 'job contains invalid response upload paths' };
@@ -126,12 +152,14 @@ export const handler = async (event) => {
   if (queuedJob.response_evidence_id) {
     const { data: evidenceRow, error: evidenceErr } = await db
       .from('response_evidence')
-      .select('id,firm_user_id,client_id,letter_id,response_kind,storage_bucket,storage_paths,upload_status')
+      .select('id,firm_user_id,client_id,letter_id,response_kind,storage_bucket,storage_paths,upload_status,analysis,analysis_status')
       .eq('id', queuedJob.response_evidence_id)
       .maybeSingle();
     if (evidenceErr || !evidenceRow) return { statusCode: 400, body: 'response evidence not found' };
 
-    const expectedKind = queuedJob.kind === 'bureau_response' ? 'bureau' : 'furnisher';
+    const expectedKind = (queuedJob.kind === 'bureau_response' || queuedJob.kind === 'bureau_follow_up')
+      ? 'bureau'
+      : 'furnisher';
     const evidencePaths = Array.isArray(evidenceRow.storage_paths) ? evidenceRow.storage_paths : [];
     if (
       evidenceRow.letter_id !== targetLetter.id
@@ -143,6 +171,11 @@ export const handler = async (event) => {
       || !evidencePaths.every((path) => isResponsePathForEvidence(path, evidenceRow))
     ) {
       return { statusCode: 400, body: 'response evidence does not match this analysis job' };
+    }
+    if (queuedJob.kind === 'bureau_follow_up') {
+      if (evidenceRow.analysis_status !== 'analyzed' || !evidenceRow.analysis) {
+        return { statusCode: 400, body: 'bureau response must be analyzed before follow-up letter generation' };
+      }
     }
     evidence = evidenceRow;
     filesForAnalysis = evidencePaths.map((path) => ({ path }));
@@ -178,7 +211,9 @@ export const handler = async (event) => {
     const { data: letter, error: letterErr } = await db.from('letters').select('*').eq('id', job.letter_id).single();
     if (letterErr || !letter) throw new Error('Could not find the Phase 1 letter for this job.');
 
-    if (evidence) {
+    // Follow-up drafts reuse an already-analyzed evidence row. Do not flip
+    // analysis_status to running/error — that would clobber the prior review.
+    if (evidence && job.kind !== 'bureau_follow_up') {
       await db.from('response_evidence').update({
         analysis_status: 'running',
         updated_at: new Date().toISOString(),
@@ -217,59 +252,122 @@ export const handler = async (event) => {
       const pageNote = pageBlocks.length > 1
         ? ` — ${pageBlocks.length} pages/photos of the same response, attached in order. Read them as one continuous document.`
         : ' (attached document):';
-      const bureauResponse = job.kind === 'bureau_response';
-      messages = [{
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: bureauResponse
-              ? `Today: ${today()}\nClient: ${letter.client_name}\nBureau target: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 3 BUREAU DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`
-              : `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — FURNISHER RESPONSE${pageNote}`,
-          },
-          ...pageBlocks,
-          { type: 'text', text: bureauResponse ? 'Perform the bureau-response staff review analysis.' : 'Perform Phase 2 analysis.' },
-        ],
-      }];
+      if (job.kind === 'bureau_follow_up') {
+        const expectedBureau = bureauFromPhase(letter.phase);
+        if (!expectedBureau) throw new Error('Could not determine bureau from Phase 3 letter phase.');
+        const prior = evidence?.analysis || {};
+        messages = [{
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `Today: ${today()}\nClient: ${letter.client_name}\nBureau target (must match output.bureau): ${expectedBureau}\nPhase label: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nPRIOR BUREAU-RESPONSE ANALYSIS (JSON — staff already reviewed; continue bureau path):\n${JSON.stringify(prior, null, 2)}\n\nEXHIBIT A — ORIGINAL PHASE 3 BUREAU DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`,
+            },
+            ...pageBlocks,
+            {
+              type: 'text',
+              text: `Draft the supplemental Phase 3 follow-up letter to ${expectedBureau}. Output bureau must be "${expectedBureau}". HARD RULES for letterHtml: (1) must not contain the substring "1681s-2(a)" anywhere — reframe on §1681s-2(b) (Seamans) or §1681i(a)(5)(A); (2) Field 19 is Special Comment only — XA/XB/XC/XH/XR live in Field 20 (Compliance Condition Code). Prefer "Compliance Condition Code XB (Metro 2 Field 20)". Correct wrong Field N citations from exhibits/analysis; do not copy them.`,
+            },
+          ],
+        }];
+      } else {
+        const bureauResponse = job.kind === 'bureau_response';
+        messages = [{
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: bureauResponse
+                ? `Today: ${today()}\nClient: ${letter.client_name}\nBureau target: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 3 BUREAU DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`
+                : `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — FURNISHER RESPONSE${pageNote}`,
+            },
+            ...pageBlocks,
+            { type: 'text', text: bureauResponse ? 'Perform the bureau-response staff review analysis.' : 'Perform Phase 2 analysis.' },
+          ],
+        }];
+      }
     }
 
     const isBureauResponse = job.kind === 'bureau_response';
-    await updateJob({ stage: isBureauResponse ? 'Analyzing bureau response against Phase 3 dispute' : 'Analyzing response against Phase 1 demands' }, true);
+    const isBureauFollowUp = job.kind === 'bureau_follow_up';
+    await updateJob({
+      stage: isBureauFollowUp
+        ? 'Drafting bureau follow-up letter'
+        : (isBureauResponse ? 'Analyzing bureau response against Phase 3 dispute' : 'Analyzing response against Phase 1 demands'),
+    }, true);
 
-    const stream = anthropic.messages.stream({
-      model: MODEL,
-      // 64000 (matches audit-run-background). 32000 was fine while ledgers
-      // came back illegible and analyses stayed thin, but a legible enclosure
-      // produces a much richer analysis plus three full Phase 3 letters and
-      // hit the cap mid-generation (stop_reason: max_tokens). The three-letter
-      // output is itself the main cost — the schema requires equifax,
-      // experian and transunion even when the account reports to only one
-      // bureau; a future optimization is to generate only the bureaus the
-      // account is actually on.
-      max_tokens: isBureauResponse ? 12000 : 64000,
-      system: isBureauResponse ? BUREAU_SYSTEM : FURNISHER_SYSTEM,
-      messages,
-      output_config: { format: { type: 'json_schema', schema: isBureauResponse ? BUREAU_RESPONSE_SCHEMA : PHASE2_SCHEMA } },
-    });
-    let chars = 0;
-    stream.on('text', (delta) => { chars += delta.length; onTokens(Math.round(chars / 4)); });
-    const msg = await stream.finalMessage();
+    // 64000 (matches audit-run-background). 32000 was fine while ledgers
+    // came back illegible and analyses stayed thin, but a legible enclosure
+    // produces a much richer analysis plus three full Phase 3 letters and
+    // hit the cap mid-generation (stop_reason: max_tokens). The three-letter
+    // output is itself the main cost — the schema requires equifax,
+    // experian and transunion even when the account reports to only one
+    // bureau; a future optimization is to generate only the bureaus the
+    // account is actually on.
+    const runModel = async (modelMessages, stageLabel) => {
+      if (stageLabel) await updateJob({ stage: stageLabel }, true);
+      const stream = anthropic.messages.stream({
+        model: MODEL,
+        max_tokens: isBureauFollowUp ? 24000 : (isBureauResponse ? 12000 : 64000),
+        system: isBureauFollowUp ? BUREAU_FOLLOW_UP_SYSTEM : (isBureauResponse ? BUREAU_SYSTEM : FURNISHER_SYSTEM),
+        messages: modelMessages,
+        output_config: {
+          format: {
+            type: 'json_schema',
+            schema: isBureauFollowUp
+              ? BUREAU_FOLLOW_UP_SCHEMA
+              : (isBureauResponse ? BUREAU_RESPONSE_SCHEMA : PHASE2_SCHEMA),
+          },
+        },
+      });
+      let chars = 0;
+      stream.on('text', (delta) => { chars += delta.length; onTokens(Math.round(chars / 4)); });
+      const msg = await stream.finalMessage();
+      const usage = msg.usage || {};
+      console.log('[phase2-usage]', JSON.stringify({
+        input: usage.input_tokens || 0, output: usage.output_tokens || 0,
+        cache_read: usage.cache_read_input_tokens || 0, cache_write: usage.cache_creation_input_tokens || 0,
+        stop_reason: msg.stop_reason,
+      }));
+      if (msg.stop_reason === 'max_tokens') {
+        throw new Error('The analysis hit the output limit before finishing. Try again.');
+      }
+      if (msg.stop_reason === 'refusal') {
+        throw new Error('The model declined this request. Check the response content and try again.');
+      }
+      const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+      return { parsed: JSON.parse(text), usage };
+    };
 
-    const u = msg.usage || {};
-    console.log('[phase2-usage]', JSON.stringify({
-      input: u.input_tokens || 0, output: u.output_tokens || 0,
-      cache_read: u.cache_read_input_tokens || 0, cache_write: u.cache_creation_input_tokens || 0,
-      stop_reason: msg.stop_reason,
-    }));
-    if (msg.stop_reason === 'max_tokens') {
-      throw new Error('The analysis hit the output limit before finishing. Try again.');
+    let { parsed: analysis, usage: u } = await runModel(messages);
+    // One automatic rebuild if the follow-up draft fails citation lint
+    // (Metro 2 Field N/name mismatches OR §1681s-2(a)). Prompt hardening alone
+    // is not enough when Exhibit A / analysis JSON still contain Phase 1 framing
+    // or historically wrong Field 19 = CCC phrasing.
+    if (isBureauFollowUp && analysis?.letterHtml) {
+      const citationProblems = collectPhase3CitationProblems(analysis.letterHtml);
+      if (citationProblems.length) {
+        console.warn('[phase2] bureau_follow_up citation lint failed; requesting one rewrite', citationProblems);
+        const rewriteMessages = [
+          ...messages,
+          {
+            role: 'user',
+            content: [{
+              type: 'text',
+              text: `CRITICAL CORRECTION: The draft letterHtml failed citation lint. Return a complete corrected JSON object for this follow-up. Fix EVERY issue below — do not leave any of them in letterHtml. Keep the same bureau/focusIssues intent. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)" in any subsection; use §1681s-2(b) (Seamans) or §1681i(a)(5)(A).\n- Field 19 = Special Comment. Field 20 = Compliance Condition Code. XA/XB/XC/XH/XR live only in Field 20. Prefer "Compliance Condition Code XB (Metro 2 Field 20)".\n- Field 21 = Current Balance; Field 22 = Amount Past Due.\n\nBAD DRAFT letterHtml:\n${analysis.letterHtml}`,
+            }],
+          },
+        ];
+        const rebuilt = await runModel(rewriteMessages, 'Rewriting follow-up to fix citation lint');
+        analysis = rebuilt.parsed;
+        u = {
+          input_tokens: (u.input_tokens || 0) + (rebuilt.usage.input_tokens || 0),
+          output_tokens: (u.output_tokens || 0) + (rebuilt.usage.output_tokens || 0),
+          cache_read_input_tokens: (u.cache_read_input_tokens || 0) + (rebuilt.usage.cache_read_input_tokens || 0),
+          cache_creation_input_tokens: (u.cache_creation_input_tokens || 0) + (rebuilt.usage.cache_creation_input_tokens || 0),
+        };
+      }
     }
-    if (msg.stop_reason === 'refusal') {
-      throw new Error('The model declined this request. Check the response content and try again.');
-    }
-
-    const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-    const analysis = JSON.parse(text);
 
     // Inject standard letter CSS only for the furnisher workflow, which is
     // the one that generates Phase 3 letters. Bureau analysis records facts
@@ -299,21 +397,18 @@ export const handler = async (event) => {
       .enclosures { margin-top: 14px; }
     `;
 
-    if (!isBureauResponse && analysis && analysis.letters) {
+    if (!isBureauResponse && !isBureauFollowUp && analysis && analysis.letters) {
       for (const bureau of ['equifax', 'experian', 'transunion']) {
         if (analysis.letters[bureau]) {
-          let html = analysis.letters[bureau];
-          if (html.includes('</head>')) {
-            html = html.replace('</head>', `<meta charset="UTF-8"><style>${baseCss}</style></head>`);
-          } else if (html.includes('<head>')) {
-            html = html.replace('<head>', `<head><meta charset="UTF-8"><style>${baseCss}</style>`);
-          } else if (html.includes('<body>')) {
-            html = html.replace('<body>', `<head><meta charset="UTF-8"><style>${baseCss}</style></head><body>`);
-          } else {
-            html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${baseCss}</style></head><body>${html}</body></html>`;
-          }
-          analysis.letters[bureau] = html;
+          analysis.letters[bureau] = injectLetterCss(analysis.letters[bureau], baseCss);
         }
+      }
+    }
+    if (isBureauFollowUp && analysis?.letterHtml) {
+      analysis.letterHtml = injectLetterCss(analysis.letterHtml, baseCss);
+      const expectedBureau = bureauFromPhase(letter.phase);
+      if (expectedBureau && analysis.bureau && analysis.bureau !== expectedBureau) {
+        analysis.bureau = expectedBureau;
       }
     }
 
@@ -329,28 +424,51 @@ export const handler = async (event) => {
       blockIssues.push(...(dq.issues && dq.issues.length ? dq.issues : ['An enclosed document could not be reliably read.']));
     }
 
-    // Citation lint (P1-2c): §1681s-2(a) is the furnisher's duty, not the
-    // CRA's, and citing it in a CRA-addressed Phase 3 letter has already
-    // been quoted back by opposing counsel as an exploitable flank (that
-    // subsection carries no private right of action). A prompt instruction
-    // isn't a guarantee the model won't slip and cite it anyway, so this
-    // scans the actual generated HTML and blocks the letter the same way an
-    // unparsed enclosure does, rather than trusting the instruction blindly.
+    // Citation lint (P1-2c): Metro 2 Field N/name mismatches + §1681s-2(a) in
+    // CRA letters. Prompt instructions are not enough when exhibits still
+    // carry Phase 1 framing or historically wrong Field 19 = CCC phrasing.
     if (!isBureauResponse) {
-      for (const bureau of ['equifax', 'experian', 'transunion']) {
-        const html = analysis && analysis.letters && analysis.letters[bureau];
-        for (const p of validateFieldCitations(html)) {
-          blockIssues.push(`The generated ${bureau} letter has a Metro 2 field citation error: ${p}`);
+      if (isBureauFollowUp) {
+        const html = analysis && analysis.letterHtml;
+        const bureau = (analysis && analysis.bureau) || bureauFromPhase(letter.phase) || 'bureau';
+        for (const p of collectPhase3CitationProblems(html)) {
+          blockIssues.push(
+            p.startsWith('Cites 15 U.S.C.')
+              ? `The generated ${bureau} follow-up letter ${p.charAt(0).toLowerCase()}${p.slice(1)}`
+              : `The generated ${bureau} follow-up letter has a Metro 2 field citation error: ${p}`
+          );
         }
-        if (html && html.includes('1681s-2(a)')) {
-          blockIssues.push(`The generated ${bureau} letter cites 15 U.S.C. §1681s-2(a), which must never appear in a Phase 3 CRA letter — this is the furnisher's duty, not the CRA's, and citing it here re-exposes a flank opposing counsel has already used. Rebuild this argument on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead.`);
+      } else {
+        for (const bureau of ['equifax', 'experian', 'transunion']) {
+          const html = analysis && analysis.letters && analysis.letters[bureau];
+          for (const p of collectPhase3CitationProblems(html)) {
+            blockIssues.push(
+              p.startsWith('Cites 15 U.S.C.')
+                ? `The generated ${bureau} letter ${p.charAt(0).toLowerCase()}${p.slice(1)}`
+                : `The generated ${bureau} letter has a Metro 2 field citation error: ${p}`
+            );
+          }
         }
       }
     }
     const parseBlocked = blockIssues.length > 0;
+    if (isBureauFollowUp) {
+      analysis.enclosure_parse_blocked = parseBlocked;
+      analysis.enclosure_parse_issues = blockIssues;
+      analysis.source_letter_id = letter.id;
+      analysis.source_evidence_id = evidence?.id || null;
+    }
 
     const analyzedAt = new Date().toISOString();
-    if (isBureauResponse) {
+    if (isBureauFollowUp) {
+      // Follow-up draft lives on the job result for the client to saveLetter.
+      // Do not overwrite the prior bureau-response analysis on evidence.
+      await db.from('letters').update({
+        bureau_next_action: 'bureau_follow_up',
+        bureau_review_status: 'follow_up',
+        bureau_response_status: 'reviewed',
+      }).eq('id', job.letter_id);
+    } else if (isBureauResponse) {
       // The full analysis stays private in response_evidence. The linked
       // letter gets only a safe lifecycle status used by staff/dashboard and
       // the client portal; no staff notes or raw model output leak to client.
@@ -388,7 +506,7 @@ export const handler = async (event) => {
     await updateJob({ status: 'done', stage: 'Complete', result: analysis, usage: u, finished_at: new Date().toISOString() }, true);
   } catch (e) {
     console.error('phase2-analyze failed:', e);
-    if (evidence) {
+    if (evidence && job.kind !== 'bureau_follow_up') {
       await db.from('response_evidence').update({
         analysis_status: 'error',
         updated_at: new Date().toISOString(),

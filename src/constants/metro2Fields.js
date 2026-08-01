@@ -316,6 +316,16 @@ const NAME_TOKENS = Object.values(METRO2_FIELDS).map((f) => ({
   head: f.name.toLowerCase().replace(/[^a-z ]/g, '').split(' ')[0],
 }));
 
+const CCC_VALUE_RE = /\bX[ABCDEFGHJR]\b/;
+
+function pushCccOn19(problems, seen, label) {
+  const key = 'ccc-value-on-19';
+  if (seen.has(key)) return;
+  seen.add(key);
+  const shown = label || 'XB';
+  problems.push(`Cites "Field 19 — ${shown}", but XA/XB/XC-style codes are Compliance Condition Code values, which live in Field ${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.num} (${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.name}). Field 19 is ${METRO2_FIELDS.SPECIAL_COMMENT.name}.`);
+}
+
 // Scans generated letter HTML for "Field N" citations. Catches the three
 // failure modes seen in real shipped letters: a field number absent from
 // the Base Segment ("Field 30 — Amount Past Due", "Field 4 — Date Opened"),
@@ -328,7 +338,7 @@ export function validateFieldCitations(html) {
   const problems = [];
   const seen = new Set();
 
-  for (const m of text.matchAll(/Field\s*(\d{1,2}[AB]?)\s*[—\-–:(]?\s*([A-Za-z][A-Za-z '\/]{2,45})?/g)) {
+  for (const m of text.matchAll(/Field\s*(\d{1,2}[AB]?)\s*[—\-–:(]?\s*([A-Za-z][A-Za-z '\/]{0,45})?/g)) {
     const num = m[1].toUpperCase();
     const label = (m[2] || '').trim().replace(/\s+/g, ' ');
 
@@ -337,15 +347,24 @@ export function validateFieldCitations(html) {
       if (!seen.has(key)) { seen.add(key); problems.push(`Cites "Field ${num}"${label ? ` — ${label}` : ''}, which is not a Metro 2 Base Segment field number in the verified map.`); }
       continue;
     }
-    if (!label) continue;
 
-    // Must run before the generic-label guard: "XB/XC" reduces to a 4-char
-    // token and would otherwise be skipped as prose.
-    if (num === '19' && /\bX[ABCDEFGHJR]\b/.test(label)) {
-      const key = 'ccc-value-on-19';
-      if (!seen.has(key)) { seen.add(key); problems.push(`Cites "Field 19 — ${label}", but XA/XB/XC-style codes are Compliance Condition Code values, which live in Field ${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.num} (${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.name}). Field 19 is ${METRO2_FIELDS.SPECIAL_COMMENT.name}.`); }
+    // Field 19 + CCC value in the captured label (including bare "Field 19 — XB").
+    if (num === '19' && label && CCC_VALUE_RE.test(label)) {
+      pushCccOn19(problems, seen, label);
       continue;
     }
+
+    // Bare / short forms the label group used to miss: "Field 19—XB", "Field 19 (XB)".
+    if (num === '19' && !CCC_VALUE_RE.test(label || '')) {
+      const window = text.slice(m.index, Math.min(text.length, m.index + m[0].length + 12));
+      const code = window.match(CCC_VALUE_RE);
+      if (code) {
+        pushCccOn19(problems, seen, code[0]);
+        continue;
+      }
+    }
+
+    if (!label) continue;
 
     const labelHead = label.toLowerCase().replace(/[^a-z ]/g, '').split(' ')[0];
     if (labelHead.length <= 4) continue;
@@ -356,6 +375,15 @@ export function validateFieldCitations(html) {
       const key = 'mislabel:' + num + ':' + claimsAnother.num;
       if (!seen.has(key)) { seen.add(key); problems.push(`Cites "Field ${num} — ${label}", but Field ${num} is ${actual.name}; "${claimsAnother.name}" is Field ${claimsAnother.num}.`); }
     }
+  }
+  return problems;
+}
+
+/** Statute + Metro 2 citation problems that block CRA Phase 3 / follow-up letters. */
+export function collectPhase3CitationProblems(html) {
+  const problems = validateFieldCitations(html);
+  if (html && String(html).includes('1681s-2(a)')) {
+    problems.push('Cites 15 U.S.C. §1681s-2(a), which must never appear in a Phase 3 CRA letter — this is the furnisher\'s duty, not the CRA\'s. Rebuild on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead.');
   }
   return problems;
 }
