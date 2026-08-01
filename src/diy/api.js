@@ -224,19 +224,53 @@ export async function fieldworkCheckout(planId) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Poll fieldwork_audit_jobs until done/error (background Anthropic pass). */
+async function pollFieldworkAuditJob(jobId, { timeoutMs = 240000 } = {}) {
+  if (!fieldworkSupabase) throw new Error('Fieldwork Supabase is not configured');
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const { data, error } = await fieldworkSupabase
+      .from('fieldwork_audit_jobs')
+      .select('id,status,progress,error,result_json')
+      .eq('id', jobId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error('Audit job not found');
+    if (data.status === 'done' && data.result_json) {
+      return { audit: data.result_json, mode: 'engine', jobId };
+    }
+    if (data.status === 'error') {
+      throw new Error(data.error || 'Audit failed');
+    }
+    await sleep(2000);
+  }
+  throw new Error('Audit timed out — check the netlify terminal for fieldwork-audit-run-background');
+}
+
 /** Live forensic audit via FIELDWORK_ANTHROPIC (Fieldwork UI model). */
-export async function runFieldworkAudit({ base64, mediaType, fileName, mode }) {
-  return fwFetch('fieldwork-audit-run', {
+export async function runFieldworkAudit({ base64, mediaType, fileName, mode, subscriberId }) {
+  const queued = await fwFetch('fieldwork-audit-run', {
     method: 'POST',
-    // Full report audits routinely take 1–3 minutes.
-    timeoutMs: 240000,
+    // Enqueue is fast; Anthropic runs in the background worker.
+    timeoutMs: 30000,
     body: JSON.stringify({
       base64,
       mediaType: mediaType || 'application/pdf',
       fileName: fileName || 'credit-report.pdf',
       mode: mode || 'combined',
+      subscriberId: subscriberId || undefined,
     }),
   });
+
+  if (queued?.audit) return queued;
+  if (!queued?.jobId) {
+    throw new Error(queued?.error || 'Audit did not return a job id');
+  }
+  return pollFieldworkAuditJob(queued.jobId);
 }
 
 /** Fieldwork-styled letter from findings (engine when key set, local builder otherwise). */

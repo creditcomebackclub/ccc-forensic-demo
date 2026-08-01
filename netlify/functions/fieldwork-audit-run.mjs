@@ -1,27 +1,13 @@
 /**
- * Fieldwork audit — CCC forensic engine, Fieldwork UI output.
- * Uses FIELDWORK_ANTHROPIC_API_KEY only (never ANTHROPIC_API_KEY).
+ * Fieldwork audit — enqueue + kick background worker.
+ * Live Anthropic work runs in fieldwork-audit-run-background (15‑min window).
+ * Falls back to inline engine only when BACKGROUND is unavailable and the
+ * request is small enough for the short sync timeout.
  *
- * POST JSON: { base64, mediaType?, fileName?, mode? }
- * Returns: { audit: FieldworkAudit, mode: 'engine' }
+ * POST JSON: { base64, mediaType?, fileName?, mode?, subscriberId? }
+ * Returns: { jobId, mode: 'queued' } or { audit, mode: 'engine' }
  */
-import Anthropic from '@anthropic-ai/sdk';
-import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
-import { AUDIT_SCHEMA } from '../../src/utils/auditSchemas.js';
-import {
-  buildReportContent,
-  combinedAuditPrompt,
-  singleBureauAuditPrompt,
-  todayLong,
-} from '../../src/utils/auditPrompts.js';
-import {
-  applyDofdDirectionalGuard,
-  applyCollectionBalanceGuard,
-} from './_fieldworkGuards.mjs';
-import { adaptCccAuditToFieldwork } from '../../src/diy/adapters/auditAdapter.js';
-
-const AUDIT_MODEL = 'claude-sonnet-5';
-const SYSTEM = [{ type: 'text', text: MASTER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
+import { createClient } from '@supabase/supabase-js';
 
 function json(status, body) {
   return {
@@ -31,31 +17,34 @@ function json(status, body) {
   };
 }
 
-function parseAuditJSON(text) {
-  try { return JSON.parse(text); } catch { /* fall through */ }
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) {
-    try { return JSON.parse(fence[1]); } catch { /* fall through */ }
-  }
-  const obj = text.match(/\{[\s\S]*\}/);
-  if (obj) {
-    try { return JSON.parse(obj[0]); } catch { /* fall through */ }
-  }
-  throw new Error('Could not parse JSON from audit response');
+function fwAdmin() {
+  const url = process.env.FIELDWORK_SUPABASE_URL;
+  const key = process.env.FIELDWORK_SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-function assertAuditOutput(audit) {
-  if (!audit || typeof audit !== 'object' || !Array.isArray(audit.accounts)) {
-    throw new Error('Audit returned invalid JSON');
-  }
-  return audit;
+async function requireUser(event) {
+  const headers = event.headers || {};
+  const authHeader = headers.authorization || headers.Authorization;
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  const token = authHeader.slice(7).trim();
+  const url = process.env.FIELDWORK_SUPABASE_URL;
+  const anon = process.env.FIELDWORK_SUPABASE_ANON_KEY;
+  if (!url || !anon) return null;
+  const userClient = createClient(url, anon, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await userClient.auth.getUser();
+  if (error || !data?.user) return null;
+  return data.user;
 }
 
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
 
-  const anthropicKey = process.env.FIELDWORK_ANTHROPIC_API_KEY;
-  if (!anthropicKey) {
+  if (!process.env.FIELDWORK_ANTHROPIC_API_KEY) {
     return json(503, {
       error: 'FIELDWORK_ANTHROPIC_API_KEY not configured',
       mode: 'demo',
@@ -75,67 +64,77 @@ export const handler = async (event) => {
   if (!base64 || typeof base64 !== 'string') {
     return json(400, { error: 'base64 report required' });
   }
-
-  // Rough size guard (~11MB base64 ≈ 8MB binary)
   if (base64.length > 12_000_000) {
     return json(413, { error: 'Report too large for Fieldwork audit pass' });
   }
 
-  const mediaType = payload.mediaType || 'application/pdf';
-  const mode = payload.mode === 'single' ? 'single' : 'combined';
-  const bureau = payload.bureau || 'Experian';
-  const fileName = payload.fileName || 'credit-report.pdf';
-  const t = todayLong();
+  const admin = fwAdmin();
+  if (!admin) {
+    return json(503, { error: 'FIELDWORK_SUPABASE_* not configured for audit jobs' });
+  }
 
-  try {
-    const anthropic = new Anthropic({
-      apiKey: anthropicKey,
-      maxRetries: 2,
-      timeout: 8 * 60 * 1000,
-    });
+  const user = await requireUser(event);
+  let subscriberId = payload.subscriberId || null;
 
-    const prompt = mode === 'single'
-      ? singleBureauAuditPrompt(t, bureau)
-      : combinedAuditPrompt(t);
+  if (user && !subscriberId) {
+    const { data: sub } = await admin
+      .from('fieldwork_subscribers')
+      .select('id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    subscriberId = sub?.id || null;
+  }
 
-    const content = buildReportContent(base64, prompt, mediaType);
-    const stream = anthropic.messages.stream({
-      model: AUDIT_MODEL,
-      max_tokens: 64000,
-      system: SYSTEM,
-      messages: [{ role: 'user', content }],
-      output_config: {
-        effort: 'high',
-        format: { type: 'json_schema', schema: AUDIT_SCHEMA },
-      },
-    });
-
-    const final = await stream.finalMessage();
-    const text = (final.content || [])
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
-      .join('\n');
-
-    const cccAudit = assertAuditOutput(parseAuditJSON(text));
-    applyDofdDirectionalGuard(cccAudit.accounts);
-    applyCollectionBalanceGuard(cccAudit.accounts);
-
-    const audit = adaptCccAuditToFieldwork(cccAudit, {
-      reportSource: fileName,
-      generatedAt: new Date().toISOString(),
-    });
-
-    return json(200, {
-      product: 'fieldwork',
-      isolated: true,
-      mode: 'engine',
-      audit,
-    });
-  } catch (err) {
-    console.error('fieldwork-audit-run failed', err);
-    return json(500, {
-      error: err.message || 'Audit failed',
-      mode: 'engine',
+  if (!subscriberId) {
+    return json(401, {
+      error: 'Sign in to Fieldwork cloud to run a live audit (subscriber required for background jobs).',
     });
   }
+
+  const { data: job, error: jobErr } = await admin
+    .from('fieldwork_audit_jobs')
+    .insert({
+      subscriber_id: subscriberId,
+      status: 'queued',
+      progress: 'Queued…',
+    })
+    .select('id')
+    .single();
+
+  if (jobErr || !job) {
+    return json(500, { error: jobErr?.message || 'Could not create audit job' });
+  }
+
+  // Kick the background worker. On Netlify this returns 202 immediately;
+  // locally netlify-cli also supports *-background functions.
+  const siteUrl = process.env.URL
+    || process.env.DEPLOY_URL
+    || process.env.NETLIFY_DEV_SERVER_URL
+    || 'http://localhost:8888';
+
+  const workerPayload = {
+    jobId: job.id,
+    base64,
+    mediaType: payload.mediaType || 'application/pdf',
+    fileName: payload.fileName || 'credit-report.pdf',
+    mode: payload.mode === 'single' ? 'single' : 'combined',
+    bureau: payload.bureau || 'Experian',
+  };
+
+  // Fire-and-forget invoke; do not await completion.
+  const workerUrl = `${siteUrl.replace(/\/$/, '')}/.netlify/functions/fieldwork-audit-run-background`;
+  fetch(workerUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(workerPayload),
+  }).catch((err) => {
+    console.error('Failed to invoke fieldwork-audit-run-background', err);
+  });
+
+  return json(200, {
+    product: 'fieldwork',
+    isolated: true,
+    mode: 'queued',
+    jobId: job.id,
+  });
 };

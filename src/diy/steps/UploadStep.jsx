@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { FileUp, Sparkles } from 'lucide-react';
 import { ANALYZE_STEPS } from '../demoData';
 import { getFieldworkStatus, runFieldworkAudit } from '../api';
+import { useFieldwork } from '../state';
 
 function readFileAsBase64(file) {
   return new Promise((resolve, reject) => {
@@ -18,6 +19,7 @@ function readFileAsBase64(file) {
 }
 
 export default function UploadStep({ onComplete }) {
+  const { user } = useFieldwork();
   const [phase, setPhase] = useState('idle'); // idle | analyzing
   const [stepIdx, setStepIdx] = useState(0);
   const [dragOver, setDragOver] = useState(false);
@@ -70,6 +72,7 @@ export default function UploadStep({ onComplete }) {
         mediaType,
         fileName: file.name,
         mode: 'combined',
+        subscriberId: user?.subscriberId,
       });
       onComplete(res.audit, { fileName: file.name, mode: res.mode });
     } catch (err) {

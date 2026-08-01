@@ -38,6 +38,17 @@
 [functions]
   node_bundler = "esbuild"
 
+# Live Fieldwork audits exceed the default 30s local/sync cap.
+# Background worker does the Anthropic pass (up to 15 minutes).
+[functions."fieldwork-audit-run"]
+  timeout = 26
+
+[functions."fieldwork-audit-run-background"]
+  timeout = 900
+
+[functions."fieldwork-generate-letter"]
+  timeout = 60
+
 [functions."daily-cron"]
   schedule = "0 15 * * *"
 
