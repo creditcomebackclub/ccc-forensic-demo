@@ -41,19 +41,19 @@ export async function fieldworkGetSession() {
 }
 
 async function fwFetch(path, options = {}) {
+  const { timeoutMs = 8000, headers: optHeaders, ...fetchOpts } = options;
   const headers = {
     'Content-Type': 'application/json',
-    ...(options.headers || {}),
+    ...(optHeaders || {}),
   };
   const auth = await authHeader();
   if (auth) Object.assign(headers, auth);
 
-  const timeoutMs = options.timeoutMs ?? 8000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`/.netlify/functions/${path}`, {
-      ...options,
+      ...fetchOpts,
       headers,
       signal: controller.signal,
     });
@@ -65,6 +65,14 @@ async function fwFetch(path, options = {}) {
       throw err;
     }
     return body;
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      const timed = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
+      timed.name = 'AbortError';
+      timed.status = 408;
+      throw timed;
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -213,6 +221,8 @@ export async function fieldworkCheckout(planId) {
 export async function runFieldworkAudit({ base64, mediaType, fileName, mode }) {
   return fwFetch('fieldwork-audit-run', {
     method: 'POST',
+    // Full report audits routinely take 1–3 minutes.
+    timeoutMs: 240000,
     body: JSON.stringify({
       base64,
       mediaType: mediaType || 'application/pdf',
@@ -226,6 +236,7 @@ export async function runFieldworkAudit({ base64, mediaType, fileName, mode }) {
 export async function generateFieldworkLetter({ user, account, phaseId, tone }) {
   return fwFetch('fieldwork-generate-letter', {
     method: 'POST',
+    timeoutMs: 120000,
     body: JSON.stringify({
       user,
       account,
