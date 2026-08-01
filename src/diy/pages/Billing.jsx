@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Check } from 'lucide-react';
 import { PRICING_PLANS } from '../demoData';
 import { CREDIT_PACKS, formatCreditCostRange, MAIL_PHASES } from '../mailEconomics';
@@ -7,6 +8,18 @@ export default function Billing() {
   const { planId, plan, mailCredits, auditCredits, expertChatCredits, changePlan, buyCreditPack, billingHistory } = useFieldwork();
   const [switching, setSwitching] = useState(null);
   const [switchError, setSwitchError] = useState('');
+
+  const onSwitchPlan = async (id) => {
+    setSwitchError('');
+    setSwitching(id);
+    try {
+      await changePlan(id);
+    } catch (err) {
+      setSwitchError(err?.message || 'Could not switch plan');
+    } finally {
+      setSwitching(null);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -89,16 +102,17 @@ export default function Billing() {
               </ul>
               <button
                 type="button"
-                disabled={active}
-                onClick={() => changePlan(p.id)}
+                disabled={active || Boolean(switching)}
+                onClick={() => onSwitchPlan(p.id)}
                 className={`mt-6 w-full ${active ? 'fw-btn-ghost !border-white/20 opacity-60' : 'fw-btn-ink'}`}
               >
-                {active ? 'Current plan' : `Switch to ${p.name}`}
+                {active ? 'Current plan' : switching === p.id ? 'Switching…' : `Switch to ${p.name}`}
               </button>
             </div>
           );
         })}
       </div>
+      {switchError ? <p className="mt-3 text-sm text-[#b93d30]">{switchError}</p> : null}
 
       <div className="mt-12">
         <h2 className="fw-display text-2xl font-bold">Top up credits</h2>
