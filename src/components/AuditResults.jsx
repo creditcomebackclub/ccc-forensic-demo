@@ -317,12 +317,15 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
 
   React.useEffect(() => {
     const clientName = audit && audit.client && audit.client.name;
-    if (!clientName) return;
-    supabase.from('letters').select('account_id').eq('client_name', clientName)
-      .then(({ data }) => {
-        if (data) setExistingLetters(new Set(data.map((l) => l.account_id).filter(Boolean)));
-      });
-  }, [audit && audit.client && audit.client.name]);
+    const clientId = audit && audit.client && audit.client.id;
+    if (!clientName && !clientId) return;
+    const lettersQuery = clientId
+      ? supabase.from('letters').select('account_id').eq('client_id', clientId)
+      : supabase.from('letters').select('account_id').eq('client_name', clientName);
+    lettersQuery.then(({ data }) => {
+      if (data) setExistingLetters(new Set(data.map((l) => l.account_id).filter(Boolean)));
+    });
+  }, [audit && audit.client && audit.client.name, audit && audit.client && audit.client.id]);
   const [selectedAccount, setSelectedAccount] = useState(null);
 
   // Session-local editable copy — auditors can correct extraction errors

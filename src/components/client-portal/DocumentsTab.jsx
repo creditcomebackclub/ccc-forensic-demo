@@ -9,7 +9,7 @@ const OTHER_DOC_CATEGORIES = [
   'Insurance Document', 'Correspondence', 'Other',
 ];
 
-function OtherDocsCard({ docs, uploadingOther, handleUploadOther, clientId, onChanged }) {
+function OtherDocsCard({ docs, uploadingOther, handleUploadOther, clientId, ownerUserId, onChanged }) {
   const [category, setCategory] = useState(OTHER_DOC_CATEGORIES[0]);
   const [customLabel, setCustomLabel] = useState('');
   const [error, setError] = useState(null);
@@ -32,7 +32,8 @@ function OtherDocsCard({ docs, uploadingOther, handleUploadOther, clientId, onCh
   const handleDelete = async (doc) => {
     if (!window.confirm('Remove "' + (doc.label || doc.file_name) + '"?')) return;
     try {
-      await deleteDocument(clientId, doc.doc_type);
+      if (!ownerUserId) throw new Error('Could not identify document owner.');
+      await deleteDocument(clientId, doc.doc_type, ownerUserId);
       onChanged();
     } catch (e) { alert('Could not delete: ' + e.message); }
   };
@@ -192,6 +193,7 @@ export default function DocumentsTab({
           uploadingOther={uploadingDoc === 'other'}
           handleUploadOther={handleUploadOther}
           clientId={clientMeta?.id}
+          ownerUserId={clientMeta?.user_id}
           onChanged={loadData}
         />
       </div>

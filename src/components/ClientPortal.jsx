@@ -126,8 +126,8 @@ export default function ClientPortal({ session, onSignOut }) {
       if (!adminUserId || !clientId) throw new Error('Could not identify client record.');
       const { uploadDocument } = await import('../utils/documents.js');
       const internalDocType = docType === 'government_id' ? 'id' : 'address';
-      const storagePath = await uploadDocument(clientId, profile.full_name, internalDocType, file, adminUserId);
-      setClientDocs(prev => ({ ...prev, [internalDocType]: { name: storagePath } }));
+      await uploadDocument(clientId, profile.full_name, internalDocType, file, adminUserId);
+      await loadData();
       toast.success('Document uploaded successfully!', { id: toastId });
     } catch(e) {
       console.error('Doc upload error:', e);

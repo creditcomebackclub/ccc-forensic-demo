@@ -246,12 +246,24 @@ function ClientOnboardingModal({ session, onComplete }) {
         }
       } catch (e) { console.warn('Could not resolve client record for document upload:', e); }
 
-      if (idFile) await labeled('Upload ID', () => (docsClientId && docsOwnerUserId)
-        ? uploadDocument(docsClientId, docsClientName, 'id', idFile, docsOwnerUserId)
-        : uploadFile(idFile, `${userId}/id.${idFile.name.split('.').pop()}`));
-      if (addressFile) await labeled('Upload address doc', () => (docsClientId && docsOwnerUserId)
-        ? uploadDocument(docsClientId, docsClientName, 'address', addressFile, docsOwnerUserId)
-        : uploadFile(addressFile, `${userId}/address.${addressFile.name.split('.').pop()}`));
+      // Never fall back to client-docs for ID/address — those uploads leave no
+      // documents row and are invisible in the admin CRM. Fail closed so the
+      // client can retry once their profile is linked to a clients row.
+      if ((idFile || addressFile) && (!docsClientId || !docsOwnerUserId)) {
+        throw new Error(
+          'Could not resolve your client record for identity documents. Contact Credit Comeback Club before finishing enrollment so your ID and address files are saved correctly.'
+        );
+      }
+      if (idFile) {
+        await labeled('Upload ID', () =>
+          uploadDocument(docsClientId, docsClientName, 'id', idFile, docsOwnerUserId)
+        );
+      }
+      if (addressFile) {
+        await labeled('Upload address doc', () =>
+          uploadDocument(docsClientId, docsClientName, 'address', addressFile, docsOwnerUserId)
+        );
+      }
 
       // Always mark onboarding complete in DB — do this even if subsequent steps fail
       await labeled('Save enrollment record', () =>

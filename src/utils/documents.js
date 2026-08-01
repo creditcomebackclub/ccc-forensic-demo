@@ -112,8 +112,11 @@ export async function getDocumentBase64(storagePath) {
   });
 }
 
-export async function deleteDocument(clientId, docType) {
-  const userId = await getUserId();
+// ownerUserId matches uploadDocument: portal callers must pass the firm's
+// staff user_id (documents.user_id / storage path root). Defaults to the
+// current session — correct for admin DocumentManager deletes.
+export async function deleteDocument(clientId, docType, ownerUserId) {
+  const userId = ownerUserId || await getUserId();
   if (!clientId) throw new Error('deleteDocument requires a clientId');
   const { data: docs } = await supabase
     .from('documents')
