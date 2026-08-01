@@ -57,10 +57,16 @@ async function fwFetch(path, options = {}) {
       headers,
       signal: controller.signal,
     });
-    const body = await res.json().catch(() => ({}));
+    const rawText = await res.text();
+    let body = {};
+    try {
+      body = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      body = { error: rawText?.slice(0, 280) || `Fieldwork API ${res.status}` };
+    }
     if (!res.ok) {
       const detail = body.error || body.message || body.msg;
-      const err = new Error(detail ? `${detail}` : `Fieldwork API ${res.status}`);
+      const err = new Error(detail || `Fieldwork API ${res.status}`);
       err.status = res.status;
       err.body = body;
       throw err;
