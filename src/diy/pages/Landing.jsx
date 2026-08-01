@@ -70,8 +70,8 @@ export default function Landing() {
             <Link to={user ? '/app' : '/signup'} className="fw-btn-primary text-base">
               {user ? 'Open workspace' : 'See what an audit looks like'} <ArrowRight size={18} />
             </Link>
-            <a href="#been-here" className="fw-btn-ghost text-base">
-              I know that feeling
+            <a href="#how" className="fw-btn-ghost text-base">
+              How it works
             </a>
           </motion.div>
         </div>
