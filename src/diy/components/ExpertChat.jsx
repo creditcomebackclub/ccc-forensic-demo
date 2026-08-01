@@ -149,9 +149,8 @@ export default function ExpertChat() {
 
     setLoading(true);
     try {
-      const history = alreadyPostedUser
-        ? messages
-        : [...messages, { role: 'user', text: userLine }];
+      // Always append the handoff line — React state may not have flushed yet.
+      const history = [...messages, { role: 'user', text: userLine }];
       const data = await requestFieldworkExpertHandoff({
         concern,
         message: concern,
