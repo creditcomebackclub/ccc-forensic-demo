@@ -48,7 +48,7 @@ export default function Responses() {
     letters,
     campaigns,
     documents,
-    setDocuments,
+    uploadDocument,
     saveResponseAnalysis,
     beginFollowUpMail,
     responseAnalyses,
@@ -105,27 +105,26 @@ export default function Responses() {
   const canAutoDraft = planId === 'pro' || planId === 'unlimited';
 
   const onPickFiles = async (fileList) => {
-    const list = Array.from(fileList || []);
+    const list = Array.from(fileList || []).slice(0, 6);
     if (!list.length) return;
     const prepared = await Promise.all(
-      list.slice(0, 6).map(async (file) => ({
+      list.map(async (file) => ({
         name: file.name,
         mediaType: file.type || 'application/pdf',
         base64: await readFileAsBase64(file),
         size: file.size,
+        file,
       })),
     );
     setFiles(prepared);
-    setDocuments((docs) => [
-      ...prepared.map((f, i) => ({
-        id: `doc_resp_${Date.now()}_${i}`,
-        name: f.name,
-        kind: 'Furnisher response',
-        uploadedAt: new Date().toISOString(),
-        size: f.size,
-      })),
-      ...docs,
-    ]);
+    // Persist into the evidence vault (cloud when Fieldwork keys are set).
+    for (const item of prepared) {
+      try {
+        await uploadDocument('Furnisher response', item.file);
+      } catch (err) {
+        console.warn('[fieldwork] vault upload from Responses', err);
+      }
+    }
   };
 
   const runAnalyze = async ({ draft }) => {

@@ -16,6 +16,10 @@ import {
   fieldworkSignUp,
   getFieldworkStatus,
 } from './api';
+import {
+  deleteFieldworkDocument,
+  uploadFieldworkDocument,
+} from './documents';
 
 // v5: response analyses + mail handoff for Pro follow-up drafts.
 const STORAGE_KEY = 'fieldwork-saas-v5';
@@ -76,8 +80,12 @@ function mapDocuments(rows) {
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
-    kind: r.kind || 'other',
+    kind: r.kind || 'Other',
     uploadedAt: r.created_at,
+    size: typeof r.byte_size === 'number' ? r.byte_size : null,
+    contentType: r.content_type || null,
+    storagePath: r.storage_path || null,
+    cloud: Boolean(r.storage_path),
   }));
 }
 
@@ -461,6 +469,30 @@ export function FieldworkProvider({ children }) {
     setWizardStep('mail');
   }, []);
 
+  /** Persist a real file to fieldwork-docs (or demo localDataUrl). */
+  const uploadDocument = useCallback(async (kind, file) => {
+    const { doc, removeIds } = await uploadFieldworkDocument({
+      kind,
+      file,
+      subscriberId: user?.subscriberId,
+      existingDocs: documents,
+    });
+    setDocuments((prev) => [
+      doc,
+      ...prev.filter((d) => d.id !== doc.id && !removeIds.includes(d.id)),
+    ]);
+    return doc;
+  }, [documents, user?.subscriberId]);
+
+  const removeDocument = useCallback(async (doc) => {
+    if (!doc?.id) return;
+    await deleteFieldworkDocument({
+      id: doc.id,
+      storagePath: doc.storagePath || null,
+    });
+    setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+  }, []);
+
   const value = {
     user,
     plan,
@@ -476,6 +508,8 @@ export function FieldworkProvider({ children }) {
     campaigns,
     documents,
     setDocuments,
+    uploadDocument,
+    removeDocument,
     wizardStep,
     setWizardStep,
     mailPhaseId,
