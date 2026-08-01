@@ -236,7 +236,7 @@ export const handler = async (event) => {
       email: '',
       plan_id: 'unlimited',
       mail_credits: 8,
-      audit_credits: 25,
+      audit_credits: 8,
     };
     const brief = await generateAiBrief({
       anthropicKey: process.env.FIELDWORK_ANTHROPIC_API_KEY,
