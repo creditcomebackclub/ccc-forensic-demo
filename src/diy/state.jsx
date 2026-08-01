@@ -6,6 +6,7 @@ import {
   DEMO_USER,
   PRICING_PLANS,
 } from './demoData';
+import { getFieldworkStatus, fieldworkCloudEnabled } from './api';
 
 const STORAGE_KEY = 'fieldwork-saas-v2';
 
@@ -43,8 +44,29 @@ export function FieldworkProvider({ children }) {
       { id: 'inv_001', date: '2026-08-01', label: 'Pro plan · August', amount: 59, status: 'Paid (demo)' },
     ],
   );
+  const [runtime, setRuntime] = useState({
+    mode: fieldworkCloudEnabled ? 'cloud' : 'demo',
+    isolated: true,
+    usesCccKeys: false,
+    message: 'Checking Fieldwork lane…',
+  });
 
   const plan = planById(planId);
+
+  useEffect(() => {
+    let cancelled = false;
+    getFieldworkStatus().then((status) => {
+      if (!cancelled) {
+        setRuntime({
+          mode: status.mode || (fieldworkCloudEnabled ? 'cloud' : 'demo'),
+          isolated: status.isolated !== false,
+          usesCccKeys: Boolean(status.usesCccKeys),
+          message: status.message || '',
+        });
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(
@@ -183,6 +205,7 @@ export function FieldworkProvider({ children }) {
     changePlan,
     completeMail,
     startNewCampaign,
+    runtime,
   };
 
   return <FieldworkContext.Provider value={value}>{children}</FieldworkContext.Provider>;

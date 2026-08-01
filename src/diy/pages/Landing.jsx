@@ -98,7 +98,7 @@ export default function Landing() {
             Marketing site out front. Subscriber app behind the login.
           </h2>
           <p className="mt-5 max-w-2xl text-lg text-[var(--fw-muted)]">
-            Fieldwork would ship as its own product surface — own domain, Stripe billing, consumer auth — while reusing the forensic/Lob engine from the CCC ops suite. Agency retainers stay a separate business.
+            Fieldwork ships as its own product surface — own tables, own API keys, own Stripe — sealed off from the CCC agency Forensic Suite. DIY traffic cannot touch your agency Lob/Claude setup.
           </p>
 
           <div className="mt-14 grid gap-10 md:grid-cols-3">

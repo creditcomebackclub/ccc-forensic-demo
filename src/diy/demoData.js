@@ -268,8 +268,8 @@ export const STANDALONE_PILLARS = [
     body: 'You subscribe, upload, decide, and mail in your own name. No LPOA. Fieldwork is the forensic toolkit — you stay the sender of record.',
   },
   {
-    title: 'Shared engine, separate product',
-    body: 'Audits, letter drafting, and Lob fulfillment reuse the same Metro 2 / FCRA pipeline built for ops — wrapped in a consumer app with Stripe credits and ownership-based access.',
+    title: 'Sealed off from CCC ops',
+    body: 'Own fieldwork_* database tables, own FIELDWORK_* API keys, own Stripe. The agency Forensic Suite — clients, LPOA, Lob, Claude — is never billed or written by DIY traffic.',
   },
   {
     title: 'Campaigns you can run yourself',

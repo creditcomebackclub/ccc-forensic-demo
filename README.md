@@ -13,7 +13,9 @@ npm run dev
 # open http://localhost:5173/diy.html
 ```
 
-**Fieldwork** is a clickable DIY credit-repair product — marketing site + subscriber app (dashboard, campaign wizard, campaigns, documents, billing, settings). Hash routes: `#/`, `#/signup`, `#/app`, etc. Demo data + `localStorage` only (no backend). Shows how a consumer SaaS would sit on the forensic / Lob engine while staying separate from the agency Forensic Suite.
+**Fieldwork** is a clickable DIY credit-repair product — marketing site + subscriber app (dashboard, campaign wizard, campaigns, documents, billing, settings). Hash routes: `#/`, `#/signup`, `#/app`, etc.
+
+**Isolation (hard requirement):** Fieldwork does **not** touch the CCC agency setup. It uses `fieldwork_*` tables, `fieldwork-*` Netlify functions, and `FIELDWORK_*` / `VITE_FIELDWORK_*` credentials only — never CCC Supabase/Lob/Anthropic keys. Default local run is `localStorage` demo mode. See [docs/FIELDWORK_ISOLATION.md](docs/FIELDWORK_ISOLATION.md).
 
 ## What is built
 

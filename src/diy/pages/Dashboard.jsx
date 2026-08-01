@@ -3,7 +3,7 @@ import { ArrowRight, Crosshair, FileSearch, Mail, Sparkles } from 'lucide-react'
 import { useFieldwork } from '../state';
 
 export default function Dashboard() {
-  const { user, plan, mailCredits, audit, campaigns, letters } = useFieldwork();
+  const { user, plan, mailCredits, audit, campaigns, letters, runtime } = useFieldwork();
   const first = user.name.split(' ')[0];
   const active = campaigns[0];
 
@@ -108,8 +108,8 @@ export default function Dashboard() {
       <div className="mt-10 flex items-start gap-3 rounded-lg border border-[rgba(22,158,111,0.2)] bg-[rgba(46,230,166,0.08)] px-4 py-4 text-sm">
         <Sparkles size={16} className="mt-0.5 shrink-0 text-[var(--fw-signal-dim)]" />
         <p className="text-[var(--fw-ink)]/80">
-          <strong className="font-semibold">Standalone product shape:</strong> this app is the subscriber experience.
-          Production wires the same forensic jobs + Lob stack already in the CCC repo, with Stripe for plans/credits and RLS so each user only sees their data.
+          <strong className="font-semibold">Isolated from CCC:</strong> {runtime.message || 'Fieldwork uses its own tables and FIELDWORK_* keys.'}
+          {' '}Agency Forensic Suite data, Lob, and Claude accounts are not used unless you deliberately configure separate Fieldwork credentials.
         </p>
       </div>
     </div>
