@@ -23,12 +23,13 @@ async function callFunction(body) {
 }
 
 // Staff-only — returns { ssnLast4, monitoringPassword }.
-export async function readClientSensitiveData(clientName) {
-  return callFunction({ action: 'read', clientName });
+// clientId preferred; clientName kept only for pre-migration callers.
+export async function readClientSensitiveData(clientName, clientId) {
+  return callFunction({ action: 'read', clientName, clientId: clientId || null });
 }
 
 // Staff, or the client updating their own record. Only keys present in
 // `fields` are written — omit a key to leave it untouched.
-export async function writeClientSensitiveData(clientName, fields) {
-  return callFunction({ action: 'write', clientName, ...fields });
+export async function writeClientSensitiveData(clientName, fields, clientId) {
+  return callFunction({ action: 'write', clientName, clientId: clientId || null, ...fields });
 }

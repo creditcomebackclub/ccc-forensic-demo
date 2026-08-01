@@ -259,17 +259,18 @@ export default function DocumentsTab({
                   const svcKey = (monitoringForm.service || '').toLowerCase();
                   const portalUrl = Object.entries(serviceUrls).find(([k]) => svcKey.includes(k))?.[1] || 'https://www.privacyguard.com';
                   try {
+                    if (!clientMeta?.id) throw new Error('Could not identify client record.');
                     await supabase.from('clients').update({
                       monitoring_service: monitoringForm.service,
                       monitoring_email: monitoringForm.email,
                       monitoring_enrolled: true,
                       monitoring_portal_url: portalUrl,
-                    }).eq('name', profile.full_name);
+                    }).eq('id', clientMeta.id);
                     const sensitive = {};
                     if (monitoringForm.password) sensitive.monitoringPassword = monitoringForm.password;
                     if (monitoringForm.ssnLast4) sensitive.ssnLast4 = monitoringForm.ssnLast4;
                     if (Object.keys(sensitive).length > 0) {
-                      await writeClientSensitiveData(profile.full_name, sensitive);
+                      await writeClientSensitiveData(profile.full_name, sensitive, clientMeta.id);
                     }
                     setMonitoringStep('view');
                     loadData();

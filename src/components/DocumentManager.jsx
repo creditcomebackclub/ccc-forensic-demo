@@ -305,11 +305,12 @@ function ResponsesSection({ clientId, clientName, letters, setAnalyzingLetter })
         console.warn('Response evidence table unavailable:', e.message || e);
       }
 
-      // Legacy folder scan (pre-response_evidence). Prefer firm-owned roots
-      // (clients.user_id / letter.user_id) and also the client's auth uid
-      // folder when linked — new uploads live under firmUid/response-evidence
-      // and are already covered by listResponseEvidence above.
+      // Legacy folder scan (pre-response_evidence). Firm root =
+      // clients.user_id; also the client's auth uid when linked. Never add
+      // every letter.userId — that walks other clients' folders under a
+      // shared staff root. Restrict to this client's own letter ids.
       const evidenceLetterIds = new Set(allResponses.map((r) => r.letterId).filter(Boolean));
+      const thisClientLetterIds = new Set((letters || []).map((l) => l.id).filter(Boolean));
       const rootIds = new Set();
       if (clientId) {
         const { data: clientRow } = await supabase
@@ -324,10 +325,6 @@ function ResponsesSection({ clientId, clientName, letters, setAnalyzingLetter })
         : supabase.from('client_profiles').select('user_id').eq('full_name', clientName).limit(1);
       const { data: cp } = await profileQuery;
       if (cp?.[0]?.user_id) rootIds.add(cp[0].user_id);
-      for (const letter of letters || []) {
-        if (letter.user_id) rootIds.add(letter.user_id);
-        if (letter.userId) rootIds.add(letter.userId);
-      }
 
       for (const rootId of rootIds) {
         const { data: files } = await supabase.storage
@@ -336,6 +333,7 @@ function ResponsesSection({ clientId, clientName, letters, setAnalyzingLetter })
         if (!files || files.length === 0) continue;
 
         for (const folder of files.filter((folder) => folder.name !== 'response-evidence')) {
+          if (!thisClientLetterIds.has(folder.name)) continue;
           if (evidenceLetterIds.has(folder.name)) continue;
           const { data: folderFiles } = await supabase.storage
             .from('responses')
