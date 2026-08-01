@@ -54,6 +54,8 @@ PHASE 3 LETTER REQUIREMENTS — CONTENT:
 
 HARD RULE — CITATION LINT: Phase 3 CRA letters must NEVER contain the string "1681s-2(a)" anywhere, in any subsection — (a), (a)(1), (a)(3), (a)(5), all of it. This letter is addressed to a bureau; §1681s-2(a) is the furnisher's duty and citing it here has already been quoted back by opposing counsel once as an exploitable flank (that subsection carries no private right of action, per §1681s-2(c)(1), and the furnisher's counsel will point that out). Every argument that would otherwise cite §1681s-2(a) must be rebuilt on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead — same underlying facts, no exposed flank.
 
+HARD RULE — METRO 2 FIELD NUMBERS: Field 19 is Special Comment only. Field 20 is Compliance Condition Code — XA/XB/XC/XH/XR live ONLY in Field 20. Never write "Field 19 — Compliance Condition Code" or "Field 19 — XB". Prefer "Compliance Condition Code XB (Metro 2 Field 20)". Field 21 is Current Balance; Field 22 is Amount Past Due — do not swap them. If Exhibit A uses a wrong Field number, correct it — do not copy the error.
+
 PHASE 3 LETTER REQUIREMENTS — DEVASTATING CLOSING:
 Before the signature block, you MUST include ONE devastating sentence that frames the furnisher's inadequate response as the strongest evidence against them. Examples:
 - "The furnisher's own response — a pre-printed checkbox form with no substantive documentation — is itself the strongest evidence that no reasonable investigation occurred under the Johnson v. MBNA standard."

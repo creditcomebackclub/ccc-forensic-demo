@@ -18,7 +18,7 @@ import { BUREAU_RESPONSE_SYSTEM_PROMPT } from '../../src/prompts/bureauResponseP
 import { BUREAU_FOLLOW_UP_SYSTEM_PROMPT } from '../../src/prompts/bureauFollowUpPrompt.js';
 import { BUREAU_FOLLOW_UP_SCHEMA, BUREAU_RESPONSE_SCHEMA, PHASE2_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { inferMediaType, isAnalyzable } from '../../src/utils/responseFiles.js';
-import { validateFieldCitations, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
+import { collectPhase3CitationProblems, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
 import { requireStaff } from './_requireAuth.cjs';
 
 assertMapFullySourced();
@@ -266,7 +266,7 @@ export const handler = async (event) => {
             ...pageBlocks,
             {
               type: 'text',
-              text: `Draft the supplemental Phase 3 follow-up letter to ${expectedBureau}. Output bureau must be "${expectedBureau}". HARD RULE: letterHtml must not contain the substring "1681s-2(a)" anywhere — not even when quoting or restating Phase 1 issues. Reframe those arguments on §1681s-2(b) (Seamans) or §1681i(a)(5)(A).`,
+              text: `Draft the supplemental Phase 3 follow-up letter to ${expectedBureau}. Output bureau must be "${expectedBureau}". HARD RULES for letterHtml: (1) must not contain the substring "1681s-2(a)" anywhere — reframe on §1681s-2(b) (Seamans) or §1681i(a)(5)(A); (2) Field 19 is Special Comment only — XA/XB/XC/XH/XR live in Field 20 (Compliance Condition Code). Prefer "Compliance Condition Code XB (Metro 2 Field 20)". Correct wrong Field N citations from exhibits/analysis; do not copy them.`,
             },
           ],
         }];
@@ -340,29 +340,33 @@ export const handler = async (event) => {
     };
 
     let { parsed: analysis, usage: u } = await runModel(messages);
-    // One automatic rebuild if the follow-up draft slips §1681s-2(a) — the same
-    // flank the Phase 3 citation lint exists to catch. Prompt hardening alone
-    // is not enough when Exhibit A / analysis JSON still contain Phase 1 (a) cites.
-    if (isBureauFollowUp && analysis?.letterHtml && String(analysis.letterHtml).includes('1681s-2(a)')) {
-      console.warn('[phase2] bureau_follow_up cited 1681s-2(a); requesting one rewrite');
-      const rewriteMessages = [
-        ...messages,
-        {
-          role: 'user',
-          content: [{
-            type: 'text',
-            text: `CRITICAL CORRECTION: The draft below contains the forbidden substring "1681s-2(a)". Return a complete corrected JSON object for this follow-up. letterHtml must contain ZERO occurrences of "1681s-2(a)" in any subsection. Rebuild every such argument on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete. Keep the same bureau/focusIssues intent. Do not mention that a correction was required.\n\nBAD DRAFT letterHtml:\n${analysis.letterHtml}`,
-          }],
-        },
-      ];
-      const rebuilt = await runModel(rewriteMessages, 'Rewriting follow-up to remove §1681s-2(a)');
-      analysis = rebuilt.parsed;
-      u = {
-        input_tokens: (u.input_tokens || 0) + (rebuilt.usage.input_tokens || 0),
-        output_tokens: (u.output_tokens || 0) + (rebuilt.usage.output_tokens || 0),
-        cache_read_input_tokens: (u.cache_read_input_tokens || 0) + (rebuilt.usage.cache_read_input_tokens || 0),
-        cache_creation_input_tokens: (u.cache_creation_input_tokens || 0) + (rebuilt.usage.cache_creation_input_tokens || 0),
-      };
+    // One automatic rebuild if the follow-up draft fails citation lint
+    // (Metro 2 Field N/name mismatches OR §1681s-2(a)). Prompt hardening alone
+    // is not enough when Exhibit A / analysis JSON still contain Phase 1 framing
+    // or historically wrong Field 19 = CCC phrasing.
+    if (isBureauFollowUp && analysis?.letterHtml) {
+      const citationProblems = collectPhase3CitationProblems(analysis.letterHtml);
+      if (citationProblems.length) {
+        console.warn('[phase2] bureau_follow_up citation lint failed; requesting one rewrite', citationProblems);
+        const rewriteMessages = [
+          ...messages,
+          {
+            role: 'user',
+            content: [{
+              type: 'text',
+              text: `CRITICAL CORRECTION: The draft letterHtml failed citation lint. Return a complete corrected JSON object for this follow-up. Fix EVERY issue below — do not leave any of them in letterHtml. Keep the same bureau/focusIssues intent. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)" in any subsection; use §1681s-2(b) (Seamans) or §1681i(a)(5)(A).\n- Field 19 = Special Comment. Field 20 = Compliance Condition Code. XA/XB/XC/XH/XR live only in Field 20. Prefer "Compliance Condition Code XB (Metro 2 Field 20)".\n- Field 21 = Current Balance; Field 22 = Amount Past Due.\n\nBAD DRAFT letterHtml:\n${analysis.letterHtml}`,
+            }],
+          },
+        ];
+        const rebuilt = await runModel(rewriteMessages, 'Rewriting follow-up to fix citation lint');
+        analysis = rebuilt.parsed;
+        u = {
+          input_tokens: (u.input_tokens || 0) + (rebuilt.usage.input_tokens || 0),
+          output_tokens: (u.output_tokens || 0) + (rebuilt.usage.output_tokens || 0),
+          cache_read_input_tokens: (u.cache_read_input_tokens || 0) + (rebuilt.usage.cache_read_input_tokens || 0),
+          cache_creation_input_tokens: (u.cache_creation_input_tokens || 0) + (rebuilt.usage.cache_creation_input_tokens || 0),
+        };
+      }
     }
 
     // Inject standard letter CSS only for the furnisher workflow, which is
@@ -420,31 +424,29 @@ export const handler = async (event) => {
       blockIssues.push(...(dq.issues && dq.issues.length ? dq.issues : ['An enclosed document could not be reliably read.']));
     }
 
-    // Citation lint (P1-2c): §1681s-2(a) is the furnisher's duty, not the
-    // CRA's, and citing it in a CRA-addressed Phase 3 letter has already
-    // been quoted back by opposing counsel as an exploitable flank (that
-    // subsection carries no private right of action). A prompt instruction
-    // isn't a guarantee the model won't slip and cite it anyway, so this
-    // scans the actual generated HTML and blocks the letter the same way an
-    // unparsed enclosure does, rather than trusting the instruction blindly.
+    // Citation lint (P1-2c): Metro 2 Field N/name mismatches + §1681s-2(a) in
+    // CRA letters. Prompt instructions are not enough when exhibits still
+    // carry Phase 1 framing or historically wrong Field 19 = CCC phrasing.
     if (!isBureauResponse) {
       if (isBureauFollowUp) {
         const html = analysis && analysis.letterHtml;
         const bureau = (analysis && analysis.bureau) || bureauFromPhase(letter.phase) || 'bureau';
-        for (const p of validateFieldCitations(html)) {
-          blockIssues.push(`The generated ${bureau} follow-up letter has a Metro 2 field citation error: ${p}`);
-        }
-        if (html && html.includes('1681s-2(a)')) {
-          blockIssues.push(`The generated ${bureau} follow-up letter cites 15 U.S.C. §1681s-2(a), which must never appear in a Phase 3 CRA letter — this is the furnisher's duty, not the CRA's, and citing it here re-exposes a flank opposing counsel has already used. Rebuild this argument on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead.`);
+        for (const p of collectPhase3CitationProblems(html)) {
+          blockIssues.push(
+            p.startsWith('Cites 15 U.S.C.')
+              ? `The generated ${bureau} follow-up letter ${p.charAt(0).toLowerCase()}${p.slice(1)}`
+              : `The generated ${bureau} follow-up letter has a Metro 2 field citation error: ${p}`
+          );
         }
       } else {
         for (const bureau of ['equifax', 'experian', 'transunion']) {
           const html = analysis && analysis.letters && analysis.letters[bureau];
-          for (const p of validateFieldCitations(html)) {
-            blockIssues.push(`The generated ${bureau} letter has a Metro 2 field citation error: ${p}`);
-          }
-          if (html && html.includes('1681s-2(a)')) {
-            blockIssues.push(`The generated ${bureau} letter cites 15 U.S.C. §1681s-2(a), which must never appear in a Phase 3 CRA letter — this is the furnisher's duty, not the CRA's, and citing it here re-exposes a flank opposing counsel has already used. Rebuild this argument on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead.`);
+          for (const p of collectPhase3CitationProblems(html)) {
+            blockIssues.push(
+              p.startsWith('Cites 15 U.S.C.')
+                ? `The generated ${bureau} letter ${p.charAt(0).toLowerCase()}${p.slice(1)}`
+                : `The generated ${bureau} letter has a Metro 2 field citation error: ${p}`
+            );
           }
         }
       }
