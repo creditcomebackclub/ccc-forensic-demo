@@ -32,6 +32,10 @@ export default function CampaignWizard() {
     setSelectedIds,
     letters,
     mailCredits,
+    mailPhaseId,
+    setMailPhaseId,
+    letterOverrides,
+    setLetterOverrides,
     completeUpload,
     completeMail,
   } = useFieldwork();
@@ -111,8 +115,13 @@ export default function CampaignWizard() {
           audit={audit}
           selectedIds={selectedIds}
           mailCredits={mailCredits}
+          initialPhaseId={mailPhaseId}
+          letterOverrides={letterOverrides}
+          onPhaseChange={setMailPhaseId}
           onComplete={(newLetters) => {
             completeMail(newLetters);
+            setLetterOverrides({});
+            setMailPhaseId('phase1');
           }}
         />
       )}

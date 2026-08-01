@@ -407,6 +407,36 @@ export async function generateFieldworkLetter({ user, account, phaseId, tone }) 
   });
 }
 
+/**
+ * Analyze a furnisher response (all plans). Set draft:true for Pro/Campaign
+ * auto-drafted phase-2 follow-up HTML.
+ */
+export async function analyzeFieldworkResponse({
+  user,
+  account,
+  priorLetterHtml,
+  files,
+  nonResponse,
+  draft,
+  planId,
+  tone,
+}) {
+  return fwFetch('fieldwork-analyze-response', {
+    method: 'POST',
+    timeoutMs: 180000,
+    body: JSON.stringify({
+      user,
+      account,
+      priorLetterHtml: priorLetterHtml || null,
+      files: files || [],
+      nonResponse: Boolean(nonResponse),
+      draft: Boolean(draft),
+      planId: planId || null,
+      tone: tone || 'Standard',
+    }),
+  });
+}
+
 /** Campaign expert chat — Fieldwork-only; never CCC concierge / agents API. */
 export async function sendFieldworkExpertChat({ message, history, context }) {
   return fwFetch('fieldwork-expert-chat', {

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { File, FileUp, Trash2 } from 'lucide-react';
 import { useFieldwork } from '../state';
 
@@ -114,9 +115,12 @@ export default function Documents() {
 
       <div className="mt-10 rounded-lg border border-[rgba(20,80,95,0.15)] bg-[rgba(20,80,95,0.04)] px-4 py-4 text-sm leading-relaxed text-[var(--fw-ink)]/85">
         <strong className="font-semibold">Responses → follow-up letters.</strong>{' '}
-        Upload a furnisher response here, then run a follow-up campaign: Fieldwork will analyze what they claimed
-        (or ignored) and draft the next letter with the right enclosures. That analysis path is next to wire —
-        vault + packet model are in place now.
+        After you file a reply (or mark no response), open{' '}
+        <Link to="/app/responses" className="font-semibold text-[var(--fw-sea)] hover:underline">
+          Responses
+        </Link>
+        {' '}to see what they claimed vs dodged. Starter gets talking points; Pro and Campaign auto-draft the
+        Phase 2 follow-up letter and hand it into mail with the right enclosures.
       </div>
 
       <ul className="mt-6 divide-y divide-[var(--fw-line)] overflow-hidden rounded-lg border border-[var(--fw-line)] bg-white">

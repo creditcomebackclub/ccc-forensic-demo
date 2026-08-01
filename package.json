@@ -11,7 +11,8 @@
     "dev:netlify": "netlify dev",
     "dev:diy": "vite --open /diy.html",
     "audit:fieldwork": "node scripts/fieldwork-audit-local.mjs",
-    "test:metro2-citations": "node scripts/test-metro2-citations.mjs"
+    "test:metro2-citations": "node scripts/test-metro2-citations.mjs",
+    "test:fieldwork-response": "node scripts/test-fieldwork-response.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",

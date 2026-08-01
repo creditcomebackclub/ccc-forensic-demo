@@ -7,18 +7,40 @@ import { buildFieldworkLetter, fieldworkLetterPlainExcerpt } from '../adapters/b
 import { isFieldworkLetterHtml } from '../adapters/fieldworkLetterCss';
 import { generateFieldworkLetter, getFieldworkStatus } from '../api';
 
-export default function MailStep({ user, audit, selectedIds, mailCredits = 99, onComplete }) {
+export default function MailStep({
+  user,
+  audit,
+  selectedIds,
+  mailCredits = 99,
+  onComplete,
+  initialPhaseId = 'phase1',
+  letterOverrides = {},
+  onPhaseChange,
+}) {
   const accounts = useMemo(
     () => audit.accounts.filter((a) => selectedIds.includes(a.id)),
     [audit, selectedIds],
   );
   const [activeId, setActiveId] = useState(accounts[0]?.id);
-  const [phaseId, setPhaseId] = useState('phase1');
+  const [phaseId, setPhaseId] = useState(initialPhaseId || 'phase1');
   const [sending, setSending] = useState(false);
   const [sentFlash, setSentFlash] = useState(false);
-  const [letterByAccount, setLetterByAccount] = useState({});
-  const [letterMode, setLetterMode] = useState('local');
+  const [letterByAccount, setLetterByAccount] = useState(() => ({ ...letterOverrides }));
+  const [letterMode, setLetterMode] = useState(
+    Object.keys(letterOverrides || {}).length ? 'follow-up' : 'local',
+  );
   const [engineReady, setEngineReady] = useState(false);
+
+  useEffect(() => {
+    if (initialPhaseId && initialPhaseId !== phaseId) {
+      setPhaseId(initialPhaseId);
+    }
+  }, [initialPhaseId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selectPhase = (next) => {
+    setPhaseId(next);
+    onPhaseChange?.(next);
+  };
 
   const phase = MAIL_PHASES[phaseId];
   const active = accounts.find((a) => a.id === activeId) || accounts[0];
@@ -31,11 +53,27 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
   }, []);
 
   // Fieldwork-styled letters (CCC substance). Engine when FIELDWORK_ANTHROPIC is set.
+  // Skip regeneration when Pro follow-up overrides are already loaded for phase2.
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       if (!accounts.length) return;
+      const hasOverrides = phaseId === 'phase2'
+        && accounts.some((a) => letterOverrides?.[a.id]);
+      if (hasOverrides) {
+        const next = {};
+        for (const account of accounts) {
+          next[account.id] = letterOverrides[account.id]
+            || buildFieldworkLetter(user, account, phaseId);
+        }
+        if (!cancelled) {
+          setLetterByAccount({ ...next });
+          setLetterMode('follow-up');
+        }
+        return;
+      }
+
       const next = {};
       for (const account of accounts) {
         next[account.id] = buildFieldworkLetter(user, account, phaseId);
@@ -75,7 +113,7 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
 
     load();
     return () => { cancelled = true; };
-  }, [accounts, phaseId, user, engineReady]);
+  }, [accounts, phaseId, user, engineReady, letterOverrides]);
 
   useEffect(() => {
     if (active && !accounts.some((a) => a.id === activeId)) {
@@ -147,7 +185,7 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
             <button
               key={p.id}
               type="button"
-              onClick={() => setPhaseId(p.id)}
+              onClick={() => selectPhase(p.id)}
               className={`rounded-lg border p-4 text-left transition ${
                 selected
                   ? 'border-[var(--fw-ink)] bg-[var(--fw-ink)] text-white'

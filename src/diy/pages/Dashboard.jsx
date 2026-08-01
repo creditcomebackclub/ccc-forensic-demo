@@ -3,7 +3,7 @@ import { ArrowRight, Crosshair, FileSearch, Mail, Sparkles } from 'lucide-react'
 import { useFieldwork } from '../state';
 
 export default function Dashboard() {
-  const { user, plan, mailCredits, auditCredits, audit, campaigns, letters, runtime } = useFieldwork();
+  const { user, plan, planId, mailCredits, auditCredits, audit, campaigns, letters, runtime } = useFieldwork();
   const first = user.name.split(' ')[0];
   const active = campaigns[0];
 
@@ -86,6 +86,22 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {letters.length > 0 && (
+        <div className="mt-6 rounded-lg border border-[var(--fw-line)] bg-white px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="fw-mono text-[10px] uppercase tracking-wider text-[var(--fw-sea)]">When they answer</div>
+            <p className="mt-1 text-sm text-[var(--fw-ink)]/85">
+              Analyze the reply (or mark no response). {plan.expertChats || planId === 'pro' || plan.name === 'Pro'
+                ? 'Pro drafts the follow-up letter for you.'
+                : 'Starter gives talking points; Pro auto-drafts.'}
+            </p>
+          </div>
+          <Link to="/app/responses" className="fw-btn-ink shrink-0">
+            Open Responses <ArrowRight size={16} />
+          </Link>
+        </div>
+      )}
 
       <div className="mt-10 grid gap-8 md:grid-cols-3">
         {[

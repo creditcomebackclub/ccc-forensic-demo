@@ -17,16 +17,25 @@ import {
   getFieldworkStatus,
 } from './api';
 
-// v4: clears stale Campaign mail=10 localStorage from before audit/expert caps.
-const STORAGE_KEY = 'fieldwork-saas-v4';
+// v5: response analyses + mail handoff for Pro follow-up drafts.
+const STORAGE_KEY = 'fieldwork-saas-v5';
+const LEGACY_STORAGE_KEYS = ['fieldwork-saas-v4'];
 
 const FieldworkContext = createContext(null);
 
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
+    if (raw) return JSON.parse(raw);
+    for (const key of LEGACY_STORAGE_KEYS) {
+      const legacy = localStorage.getItem(key);
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        localStorage.setItem(STORAGE_KEY, legacy);
+        return parsed;
+      }
+    }
+    return null;
   } catch {
     return null;
   }
@@ -104,6 +113,9 @@ export function FieldworkProvider({ children }) {
   const [campaigns, setCampaigns] = useState(saved?.campaigns || []);
   const [documents, setDocuments] = useState(saved?.documents || DEMO_DOCUMENTS);
   const [wizardStep, setWizardStep] = useState(saved?.wizardStep || 'upload');
+  const [mailPhaseId, setMailPhaseId] = useState(saved?.mailPhaseId || 'phase1');
+  const [letterOverrides, setLetterOverrides] = useState(saved?.letterOverrides || {});
+  const [responseAnalyses, setResponseAnalyses] = useState(saved?.responseAnalyses || []);
   const [billingHistory, setBillingHistory] = useState(
     saved?.billingHistory || [
       { id: 'inv_001', date: '2026-08-01', label: 'Pro plan · August', amount: 99, status: 'Paid (demo)' },
@@ -194,10 +206,17 @@ export function FieldworkProvider({ children }) {
         campaigns,
         documents,
         wizardStep,
+        mailPhaseId,
+        letterOverrides,
+        responseAnalyses,
         billingHistory,
       }),
     );
-  }, [user, planId, mailCredits, auditCredits, expertChatCredits, audit, selectedIds, letters, campaigns, documents, wizardStep, billingHistory]);
+  }, [
+    user, planId, mailCredits, auditCredits, expertChatCredits, audit, selectedIds,
+    letters, campaigns, documents, wizardStep, mailPhaseId, letterOverrides,
+    responseAnalyses, billingHistory,
+  ]);
 
   const signUp = useCallback(async (profile, chosenPlanId = DEFAULT_PLAN_ID) => {
     const nextPlan = planById(chosenPlanId);
@@ -312,6 +331,9 @@ export function FieldworkProvider({ children }) {
     setCampaigns([]);
     setDocuments(DEMO_DOCUMENTS);
     setWizardStep('upload');
+    setMailPhaseId('phase1');
+    setLetterOverrides({});
+    setResponseAnalyses([]);
     setBillingHistory([]);
   }, []);
 
@@ -412,6 +434,31 @@ export function FieldworkProvider({ children }) {
     setSelectedIds([]);
     setLetters([]);
     setWizardStep('upload');
+    setMailPhaseId('phase1');
+    setLetterOverrides({});
+  }, []);
+
+  /** Save an analysis record (Starter talking points or Pro draft). */
+  const saveResponseAnalysis = useCallback((record) => {
+    setResponseAnalyses((prev) => [record, ...prev].slice(0, 20));
+  }, []);
+
+  /**
+   * Hand off a Pro/Campaign follow-up draft into the campaign mail step
+   * with phase2 + preloaded letter HTML.
+   */
+  const beginFollowUpMail = useCallback(({ accountId, letterHtml, analysis }) => {
+    if (!accountId) return;
+    setSelectedIds([accountId]);
+    setMailPhaseId('phase2');
+    setLetterOverrides({ [accountId]: letterHtml });
+    if (analysis) {
+      setResponseAnalyses((prev) => {
+        if (prev.some((r) => r.id === analysis.id)) return prev;
+        return [analysis, ...prev].slice(0, 20);
+      });
+    }
+    setWizardStep('mail');
   }, []);
 
   const value = {
@@ -431,6 +478,13 @@ export function FieldworkProvider({ children }) {
     setDocuments,
     wizardStep,
     setWizardStep,
+    mailPhaseId,
+    setMailPhaseId,
+    letterOverrides,
+    setLetterOverrides,
+    responseAnalyses,
+    saveResponseAnalysis,
+    beginFollowUpMail,
     billingHistory,
     signUp,
     signIn,

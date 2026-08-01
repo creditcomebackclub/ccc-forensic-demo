@@ -1,6 +1,7 @@
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   CreditCard,
+  FileSearch,
   FileText,
   FolderOpen,
   LayoutDashboard,
@@ -18,6 +19,7 @@ const NAV = [
   { to: '/app', end: true, label: 'Home', icon: LayoutDashboard },
   { to: '/app/campaign/new', label: 'New campaign', icon: Plus },
   { to: '/app/campaigns', label: 'Campaigns', icon: Waypoints },
+  { to: '/app/responses', label: 'Responses', icon: FileSearch },
   { to: '/app/documents', label: 'Documents', icon: FolderOpen },
   { to: '/app/billing', label: 'Billing', icon: CreditCard },
   { to: '/app/settings', label: 'Settings', icon: Settings },

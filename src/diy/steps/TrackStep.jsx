@@ -70,7 +70,7 @@ export default function TrackStep({ user, mailed, onBackHome }) {
       <div className="mt-12 overflow-hidden rounded-lg bg-[var(--fw-ink)] p-8 text-white">
         <h2 className="fw-display text-3xl font-bold">Campaign saved to your workspace</h2>
         <p className="mt-3 max-w-2xl text-white/70">
-          In the standalone SaaS, this lands in Campaigns with Lob webhooks updating status. Next: upload responses in Documents, then analyze or escalate.
+          In the standalone SaaS, this lands in Campaigns with Lob webhooks updating status. Next: open Responses when they answer (or don’t) — analyze, then Pro auto-drafts the follow-up.
         </p>
         <button type="button" onClick={onBackHome} className="fw-btn-primary mt-6">
           View campaigns <ArrowRight size={16} />

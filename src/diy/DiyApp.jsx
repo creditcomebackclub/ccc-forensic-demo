@@ -12,6 +12,7 @@ import Dashboard from './pages/Dashboard';
 import CampaignWizard from './pages/CampaignWizard';
 import Campaigns from './pages/Campaigns';
 import Documents from './pages/Documents';
+import Responses from './pages/Responses';
 import Billing from './pages/Billing';
 import Settings from './pages/Settings';
 import DemoReel from './pages/DemoReel';
@@ -68,6 +69,7 @@ export default function DiyApp() {
             <Route path="campaign/new" element={<CampaignWizard />} />
             <Route path="campaigns" element={<Campaigns />} />
             <Route path="documents" element={<Documents />} />
+            <Route path="responses" element={<Responses />} />
             <Route path="billing" element={<Billing />} />
             <Route path="settings" element={<Settings />} />
           </Route>
