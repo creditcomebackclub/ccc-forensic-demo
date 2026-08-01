@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { DEFAULT_PLAN_ID, PRICING_PLANS } from '../demoData';
 import { useFieldwork } from '../state';
@@ -9,7 +9,9 @@ import { fieldworkCloudEnabled } from '../supabase';
 export default function Auth() {
   const { signUp, signIn } = useFieldwork();
   const navigate = useNavigate();
-  const [mode, setMode] = useState('signup'); // signup | signin
+  const location = useLocation();
+  const initialMode = location.pathname.includes('login') ? 'signin' : 'signup';
+  const [mode, setMode] = useState(initialMode); // signup | signin
   const [name, setName] = useState('Alex Rivera');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -17,6 +19,11 @@ export default function Auth() {
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    setMode(location.pathname.includes('login') ? 'signin' : 'signup');
+    setError('');
+  }, [location.pathname]);
 
   const onSubmit = async (e) => {
     e.preventDefault();

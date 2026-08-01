@@ -75,6 +75,11 @@ export default function Landing() {
             <SectionLink section="demo" className="fw-btn-ghost text-base">
               Watch the demo
             </SectionLink>
+            {!user && (
+              <Link to="/login" className="text-sm font-semibold text-white/70 hover:text-white">
+                Already have an account? Log in
+              </Link>
+            )}
           </motion.div>
         </div>
       </section>

@@ -58,6 +58,14 @@ export default function DiyApp() {
             )}
           />
           <Route
+            path="/login"
+            element={(
+              <PublicOnly>
+                <Auth />
+              </PublicOnly>
+            )}
+          />
+          <Route
             path="/app"
             element={(
               <RequireAuth>
