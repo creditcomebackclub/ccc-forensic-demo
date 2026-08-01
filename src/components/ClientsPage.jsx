@@ -10,6 +10,7 @@ import { archiveHistoricalMailpiece, getMailArtifactUrl, listMailArtifacts } fro
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
 import BureauResponseAnalyzer from './BureauResponseAnalyzer';
+import BureauFollowUpPanel from './BureauFollowUpPanel';
 import EscalationPanel from './EscalationPanel';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
@@ -550,6 +551,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [analyzingLetter, setAnalyzingLetter] = useState(null);
   const [analyzingBureauLetter, setAnalyzingBureauLetter] = useState(null); // { letter, client }
   const [reviewingBureauLetter, setReviewingBureauLetter] = useState(null); // { letter, client }
+  const [followUpBureauLetter, setFollowUpBureauLetter] = useState(null); // { letter, client, evidence }
   const [escalatingLetter, setEscalatingLetter] = useState(null); // { letter, client }
   const [lobMailerQueue, setLobMailerQueue] = useState([]);
   const [togglingVip, setTogglingVip] = useState(null);
@@ -1161,6 +1163,20 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               setReviewingBureauLetter(null);
               setEscalatingLetter(next);
             }}
+            onFollowUp={(evidence) => {
+              const next = reviewingBureauLetter;
+              setReviewingBureauLetter(null);
+              setFollowUpBureauLetter({ ...next, evidence: evidence || next.evidence || null });
+            }}
+          />
+        )}
+        {followUpBureauLetter && (
+          <BureauFollowUpPanel
+            letter={followUpBureauLetter.letter}
+            client={followUpBureauLetter.client}
+            evidence={followUpBureauLetter.evidence || null}
+            onClose={() => setFollowUpBureauLetter(null)}
+            onSaved={() => { refreshSelectedClient(); }}
           />
         )}
         {escalatingLetter && (
