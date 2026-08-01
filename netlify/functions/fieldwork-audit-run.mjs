@@ -1,11 +1,9 @@
 /**
- * Fieldwork audit — enqueue + kick background worker.
- * Live Anthropic work runs in fieldwork-audit-run-background (15‑min window).
- * Falls back to inline engine only when BACKGROUND is unavailable and the
- * request is small enough for the short sync timeout.
+ * Fieldwork audit enqueue — creates fieldwork_audit_jobs row.
+ * Client then invokes fieldwork-audit-run-background and polls the job.
  *
- * POST JSON: { base64, mediaType?, fileName?, mode?, subscriberId? }
- * Returns: { jobId, mode: 'queued' } or { audit, mode: 'engine' }
+ * POST JSON: { subscriberId? } (+ auth bearer)
+ * Report bytes are NOT stored here — passed only to the background worker.
  */
 import { createClient } from '@supabase/supabase-js';
 
@@ -51,7 +49,7 @@ export const handler = async (event) => {
     });
   }
 
-  let payload;
+  let payload = {};
   try {
     let raw = event.body || '{}';
     if (event.isBase64Encoded) raw = Buffer.from(raw, 'base64').toString('utf8');
@@ -60,23 +58,18 @@ export const handler = async (event) => {
     return json(400, { error: 'Invalid JSON' });
   }
 
-  const base64 = payload.base64;
-  if (!base64 || typeof base64 !== 'string') {
-    return json(400, { error: 'base64 report required' });
-  }
-  if (base64.length > 12_000_000) {
-    return json(413, { error: 'Report too large for Fieldwork audit pass' });
-  }
-
   const admin = fwAdmin();
   if (!admin) {
     return json(503, { error: 'FIELDWORK_SUPABASE_* not configured for audit jobs' });
   }
 
   const user = await requireUser(event);
-  let subscriberId = payload.subscriberId || null;
+  if (!user) {
+    return json(401, { error: 'Sign in required for live Fieldwork audits' });
+  }
 
-  if (user && !subscriberId) {
+  let subscriberId = payload.subscriberId || null;
+  if (!subscriberId) {
     const { data: sub } = await admin
       .from('fieldwork_subscribers')
       .select('id')
@@ -87,8 +80,19 @@ export const handler = async (event) => {
 
   if (!subscriberId) {
     return json(401, {
-      error: 'Sign in to Fieldwork cloud to run a live audit (subscriber required for background jobs).',
+      error: 'No Fieldwork subscriber row — finish signup/bootstrap first.',
     });
+  }
+
+  // Ensure the subscriber belongs to this auth user
+  const { data: owned } = await admin
+    .from('fieldwork_subscribers')
+    .select('id')
+    .eq('id', subscriberId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (!owned) {
+    return json(403, { error: 'Subscriber mismatch' });
   }
 
   const { data: job, error: jobErr } = await admin
@@ -104,32 +108,6 @@ export const handler = async (event) => {
   if (jobErr || !job) {
     return json(500, { error: jobErr?.message || 'Could not create audit job' });
   }
-
-  // Kick the background worker. On Netlify this returns 202 immediately;
-  // locally netlify-cli also supports *-background functions.
-  const siteUrl = process.env.URL
-    || process.env.DEPLOY_URL
-    || process.env.NETLIFY_DEV_SERVER_URL
-    || 'http://localhost:8888';
-
-  const workerPayload = {
-    jobId: job.id,
-    base64,
-    mediaType: payload.mediaType || 'application/pdf',
-    fileName: payload.fileName || 'credit-report.pdf',
-    mode: payload.mode === 'single' ? 'single' : 'combined',
-    bureau: payload.bureau || 'Experian',
-  };
-
-  // Fire-and-forget invoke; do not await completion.
-  const workerUrl = `${siteUrl.replace(/\/$/, '')}/.netlify/functions/fieldwork-audit-run-background`;
-  fetch(workerUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(workerPayload),
-  }).catch((err) => {
-    console.error('Failed to invoke fieldwork-audit-run-background', err);
-  });
 
   return json(200, {
     product: 'fieldwork',

@@ -253,15 +253,13 @@ async function pollFieldworkAuditJob(jobId, { timeoutMs = 240000 } = {}) {
 
 /** Live forensic audit via FIELDWORK_ANTHROPIC (Fieldwork UI model). */
 export async function runFieldworkAudit({ base64, mediaType, fileName, mode, subscriberId }) {
+  if (!base64) throw new Error('base64 report required');
+  if (base64.length > 12_000_000) throw new Error('Report too large for Fieldwork audit pass');
+
   const queued = await fwFetch('fieldwork-audit-run', {
     method: 'POST',
-    // Enqueue is fast; Anthropic runs in the background worker.
     timeoutMs: 30000,
     body: JSON.stringify({
-      base64,
-      mediaType: mediaType || 'application/pdf',
-      fileName: fileName || 'credit-report.pdf',
-      mode: mode || 'combined',
       subscriberId: subscriberId || undefined,
     }),
   });
@@ -270,6 +268,26 @@ export async function runFieldworkAudit({ base64, mediaType, fileName, mode, sub
   if (!queued?.jobId) {
     throw new Error(queued?.error || 'Audit did not return a job id');
   }
+
+  // Kick Netlify BACKGROUND worker (returns 202 quickly; work continues server-side).
+  const auth = await authHeader();
+  await fetch('/.netlify/functions/fieldwork-audit-run-background', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(auth || {}),
+    },
+    body: JSON.stringify({
+      jobId: queued.jobId,
+      base64,
+      mediaType: mediaType || 'application/pdf',
+      fileName: fileName || 'credit-report.pdf',
+      mode: mode || 'combined',
+    }),
+  }).catch(() => {
+    /* 202 / network race — polling will surface real failures */
+  });
+
   return pollFieldworkAuditJob(queued.jobId);
 }
 
