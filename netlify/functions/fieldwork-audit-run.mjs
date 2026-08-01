@@ -1,11 +1,14 @@
 /**
- * Fieldwork audit enqueue — creates fieldwork_audit_jobs row.
- * Client then invokes fieldwork-audit-run-background and polls the job.
+ * Fieldwork audit entrypoint.
  *
- * POST JSON: { subscriberId? } (+ auth bearer)
- * Report bytes are NOT stored here — passed only to the background worker.
+ * Local `netlify dev`: runs Anthropic inline (background workers often never
+ * execute after the 202 queue). Production: enqueues a job and expects the
+ * client to invoke fieldwork-audit-run-background + poll.
+ *
+ * POST JSON: { base64, mediaType?, fileName?, mode?, subscriberId? }
  */
 import { createClient } from '@supabase/supabase-js';
+import { isNetlifyLocalDev, runFieldworkAuditEngine } from './_fieldworkAuditEngine.mjs';
 
 function json(status, body) {
   return {
@@ -58,6 +61,41 @@ export const handler = async (event) => {
     return json(400, { error: 'Invalid JSON' });
   }
 
+  const local = isNetlifyLocalDev();
+
+  // -------- Local / netlify dev: run inline (avoid 202-and-never-run) --------
+  if (local) {
+    const base64 = payload.base64;
+    if (!base64 || typeof base64 !== 'string') {
+      return json(400, { error: 'base64 report required' });
+    }
+    if (base64.length > 12_000_000) {
+      return json(413, { error: 'Report too large for Fieldwork audit pass' });
+    }
+    try {
+      const audit = await runFieldworkAuditEngine({
+        base64,
+        mediaType: payload.mediaType || 'application/pdf',
+        fileName: payload.fileName || 'credit-report.pdf',
+        mode: payload.mode === 'single' ? 'single' : 'combined',
+        bureau: payload.bureau || 'Experian',
+      });
+      return json(200, {
+        product: 'fieldwork',
+        isolated: true,
+        mode: 'engine-local',
+        audit,
+      });
+    } catch (err) {
+      console.error('fieldwork-audit-run local inline failed', err);
+      return json(err.statusCode || 500, {
+        error: err.message || 'Audit failed',
+        mode: 'engine-local',
+      });
+    }
+  }
+
+  // -------- Production: enqueue job for background worker --------
   const admin = fwAdmin();
   if (!admin) {
     return json(503, { error: 'FIELDWORK_SUPABASE_* not configured for audit jobs' });
@@ -84,7 +122,6 @@ export const handler = async (event) => {
     });
   }
 
-  // Ensure the subscriber belongs to this auth user
   const { data: owned } = await admin
     .from('fieldwork_subscribers')
     .select('id')

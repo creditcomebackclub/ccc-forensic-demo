@@ -38,16 +38,16 @@
 [functions]
   node_bundler = "esbuild"
 
-# Live Fieldwork audits exceed the default 30s local/sync cap.
-# Background worker does the Anthropic pass (up to 15 minutes).
+# Live Fieldwork audits need minutes. Local netlify.dev runs them inline on
+# fieldwork-audit-run; production uses the background worker.
 [functions."fieldwork-audit-run"]
-  timeout = 26
+  timeout = 900
 
 [functions."fieldwork-audit-run-background"]
   timeout = 900
 
 [functions."fieldwork-generate-letter"]
-  timeout = 60
+  timeout = 120
 
 [functions."daily-cron"]
   schedule = "0 15 * * *"
