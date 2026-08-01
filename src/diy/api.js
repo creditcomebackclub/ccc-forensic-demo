@@ -298,7 +298,13 @@ async function runLocalAuditServer(payload) {
       body = { error: rawText?.slice(0, 280) || `Local audit ${res.status}` };
     }
     if (!res.ok) throw new Error(body.error || `Local audit failed (${res.status})`);
+    if (!body.audit) throw new Error('Local audit returned no audit payload');
     return body;
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      throw new Error('Local audit aborted/timed out after 5 minutes — check the audit:fieldwork terminal');
+    }
+    throw err;
   } finally {
     runCtl.clear();
   }

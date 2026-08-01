@@ -21,6 +21,20 @@
   status = 200
   force = true
 
+# Local Fieldwork audit server (npm run audit:fieldwork) — must be above the SPA catch-all.
+# Bypasses netlify-cli's hardcoded 30s lambda-local timeout for Anthropic audits.
+[[redirects]]
+  from = "/fieldwork-local-audit"
+  to = "http://127.0.0.1:8787/audit"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/fieldwork-local-health"
+  to = "http://127.0.0.1:8787/health"
+  status = 200
+  force = true
+
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
