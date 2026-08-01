@@ -46,6 +46,25 @@ function titleFrom(account, v) {
   return short.length > 90 ? `${short.slice(0, 87)}…` : short;
 }
 
+/** Rewrite engine copy so the readout says "your report", not the consumer's name. */
+function personalizeMethodologyNote(text) {
+  const fallback =
+    'Fieldwork audits Metro 2 base-segment fields against FCRA accuracy duties — then aims your first dispute at the furnisher (the source), not the bureaus.';
+  if (!text || !String(text).trim()) return fallback;
+  let out = String(text).trim();
+  // "of Jeffrey Kirkland's three-bureau report" → "of your three-bureau report"
+  out = out.replace(
+    /\bof\s+[A-Z][A-Za-z'’.\-]+(?:\s+[A-Z][A-Za-z'’.\-]+){0,3}['’]s\s+((?:three[-\s]?bureau\s+)?)report\b/gi,
+    'of your $1report',
+  );
+  // lingering "Name's report" without leading "of"
+  out = out.replace(
+    /\b[A-Z][A-Za-z'’.\-]+(?:\s+[A-Z][A-Za-z'’.\-]+){0,3}['’]s\s+((?:three[-\s]?bureau\s+)?)report\b/g,
+    'your $1report',
+  );
+  return out;
+}
+
 function whyFurnisherFirst(account) {
   const strategy = String(account.strategy || '').trim();
   if (strategy) return strategy;
@@ -146,9 +165,7 @@ export function adaptCccAuditToFieldwork(cccAudit, opts = {}) {
       crossBureauConflicts: countCrossBureau(accountsIn),
       furnisherFirst: true,
     },
-    methodologyNote:
-      cccAudit?.executiveSummary
-      || 'Fieldwork audits Metro 2 base-segment fields against FCRA accuracy duties — then aims your first dispute at the furnisher (the source), not the bureaus.',
+    methodologyNote: personalizeMethodologyNote(cccAudit?.executiveSummary),
     accounts,
     cccRaw: cccAudit,
   };
