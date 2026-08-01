@@ -116,9 +116,15 @@ export const FIELDWORK_LETTER_CSS = `
   }
   .signature-block { margin-top: 40px; }
   .sig-line {
-    margin-top: 36px;
-    border-top: 1px solid #07131f;
-    width: 240px;
+    margin-top: 18px;
+    min-height: 56px;
+    width: 260px;
+    border-bottom: 1px solid #07131f;
+  }
+  .sig-line img {
+    display: block;
+    max-height: 56px;
+    max-width: 220px;
   }
   .printed-name { margin-top: 6px; font-weight: 700; }
   .rights-line {

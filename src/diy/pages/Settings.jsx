@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useFieldwork } from '../state';
+import SignaturePad from '../components/SignaturePad';
 
 export default function Settings() {
   const { user, updateProfile } = useFieldwork();
@@ -9,6 +11,7 @@ export default function Settings() {
   const [city, setCity] = useState(user.address.city);
   const [state, setState] = useState(user.address.state);
   const [zip, setZip] = useState(user.address.zip);
+  const [signatureData, setSignatureData] = useState(user.signatureData || null);
   const [saved, setSaved] = useState(false);
 
   return (
@@ -16,7 +19,7 @@ export default function Settings() {
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Settings</p>
       <h1 className="fw-display mt-2 text-4xl font-bold">Account</h1>
       <p className="mt-3 text-[var(--fw-muted)]">
-        Your identity on letters. In production this is the return address Lob uses — never an agency “c/o”.
+        Your identity on letters — return address and drawn signature. Never an agency “c/o”.
       </p>
 
       <form
@@ -27,6 +30,7 @@ export default function Settings() {
             name,
             email,
             address: { line1, city, state, zip },
+            signatureData,
           });
           setSaved(true);
           setTimeout(() => setSaved(false), 2000);
@@ -84,10 +88,37 @@ export default function Settings() {
           </label>
         </div>
 
+        <div className="pt-4">
+          <div className="fw-mono text-[11px] uppercase tracking-wider text-[var(--fw-muted)]">
+            Signature for letters
+          </div>
+          <p className="mt-1 text-sm text-[var(--fw-muted)]">
+            Draw once with mouse or finger — we embed it on every dispute letter.
+          </p>
+          <SignaturePad
+            className="mt-3"
+            value={signatureData}
+            onChange={setSignatureData}
+          />
+          {!signatureData && (
+            <p className="mt-2 text-xs text-[#b93d30]">
+              No signature yet — letters will show a blank line until you draw one and save.
+            </p>
+          )}
+        </div>
+
         <button type="submit" className="fw-btn-ink mt-4">
           {saved ? 'Saved' : 'Save profile'}
         </button>
       </form>
+
+      <p className="mt-8 text-sm text-[var(--fw-muted)]">
+        After saving, reopen{' '}
+        <Link to="/app/campaign/new" className="font-semibold text-[var(--fw-sea)] hover:underline">
+          Compose letters
+        </Link>{' '}
+        to see the signature on previews.
+      </p>
     </div>
   );
 }

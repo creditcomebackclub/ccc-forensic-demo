@@ -30,6 +30,18 @@ function stripProductChrome(html) {
     .replace(/PHASE\s*[12]\s*[—\-].*?(?=<\/|$)/gi, '');
 }
 
+function injectSignature(html, signatureData) {
+  if (!html || !signatureData) return html;
+  const safe = String(signatureData).replace(/"/g, '&quot;');
+  const img = `<img src="${safe}" alt="Signature" style="max-height:56px;max-width:220px;display:block;" />`;
+  if (/class=["'][^"']*sig-line[^"']*["'][^>]*>\s*</i.test(html)) {
+    return html.replace(/(class=["'][^"']*sig-line[^"']*["'][^>]*>)(\s*)</i, `$1${img}<`);
+  }
+  // Fallback: first run of underscores (model placeholder)
+  if (/_{3,}/.test(html)) return html.replace(/_{3,}/, img);
+  return html;
+}
+
 function injectFieldworkCss(html) {
   if (!html) return html;
   let out = stripProductChrome(html.trim());
@@ -123,9 +135,12 @@ export const handler = async (event) => {
 
     letter = letter.replace(/^```(?:html)?\s*/i, '').replace(/\s*```$/i, '').trim();
     letter = injectFieldworkCss(letter);
+    letter = injectSignature(letter, user.signatureData);
 
     if (!letter || letter.length < 400 || !/id-table/i.test(letter)) {
       letter = fallback;
+    } else if (user.signatureData) {
+      letter = injectSignature(letter, user.signatureData);
     }
 
     return json(200, {

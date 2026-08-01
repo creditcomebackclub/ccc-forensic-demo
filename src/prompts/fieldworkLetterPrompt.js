@@ -22,7 +22,7 @@ Never brand Fieldwork, Credit Comeback Club, CCC, or any third-party company on 
   2. Metro 2 findings (\`list-table\` with columns Field / Statute / Reported / Challenge)
   3. Required corrections (\`demands-table\` with td.demand-num)
 - Open with date → sender → recipient (no product mark, no "Phase 1" banner).
-- Signature block: "Sincerely," then an empty \`sig-line\` space for a wet/ink signature, then printed name.
+- Signature block: "Sincerely," then an empty \`sig-line\` div (the app injects a drawn signature image), then printed name. Do not invent a signature image.
 
 ## Forensic substance (keep it)
 - Direct furnisher dispute under 12 CFR §1022.43 and 15 U.S.C. §1681s-2(a)(8).

@@ -147,7 +147,11 @@ ${account.whyFurnisherFirst ? `<p class="body-copy">${esc(account.whyFurnisherFi
 
 <div class="signature-block">
   <div>Sincerely,</div>
-  <div class="sig-line"></div>
+  <div class="sig-line">${
+    user.signatureData
+      ? `<img src="${esc(user.signatureData)}" alt="Signature" />`
+      : ''
+  }</div>
   <div class="printed-name">${esc(user.name)}</div>
   <div class="rights-line">Consumer — All Rights Reserved</div>
 </div>
