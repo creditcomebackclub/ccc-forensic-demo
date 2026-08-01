@@ -36,14 +36,25 @@ function severityOf(v) {
   return 'high';
 }
 
+function truncateTitle(text, max = 140) {
+  const s = String(text || '').trim();
+  if (s.length <= max) return s;
+  const slice = s.slice(0, max);
+  // Prefer breaking on a word boundary so names like "Experian" aren't clipped.
+  const broken = slice.replace(/\s+\S*$/, '').replace(/[,\s;:–—-]+$/g, '');
+  return `${broken || slice.slice(0, max - 1)}…`;
+}
+
 function titleFrom(account, v) {
   const primary = account.primaryViolation && String(account.primaryViolation).trim();
-  if (primary && (!account.violations?.[1] || v === account.violations[0])) return primary;
+  if (primary && (!account.violations?.[1] || v === account.violations[0])) {
+    return truncateTitle(primary);
+  }
   const issue = String(v.issue || '').trim();
   if (!issue) return `Field ${fieldNumber(v.field)} accuracy defect`;
   // Prefer a short headline — first sentence / clause
   const short = issue.split(/[.\n]/)[0].trim();
-  return short.length > 90 ? `${short.slice(0, 87)}…` : short;
+  return truncateTitle(short);
 }
 
 /** Rewrite engine copy so the readout says "your report", not the consumer's name. */
