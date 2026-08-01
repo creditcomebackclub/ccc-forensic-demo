@@ -48,18 +48,26 @@ async function fwFetch(path, options = {}) {
   const auth = await authHeader();
   if (auth) Object.assign(headers, auth);
 
-  const res = await fetch(`/.netlify/functions/${path}`, {
-    ...options,
-    headers,
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const err = new Error(body.error || `Fieldwork API ${res.status}`);
-    err.status = res.status;
-    err.body = body;
-    throw err;
+  const timeoutMs = options.timeoutMs ?? 8000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`/.netlify/functions/${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(body.error || `Fieldwork API ${res.status}`);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
+    return body;
+  } finally {
+    clearTimeout(timer);
   }
-  return body;
 }
 
 export async function getFieldworkStatus() {
