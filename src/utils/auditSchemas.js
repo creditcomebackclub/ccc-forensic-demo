@@ -363,6 +363,31 @@ export const BUREAU_RESPONSE_SCHEMA = {
   ],
 };
 
+// Supplemental Phase 3 CRA letter after staff chooses bureau follow-up.
+export const BUREAU_FOLLOW_UP_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    bureau: { type: 'string', enum: ['equifax', 'experian', 'transunion'] },
+    summary: { type: 'string' },
+    focusIssues: { type: 'array', items: { type: 'string' } },
+    letterHtml: {
+      type: 'string',
+      description: 'Complete HTML document (<!DOCTYPE html>...) for the supplemental Phase 3 CRA letter.',
+    },
+    documentQuality: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        enclosureLegible: { type: 'boolean' },
+        issues: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['enclosureLegible', 'issues'],
+    },
+  },
+  required: ['bureau', 'summary', 'focusIssues', 'letterHtml', 'documentQuality'],
+};
+
 // Phase 4 (CFPB / state-AG escalation) narrative — mirrors the JSON contract
 // in src/prompts/phase4Prompt.js field-for-field. cfpbCategory/cfpbSubIssue
 // are free-text, not an enum: CFPB's own picklist already changed once
