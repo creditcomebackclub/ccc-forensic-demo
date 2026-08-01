@@ -2,25 +2,82 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FileUp, Sparkles } from 'lucide-react';
 import { ANALYZE_STEPS } from '../demoData';
+import { getFieldworkStatus, runFieldworkAudit } from '../api';
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function UploadStep({ onComplete }) {
   const [phase, setPhase] = useState('idle'); // idle | analyzing
   const [stepIdx, setStepIdx] = useState(0);
   const [dragOver, setDragOver] = useState(false);
+  const [error, setError] = useState('');
+  const [engineReady, setEngineReady] = useState(false);
+
+  useEffect(() => {
+    getFieldworkStatus().then((s) => {
+      setEngineReady(Boolean(s.anthropicConfigured));
+    });
+  }, []);
 
   useEffect(() => {
     if (phase !== 'analyzing') return undefined;
-    if (stepIdx >= ANALYZE_STEPS.length) {
-      const t = setTimeout(onComplete, 600);
-      return () => clearTimeout(t);
-    }
+    // Progress animation while sample OR live audit runs
+    if (stepIdx >= ANALYZE_STEPS.length) return undefined;
     const t = setTimeout(() => setStepIdx((s) => s + 1), 900);
     return () => clearTimeout(t);
-  }, [phase, stepIdx, onComplete]);
+  }, [phase, stepIdx]);
 
-  const start = () => {
+  const finishSample = () => {
+    // Let the animation land, then hand canned Fieldwork audit to parent
+    const wait = Math.max(400, (ANALYZE_STEPS.length - stepIdx) * 200);
+    setTimeout(() => onComplete(null, { fileName: 'PrivacyGuard_3bureau_sample.pdf' }), wait);
+  };
+
+  const startSample = () => {
+    setError('');
     setPhase('analyzing');
     setStepIdx(0);
+    finishSample();
+  };
+
+  const startLive = async (file) => {
+    setError('');
+    setPhase('analyzing');
+    setStepIdx(0);
+
+    if (!engineReady) {
+      // No Fieldwork Anthropic key — keep demo UX with canned findings
+      finishSample();
+      return;
+    }
+
+    try {
+      const base64 = await readFileAsBase64(file);
+      const mediaType = file.type || 'application/pdf';
+      const res = await runFieldworkAudit({
+        base64,
+        mediaType,
+        fileName: file.name,
+        mode: 'combined',
+      });
+      onComplete(res.audit, { fileName: file.name, mode: res.mode });
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Live audit failed — try the sample report, or check FIELDWORK_ANTHROPIC_API_KEY + netlify functions.');
+      setPhase('idle');
+      setStepIdx(0);
+    }
   };
 
   return (
@@ -28,7 +85,10 @@ export default function UploadStep({ onComplete }) {
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Step 01 · Upload</p>
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Drop your credit report</h1>
       <p className="mt-3 text-lg text-[var(--fw-muted)]">
-        PrivacyGuard, IdentityIQ, or any 3-bureau PDF/HTML export. This demo runs a canned forensic sample so you can feel the product instantly.
+        PrivacyGuard, IdentityIQ, or any 3-bureau PDF/HTML export.
+        {engineReady
+          ? ' Live Fieldwork audits use the same forensic engine as CCC — findings still render in this UI.'
+          : ' This demo runs a canned forensic sample so you can feel the product instantly.'}
       </p>
 
       <AnimatePresence mode="wait">
@@ -49,7 +109,9 @@ export default function UploadStep({ onComplete }) {
               onDrop={(e) => {
                 e.preventDefault();
                 setDragOver(false);
-                start();
+                const file = e.dataTransfer.files?.[0];
+                if (file) startLive(file);
+                else startSample();
               }}
               className={`relative overflow-hidden rounded-lg border-2 border-dashed px-6 py-16 text-center transition ${
                 dragOver
@@ -60,11 +122,30 @@ export default function UploadStep({ onComplete }) {
               <div className="absolute inset-0 fw-field-scan opacity-60 pointer-events-none" />
               <FileUp className="relative mx-auto text-[var(--fw-sea)]" size={36} strokeWidth={1.5} />
               <p className="relative mt-4 text-lg font-semibold">Drag & drop a report</p>
-              <p className="relative mt-1 text-sm text-[var(--fw-muted)]">PDF, HTML, or TXT · demo accepts anything</p>
-              <button type="button" onClick={start} className="fw-btn-ink relative mt-8">
-                <Sparkles size={16} /> Use sample 3-bureau report
-              </button>
+              <p className="relative mt-1 text-sm text-[var(--fw-muted)]">
+                PDF, HTML, or TXT · {engineReady ? 'live forensic audit when key is set' : 'demo accepts anything'}
+              </p>
+              <div className="relative mt-8 flex flex-wrap items-center justify-center gap-3">
+                <button type="button" onClick={startSample} className="fw-btn-ink">
+                  <Sparkles size={16} /> Use sample 3-bureau report
+                </button>
+                <label className="fw-btn-ghost cursor-pointer !border-[var(--fw-line)] !text-[var(--fw-ink)]">
+                  Upload file
+                  <input
+                    type="file"
+                    accept=".pdf,.html,.htm,.txt,application/pdf,text/html,text/plain"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) startLive(file);
+                    }}
+                  />
+                </label>
+              </div>
             </div>
+            {error ? (
+              <p className="mt-4 text-sm text-[#b93d30]">{error}</p>
+            ) : null}
           </motion.div>
         ) : (
           <motion.div

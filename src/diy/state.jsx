@@ -62,6 +62,7 @@ export function FieldworkProvider({ children }) {
           mode: status.mode || (fieldworkCloudEnabled ? 'cloud' : 'demo'),
           isolated: status.isolated !== false,
           usesCccKeys: Boolean(status.usesCccKeys),
+          anthropicConfigured: Boolean(status.anthropicConfigured),
           message: status.message || '',
         });
       }
@@ -125,17 +126,20 @@ export function FieldworkProvider({ children }) {
     setBillingHistory([]);
   }, []);
 
-  const completeUpload = useCallback(() => {
-    setAudit(DEMO_AUDIT);
-    setSelectedIds(DEMO_AUDIT.accounts.filter((a) => a.priority === 'high').map((a) => a.id));
+  const completeUpload = useCallback((auditOverride, meta = {}) => {
+    const nextAudit = auditOverride || DEMO_AUDIT;
+    setAudit(nextAudit);
+    const highs = nextAudit.accounts.filter((a) => a.priority === 'high').map((a) => a.id);
+    setSelectedIds(highs.length ? highs : nextAudit.accounts.slice(0, 2).map((a) => a.id));
     setWizardStep('audit');
     setDocuments((docs) => {
-      if (docs.some((d) => d.id === 'doc_report')) return docs;
+      const name = meta.fileName || (auditOverride ? 'Uploaded_credit_report.pdf' : 'PrivacyGuard_3bureau_sample.pdf');
+      if (docs.some((d) => d.kind === 'Credit report' && d.name === name)) return docs;
       return [
-        ...docs,
+        ...docs.filter((d) => d.kind !== 'Credit report' || d.id === 'doc_report'),
         {
-          id: 'doc_report',
-          name: 'PrivacyGuard_3bureau_sample.pdf',
+          id: `doc_report_${Date.now()}`,
+          name,
           kind: 'Credit report',
           uploadedAt: new Date().toISOString(),
         },

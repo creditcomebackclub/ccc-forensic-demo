@@ -1,42 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, CheckCircle2, Loader2, Package } from 'lucide-react';
 import { estimatePostageUsd, formatCreditCostRange, MAIL_PHASES } from '../mailEconomics';
-
-function buildLetterHtml(user, account, phase) {
-  const topViolation = account.violations[0];
-  const phaseLine = phase === 'phase2'
-    ? 'PHASE 2 FOLLOW-UP — prior dispute + response enclosed'
-    : 'PHASE 1 DIRECT DISPUTE — FCRA §623 / Metro 2';
-  return `${phaseLine}
-
-Field ${topViolation.field} · ${topViolation.statute}
-
-${user.name}
-${user.address.line1}
-${user.address.city}, ${user.address.state} ${user.address.zip}
-
-${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-
-${account.furnisher}
-Re: Account ${account.accountMask} · Original creditor: ${account.originalCreditor}
-
-I am writing to dispute inaccurate information you are furnishing about me under the Fair Credit Reporting Act.
-
-ISSUE: ${topViolation.title}
-METRO 2 FIELD: ${topViolation.field} (${topViolation.fieldName})
-STATUTE: ${topViolation.statute}
-
-${topViolation.plain}
-
-Reported: ${topViolation.reported}
-Requested correction: ${topViolation.expected}
-
-Please investigate and correct or delete the inaccurate reporting within thirty (30) days, and update all consumer reporting agencies to which you have furnished this data.
-
-Sincerely,
-${user.name}`;
-}
+import { buildFieldworkLetter } from '../adapters/buildFieldworkLetter';
+import { generateFieldworkLetter, getFieldworkStatus } from '../api';
 
 export default function MailStep({ user, audit, selectedIds, mailCredits = 99, onComplete }) {
   const accounts = useMemo(
@@ -47,33 +14,100 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
   const [phaseId, setPhaseId] = useState('phase1');
   const [sending, setSending] = useState(false);
   const [sentFlash, setSentFlash] = useState(false);
+  const [letterByAccount, setLetterByAccount] = useState({});
+  const [letterMode, setLetterMode] = useState('local');
+  const [engineReady, setEngineReady] = useState(false);
 
   const phase = MAIL_PHASES[phaseId];
   const active = accounts.find((a) => a.id === activeId) || accounts[0];
-  const letter = active ? buildLetterHtml(user, active, phaseId) : '';
   const cost = accounts.length * phase.credits;
   const canAfford = mailCredits >= cost;
   const postageEst = estimatePostageUsd(accounts.length, { phase: phaseId });
+
+  useEffect(() => {
+    getFieldworkStatus().then((s) => setEngineReady(Boolean(s.anthropicConfigured)));
+  }, []);
+
+  // Fieldwork-styled letters (CCC substance). Engine when FIELDWORK_ANTHROPIC is set.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      if (!accounts.length) return;
+      const next = {};
+      for (const account of accounts) {
+        next[account.id] = buildFieldworkLetter(user, account, phaseId);
+      }
+      if (!cancelled) {
+        setLetterByAccount({ ...next });
+        setLetterMode('local');
+      }
+
+      if (!engineReady) return;
+
+      let mode = 'local';
+      await Promise.all(
+        accounts.map(async (account) => {
+          try {
+            const res = await generateFieldworkLetter({
+              user,
+              account,
+              phaseId,
+              tone: 'Standard',
+            });
+            if (!cancelled && res?.letter) {
+              next[account.id] = res.letter;
+              if (res.mode === 'engine') mode = 'engine';
+            }
+          } catch {
+            // keep local Fieldwork builder — same look as demo
+          }
+        }),
+      );
+
+      if (!cancelled) {
+        setLetterByAccount({ ...next });
+        setLetterMode(mode);
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
+  }, [accounts, phaseId, user, engineReady]);
+
+  useEffect(() => {
+    if (active && !accounts.some((a) => a.id === activeId)) {
+      setActiveId(accounts[0]?.id);
+    }
+  }, [accounts, active, activeId]);
+
+  const letter = active
+    ? (letterByAccount[active.id] || buildFieldworkLetter(user, active, phaseId))
+    : '';
 
   const sendAll = async () => {
     if (!canAfford) return;
     setSending(true);
     await new Promise((r) => setTimeout(r, 1600));
     const now = Date.now();
-    const letters = accounts.map((account, i) => ({
-      id: `lob_demo_${account.id}_${now}`,
-      accountId: account.id,
-      furnisher: account.furnisher,
-      phase: phaseId,
-      enclosures: phase.enclosures.map((e) => e.name),
-      trackingNumber: `9401 1198 9898 ${String(1000000000 + i).slice(0, 10)}`,
-      status: i === 0 ? 'In transit' : 'Accepted by Lob',
-      mailedAt: new Date(now - i * 60000).toISOString(),
-      etaDays: 30,
-      violationCount: account.violations.length,
-      estimatedLobCostUsd: phaseId === 'phase2' ? 15 : 14,
-      preview: buildLetterHtml(user, account, phaseId).slice(0, 160),
-    }));
+    const letters = accounts.map((account, i) => {
+      const body = letterByAccount[account.id] || buildFieldworkLetter(user, account, phaseId);
+      return {
+        id: `lob_demo_${account.id}_${now}`,
+        accountId: account.id,
+        furnisher: account.furnisher,
+        phase: phaseId,
+        enclosures: phase.enclosures.map((e) => e.name),
+        trackingNumber: `9401 1198 9898 ${String(1000000000 + i).slice(0, 10)}`,
+        status: i === 0 ? 'In transit' : 'Accepted by Lob',
+        mailedAt: new Date(now - i * 60000).toISOString(),
+        etaDays: 30,
+        violationCount: account.violations.length,
+        estimatedLobCostUsd: phaseId === 'phase2' ? 15 : 14,
+        preview: body.slice(0, 200),
+        body,
+      };
+    });
     setSentFlash(true);
     await new Promise((r) => setTimeout(r, 700));
     setSending(false);
@@ -90,10 +124,10 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Review & send</h1>
       <p className="mt-3 max-w-2xl text-lg text-[var(--fw-muted)]">
         One credit = one certified Lob packet ({formatCreditCostRange()} with enclosures).
-        Letters go out in <strong className="font-semibold text-[var(--fw-ink)]">your name</strong>.
+        Letters go out in <strong className="font-semibold text-[var(--fw-ink)]">your name</strong>
+        {letterMode === 'engine' ? ' — forensic substance from the live engine, Fieldwork formatting.' : '.'}
       </p>
 
-      {/* Phase picker */}
       <div className="mt-8 grid gap-3 md:grid-cols-2">
         {Object.values(MAIL_PHASES).map((p) => {
           const selected = p.id === phaseId;
@@ -149,7 +183,7 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
             >
               <div className="font-semibold">{account.furnisher}</div>
               <div className={`mt-0.5 text-xs ${active.id === account.id ? 'text-white/60' : 'text-[var(--fw-muted)]'}`}>
-                Field {account.violations[0].field} · {phase.label}
+                Field {account.violations[0]?.field} · {phase.label}
               </div>
             </button>
           ))}
@@ -165,7 +199,7 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
             </div>
           </div>
           <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap px-5 py-5 font-[Figtree] text-sm leading-relaxed text-[var(--fw-ink)]">
-            {letter}
+            {letter || 'Composing…'}
           </pre>
         </div>
       </div>

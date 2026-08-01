@@ -22,6 +22,21 @@ Fieldwork is a **separate product lane**. It must not read, write, or bill throu
 
 Sharing the same Anthropic/Lob *vendor login* is an ops choice — but **API keys in Netlify should still be distinct Fieldwork keys** so DIY traffic cannot drain CCC quotas by misconfiguration.
 
+## Forensic engine reuse (audits + letters)
+
+Fieldwork **reuses CCC forensic logic** (prompts, schemas, DOFD/balance guards) but **never CCC UI or letter HTML templates**.
+
+| Piece | CCC | Fieldwork |
+|---|---|---|
+| Audit brain | `masterPrompt` + `auditSchemas` + guards | `fieldwork-audit-run.mjs` via `FIELDWORK_ANTHROPIC_API_KEY` |
+| UI findings | Staff blue/gold screens | DIY cards (`AuditStep`) via `adaptCccAuditToFieldwork` |
+| Letter brain | Legal boundaries / Metro 2 substance | `fieldworkLetterPrompt` + `buildFieldworkLetter` |
+| Letter skin | Navy/gold HTML tables | Plain-text Fieldwork preview (`<pre>`) |
+
+- `POST fieldwork-audit-run` → CCC-shaped analysis → adapted Fieldwork audit JSON  
+- `POST fieldwork-generate-letter` → Fieldwork plain letter (engine or local builder)  
+- Sample report path still uses canned `DEMO_AUDIT` so the demo UI works offline  
+
 ## Local demo (default)
 
 With no `VITE_FIELDWORK_SUPABASE_*` / `FIELDWORK_*` set:
@@ -29,6 +44,7 @@ With no `VITE_FIELDWORK_SUPABASE_*` / `FIELDWORK_*` set:
 - UI runs entirely on `localStorage`
 - `GET /.netlify/functions/fieldwork-status` reports `mode: "demo"`, `usesCccKeys: false`
 - CCC production data and keys are never contacted
+- Set **only** `FIELDWORK_ANTHROPIC_API_KEY` (+ `netlify dev`) to enable live audits/letters while keeping storage local
 
 ## Enabling cloud mode later
 

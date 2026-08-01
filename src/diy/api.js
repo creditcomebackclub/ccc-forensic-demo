@@ -65,4 +65,30 @@ export async function fieldworkCheckout(planId) {
   });
 }
 
+/** Live forensic audit via FIELDWORK_ANTHROPIC (CCC logic → Fieldwork UI model). */
+export async function runFieldworkAudit({ base64, mediaType, fileName, mode }) {
+  return fwFetch('fieldwork-audit-run', {
+    method: 'POST',
+    body: JSON.stringify({
+      base64,
+      mediaType: mediaType || 'application/pdf',
+      fileName: fileName || 'credit-report.pdf',
+      mode: mode || 'combined',
+    }),
+  });
+}
+
+/** Fieldwork-styled letter from findings (engine when key set, local builder otherwise). */
+export async function generateFieldworkLetter({ user, account, phaseId, tone }) {
+  return fwFetch('fieldwork-generate-letter', {
+    method: 'POST',
+    body: JSON.stringify({
+      user,
+      account,
+      phaseId: phaseId || 'phase1',
+      tone: tone || 'Standard',
+    }),
+  });
+}
+
 export { fieldworkCloudEnabled };
