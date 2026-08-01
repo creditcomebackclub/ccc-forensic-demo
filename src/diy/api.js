@@ -59,7 +59,8 @@ async function fwFetch(path, options = {}) {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const err = new Error(body.error || `Fieldwork API ${res.status}`);
+      const detail = body.error || body.message || body.msg;
+      const err = new Error(detail ? `${detail}` : `Fieldwork API ${res.status}`);
       err.status = res.status;
       err.body = body;
       throw err;
