@@ -684,7 +684,8 @@ exports.handler = async () => {
   let lobDeliveriesCount = 0;
 
   // --- 4. Run Automated Billing Sweep ---
-  // First invoices / FWF are created at audit-delivery (billing-on-audit-delivered).
+  // First invoices / FWF are created when staff flips Active (billing-on-active),
+  // with audit-delivery as catch-up if Active was set earlier.
   // Cron only generates monthly invoices when recurring_active, charges vault,
   // processes soft-decline retries, and keeps dunning/pause.
   let billingAlerts = [];

@@ -154,9 +154,10 @@ export default function SettingsModal({ onClose, displayName, email }) {
                     </div>
                     <p className="text-[11px] text-gray-600 mt-1 leading-relaxed">
                       Browser Collect.js uses <code className="text-[10px]">VITE_NMI_TOKENIZATION_KEY</code>.
-                      Server charge/vault requires Netlify env <code className="text-[10px]">NMI_SECURITY_KEY</code>,
-                      <code className="text-[10px]"> NMI_WEBHOOK_SECRET</code>, and
-                      <code className="text-[10px]"> BILLING_AUTO_CHARGE=true</code> before cron/audit auto-charges run.
+                      Server charge/vault requires Netlify env <code className="text-[10px]">NMI_SECURITY_KEY</code> and
+                      <code className="text-[10px]"> NMI_WEBHOOK_SECRET</code>.
+                      First charge runs when staff flips a client to Active (gated on LPOA, portal, audit, card).
+                      Monthly cron auto-charge needs <code className="text-[10px]">BILLING_AUTO_CHARGE=true</code>.
                     </p>
                   </div>
                 </div>

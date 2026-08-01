@@ -49,6 +49,19 @@ export async function chargeDue({ clientId, invoiceIds }) {
   return data;
 }
 
+/** Staff flipped billing to Active — attempt first invoice + vault charge. */
+export async function activateBillingCharge({ clientId }) {
+  const headers = await authHeader();
+  const res = await fetch('/.netlify/functions/billing-on-active', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ clientId }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.message || 'Could not run activation charge');
+  return data;
+}
+
 export async function fetchCardOnFile(clientId) {
   if (!clientId) return null;
   const { data, error } = await supabase

@@ -82,7 +82,7 @@ create table if not exists public.payment_transactions (
   next_retry_at timestamptz,
   decline_type text check (decline_type is null or decline_type in ('soft', 'hard')),
   initiated_by text not null check (initiated_by in (
-    'onboarding', 'client', 'staff', 'cron', 'audit_delivery', 'webhook'
+    'onboarding', 'client', 'staff', 'staff_activation', 'cron', 'audit_delivery', 'webhook'
   )),
   raw_response jsonb,
   error_message text,

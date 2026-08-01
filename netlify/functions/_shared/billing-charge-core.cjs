@@ -103,6 +103,10 @@ function assertFirstChargeGate({ client, profile, hasAudit }) {
   if (!portalActive) return { ok: false, reason: 'Portal not active' };
   if (!hasAudit) return { ok: false, reason: 'No forensic audit delivered' };
   if (!profile?.nmi_vault_id) return { ok: false, reason: 'No card on file' };
+  // Staff "Active" is the billing go-switch. Audit/LPOA/vault alone do not charge.
+  if (client.billing_status !== 'Active') {
+    return { ok: false, reason: 'Billing status is not Active' };
+  }
   return { ok: true };
 }
 
@@ -288,6 +292,7 @@ function markInvoiceRetry(ledger, invoiceIds, attemptNumber, declineType, declin
 /**
  * Charge unpaid invoices (or a provided amount) against vault.
  * Respects BILLING_AUTO_CHARGE for cron/audit_delivery paths.
+ * staff_activation (flip to Active) uses the first-charge gate and may force.
  */
 async function chargeClientDue({
   clientId,
@@ -304,7 +309,8 @@ async function chargeClientDue({
   const bundle = await fetchClientBundle(clientId);
   if (!bundle) return { ok: false, error: 'Client not found', statusCode: 404 };
 
-  const gate = initiatedBy === 'audit_delivery'
+  const firstChargePath = initiatedBy === 'audit_delivery' || initiatedBy === 'staff_activation';
+  const gate = firstChargePath
     ? assertFirstChargeGate(bundle)
     : assertVaultChargeable(bundle);
   if (!gate.ok) return { ok: false, error: gate.reason, statusCode: 400 };
@@ -458,6 +464,37 @@ async function ensureInitialInvoice(clientId) {
   return { ok: true, created: true, ledger, invoiceIds: [row.id] };
 }
 
+/**
+ * First billable sale: create FWF/initial invoice if needed, then charge vault.
+ * Used when staff flips Active (primary) or audit lands while already Active (catch-up).
+ */
+async function runFirstBillableCharge(clientId, initiatedBy, { force = false } = {}) {
+  const bundle = await fetchClientBundle(clientId);
+  if (!bundle) return { ok: false, error: 'Client not found', statusCode: 404 };
+
+  const gate = assertFirstChargeGate(bundle);
+  if (!gate.ok) {
+    return { ok: true, skipped: true, reason: gate.reason };
+  }
+
+  const inv = await ensureInitialInvoice(clientId);
+  if (!inv.ok) return { ok: false, error: inv.error, statusCode: 500 };
+
+  const result = await chargeClientDue({
+    clientId,
+    initiatedBy,
+    invoiceIds: inv.invoiceIds && inv.invoiceIds.length ? inv.invoiceIds : null,
+    attemptNumber: 1,
+    force,
+  });
+
+  return {
+    ok: true,
+    invoiceCreated: !!inv.created,
+    charge: result,
+  };
+}
+
 async function boardVault({
   clientId,
   paymentToken,
@@ -609,6 +646,7 @@ module.exports = {
   balanceDue,
   chargeClientDue,
   ensureInitialInvoice,
+  runFirstBillableCharge,
   boardVault,
   processDueRetries,
   patchClient,

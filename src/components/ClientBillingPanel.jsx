@@ -4,7 +4,7 @@ import { supabase } from '../utils/supabase';
 import { Check, X, DollarSign, Edit2, Link, CreditCard } from 'lucide-react';
 import { computeClientCommission } from '../utils/affiliateCommission';
 import NmiCollectForm from './NmiCollectForm';
-import { chargeDue, fetchCardOnFile, vaultCard, nmiConfigured } from '../utils/billingApi';
+import { activateBillingCharge, chargeDue, fetchCardOnFile, vaultCard, nmiConfigured } from '../utils/billingApi';
 
 const T = {
   navy: '#1B2A4A',
@@ -182,6 +182,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
   const [showVaultForm, setShowVaultForm] = useState(false);
   const [charging, setCharging] = useState(false);
   const [vaultBusy, setVaultBusy] = useState(false);
+  const [activating, setActivating] = useState(false);
 
   useEffect(() => {
     // Raw rows keyed by id — affiliateCommission.js reads .commission_rate
@@ -216,7 +217,35 @@ export default function ClientBillingPanel({ client, onChanged }) {
 
   const save = async (fields) => {
     try {
+      const becomingActive = fields.billing_status === 'Active' && client.billingStatus !== 'Active';
       await updateClientProfile(client.name, fields, client.id);
+
+      if (becomingActive) {
+        setActivating(true);
+        try {
+          const result = await activateBillingCharge({ clientId: client.id });
+          if (result.skipped) {
+            alert(
+              'Billing set to Active. First charge skipped: '
+              + (result.reason || 'gates not met yet')
+              + '\n\nNeeded: LPOA signed, portal active, audit delivered, and card on file. '
+              + 'Charge runs automatically when the last missing piece lands (or use Charge due).'
+            );
+          } else if (result.charge?.declined) {
+            alert('Billing set to Active, but the card was declined: ' + (result.charge.error || 'declined'));
+          } else if (result.charge?.skipped) {
+            alert('Billing set to Active. Charge skipped: ' + (result.charge.reason || 'auto-charge off / not configured'));
+          } else if (result.charge?.charged) {
+            alert('Billing set to Active. First charge succeeded' + (result.charge.amount != null ? ` ($${Number(result.charge.amount).toFixed(2)})` : '') + '.');
+          }
+        } catch (chargeErr) {
+          console.error('Activation charge failed:', chargeErr);
+          alert('Billing set to Active, but first charge failed: ' + (chargeErr.message || chargeErr));
+        } finally {
+          setActivating(false);
+        }
+      }
+
       if (onChanged) onChanged();
     } catch (e) {
       console.error('Failed to save billing settings:', e);
@@ -434,14 +463,20 @@ export default function ClientBillingPanel({ client, onChanged }) {
           </div>
         )}
         
+        {activating && (
+          <div className="mt-2 bg-blue-50 text-blue-800 text-[11px] px-3 py-2 rounded-md border border-blue-200">
+            Running first charge for Active billing…
+          </div>
+        )}
+
         {client.billingStatus === 'Active' && (
           <div className="mt-2 bg-green-50 text-green-800 text-[11px] px-3 py-2 rounded-md border border-green-200 flex items-start gap-2">
             <Check size={14} className="mt-0.5 flex-shrink-0" />
             <div>
               <strong>Billing is active.</strong>{' '}
               {client.recurringActive
-                ? 'Monthly auto-charge runs when BILLING_AUTO_CHARGE is enabled.'
-                : 'Card may be on file; first sale (after audit delivery) activates recurring.'}
+                ? 'First sale succeeded — monthly auto-charge runs when BILLING_AUTO_CHARGE is enabled.'
+                : 'Flip to Active (with LPOA, portal, audit, and card on file) runs the first charge and turns on recurring.'}
             </div>
           </div>
         )}
