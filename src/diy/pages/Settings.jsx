@@ -13,6 +13,8 @@ export default function Settings() {
   const [zip, setZip] = useState(user.address.zip);
   const [signatureData, setSignatureData] = useState(user.signatureData || null);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   return (
     <div className="mx-auto max-w-xl">
@@ -24,16 +26,26 @@ export default function Settings() {
 
       <form
         className="mt-8 space-y-4"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          updateProfile({
-            name,
-            email,
-            address: { line1, city, state, zip },
-            signatureData,
-          });
-          setSaved(true);
-          setTimeout(() => setSaved(false), 2000);
+          setSaving(true);
+          setError('');
+          setSaved(false);
+          try {
+            await updateProfile({
+              name,
+              email,
+              address: { line1, city, state, zip },
+              signatureData,
+            });
+            setSaved(true);
+            setTimeout(() => setSaved(false), 2500);
+          } catch (err) {
+            console.error(err);
+            setError(err?.message || 'Could not save profile to Fieldwork.');
+          } finally {
+            setSaving(false);
+          }
         }}
       >
         <label className="block">
@@ -93,7 +105,7 @@ export default function Settings() {
             Signature for letters
           </div>
           <p className="mt-1 text-sm text-[var(--fw-muted)]">
-            Draw once with mouse or finger — we embed it on every dispute letter.
+            Draw once with mouse or finger — saved to your Fieldwork account and embedded on every dispute letter.
           </p>
           <SignaturePad
             className="mt-3"
@@ -107,8 +119,12 @@ export default function Settings() {
           )}
         </div>
 
-        <button type="submit" className="fw-btn-ink mt-4">
-          {saved ? 'Saved' : 'Save profile'}
+        {error ? (
+          <p className="text-sm text-[#b93d30]">{error}</p>
+        ) : null}
+
+        <button type="submit" className="fw-btn-ink mt-4" disabled={saving}>
+          {saving ? 'Saving…' : saved ? 'Saved to Fieldwork' : 'Save profile'}
         </button>
       </form>
 

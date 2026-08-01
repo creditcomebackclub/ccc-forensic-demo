@@ -35,7 +35,8 @@ exports.handler = async (event) => {
     });
 
     // Optional profile patch (never touches CCC tables)
-    if (body.full_name || body.address_line1 || body.plan_id) {
+    const hasSignaturePatch = Object.prototype.hasOwnProperty.call(body, 'signature_data');
+    if (body.full_name || body.address_line1 || body.plan_id || body.email || hasSignaturePatch) {
       const { url, serviceKey } = fieldworkSupabase();
       const patch = {
         updated_at: new Date().toISOString(),
@@ -46,6 +47,7 @@ exports.handler = async (event) => {
       if (body.address_city != null) patch.address_city = body.address_city;
       if (body.address_state != null) patch.address_state = body.address_state;
       if (body.address_zip != null) patch.address_zip = body.address_zip;
+      if (hasSignaturePatch) patch.signature_data = body.signature_data || null;
       if (body.plan_id) {
         const credits = planCredits(body.plan_id);
         patch.plan_id = body.plan_id;
@@ -60,6 +62,16 @@ exports.handler = async (event) => {
         url,
         patch,
       );
+      if (updated.status >= 400) {
+        const detail = (updated.body && (updated.body.message || updated.body.error)) || 'Profile update failed';
+        const err = new Error(
+          /signature_data/i.test(String(detail))
+            ? 'Signature column missing — run migration 20260802030000_fieldwork_signature_data.sql on Fieldwork Supabase.'
+            : detail,
+        );
+        err.statusCode = updated.status;
+        throw err;
+      }
       if (Array.isArray(updated.body) && updated.body[0]) {
         Object.assign(subscriber, updated.body[0]);
       }

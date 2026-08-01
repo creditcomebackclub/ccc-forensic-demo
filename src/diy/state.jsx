@@ -45,6 +45,7 @@ function userFromSubscriber(subscriber, fallback = {}) {
       state: subscriber.address_state || fallback.address?.state || '',
       zip: subscriber.address_zip || fallback.address?.zip || '',
     },
+    signatureData: subscriber.signature_data || fallback.signatureData || null,
     subscriberId: subscriber.id,
   };
 }
@@ -249,9 +250,39 @@ export function FieldworkProvider({ children }) {
     applyBootstrap(snap, { email });
   }, [applyBootstrap]);
 
-  const updateProfile = useCallback((profile) => {
-    setUser((prev) => ({ ...prev, ...profile, address: { ...prev.address, ...(profile.address || {}) } }));
-  }, []);
+  const updateProfile = useCallback(async (profile) => {
+    const nextLocal = (prev) => ({
+      ...prev,
+      ...profile,
+      address: { ...prev.address, ...(profile.address || {}) },
+      signatureData:
+        profile.signatureData !== undefined ? profile.signatureData : prev.signatureData,
+    });
+    setUser(nextLocal);
+
+    if (!fieldworkCloudEnabled) return { mode: 'demo' };
+
+    const snap = await bootstrapFieldwork({
+      email: profile.email,
+      full_name: profile.name,
+      address_line1: profile.address?.line1,
+      address_city: profile.address?.city,
+      address_state: profile.address?.state,
+      address_zip: profile.address?.zip,
+      ...(Object.prototype.hasOwnProperty.call(profile, 'signatureData')
+        ? { signature_data: profile.signatureData || null }
+        : {}),
+    });
+    if (snap?.subscriber) {
+      applyBootstrap(snap, {
+        name: profile.name,
+        email: profile.email,
+        address: profile.address,
+        signatureData: profile.signatureData,
+      });
+    }
+    return snap;
+  }, [applyBootstrap]);
 
   const signOut = useCallback(async () => {
     try {

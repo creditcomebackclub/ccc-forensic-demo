@@ -143,7 +143,13 @@ async function bootstrapFieldworkClient(profile = {}) {
       .single();
     if (insErr) throw insErr;
     subscriber = created;
-  } else if (profile.full_name || profile.plan_id || profile.address_line1) {
+  } else if (
+    profile.full_name
+    || profile.plan_id
+    || profile.address_line1
+    || profile.email
+    || Object.prototype.hasOwnProperty.call(profile, 'signature_data')
+  ) {
     const patch = { updated_at: new Date().toISOString() };
     if (profile.full_name != null) patch.full_name = profile.full_name;
     if (profile.email != null) patch.email = profile.email;
@@ -151,6 +157,9 @@ async function bootstrapFieldworkClient(profile = {}) {
     if (profile.address_city != null) patch.address_city = profile.address_city;
     if (profile.address_state != null) patch.address_state = profile.address_state;
     if (profile.address_zip != null) patch.address_zip = profile.address_zip;
+    if (Object.prototype.hasOwnProperty.call(profile, 'signature_data')) {
+      patch.signature_data = profile.signature_data || null;
+    }
     if (profile.plan_id) {
       const credits = planCredits(profile.plan_id);
       patch.plan_id = profile.plan_id;
@@ -164,7 +173,14 @@ async function bootstrapFieldworkClient(profile = {}) {
       .eq('id', subscriber.id)
       .select('*')
       .single();
-    if (updErr) throw updErr;
+    if (updErr) {
+      if (/signature_data/i.test(updErr.message || '')) {
+        throw new Error(
+          'Signature column missing — run migration 20260802030000_fieldwork_signature_data.sql on Fieldwork Supabase.',
+        );
+      }
+      throw updErr;
+    }
     subscriber = updated;
   }
 
@@ -200,15 +216,17 @@ async function bootstrapFieldworkClient(profile = {}) {
   };
 }
 
-export async function bootstrapFieldwork(profile) {
+export async function bootstrapFieldwork(profile, { timeoutMs } = {}) {
   if (!fieldworkCloudEnabled) {
     return { mode: 'demo', isolated: true };
   }
+  const hasSig = profile && Object.prototype.hasOwnProperty.call(profile, 'signature_data');
   try {
     return await fwFetch('fieldwork-bootstrap', {
       method: 'POST',
       body: JSON.stringify(profile || {}),
-      timeoutMs: 4000,
+      // Signature data URLs are large — give the PATCH room to finish.
+      timeoutMs: timeoutMs || (hasSig ? 20000 : 4000),
     });
   } catch (err) {
     // Plain `vite` has no Netlify functions — fall back to RLS client writes.
