@@ -222,7 +222,7 @@ export const PRICING_PLANS = [
   {
     id: 'starter',
     name: 'Starter',
-    price: 39,
+    price: 49,
     mailCredits: 2,
     blurb: 'Audit, mail opening packets, and get plain-English guidance when they answer — you write the follow-up.',
     features: [
@@ -239,7 +239,7 @@ export const PRICING_PLANS = [
   {
     id: 'pro',
     name: 'Pro',
-    price: 79,
+    price: 99,
     mailCredits: 5,
     blurb: 'Software runs the fight like your opening letters — analyze the reply and draft the next send for you.',
     features: [
@@ -256,7 +256,7 @@ export const PRICING_PLANS = [
   {
     id: 'unlimited',
     name: 'Campaign',
-    price: 129,
+    price: 149,
     mailCredits: 10,
     blurb: 'End-to-end dispute ops: multi-furnisher waves, bureau-route follow-ups, CFPB/AG escalation, and live experts.',
     features: [

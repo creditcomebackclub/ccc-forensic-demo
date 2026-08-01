@@ -98,7 +98,7 @@ export function FieldworkProvider({ children }) {
   const [wizardStep, setWizardStep] = useState(saved?.wizardStep || 'upload');
   const [billingHistory, setBillingHistory] = useState(
     saved?.billingHistory || [
-      { id: 'inv_001', date: '2026-08-01', label: 'Pro plan · August', amount: 59, status: 'Paid (demo)' },
+      { id: 'inv_001', date: '2026-08-01', label: 'Pro plan · August', amount: 99, status: 'Paid (demo)' },
     ],
   );
   const [runtime, setRuntime] = useState({
