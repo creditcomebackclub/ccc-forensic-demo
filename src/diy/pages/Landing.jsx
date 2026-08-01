@@ -41,7 +41,7 @@ export default function Landing() {
               </Link>
             ) : (
               <Link to="/signup" className="fw-btn-primary !py-2 !px-3 text-sm">
-                Start free demo
+                Try the demo
               </Link>
             )}
           </div>
@@ -55,7 +55,7 @@ export default function Landing() {
             animate="show"
             custom={0}
           >
-            Furnisher-first credit repair
+            For people who&apos;ve already tried
           </motion.p>
           <motion.h1
             className="fw-display max-w-4xl text-[clamp(3.2rem,9vw,6.4rem)] font-extrabold text-white"
@@ -75,7 +75,7 @@ export default function Landing() {
             animate="show"
             custom={2}
           >
-            Upload your report. See what’s wrong — field by field. Mail certified disputes in your name. No agency retainer. No handoff.
+            You paid someone else to fix this. Or you tried alone and hit a wall. Fieldwork gives you the forensic readout and the certified letters — in your name, on your timeline.
           </motion.p>
           <motion.div
             className="mt-10 flex flex-wrap items-center gap-4"
@@ -85,31 +85,66 @@ export default function Landing() {
             custom={3}
           >
             <Link to={user ? '/app' : '/signup'} className="fw-btn-primary text-base">
-              {user ? 'Open workspace' : 'See a sample audit'} <ArrowRight size={18} />
+              {user ? 'Open workspace' : 'See what an audit looks like'} <ArrowRight size={18} />
             </Link>
-            <a href="#method" className="fw-btn-ghost text-base">
-              Why furnishers first
+            <a href="#been-here" className="fw-btn-ghost text-base">
+              I know that feeling
             </a>
           </motion.div>
         </div>
       </section>
 
-      {/* HOW IT WORKS — one job */}
-      <section id="how" className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
+      {/* PAIN / RECOGNITION — one job */}
+      <section id="been-here" className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto max-w-6xl">
-          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">How it works</p>
+          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Sound familiar</p>
           <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
-            Three moves. You stay in control.
+            The monthly charge kept coming. The answers didn&apos;t.
           </h2>
           <p className="mt-5 max-w-2xl text-lg text-[var(--fw-muted)]">
-            Fieldwork is the toolkit. You decide what to dispute, what to mail, and when to stop.
+            Most people who land here aren&apos;t new to credit repair. They&apos;re tired of the same loop.
+          </p>
+
+          <div className="mt-14 grid gap-10 md:grid-cols-3">
+            {[
+              {
+                title: 'Black-box letters',
+                body: 'You paid $80–$150 a month and never really saw what went out — or why that account was chosen. Just “we’re working on it.”',
+              },
+              {
+                title: 'Deletes that crawled back',
+                body: 'Something vanished after a mass dispute… then reappeared once the furnisher verified. You paid for a temporary glitch.',
+              },
+              {
+                title: 'DIY that ran out of gas',
+                body: 'Templates. Guesswork. A stack of half-written letters. Accurate negatives don’t magically leave — and vague disputes don’t help the ones that should.',
+              },
+            ].map((item) => (
+              <div key={item.title} className="border-t border-[var(--fw-line)] pt-6">
+                <h3 className="fw-display text-2xl font-bold">{item.title}</h3>
+                <p className="mt-3 leading-relaxed text-[var(--fw-muted)]">{item.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* WHAT CHANGES */}
+      <section id="how" className="bg-white px-6 py-24 text-[var(--fw-ink)] md:px-8">
+        <div className="mx-auto max-w-6xl">
+          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">What&apos;s different</p>
+          <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
+            You see the work. You send the work.
+          </h2>
+          <p className="mt-5 max-w-2xl text-lg text-[var(--fw-muted)]">
+            Fieldwork isn&apos;t another company “handling it.” It&apos;s the toolkit those companies never hand you — audit, selection, certified mail, tracking — with you as the sender of record.
           </p>
 
           <div className="mt-14 grid gap-10 md:grid-cols-3">
             {VALUE_PILLARS.map((p, i) => (
               <div key={p.title} className="border-t border-[var(--fw-line)] pt-6">
                 <div className="fw-mono text-[11px] uppercase tracking-[0.2em] text-[var(--fw-sea)]">
-                  Step 0{i + 1}
+                  0{i + 1}
                 </div>
                 <h3 className="fw-display mt-3 text-2xl font-bold">{p.title}</h3>
                 <p className="mt-3 leading-relaxed text-[var(--fw-muted)]">{p.body}</p>
@@ -120,14 +155,14 @@ export default function Landing() {
       </section>
 
       {/* METHOD */}
-      <section id="method" className="bg-white px-6 py-24 text-[var(--fw-ink)] md:px-8">
+      <section id="method" className="bg-[var(--fw-ink)] px-6 py-24 text-white md:px-8">
         <div className="mx-auto max-w-6xl">
-          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">The method</p>
+          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-signal)]">Why furnishers first</p>
           <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
-            Credit bureaus repeat what furnishers report.
+            Spamming the bureaus is how you got nowhere.
           </h2>
-          <p className="mt-5 max-w-2xl text-lg text-[var(--fw-muted)]">
-            So we start with the companies putting the data on your file — not a vague “dispute everything” letter to the bureaus.
+          <p className="mt-5 max-w-2xl text-lg text-white/65">
+            Bureaus mostly repeat what furnishers report. Mass “not mine” letters hope someone misses a deadline. Fieldwork starts where the data is born — with field-level defects you can actually point to.
           </p>
 
           <div className="mt-14 grid gap-10 md:grid-cols-3">
@@ -135,23 +170,23 @@ export default function Landing() {
               {
                 icon: FileSearch,
                 title: 'Metro 2, not vibes',
-                body: 'We flag real reporting defects — DOFD, compliance codes, balances, payment history — with the field numbers and FCRA hooks your letter needs.',
+                body: 'DOFD. Compliance codes. Balances that don’t match. Payment history that doesn’t add up. Cited to the field — and to the FCRA — so the letter isn’t empty.',
               },
               {
                 icon: Crosshair,
-                title: 'You pick the targets',
-                body: 'See every finding in plain English. Select the accounts worth fighting. Skip the noise.',
+                title: 'You pick what worth fighting',
+                body: 'No mystery campaign. You see every finding, choose the accounts, and skip the ones that aren’t worth a stamp.',
               },
               {
                 icon: Mail,
-                title: 'Certified, then tracked',
-                body: 'Letters go out in your name via certified mail. Delivery status and 30-day response clocks live in one place.',
+                title: 'Paper trail you own',
+                body: 'Certified mail in your name. Tracking you can check. Response windows you can see. No more asking a portal what happened last month.',
               },
             ].map(({ icon: Icon, title, body }) => (
-              <div key={title} className="border-t border-[var(--fw-line)] pt-6">
-                <Icon className="text-[var(--fw-sea)]" size={22} strokeWidth={1.75} />
+              <div key={title} className="border-t border-white/15 pt-6">
+                <Icon className="text-[var(--fw-signal)]" size={22} strokeWidth={1.75} />
                 <h3 className="fw-display mt-4 text-2xl font-bold">{title}</h3>
-                <p className="mt-3 leading-relaxed text-[var(--fw-muted)]">{body}</p>
+                <p className="mt-3 leading-relaxed text-white/60">{body}</p>
               </div>
             ))}
           </div>
@@ -159,27 +194,25 @@ export default function Landing() {
       </section>
 
       {/* AUDIT PREVIEW */}
-      <section className="bg-[var(--fw-ink)] px-6 py-24 text-white md:px-8">
+      <section className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto grid max-w-6xl items-center gap-12 lg:grid-cols-2">
           <div>
-            <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-signal)]">Inside the audit</p>
+            <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">The audit</p>
             <h2 className="fw-display mt-3 text-4xl font-bold md:text-5xl">
-              Clear enough to act.
-              <br />
-              Precise enough to matter.
+              Finally, a report that tells you what to do.
             </h2>
-            <p className="mt-5 text-lg text-[rgba(232,238,242,0.72)]">
-              Each finding pairs a Metro 2 field with a statute — so you’re not guessing what to say, and neither is the letter.
+            <p className="mt-5 text-lg text-[var(--fw-muted)]">
+              Not a score tease. Not a checklist of “dispute everything.” A readout of what looks wrong on the file — and the language to challenge it.
             </p>
-            <ul className="mt-8 space-y-3 text-[rgba(232,238,242,0.85)]">
+            <ul className="mt-8 space-y-3 text-[var(--fw-ink)]/85">
               {[
-                'Re-aged dates of first delinquency',
-                'Stale dispute codes that never cleared',
-                'Balances that don’t match across bureaus',
-                'Past-due amounts that can’t be right',
+                'Dates that look re-aged after a debt sale',
+                'Dispute codes that never cleared',
+                'Balances that disagree across bureaus',
+                'Numbers that can’t both be true',
               ].map((item) => (
                 <li key={item} className="flex items-start gap-3">
-                  <BadgeCheck className="mt-0.5 shrink-0 text-[var(--fw-signal)]" size={18} />
+                  <BadgeCheck className="mt-0.5 shrink-0 text-[var(--fw-signal-dim)]" size={18} />
                   <span>{item}</span>
                 </li>
               ))}
@@ -187,8 +220,8 @@ export default function Landing() {
           </div>
 
           <div className="relative">
-            <div className="absolute -inset-4 rounded-lg bg-[var(--fw-glow)] blur-2xl" />
-            <div className="relative overflow-hidden rounded-lg border border-white/10 bg-[var(--fw-deep)] p-6 shadow-2xl">
+            <div className="absolute -inset-4 rounded-lg bg-[var(--fw-glow)] blur-2xl opacity-60" />
+            <div className="relative overflow-hidden rounded-lg border border-[var(--fw-line)] bg-[var(--fw-ink)] p-6 text-white shadow-2xl">
               <div className="flex items-center justify-between border-b border-white/10 pb-4">
                 <div>
                   <div className="fw-mono text-[10px] uppercase tracking-widest text-[var(--fw-signal)]">Critical · Field 25</div>
@@ -202,16 +235,16 @@ export default function Landing() {
               <div className="mt-5 grid gap-3 text-sm">
                 <div className="rounded border border-white/10 bg-black/20 px-3 py-2">
                   <div className="fw-mono text-[10px] uppercase text-white/40">On your report</div>
-                  <div className="mt-1">DOFD 03/2023 (after the debt was sold)</div>
+                  <div className="mt-1">DOFD dated after the debt was sold</div>
                 </div>
                 <div className="rounded border border-[rgba(46,230,166,0.25)] bg-[rgba(46,230,166,0.06)] px-3 py-2">
                   <div className="fw-mono text-[10px] uppercase text-[var(--fw-signal)]">What you challenge</div>
-                  <div className="mt-1">Trace DOFD to the original creditor delinquency</div>
+                  <div className="mt-1">Trace that date to the original creditor</div>
                 </div>
               </div>
               <div className="mt-5 flex items-center gap-2 text-xs text-white/50">
                 <Shield size={14} className="text-[var(--fw-signal)]" />
-                Ready for a furnisher-first letter
+                This is the kind of thing form letters never mention
               </div>
             </div>
           </div>
@@ -219,16 +252,16 @@ export default function Landing() {
       </section>
 
       {/* PRICING */}
-      <section id="pricing" className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
+      <section id="pricing" className="bg-white px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto max-w-6xl">
           <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Pricing</p>
           <h2 className="fw-display mt-3 text-4xl font-bold md:text-5xl">
-            Pay for tools.
+            Less than another retainer.
             <br />
-            Keep the playbook.
+            More than another promise.
           </h2>
           <p className="mt-4 max-w-xl text-lg text-[var(--fw-muted)]">
-            Agencies charge more and run the case for you. Fieldwork is the opposite: a monthly toolkit with mail credits, built for people who want to drive.
+            You&apos;re not funding a call center to send the same letter again. You&apos;re paying for the audit, the drafts, and the stamps — and you keep the file.
           </p>
 
           <div className="mt-12 grid gap-5 lg:grid-cols-3">
@@ -238,7 +271,7 @@ export default function Landing() {
                 className={`flex flex-col border p-6 ${
                   plan.highlight
                     ? 'border-[var(--fw-ink)] bg-[var(--fw-ink)] text-white'
-                    : 'border-[var(--fw-line)] bg-white'
+                    : 'border-[var(--fw-line)] bg-[var(--fw-paper)]'
                 }`}
               >
                 <div className="fw-mono text-[11px] uppercase tracking-widest opacity-60">{plan.name}</div>
@@ -266,7 +299,7 @@ export default function Landing() {
           </div>
 
           <p className="mt-8 max-w-2xl text-sm text-[var(--fw-muted)]">
-            Mail credits cover certified postage. Unused credits don’t roll forever in the live product — the point is steady campaigns, not stockpiling.
+            No score guarantees. Accurate negatives can stay. Fieldwork is for finding and challenging what shouldn&apos;t be there — with a paper trail you control.
           </p>
         </div>
       </section>
@@ -276,7 +309,7 @@ export default function Landing() {
           <div>
             <div className="fw-display text-xl text-white">Fieldwork.</div>
             <p className="mt-2 max-w-md">
-              DIY credit-repair software. Not legal advice. You choose what to dispute and remain the sender of record on every letter.
+              Software for repairing your own credit. Not legal advice. Not a promise to erase your past. You choose every dispute and sign every letter.
             </p>
           </div>
           <Link to={user ? '/app' : '/signup'} className="fw-btn-primary self-start">

@@ -219,14 +219,14 @@ export const PRICING_PLANS = [
     name: 'Starter',
     price: 29,
     mailCredits: 3,
-    blurb: 'Get your first forensic audit and mail your opening wave.',
+    blurb: 'Enough to see the truth on your file and mail a first wave.',
     features: [
       'Full Metro 2 / FCRA audit',
       '3 certified letters / month',
-      'Furnisher-first letter drafts',
-      'Delivery tracking',
+      'Letters in your name',
+      'Delivery tracking you can see',
     ],
-    cta: 'Choose Starter',
+    cta: 'Start here',
     highlight: false,
   },
   {
@@ -234,15 +234,15 @@ export const PRICING_PLANS = [
     name: 'Pro',
     price: 59,
     mailCredits: 12,
-    blurb: 'For people running a real campaign — not a one-off letter.',
+    blurb: 'For the people who got burned once and want a real campaign this time.',
     features: [
       'Everything in Starter',
       '12 certified letters / month',
-      'Response analyzer',
+      'Help reading furnisher responses',
       'Cross-bureau conflict map',
       'Priority mail queue',
     ],
-    cta: 'Choose Pro',
+    cta: 'This is the one',
     highlight: true,
   },
   {
@@ -250,14 +250,14 @@ export const PRICING_PLANS = [
     name: 'Campaign',
     price: 99,
     mailCredits: 30,
-    blurb: 'Multiple furnishers, thicker files, longer fights.',
+    blurb: 'Thick file. Several collections. You’re in it for the long haul.',
     features: [
       'Unlimited audits',
       '30 certified letters / month',
       'Escalation letter toolkit',
-      'Exportable evidence pack',
+      'Evidence pack you can keep',
     ],
-    cta: 'Choose Campaign',
+    cta: 'Go Campaign',
     highlight: false,
   },
 ];
@@ -277,19 +277,19 @@ export const DEMO_DOCUMENTS = [
   { id: 'doc_report', name: 'PrivacyGuard_3bureau_sample.pdf', kind: 'Credit report', uploadedAt: '2026-08-01T14:20:00Z' },
 ];
 
-/** Customer-facing “how it works” pillars for the marketing site. */
+/** Customer-facing “what’s different” pillars for the marketing site. */
 export const VALUE_PILLARS = [
   {
-    title: 'Audit the file',
-    body: 'Drop in a 3-bureau report. Fieldwork maps Metro 2 fields and surfaces FCRA-grounded issues — in language you can actually use.',
+    title: 'Upload the report they never explained',
+    body: 'Drop in a 3-bureau file. Get a field-level audit — what’s off, why it matters, what a letter can actually say.',
   },
   {
-    title: 'Choose the fights',
-    body: 'Select the furnishers and findings worth disputing. Nothing mails until you say so. Your name is on every letter.',
+    title: 'Choose every fight',
+    body: 'Nothing mails until you approve it. No mystery “we disputed 14 items.” You pick the furnishers. You stay the sender.',
   },
   {
-    title: 'Send and track',
-    body: 'Spend mail credits on certified delivery. Watch status, sit the response window, upload what comes back.',
+    title: 'Watch the mail, own the trail',
+    body: 'Certified delivery, tracking, response clocks — in one place. When something comes back, you see it first.',
   },
 ];
 
