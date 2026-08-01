@@ -2,6 +2,11 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { FieldworkProvider, useFieldwork } from './state';
 import Landing from './pages/Landing';
 import Auth from './pages/Auth';
+import About from './pages/About';
+import Contact from './pages/Contact';
+import Terms from './pages/legal/Terms';
+import Privacy from './pages/legal/Privacy';
+import Croa from './pages/legal/Croa';
 import AppShell from './layout/AppShell';
 import Dashboard from './pages/Dashboard';
 import CampaignWizard from './pages/CampaignWizard';
@@ -28,6 +33,11 @@ export default function DiyApp() {
       <HashRouter>
         <Routes>
           <Route path="/" element={<Landing />} />
+          <Route path="/about" element={<About />} />
+          <Route path="/contact" element={<Contact />} />
+          <Route path="/terms" element={<Terms />} />
+          <Route path="/privacy" element={<Privacy />} />
+          <Route path="/croa" element={<Croa />} />
           <Route
             path="/signup"
             element={(

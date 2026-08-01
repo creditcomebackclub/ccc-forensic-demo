@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { DEFAULT_PLAN_ID, PRICING_PLANS } from '../demoData';
 import { useFieldwork } from '../state';
+import Logo from '../components/Logo';
 
 export default function Auth() {
   const { signUp } = useFieldwork();
@@ -10,6 +11,7 @@ export default function Auth() {
   const [name, setName] = useState('Alex Rivera');
   const [email, setEmail] = useState('alex@example.com');
   const [planId, setPlanId] = useState(DEFAULT_PLAN_ID);
+  const [agreed, setAgreed] = useState(false);
 
   return (
     <div className="min-h-screen fw-atmosphere text-white">
@@ -19,9 +21,7 @@ export default function Auth() {
           <ArrowLeft size={16} /> Back
         </Link>
 
-        <div className="fw-display text-3xl font-bold">
-          Fieldwork<span className="text-[var(--fw-signal)]">.</span>
-        </div>
+        <Logo invert to={false} size={34} />
         <h1 className="fw-display mt-6 text-4xl font-bold leading-tight">Create your workspace</h1>
         <p className="mt-3 text-white/65">
           No card for the demo. Pick a plan, open the app, and walk a sample audit the way your real file would go.
@@ -31,6 +31,7 @@ export default function Auth() {
           className="mt-10 space-y-5"
           onSubmit={(e) => {
             e.preventDefault();
+            if (!agreed) return;
             signUp(
               { name: name.trim() || 'Alex Rivera', email: email.trim() || 'alex@example.com' },
               planId,
@@ -87,13 +88,33 @@ export default function Auth() {
             </div>
           </fieldset>
 
-          <button type="submit" className="fw-btn-primary mt-4 w-full text-base">
+          <label className="flex cursor-pointer items-start gap-3 rounded border border-white/15 bg-white/5 px-3 py-3 text-xs leading-relaxed text-white/70">
+            <input
+              type="checkbox"
+              className="fw-check mt-0.5 !border-white/30"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              required
+            />
+            <span>
+              I agree to the{' '}
+              <Link to="/terms" className="text-[var(--fw-signal)] hover:underline">Terms of Service</Link>
+              {' '}and{' '}
+              <Link to="/privacy" className="text-[var(--fw-signal)] hover:underline">Privacy Policy</Link>
+              , and I have received the{' '}
+              <Link to="/croa" className="text-[var(--fw-signal)] hover:underline">Statement of Consumer Rights (CROA)</Link>.
+              I understand Fieldwork is not legal advice and does not guarantee deletions or score increases.
+            </span>
+          </label>
+
+          <button type="submit" disabled={!agreed} className="fw-btn-primary mt-2 w-full text-base">
             Enter Fieldwork <ArrowRight size={18} />
           </button>
         </form>
 
         <p className="mt-8 text-xs leading-relaxed text-white/40">
-          By continuing you acknowledge this is a product demo. Fieldwork does not provide legal advice. You remain the sender of record on every letter.
+          You remain the sender of record on every letter. Questions?{' '}
+          <Link to="/contact" className="text-white/70 hover:underline">Contact us</Link>.
         </p>
       </div>
     </div>

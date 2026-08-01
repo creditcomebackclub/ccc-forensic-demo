@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { ArrowRight, BadgeCheck, Crosshair, FileSearch, Mail, Shield } from 'lucide-react';
 import { PRICING_PLANS, VALUE_PILLARS } from '../demoData';
 import { useFieldwork } from '../state';
+import { MarketingHeader, SiteFooter } from '../components/SiteChrome';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 22 },
@@ -27,25 +28,7 @@ export default function Landing() {
           <div className="fw-scan-line absolute left-[12%] right-[12%] h-24 bg-gradient-to-b from-transparent via-[rgba(46,230,166,0.2)] to-transparent" />
         </div>
 
-        <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 pt-6 md:px-8">
-          <div className="fw-display text-2xl font-extrabold tracking-tight">
-            Fieldwork<span className="text-[var(--fw-signal)]">.</span>
-          </div>
-          <div className="flex items-center gap-4 text-sm">
-            <a href="#pricing" className="hidden text-white/70 hover:text-white sm:inline">
-              Pricing
-            </a>
-            {user ? (
-              <Link to="/app" className="fw-btn-primary !py-2 !px-3 text-sm">
-                Open app
-              </Link>
-            ) : (
-              <Link to="/signup" className="fw-btn-primary !py-2 !px-3 text-sm">
-                Try the demo
-              </Link>
-            )}
-          </div>
-        </header>
+        <MarketingHeader />
 
         <div className="relative z-10 mx-auto flex min-h-[calc(100svh-5rem)] max-w-6xl flex-col justify-end px-6 pb-16 pt-24 md:px-8 md:pb-20">
           <motion.p
@@ -304,19 +287,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <footer className="border-t border-white/10 bg-[var(--fw-ink)] px-6 py-10 text-sm text-white/50 md:px-8">
-        <div className="mx-auto flex max-w-6xl flex-col gap-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <div className="fw-display text-xl text-white">Fieldwork.</div>
-            <p className="mt-2 max-w-md">
-              Software for repairing your own credit. Not legal advice. Not a promise to erase your past. You choose every dispute and sign every letter.
-            </p>
-          </div>
-          <Link to={user ? '/app' : '/signup'} className="fw-btn-primary self-start">
-            {user ? 'Open app' : 'Try the demo'} <ArrowRight size={16} />
-          </Link>
-        </div>
-      </footer>
+      <SiteFooter dark />
     </div>
   );
 }

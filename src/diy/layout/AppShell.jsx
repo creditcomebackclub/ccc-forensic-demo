@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   CreditCard,
   FileText,
@@ -10,8 +10,8 @@ import {
   Settings,
   Waypoints,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { useFieldwork } from '../state';
+import Logo from '../components/Logo';
 
 const NAV = [
   { to: '/app', end: true, label: 'Home', icon: LayoutDashboard },
@@ -30,13 +30,7 @@ export default function AppShell() {
     <div className="min-h-screen bg-[var(--fw-paper)] text-[var(--fw-ink)] md:flex">
       <aside className="flex w-full flex-col border-b border-[var(--fw-line)] bg-[var(--fw-ink)] text-white md:w-60 md:border-b-0 md:border-r md:border-white/10">
         <div className="flex items-center justify-between px-5 py-5">
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="fw-display text-left text-xl font-extrabold"
-          >
-            Fieldwork<span className="text-[var(--fw-signal)]">.</span>
-          </button>
+          <Logo invert to="/" size={26} wordmarkClass="!text-lg" />
           <span className="fw-mono rounded border border-white/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-white/50 md:hidden">
             SaaS demo
           </span>
@@ -120,9 +114,15 @@ export default function AppShell() {
           <Outlet />
         </main>
         <footer className="border-t border-[var(--fw-line)] px-4 py-6 text-xs text-[var(--fw-muted)] md:px-8">
-          <div className="flex flex-wrap items-center gap-2">
-            <FileText size={12} />
-            Fieldwork is a product concept demo. Not legal advice. You remain responsible for disputes you authorize and send.
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="inline-flex items-center gap-1.5">
+              <FileText size={12} />
+              Not legal advice. You authorize every letter.
+            </span>
+            <Link to="/terms" className="hover:text-[var(--fw-ink)]">Terms</Link>
+            <Link to="/privacy" className="hover:text-[var(--fw-ink)]">Privacy</Link>
+            <Link to="/croa" className="hover:text-[var(--fw-ink)]">CROA rights</Link>
+            <Link to="/contact" className="hover:text-[var(--fw-ink)]">Contact</Link>
           </div>
         </footer>
       </div>

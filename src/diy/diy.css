@@ -200,3 +200,12 @@ body {
     animation: none !important;
   }
 }
+
+.legal-prose h2 {
+  margin-top: 2.5rem;
+}
+
+.legal-prose p,
+.legal-prose ul {
+  margin-top: 0.75rem;
+}
