@@ -316,7 +316,7 @@ export default function Landing() {
           </div>
 
           <p className="mt-8 max-w-2xl text-sm text-[var(--fw-muted)]">
-            Mail credits map to real Lob certified packets (~$12–15 each): Phase 1 is letter + ID docs; Phase 2 adds the response, return receipt, and prior letter. No score guarantees. Accurate negatives can stay.
+            Mail credits map to real Lob certified packets (~$12–15 each). Opening sends are letter + ID docs; follow-ups add the response, return receipt, and prior letter. Starter gives response talking points; Pro+ auto-drafts the next letter. No score guarantees. Accurate negatives can stay.
           </p>
         </div>
       </section>

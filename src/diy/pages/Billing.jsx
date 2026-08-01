@@ -24,7 +24,7 @@ export default function Billing() {
           <div className="fw-mono text-[10px] uppercase tracking-wider text-[var(--fw-muted)]">Mail credits remaining</div>
           <div className="fw-display mt-2 text-4xl font-bold">{mailCredits}</div>
           <div className="mt-1 text-sm text-[var(--fw-muted)]">
-            Includes {plan.mailCredits} / month · 1 credit = 1 Phase 1 or Phase 2 packet
+            Includes {plan.mailCredits} / month · 1 credit = 1 opening or follow-up packet
           </div>
         </div>
       </div>
