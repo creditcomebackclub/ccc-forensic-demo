@@ -1,10 +1,16 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRight, CheckCircle2, Loader2 } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Loader2, Package } from 'lucide-react';
+import { estimatePostageUsd, formatCreditCostRange, MAIL_PHASES } from '../mailEconomics';
 
-function buildLetterHtml(user, account) {
+function buildLetterHtml(user, account, phase) {
   const topViolation = account.violations[0];
-  return `DIRECT DISPUTE — FCRA §623 / Metro 2 Field ${topViolation.field}
+  const phaseLine = phase === 'phase2'
+    ? 'PHASE 2 FOLLOW-UP — prior dispute + response enclosed'
+    : 'PHASE 1 DIRECT DISPUTE — FCRA §623 / Metro 2';
+  return `${phaseLine}
+
+Field ${topViolation.field} · ${topViolation.statute}
 
 ${user.name}
 ${user.address.line1}
@@ -38,13 +44,16 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
     [audit, selectedIds],
   );
   const [activeId, setActiveId] = useState(accounts[0]?.id);
+  const [phaseId, setPhaseId] = useState('phase1');
   const [sending, setSending] = useState(false);
   const [sentFlash, setSentFlash] = useState(false);
 
+  const phase = MAIL_PHASES[phaseId];
   const active = accounts.find((a) => a.id === activeId) || accounts[0];
-  const letter = active ? buildLetterHtml(user, active) : '';
-  const cost = accounts.length;
+  const letter = active ? buildLetterHtml(user, active, phaseId) : '';
+  const cost = accounts.length * phase.credits;
   const canAfford = mailCredits >= cost;
+  const postageEst = estimatePostageUsd(accounts.length, { phase: phaseId });
 
   const sendAll = async () => {
     if (!canAfford) return;
@@ -55,12 +64,15 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
       id: `lob_demo_${account.id}_${now}`,
       accountId: account.id,
       furnisher: account.furnisher,
+      phase: phaseId,
+      enclosures: phase.enclosures.map((e) => e.name),
       trackingNumber: `9401 1198 9898 ${String(1000000000 + i).slice(0, 10)}`,
       status: i === 0 ? 'In transit' : 'Accepted by Lob',
       mailedAt: new Date(now - i * 60000).toISOString(),
       etaDays: 30,
       violationCount: account.violations.length,
-      preview: buildLetterHtml(user, account).slice(0, 160),
+      estimatedLobCostUsd: phaseId === 'phase2' ? 15 : 14,
+      preview: buildLetterHtml(user, account, phaseId).slice(0, 160),
     }));
     setSentFlash(true);
     await new Promise((r) => setTimeout(r, 700));
@@ -77,8 +89,50 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Step 04 · Mail</p>
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Review & send</h1>
       <p className="mt-3 max-w-2xl text-lg text-[var(--fw-muted)]">
-        Letters go out in <strong className="font-semibold text-[var(--fw-ink)]">your name</strong> — no LPOA, no “c/o agency.” Demo mails are simulated through the Lob-shaped flow.
+        One credit = one certified Lob packet ({formatCreditCostRange()} with enclosures).
+        Letters go out in <strong className="font-semibold text-[var(--fw-ink)]">your name</strong>.
       </p>
+
+      {/* Phase picker */}
+      <div className="mt-8 grid gap-3 md:grid-cols-2">
+        {Object.values(MAIL_PHASES).map((p) => {
+          const selected = p.id === phaseId;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setPhaseId(p.id)}
+              className={`rounded-lg border p-4 text-left transition ${
+                selected
+                  ? 'border-[var(--fw-ink)] bg-[var(--fw-ink)] text-white'
+                  : 'border-[var(--fw-line)] bg-white hover:border-black/20'
+              }`}
+            >
+              <div className="fw-mono text-[10px] uppercase tracking-wider opacity-60">{p.label}</div>
+              <div className="fw-display mt-1 text-xl font-bold">{p.title}</div>
+              <p className={`mt-2 text-sm ${selected ? 'text-white/65' : 'text-[var(--fw-muted)]'}`}>{p.blurb}</p>
+              <div className={`mt-3 text-xs font-semibold ${selected ? 'text-[var(--fw-signal)]' : 'text-[var(--fw-sea)]'}`}>
+                {p.credits} credit · {p.costHint}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-6 rounded-lg border border-[var(--fw-line)] bg-white p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Package size={16} className="text-[var(--fw-sea)]" />
+          Enclosure pack — {phase.label}
+        </div>
+        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+          {phase.enclosures.map((enc) => (
+            <li key={enc.id} className="flex items-center gap-2 text-sm text-[var(--fw-muted)]">
+              <span className="fw-mono text-[10px] text-[var(--fw-signal-dim)]">PDF</span>
+              {enc.name}
+            </li>
+          ))}
+        </ul>
+      </div>
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[240px_1fr]">
         <div className="space-y-2">
@@ -95,7 +149,7 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
             >
               <div className="font-semibold">{account.furnisher}</div>
               <div className={`mt-0.5 text-xs ${active.id === account.id ? 'text-white/60' : 'text-[var(--fw-muted)]'}`}>
-                Field {account.violations[0].field} · certified
+                Field {account.violations[0].field} · {phase.label}
               </div>
             </button>
           ))}
@@ -106,7 +160,9 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
             <div className="fw-mono text-[11px] uppercase tracking-wider text-[var(--fw-muted)]">
               Letter preview · {active.furnisher}
             </div>
-            <div className="text-xs text-[var(--fw-muted)]">Enclosure: ID + proof of address</div>
+            <div className="text-xs text-[var(--fw-muted)]">
+              {phase.enclosures.length} enclosures · {formatCreditCostRange()} Lob
+            </div>
           </div>
           <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap px-5 py-5 font-[Figtree] text-sm leading-relaxed text-[var(--fw-ink)]">
             {letter}
@@ -117,17 +173,19 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
       <div className="mt-8 flex flex-wrap items-center justify-between gap-4 rounded-lg bg-[var(--fw-ink)] p-5 text-white">
         <div>
           <div className="fw-display text-xl font-bold">
-            Mail {accounts.length} certified letter{accounts.length === 1 ? '' : 's'}
+            Mail {accounts.length} {phase.label} packet{accounts.length === 1 ? '' : 's'}
           </div>
           <p className="mt-1 text-sm text-white/60">
-            Costs {cost} credit{cost === 1 ? '' : 's'} · you have {mailCredits}
-            {!canAfford ? ' — upgrade plan to send' : ' · ~$' + (cost * 8.9).toFixed(2) + ' postage value'}
+            {cost} credit{cost === 1 ? '' : 's'} · you have {mailCredits}
+            {!canAfford
+              ? ' — need more credits (top up or upgrade)'
+              : ` · ~$${postageEst} Lob postage at ${formatCreditCostRange()} / send`}
           </p>
         </div>
         <button type="button" disabled={sending || !canAfford} onClick={sendAll} className="fw-btn-primary min-w-[200px]">
           {sending ? (
             <>
-              <Loader2 size={16} className="animate-spin" /> Submitting to Lob…
+              <Loader2 size={16} className="animate-spin" /> Building packet…
             </>
           ) : sentFlash ? (
             <>
@@ -147,7 +205,7 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
           animate={{ opacity: 1 }}
           className="mt-4 text-center text-sm text-[var(--fw-muted)]"
         >
-          Creating mail artifacts · attaching enclosures · requesting certified tracking…
+          Assembling {phase.label} enclosures · certified tracking · Lob submission…
         </motion.p>
       )}
     </div>

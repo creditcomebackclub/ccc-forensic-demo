@@ -213,17 +213,22 @@ export const DEMO_AUDIT = {
   ],
 };
 
+/**
+ * Plans priced so included mail credits can cover real Lob packets
+ * (~$12–15 each with ID / Phase 2 enclosures). Software margin sits in
+ * the subscription; stamps are not fantasy-$9 credits.
+ */
 export const PRICING_PLANS = [
   {
     id: 'starter',
     name: 'Starter',
-    price: 29,
-    mailCredits: 3,
-    blurb: 'Enough to see the truth on your file and mail a first wave.',
+    price: 39,
+    mailCredits: 2,
+    blurb: 'Audit your file and mail two Phase 1 packets — letter + ID docs.',
     features: [
       'Full Metro 2 / FCRA audit',
-      '3 certified letters / month',
-      'Letters in your name',
+      '2 mail credits / month (~$12–15 Lob each)',
+      'Phase 1 enclosure pack (letter + ID + address)',
       'Delivery tracking you can see',
     ],
     cta: 'Start here',
@@ -232,15 +237,15 @@ export const PRICING_PLANS = [
   {
     id: 'pro',
     name: 'Pro',
-    price: 59,
-    mailCredits: 12,
-    blurb: 'For the people who got burned once and want a real campaign this time.',
+    price: 79,
+    mailCredits: 5,
+    blurb: 'A real opening wave — and room for a Phase 2 follow-up when they answer.',
     features: [
       'Everything in Starter',
-      '12 certified letters / month',
+      '5 mail credits / month',
+      'Phase 1 + Phase 2 packets',
       'Help reading furnisher responses',
       'Cross-bureau conflict map',
-      'Priority mail queue',
     ],
     cta: 'Choose Pro',
     highlight: true,
@@ -248,12 +253,13 @@ export const PRICING_PLANS = [
   {
     id: 'unlimited',
     name: 'Campaign',
-    price: 99,
-    mailCredits: 30,
-    blurb: 'Thick file. Several collections. You’re in it for the long haul.',
+    price: 129,
+    mailCredits: 10,
+    blurb: 'Multiple furnishers, Phase 2 packets, longer fights — postage included realistically.',
     features: [
       'Unlimited audits',
-      '30 certified letters / month',
+      '10 mail credits / month',
+      'Phase 1 + Phase 2 enclosure packs',
       'Escalation letter toolkit',
       'Evidence pack you can keep',
     ],

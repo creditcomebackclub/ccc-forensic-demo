@@ -1,4 +1,5 @@
 import { ArrowRight } from 'lucide-react';
+import { estimatePostageUsd, formatCreditCostRange } from '../mailEconomics';
 
 export default function SelectStep({ audit, selectedIds, setSelectedIds, onContinue }) {
   const toggle = (id) => {
@@ -59,7 +60,10 @@ export default function SelectStep({ audit, selectedIds, setSelectedIds, onConti
       <div className="sticky bottom-4 mt-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--fw-line)] bg-white/95 p-4 shadow-lg backdrop-blur">
         <div className="text-sm">
           <span className="font-bold">{selectedIds.length}</span> account{selectedIds.length === 1 ? '' : 's'} selected
-          <span className="text-[var(--fw-muted)]"> · ~${(selectedIds.length * 8.9).toFixed(2)} est. certified postage</span>
+          <span className="text-[var(--fw-muted)]">
+            {' '}· {selectedIds.length} credit{selectedIds.length === 1 ? '' : 's'}
+            {' '}· ~${estimatePostageUsd(selectedIds.length)} est. Lob ({formatCreditCostRange()} / packet)
+          </span>
         </div>
         <button
           type="button"

@@ -27,7 +27,7 @@ export default function Dashboard() {
         <div className="rounded-lg border border-[var(--fw-line)] bg-white p-5">
           <div className="fw-mono text-[10px] uppercase tracking-wider text-[var(--fw-muted)]">Mail credits</div>
           <div className="fw-display mt-2 text-3xl font-bold">{mailCredits}</div>
-          <div className="mt-1 text-sm text-[var(--fw-muted)]">1 credit = 1 Lob certified letter</div>
+          <div className="mt-1 text-sm text-[var(--fw-muted)]">1 credit = 1 certified packet (~$12–15 Lob)</div>
           <Link to="/app/billing" className="mt-4 inline-flex text-sm font-semibold text-[var(--fw-sea)] hover:underline">
             Top up / upgrade
           </Link>

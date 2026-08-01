@@ -282,7 +282,7 @@ export default function Landing() {
           </div>
 
           <p className="mt-8 max-w-2xl text-sm text-[var(--fw-muted)]">
-            No score guarantees. Accurate negatives can stay. Fieldwork is for finding and challenging what shouldn&apos;t be there — with a paper trail you control.
+            Mail credits map to real Lob certified packets (~$12–15 each): Phase 1 is letter + ID docs; Phase 2 adds the response, return receipt, and prior letter. No score guarantees. Accurate negatives can stay.
           </p>
         </div>
       </section>

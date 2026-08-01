@@ -53,7 +53,7 @@ export default function CampaignWizard() {
         <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Campaign wizard</p>
         <h1 className="fw-display mt-2 text-3xl font-bold md:text-4xl">Dispute at the source</h1>
         <p className="mt-2 text-[var(--fw-muted)]">
-          {mailCredits} mail credit{mailCredits === 1 ? '' : 's'} available on your plan
+          {mailCredits} mail credit{mailCredits === 1 ? '' : 's'} available · ~$12–15 Lob per Phase 1 or Phase 2 packet
         </p>
       </div>
 

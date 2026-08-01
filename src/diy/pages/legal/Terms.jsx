@@ -53,8 +53,11 @@ export default function Terms() {
       <p>
         Paid plans, mail credits, and fees are described at checkout and on the pricing page. Unless required
         by law, fees are non-refundable once a billing period begins, except where a promotion or statutory
-        right (including any applicable cancellation right) says otherwise. Mail credits represent prepaid
-        fulfillment capacity and may expire as disclosed in-product. Demo mode does not charge a card.
+        right (including any applicable cancellation right) says otherwise. One mail credit equals one
+        certified mail packet fulfilled through our print-mail provider (typically about $12–$15 of provider
+        cost with enclosures). Phase 1 packets include the dispute letter and identity documents; Phase 2
+        packets may also include furnisher responses, return receipts, and prior letters. Credits may expire
+        as disclosed in-product. Demo mode does not charge a card.
       </p>
 
       <h2 className="fw-display !mt-10 text-2xl font-bold text-[var(--fw-ink)]">7. Acceptable use</h2>

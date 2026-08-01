@@ -6,9 +6,10 @@ import {
   DEMO_USER,
   PRICING_PLANS,
 } from './demoData';
+import { CREDIT_PACKS } from './mailEconomics';
 import { getFieldworkStatus, fieldworkCloudEnabled } from './api';
 
-const STORAGE_KEY = 'fieldwork-saas-v2';
+const STORAGE_KEY = 'fieldwork-saas-v3';
 
 const FieldworkContext = createContext(null);
 
@@ -158,6 +159,22 @@ export function FieldworkProvider({ children }) {
     ]);
   }, []);
 
+  const buyCreditPack = useCallback((packId) => {
+    const pack = CREDIT_PACKS.find((p) => p.id === packId);
+    if (!pack) return;
+    setMailCredits((c) => c + pack.credits);
+    setBillingHistory((prev) => [
+      {
+        id: `inv_${Date.now()}`,
+        date: new Date().toISOString().slice(0, 10),
+        label: `Mail credit pack · ${pack.label}`,
+        amount: pack.price,
+        status: 'Paid (demo)',
+      },
+      ...prev,
+    ]);
+  }, []);
+
   const completeMail = useCallback((newLetters) => {
     const cost = newLetters.length;
     setMailCredits((c) => Math.max(0, c - cost));
@@ -203,6 +220,7 @@ export function FieldworkProvider({ children }) {
     resetAll,
     completeUpload,
     changePlan,
+    buyCreditPack,
     completeMail,
     startNewCampaign,
     runtime,

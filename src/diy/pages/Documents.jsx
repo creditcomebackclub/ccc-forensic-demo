@@ -9,7 +9,7 @@ export default function Documents() {
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Documents</p>
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Evidence vault</h1>
       <p className="mt-3 text-lg text-[var(--fw-muted)]">
-        ID, proof of address, reports, and furnisher responses. Letters enclose ID + address — never your full credit report.
+        Keep ID, proof of address, furnisher responses, and return receipts here. Phase 1 packets enclose letter + ID + address. Phase 2 adds the response, certified receipt, and your prior Phase 1 letter — never the full credit report.
       </p>
 
       <button

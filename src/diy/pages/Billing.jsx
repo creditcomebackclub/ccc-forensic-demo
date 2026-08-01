@@ -1,16 +1,17 @@
 import { Check } from 'lucide-react';
 import { PRICING_PLANS } from '../demoData';
+import { CREDIT_PACKS, formatCreditCostRange, MAIL_PHASES } from '../mailEconomics';
 import { useFieldwork } from '../state';
 
 export default function Billing() {
-  const { planId, plan, mailCredits, changePlan, billingHistory } = useFieldwork();
+  const { planId, plan, mailCredits, changePlan, buyCreditPack, billingHistory } = useFieldwork();
 
   return (
     <div className="mx-auto max-w-5xl">
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Billing</p>
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Plan & credits</h1>
       <p className="mt-3 max-w-2xl text-lg text-[var(--fw-muted)]">
-        Simulated Stripe subscription. In production: Checkout + Customer Portal, metered or bundled Lob postage, invoice history.
+        Mail credits are priced against real Lob certified packets ({formatCreditCostRange()} with enclosures) — not fantasy postage.
       </p>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -23,9 +24,25 @@ export default function Billing() {
           <div className="fw-mono text-[10px] uppercase tracking-wider text-[var(--fw-muted)]">Mail credits remaining</div>
           <div className="fw-display mt-2 text-4xl font-bold">{mailCredits}</div>
           <div className="mt-1 text-sm text-[var(--fw-muted)]">
-            Resets to {plan.mailCredits} on renew (demo: switching plans refills)
+            Includes {plan.mailCredits} / month · 1 credit = 1 Phase 1 or Phase 2 packet
           </div>
         </div>
+      </div>
+
+      <div className="mt-8 grid gap-4 md:grid-cols-2">
+        {Object.values(MAIL_PHASES).map((p) => (
+          <div key={p.id} className="rounded-lg border border-[var(--fw-line)] bg-white p-5">
+            <div className="fw-mono text-[10px] uppercase tracking-wider text-[var(--fw-sea)]">{p.label}</div>
+            <div className="fw-display mt-1 text-xl font-bold">{p.title}</div>
+            <p className="mt-2 text-sm text-[var(--fw-muted)]">{p.blurb}</p>
+            <ul className="mt-3 space-y-1 text-sm text-[var(--fw-ink)]/80">
+              {p.enclosures.map((e) => (
+                <li key={e.id}>▸ {e.name}</li>
+              ))}
+            </ul>
+            <div className="mt-3 text-xs font-semibold text-[var(--fw-sea)]">{p.credits} credit · {p.costHint}</div>
+          </div>
+        ))}
       </div>
 
       <div className="mt-10 grid gap-4 lg:grid-cols-3">
@@ -63,6 +80,28 @@ export default function Billing() {
             </div>
           );
         })}
+      </div>
+
+      <div className="mt-12">
+        <h2 className="fw-display text-2xl font-bold">Top up credits</h2>
+        <p className="mt-2 text-sm text-[var(--fw-muted)]">
+          Need more sends mid-cycle? Packs are priced near Lob pass-through (~$14–15 / credit).
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          {CREDIT_PACKS.map((pack) => (
+            <div key={pack.id} className="rounded-lg border border-[var(--fw-line)] bg-white p-4">
+              <div className="fw-display text-xl font-bold">{pack.label}</div>
+              <div className="mt-1 text-sm text-[var(--fw-muted)]">{pack.credits} credits · ${pack.price}</div>
+              <button
+                type="button"
+                onClick={() => buyCreditPack(pack.id)}
+                className="fw-btn-ink mt-4 w-full !py-2 text-sm"
+              >
+                Add pack (demo)
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="mt-12">

@@ -8,8 +8,9 @@ const https = require('https');
 const { requireFieldworkUser, getOrCreateSubscriber, fwRest, json } = require('./_fieldworkAuth.cjs');
 const { fieldworkStripe, fieldworkSupabase } = require('./_fieldworkEnv.cjs');
 
-const PLAN_CREDITS = { starter: 3, pro: 12, unlimited: 30 };
-const PLAN_AMOUNT = { starter: 2900, pro: 5900, unlimited: 9900 };
+// Credits sized for real Lob packets (~$12–15 with Phase 1/2 enclosures).
+const PLAN_CREDITS = { starter: 2, pro: 5, unlimited: 10 };
+const PLAN_AMOUNT = { starter: 3900, pro: 7900, unlimited: 12900 };
 
 function stripeForm(path, secretKey, params) {
   return new Promise((resolve, reject) => {

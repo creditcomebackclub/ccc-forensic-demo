@@ -85,7 +85,7 @@ async function getOrCreateSubscriber(caller, profile = {}) {
   }
 
   const planId = profile.plan_id || 'pro';
-  const credits = planId === 'starter' ? 3 : planId === 'unlimited' ? 30 : 12;
+  const credits = planId === 'starter' ? 2 : planId === 'unlimited' ? 10 : 5;
   const row = {
     user_id: caller.userId,
     email: profile.email || caller.email,

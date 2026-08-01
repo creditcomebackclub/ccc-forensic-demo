@@ -45,14 +45,23 @@ export default function TrackStep({ user, mailed, onBackHome }) {
                 </div>
               </div>
               <div className="rounded bg-[var(--fw-paper)] px-3 py-2.5 text-sm">
-                <div className="fw-mono text-[10px] uppercase text-[var(--fw-muted)]">Issues cited</div>
-                <div className="mt-0.5 font-medium">{letter.violationCount}</div>
+                <div className="fw-mono text-[10px] uppercase text-[var(--fw-muted)]">Packet</div>
+                <div className="mt-0.5 font-medium">
+                  {letter.phase === 'phase2' ? 'Phase 2' : 'Phase 1'}
+                  {letter.estimatedLobCostUsd ? ` · ~$${letter.estimatedLobCostUsd}` : ''}
+                </div>
               </div>
             </div>
 
+            {letter.enclosures?.length > 0 && (
+              <p className="mt-3 text-xs text-[var(--fw-muted)]">
+                Enclosed: {letter.enclosures.join(' · ')}
+              </p>
+            )}
+
             <div className="mt-4 flex items-center gap-2 text-sm text-[var(--fw-muted)]">
               <Package size={15} className="text-[var(--fw-sea)]" />
-              Lob certified · return receipt will attach when delivered (demo)
+              Lob certified · 1 credit burned · return receipt attaches when delivered (demo)
             </div>
           </motion.article>
         ))}
