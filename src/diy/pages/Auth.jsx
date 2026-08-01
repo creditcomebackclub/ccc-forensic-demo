@@ -24,7 +24,7 @@ export default function Auth() {
         </div>
         <h1 className="fw-display mt-6 text-4xl font-bold leading-tight">Create your workspace</h1>
         <p className="mt-3 text-white/65">
-          Standalone DIY SaaS demo — pick a plan, no card charged. Jump into the subscriber app.
+          Pick a plan and jump in. This demo doesn’t charge a card — you’ll land in the full app with a sample audit ready to run.
         </p>
 
         <form
