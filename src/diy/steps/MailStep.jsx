@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, CheckCircle2, Loader2, Package } from 'lucide-react';
 import { estimatePostageUsd, formatCreditCostRange, MAIL_PHASES } from '../mailEconomics';
-import { buildFieldworkLetter } from '../adapters/buildFieldworkLetter';
+import { buildFieldworkLetter, fieldworkLetterPlainExcerpt } from '../adapters/buildFieldworkLetter';
+import { isFieldworkLetterHtml } from '../adapters/fieldworkLetterCss';
 import { generateFieldworkLetter, getFieldworkStatus } from '../api';
 
 export default function MailStep({ user, audit, selectedIds, mailCredits = 99, onComplete }) {
@@ -104,8 +105,9 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
         etaDays: 30,
         violationCount: account.violations.length,
         estimatedLobCostUsd: phaseId === 'phase2' ? 15 : 14,
-        preview: body.slice(0, 200),
+        preview: fieldworkLetterPlainExcerpt(body, 200),
         body,
+        format: 'html',
       };
     });
     setSentFlash(true);
@@ -189,7 +191,7 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
           ))}
         </div>
 
-        <div className="rounded-lg border border-[var(--fw-line)] bg-white">
+        <div className="overflow-hidden rounded-lg border border-[var(--fw-line)] bg-white">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--fw-line)] px-4 py-3">
             <div className="fw-mono text-[11px] uppercase tracking-wider text-[var(--fw-muted)]">
               Letter preview · {active.furnisher}
@@ -198,9 +200,18 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
               {phase.enclosures.length} enclosures · {formatCreditCostRange()} Lob
             </div>
           </div>
-          <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap px-5 py-5 font-[Figtree] text-sm leading-relaxed text-[var(--fw-ink)]">
-            {letter || 'Composing…'}
-          </pre>
+          {isFieldworkLetterHtml(letter) ? (
+            <iframe
+              title={`Letter preview ${active.furnisher}`}
+              srcDoc={letter}
+              className="h-[520px] w-full bg-white"
+              sandbox=""
+            />
+          ) : (
+            <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap px-5 py-5 font-[Figtree] text-sm leading-relaxed text-[var(--fw-ink)]">
+              {letter || 'Composing…'}
+            </pre>
+          )}
         </div>
       </div>
 

@@ -1,13 +1,15 @@
 /**
- * Fieldwork letter — CCC forensic logic, Fieldwork plain-text skin.
+ * Fieldwork letter — CCC forensic logic, Fieldwork HTML (id tables, unique skin).
  * FIELDWORK_ANTHROPIC_API_KEY only.
- *
- * POST: { user, account, phaseId?, tone? }
- * Returns: { letter: string, mode: 'engine' }
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { getFieldworkLetterSystemPrompt } from '../../src/prompts/fieldworkLetterPrompt.js';
 import { buildFieldworkLetter } from '../../src/diy/adapters/buildFieldworkLetter.js';
+import {
+  FIELDWORK_LETTER_CSS,
+  wrapFieldworkLetterHtml,
+  isFieldworkLetterHtml,
+} from '../../src/diy/adapters/fieldworkLetterCss.js';
 
 const MODEL = 'claude-sonnet-5';
 
@@ -17,6 +19,24 @@ function json(status, body) {
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     body: JSON.stringify(body),
   };
+}
+
+function injectFieldworkCss(html) {
+  if (!html) return html;
+  let out = html.trim();
+  // Strip any model-supplied style blocks — we own the skin
+  out = out.replace(/<style[\s\S]*?<\/style>/gi, '');
+  if (out.includes('</head>')) {
+    out = out.replace('</head>', `<style>${FIELDWORK_LETTER_CSS}</style></head>`);
+  } else if (out.includes('<body>')) {
+    out = out.replace('<body>', `<head><meta charset="UTF-8"><style>${FIELDWORK_LETTER_CSS}</style></head><body>`);
+  } else if (isFieldworkLetterHtml(out) || /<table/i.test(out)) {
+    out = wrapFieldworkLetterHtml(out);
+  } else {
+    // Plain text from model → keep deterministic Fieldwork builder instead
+    return null;
+  }
+  return out;
 }
 
 export const handler = async (event) => {
@@ -36,15 +56,14 @@ export const handler = async (event) => {
     return json(400, { error: 'user + account with violations required' });
   }
 
-  const anthropicKey = process.env.FIELDWORK_ANTHROPIC_API_KEY;
-
-  // Always have a Fieldwork-styled deterministic fallback (same look as demo)
   const fallback = buildFieldworkLetter(user, account, phaseId);
+  const anthropicKey = process.env.FIELDWORK_ANTHROPIC_API_KEY;
 
   if (!anthropicKey) {
     return json(200, {
       product: 'fieldwork',
       mode: 'local',
+      format: 'html',
       usesCccKeys: false,
       letter: fallback,
     });
@@ -60,17 +79,18 @@ export const handler = async (event) => {
     const accountPayload = account.cccRaw
       ? {
           ...account.cccRaw,
-          // ensure Fieldwork display fields available too
           accountMask: account.accountMask,
           whyFurnisherFirst: account.whyFurnisherFirst,
           violations: account.violations,
+          typeLabel: account.typeLabel,
+          bureaus: account.bureaus,
         }
       : account;
 
     const instructions = [
       `Today is ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.`,
       `Phase: ${phaseId}.`,
-      'Generate ONE plain-text Fieldwork dispute letter.',
+      'Generate ONE Fieldwork HTML dispute letter with id-table, list-table, and demands-table.',
       '',
       'Consumer (sender of record):',
       JSON.stringify(user, null, 2),
@@ -81,7 +101,7 @@ export const handler = async (event) => {
 
     const msg = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 8000,
+      max_tokens: 10000,
       system: getFieldworkLetterSystemPrompt(tone),
       messages: [{ role: 'user', content: instructions }],
     });
@@ -92,15 +112,17 @@ export const handler = async (event) => {
       .join('\n')
       .trim();
 
-    // Strip accidental fences / HTML
-    letter = letter.replace(/^```(?:text|plaintext)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    if (/<html|<table|DOCTYPE/i.test(letter) || letter.length < 200) {
+    letter = letter.replace(/^```(?:html)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    letter = injectFieldworkCss(letter);
+
+    if (!letter || letter.length < 400 || !/id-table/i.test(letter)) {
       letter = fallback;
     }
 
     return json(200, {
       product: 'fieldwork',
-      mode: 'engine',
+      mode: letter === fallback ? 'local-fallback' : 'engine',
+      format: 'html',
       usesCccKeys: false,
       letter,
     });
@@ -109,9 +131,10 @@ export const handler = async (event) => {
     return json(200, {
       product: 'fieldwork',
       mode: 'local-fallback',
+      format: 'html',
       usesCccKeys: false,
       letter: fallback,
-      warning: err.message || 'Engine failed; used Fieldwork local letter builder',
+      warning: err.message || 'Engine failed; used Fieldwork HTML builder',
     });
   }
 };

@@ -31,7 +31,7 @@ Fieldwork **reuses CCC forensic logic** (prompts, schemas, DOFD/balance guards) 
 | Audit brain | `masterPrompt` + `auditSchemas` + guards | `fieldwork-audit-run.mjs` via `FIELDWORK_ANTHROPIC_API_KEY` |
 | UI findings | Staff blue/gold screens | DIY cards (`AuditStep`) via `adaptCccAuditToFieldwork` |
 | Letter brain | Legal boundaries / Metro 2 substance | `fieldworkLetterPrompt` + `buildFieldworkLetter` |
-| Letter skin | Navy/gold HTML tables | Plain-text Fieldwork preview (`<pre>`) |
+| Letter skin | Navy/gold CCC chrome | Fieldwork HTML: id-table / list-table / demands-table in sea/ink/signal CSS |
 
 - `POST fieldwork-audit-run` → CCC-shaped analysis → adapted Fieldwork audit JSON  
 - `POST fieldwork-generate-letter` → Fieldwork plain letter (engine or local builder)  
