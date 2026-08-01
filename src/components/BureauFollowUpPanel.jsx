@@ -103,7 +103,9 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
 
   useEffect(() => {
     runDraft();
-  }, [runKey, runDraft]);
+    // Only re-run when staff clicks Retry (runKey), not when parent re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runKey]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50" onClick={(e) => { if (e.target === e.currentTarget && phase !== 'running') onClose(); }}>
