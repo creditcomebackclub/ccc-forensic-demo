@@ -1,0 +1,104 @@
+import { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { FileUp, Sparkles } from 'lucide-react';
+import { ANALYZE_STEPS } from '../demoData';
+
+export default function UploadStep({ onComplete }) {
+  const [phase, setPhase] = useState('idle'); // idle | analyzing
+  const [stepIdx, setStepIdx] = useState(0);
+  const [dragOver, setDragOver] = useState(false);
+
+  useEffect(() => {
+    if (phase !== 'analyzing') return undefined;
+    if (stepIdx >= ANALYZE_STEPS.length) {
+      const t = setTimeout(onComplete, 600);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => setStepIdx((s) => s + 1), 900);
+    return () => clearTimeout(t);
+  }, [phase, stepIdx, onComplete]);
+
+  const start = () => {
+    setPhase('analyzing');
+    setStepIdx(0);
+  };
+
+  return (
+    <div className="mx-auto max-w-2xl">
+      <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Step 01 · Upload</p>
+      <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Drop your credit report</h1>
+      <p className="mt-3 text-lg text-[var(--fw-muted)]">
+        PrivacyGuard, IdentityIQ, or any 3-bureau PDF/HTML export. This demo runs a canned forensic sample so you can feel the product instantly.
+      </p>
+
+      <AnimatePresence mode="wait">
+        {phase === 'idle' ? (
+          <motion.div
+            key="idle"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="mt-10"
+          >
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                start();
+              }}
+              className={`relative overflow-hidden rounded-lg border-2 border-dashed px-6 py-16 text-center transition ${
+                dragOver
+                  ? 'border-[var(--fw-signal-dim)] bg-[rgba(46,230,166,0.08)]'
+                  : 'border-[var(--fw-line)] bg-white'
+              }`}
+            >
+              <div className="absolute inset-0 fw-field-scan opacity-60 pointer-events-none" />
+              <FileUp className="relative mx-auto text-[var(--fw-sea)]" size={36} strokeWidth={1.5} />
+              <p className="relative mt-4 text-lg font-semibold">Drag & drop a report</p>
+              <p className="relative mt-1 text-sm text-[var(--fw-muted)]">PDF, HTML, or TXT · demo accepts anything</p>
+              <button type="button" onClick={start} className="fw-btn-ink relative mt-8">
+                <Sparkles size={16} /> Use sample 3-bureau report
+              </button>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="analyzing"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative mt-10 overflow-hidden rounded-lg bg-[var(--fw-ink)] px-6 py-14 text-white"
+          >
+            <div className="pointer-events-none absolute inset-0 fw-grid-overlay opacity-80" />
+            <div className="fw-scan-line pointer-events-none absolute inset-x-8 h-16 bg-gradient-to-b from-transparent via-[rgba(46,230,166,0.25)] to-transparent" />
+            <div className="relative">
+              <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-signal)]">Analyzing</p>
+              <h2 className="fw-display mt-3 text-3xl font-bold">Running furnisher-first audit…</h2>
+              <ul className="mt-8 space-y-3">
+                {ANALYZE_STEPS.map((label, i) => {
+                  const done = i < stepIdx;
+                  const active = i === stepIdx;
+                  return (
+                    <li
+                      key={label}
+                      className={`flex items-center gap-3 text-sm transition ${
+                        done ? 'text-[var(--fw-signal)]' : active ? 'text-white' : 'text-white/30'
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${done || active ? 'bg-[var(--fw-signal)]' : 'bg-white/20'}`} />
+                      {label}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

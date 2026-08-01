@@ -4,6 +4,17 @@ An internal operations platform and client portal for Credit Comeback Club. It s
 
 > This software supports an operational workflow; it is not legal advice. Configure and use it in accordance with applicable credit-repair, privacy, consumer-protection, and data-security requirements.
 
+## DIY product demo (Fieldwork)
+
+A separate consumer-facing demo lives at **`/diy.html`** (deployed as `/diy`):
+
+```bash
+npm run dev
+# open http://localhost:5173/diy.html
+```
+
+**Fieldwork** is a clickable DIY SaaS prototype — landing, sample Metro 2 / FCRA audit, dispute selection, Lob-shaped mail, and tracking — powered by demo data (no auth/backend required). It showcases a furnisher-first product shell on top of the forensic methodology in this repo.
+
 ## What is built
 
 ### Staff operations

@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { resolve } from 'path';
 
 export default defineConfig({
   plugins: [
@@ -16,8 +17,8 @@ export default defineConfig({
         // explicitly excluded gets served the cached index.html) hijacks
         // them for any browser that already has the SW installed, showing
         // the app shell instead of the real page.
-        navigateFallbackDenylist: [/^\/freeguide/, /^\/home/, /^\/join/, /^\/terms/, /^\/privacy/, /^\/success/, /^\/sign-lpoa/, /^\/downloads\//],
-        globIgnores: ['**/freeguide.html', '**/home.html', '**/join.html', '**/terms.html', '**/privacy.html', '**/success.html', '**/sign-lpoa.html', 'downloads/**'],
+        navigateFallbackDenylist: [/^\/freeguide/, /^\/home/, /^\/join/, /^\/terms/, /^\/privacy/, /^\/success/, /^\/sign-lpoa/, /^\/diy/, /^\/downloads\//],
+        globIgnores: ['**/freeguide.html', '**/home.html', '**/join.html', '**/terms.html', '**/privacy.html', '**/success.html', '**/sign-lpoa.html', '**/diy.html', 'downloads/**'],
       },
       manifest: {
         name: 'Credit Comeback Club',
@@ -47,8 +48,17 @@ export default defineConfig({
       }
     })
   ],
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        diy: resolve(__dirname, 'diy.html'),
+      },
+    },
+  },
   server: {
     port: 5173,
+    host: true,
     proxy: {
       // For local dev: proxy /api requests to netlify dev server (port 8888)
       '/api': {
