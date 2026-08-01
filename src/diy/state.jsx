@@ -17,7 +17,8 @@ import {
   getFieldworkStatus,
 } from './api';
 
-const STORAGE_KEY = 'fieldwork-saas-v3';
+// v4: clears stale Campaign mail=10 localStorage from before audit/expert caps.
+const STORAGE_KEY = 'fieldwork-saas-v4';
 
 const FieldworkContext = createContext(null);
 
@@ -339,7 +340,7 @@ export function FieldworkProvider({ children }) {
     });
   }, []);
 
-  const changePlan = useCallback((nextId) => {
+  const changePlan = useCallback(async (nextId) => {
     const next = planById(nextId);
     setPlanId(next.id);
     setMailCredits(next.mailCredits);
@@ -355,7 +356,13 @@ export function FieldworkProvider({ children }) {
       },
       ...prev,
     ]);
-  }, []);
+
+    // Persist plan + included credits to Fieldwork Supabase (not local-only).
+    if (fieldworkCloudEnabled) {
+      const snap = await bootstrapFieldwork({ plan_id: next.id });
+      if (snap?.subscriber) applyBootstrap(snap, user || {});
+    }
+  }, [applyBootstrap, user]);
 
   const buyCreditPack = useCallback((packId) => {
     const pack = CREDIT_PACKS.find((p) => p.id === packId);

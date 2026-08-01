@@ -5,6 +5,8 @@ import { useFieldwork } from '../state';
 
 export default function Billing() {
   const { planId, plan, mailCredits, auditCredits, expertChatCredits, changePlan, buyCreditPack, billingHistory } = useFieldwork();
+  const [switching, setSwitching] = useState(null);
+  const [switchError, setSwitchError] = useState('');
 
   return (
     <div className="mx-auto max-w-5xl">
