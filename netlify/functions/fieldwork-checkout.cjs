@@ -10,7 +10,7 @@ const { fieldworkStripe, fieldworkSupabase } = require('./_fieldworkEnv.cjs');
 
 // Credits sized for real Lob packets (~$12–15 with Phase 1/2 enclosures).
 const PLAN_CREDITS = { starter: 2, pro: 5, unlimited: 10 };
-const PLAN_AMOUNT = { starter: 3900, pro: 7900, unlimited: 12900 };
+const PLAN_AMOUNT = { starter: 4900, pro: 9900, unlimited: 14900 };
 
 function stripeForm(path, secretKey, params) {
   return new Promise((resolve, reject) => {
