@@ -242,7 +242,7 @@ export const PRICING_PLANS = [
       'Cross-bureau conflict map',
       'Priority mail queue',
     ],
-    cta: 'This is the one',
+    cta: 'Choose Pro',
     highlight: true,
   },
   {
@@ -257,7 +257,7 @@ export const PRICING_PLANS = [
       'Escalation letter toolkit',
       'Evidence pack you can keep',
     ],
-    cta: 'Go Campaign',
+    cta: 'Choose Campaign',
     highlight: false,
   },
 ];
