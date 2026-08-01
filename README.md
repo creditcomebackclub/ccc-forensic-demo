@@ -6,14 +6,14 @@ An internal operations platform and client portal for Credit Comeback Club. It s
 
 ## DIY product demo (Fieldwork)
 
-A separate consumer-facing demo lives at **`/diy.html`** (deployed as `/diy`):
+A separate **standalone SaaS prototype** lives at **`/diy.html`** (deployed as `/diy`):
 
 ```bash
 npm run dev
 # open http://localhost:5173/diy.html
 ```
 
-**Fieldwork** is a clickable DIY SaaS prototype — landing, sample Metro 2 / FCRA audit, dispute selection, Lob-shaped mail, and tracking — powered by demo data (no auth/backend required). It showcases a furnisher-first product shell on top of the forensic methodology in this repo.
+**Fieldwork** is a clickable DIY credit-repair product — marketing site + subscriber app (dashboard, campaign wizard, campaigns, documents, billing, settings). Hash routes: `#/`, `#/signup`, `#/app`, etc. Demo data + `localStorage` only (no backend). Shows how a consumer SaaS would sit on the forensic / Lob engine while staying separate from the agency Forensic Suite.
 
 ## What is built
 

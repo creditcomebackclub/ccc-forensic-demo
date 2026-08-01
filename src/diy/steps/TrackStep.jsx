@@ -59,12 +59,12 @@ export default function TrackStep({ user, mailed, onBackHome }) {
       </div>
 
       <div className="mt-12 overflow-hidden rounded-lg bg-[var(--fw-ink)] p-8 text-white">
-        <h2 className="fw-display text-3xl font-bold">This is the product feeling.</h2>
+        <h2 className="fw-display text-3xl font-bold">Campaign saved to your workspace</h2>
         <p className="mt-3 max-w-2xl text-white/70">
-          Audit → choose → mail → track, with Metro 2 teeth. In production this hooks the existing CCC forensic jobs, Lob webhooks, and Stripe credits — same engine, consumer shell.
+          In the standalone SaaS, this lands in Campaigns with Lob webhooks updating status. Next: upload responses in Documents, then analyze or escalate.
         </p>
         <button type="button" onClick={onBackHome} className="fw-btn-primary mt-6">
-          Back to landing <ArrowRight size={16} />
+          View campaigns <ArrowRight size={16} />
         </button>
       </div>
     </div>

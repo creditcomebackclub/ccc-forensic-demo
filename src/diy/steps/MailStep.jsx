@@ -32,7 +32,7 @@ Sincerely,
 ${user.name}`;
 }
 
-export default function MailStep({ user, audit, selectedIds, onComplete }) {
+export default function MailStep({ user, audit, selectedIds, mailCredits = 99, onComplete }) {
   const accounts = useMemo(
     () => audit.accounts.filter((a) => selectedIds.includes(a.id)),
     [audit, selectedIds],
@@ -43,13 +43,16 @@ export default function MailStep({ user, audit, selectedIds, onComplete }) {
 
   const active = accounts.find((a) => a.id === activeId) || accounts[0];
   const letter = active ? buildLetterHtml(user, active) : '';
+  const cost = accounts.length;
+  const canAfford = mailCredits >= cost;
 
   const sendAll = async () => {
+    if (!canAfford) return;
     setSending(true);
     await new Promise((r) => setTimeout(r, 1600));
     const now = Date.now();
     const letters = accounts.map((account, i) => ({
-      id: `lob_demo_${account.id}`,
+      id: `lob_demo_${account.id}_${now}`,
       accountId: account.id,
       furnisher: account.furnisher,
       trackingNumber: `9401 1198 9898 ${String(1000000000 + i).slice(0, 10)}`,
@@ -117,10 +120,11 @@ export default function MailStep({ user, audit, selectedIds, onComplete }) {
             Mail {accounts.length} certified letter{accounts.length === 1 ? '' : 's'}
           </div>
           <p className="mt-1 text-sm text-white/60">
-            Est. postage ${(accounts.length * 8.9).toFixed(2)} · charged against Pro mail credits in a live product
+            Costs {cost} credit{cost === 1 ? '' : 's'} · you have {mailCredits}
+            {!canAfford ? ' — upgrade plan to send' : ' · ~$' + (cost * 8.9).toFixed(2) + ' postage value'}
           </p>
         </div>
-        <button type="button" disabled={sending} onClick={sendAll} className="fw-btn-primary min-w-[200px]">
+        <button type="button" disabled={sending || !canAfford} onClick={sendAll} className="fw-btn-primary min-w-[200px]">
           {sending ? (
             <>
               <Loader2 size={16} className="animate-spin" /> Submitting to Lob…

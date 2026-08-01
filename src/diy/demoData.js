@@ -218,6 +218,7 @@ export const PRICING_PLANS = [
     id: 'starter',
     name: 'Starter',
     price: 29,
+    mailCredits: 3,
     blurb: 'One audit cycle and your first certified letters.',
     features: ['Full Metro 2 / FCRA audit', '3 certified letters / mo', 'Furnisher-first letter studio', 'Delivery tracking'],
     cta: 'Start Starter',
@@ -227,6 +228,7 @@ export const PRICING_PLANS = [
     id: 'pro',
     name: 'Pro',
     price: 59,
+    mailCredits: 12,
     blurb: 'For active campaigns — response analysis included.',
     features: ['Everything in Starter', '12 certified letters / mo', 'Response analyzer', 'Cross-bureau conflict map', 'Priority letter queue'],
     cta: 'Go Pro',
@@ -236,6 +238,7 @@ export const PRICING_PLANS = [
     id: 'unlimited',
     name: 'Campaign',
     price: 99,
+    mailCredits: 30,
     blurb: 'Heavy hitters running multi-furnisher waves.',
     features: ['Unlimited audits', '30 certified letters / mo', 'Phase-ready escalations toolkit', 'Exportable evidence pack'],
     cta: 'Run Campaign',
@@ -243,9 +246,33 @@ export const PRICING_PLANS = [
   },
 ];
 
+export const DEFAULT_PLAN_ID = 'pro';
+
 export const ANALYZE_STEPS = [
   'Reading bureau segments…',
   'Mapping Metro 2 base fields…',
   'Checking DOFD / CCC / balance integrity…',
   'Surfacing furnisher-first dispute targets…',
+];
+
+export const DEMO_DOCUMENTS = [
+  { id: 'doc_id', name: 'Drivers_License_front.pdf', kind: 'Photo ID', uploadedAt: '2026-07-28T16:00:00Z' },
+  { id: 'doc_addr', name: 'Utility_bill_July2026.pdf', kind: 'Proof of address', uploadedAt: '2026-07-28T16:02:00Z' },
+  { id: 'doc_report', name: 'PrivacyGuard_3bureau_sample.pdf', kind: 'Credit report', uploadedAt: '2026-08-01T14:20:00Z' },
+];
+
+/** How Fieldwork works as a standalone service (product architecture copy). */
+export const STANDALONE_PILLARS = [
+  {
+    title: 'Consumer SaaS, not an agency desk',
+    body: 'You subscribe, upload, decide, and mail in your own name. No LPOA. Fieldwork is the forensic toolkit — you stay the sender of record.',
+  },
+  {
+    title: 'Shared engine, separate product',
+    body: 'Audits, letter drafting, and Lob fulfillment reuse the same Metro 2 / FCRA pipeline built for ops — wrapped in a consumer app with Stripe credits and ownership-based access.',
+  },
+  {
+    title: 'Campaigns you can run yourself',
+    body: 'Each wave is a campaign: audit → select → certified mail → 30-day clocks → response upload. Upgrade plans when you need more mail credits or response analysis.',
+  },
 ];

@@ -1,6 +1,8 @@
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowRight, BadgeCheck, Crosshair, FileSearch, Mail, Shield } from 'lucide-react';
-import { PRICING_PLANS } from '../demoData';
+import { PRICING_PLANS, STANDALONE_PILLARS } from '../demoData';
+import { useFieldwork } from '../state';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 22 },
@@ -11,15 +13,15 @@ const fadeUp = {
   }),
 };
 
-export default function Landing({ onStart, onEnterApp }) {
+export default function Landing() {
+  const { user } = useFieldwork();
+
   return (
     <div className="min-h-screen text-white">
-      {/* HERO — one composition, brand-first, full-bleed atmosphere */}
       <section className="relative min-h-[100svh] overflow-hidden fw-atmosphere">
         <div className="absolute inset-0 fw-grid-overlay pointer-events-none" />
         <div className="absolute inset-0 fw-field-scan pointer-events-none" />
 
-        {/* Animated scan accent */}
         <div className="pointer-events-none absolute inset-x-0 top-0 h-full overflow-hidden opacity-40">
           <div className="fw-scan-line absolute left-[12%] right-[12%] h-24 bg-gradient-to-b from-transparent via-[rgba(46,230,166,0.2)] to-transparent" />
         </div>
@@ -29,14 +31,15 @@ export default function Landing({ onStart, onEnterApp }) {
             Fieldwork<span className="text-[var(--fw-signal)]">.</span>
           </div>
           <div className="flex items-center gap-3 text-sm">
-            {onEnterApp && (
-              <button type="button" onClick={onEnterApp} className="fw-btn-ghost !py-2 !px-3 text-sm">
-                Open workspace
-              </button>
+            {user ? (
+              <Link to="/app" className="fw-btn-primary !py-2 !px-3 text-sm">
+                Open app
+              </Link>
+            ) : (
+              <Link to="/signup" className="fw-btn-primary !py-2 !px-3 text-sm">
+                Try the demo
+              </Link>
             )}
-            <button type="button" onClick={onStart} className="fw-btn-primary !py-2 !px-3 text-sm">
-              Try the demo
-            </button>
           </div>
         </header>
 
@@ -48,7 +51,7 @@ export default function Landing({ onStart, onEnterApp }) {
             animate="show"
             custom={0}
           >
-            Furnisher-first credit repair
+            Standalone DIY credit repair
           </motion.p>
           <motion.h1
             className="fw-display max-w-4xl text-[clamp(3.2rem,9vw,6.4rem)] font-extrabold text-white"
@@ -68,7 +71,7 @@ export default function Landing({ onStart, onEnterApp }) {
             animate="show"
             custom={2}
           >
-            Upload your report. Get a Metro 2 / FCRA field audit. Choose disputes. Mail certified letters — without handing your case to an agency.
+            A subscriber app — not an agency desk. Upload your report, get a Metro 2 / FCRA audit, choose disputes, mail certified letters in your name, track the clocks.
           </motion.p>
           <motion.div
             className="mt-10 flex flex-wrap items-center gap-4"
@@ -77,18 +80,57 @@ export default function Landing({ onStart, onEnterApp }) {
             animate="show"
             custom={3}
           >
-            <button type="button" onClick={onStart} className="fw-btn-primary text-base">
-              Run a sample audit <ArrowRight size={18} />
-            </button>
-            <a href="#method" className="fw-btn-ghost text-base">
-              See the method
+            <Link to={user ? '/app' : '/signup'} className="fw-btn-primary text-base">
+              {user ? 'Open workspace' : 'Launch the app'} <ArrowRight size={18} />
+            </Link>
+            <a href="#product" className="fw-btn-ghost text-base">
+              How the service works
             </a>
           </motion.div>
         </div>
       </section>
 
-      {/* METHOD */}
-      <section id="method" className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
+      {/* STANDALONE PRODUCT */}
+      <section id="product" className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
+        <div className="mx-auto max-w-6xl">
+          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">As a standalone service</p>
+          <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
+            Marketing site out front. Subscriber app behind the login.
+          </h2>
+          <p className="mt-5 max-w-2xl text-lg text-[var(--fw-muted)]">
+            Fieldwork would ship as its own product surface — own domain, Stripe billing, consumer auth — while reusing the forensic/Lob engine from the CCC ops suite. Agency retainers stay a separate business.
+          </p>
+
+          <div className="mt-14 grid gap-10 md:grid-cols-3">
+            {STANDALONE_PILLARS.map((p) => (
+              <div key={p.title} className="border-t border-[var(--fw-line)] pt-6">
+                <h3 className="fw-display text-2xl font-bold">{p.title}</h3>
+                <p className="mt-3 leading-relaxed text-[var(--fw-muted)]">{p.body}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Architecture sketch */}
+          <div className="mt-14 overflow-hidden rounded-lg bg-[var(--fw-ink)] p-6 text-white md:p-8">
+            <div className="fw-mono text-[11px] uppercase tracking-[0.2em] text-[var(--fw-signal)]">Runtime shape</div>
+            <div className="mt-6 grid gap-4 font-[Figtree] text-sm md:grid-cols-4">
+              {[
+                { t: 'App', d: 'React SaaS · dashboard, campaigns, billing' },
+                { t: 'Auth + data', d: 'Supabase Auth · per-user RLS · document vault' },
+                { t: 'Engine', d: 'Audit / letter jobs · Metro 2 prompts · Anthropic' },
+                { t: 'Fulfillment', d: 'Lob certified mail · webhooks · Stripe credits' },
+              ].map((col) => (
+                <div key={col.t} className="rounded border border-white/10 bg-white/5 px-4 py-4">
+                  <div className="fw-display text-lg font-bold">{col.t}</div>
+                  <p className="mt-2 text-white/60">{col.d}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="method" className="bg-white px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto max-w-6xl">
           <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Why furnishers first</p>
           <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
@@ -126,7 +168,6 @@ export default function Landing({ onStart, onEnterApp }) {
         </div>
       </section>
 
-      {/* AUDIT PREVIEW STRIP */}
       <section className="bg-[var(--fw-ink)] px-6 py-24 text-white md:px-8">
         <div className="mx-auto grid max-w-6xl items-center gap-12 lg:grid-cols-2">
           <div>
@@ -186,13 +227,12 @@ export default function Landing({ onStart, onEnterApp }) {
         </div>
       </section>
 
-      {/* PRICING */}
       <section id="pricing" className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto max-w-6xl">
           <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Pricing</p>
           <h2 className="fw-display mt-3 text-4xl font-bold md:text-5xl">Software that earns its keep.</h2>
           <p className="mt-4 max-w-xl text-lg text-[var(--fw-muted)]">
-            Agency retainers run $79–$149/mo and they own the playbook. Fieldwork puts the forensic workflow in your hands — demo billing is simulated.
+            Subscribe for audits + mail credits. Agency retainers run higher and they own the playbook — Fieldwork puts the forensic workflow in your hands.
           </p>
 
           <div className="mt-12 grid gap-5 lg:grid-cols-3">
@@ -219,13 +259,12 @@ export default function Landing({ onStart, onEnterApp }) {
                     </li>
                   ))}
                 </ul>
-                <button
-                  type="button"
-                  onClick={onStart}
-                  className={`mt-8 w-full ${plan.highlight ? 'fw-btn-primary' : 'fw-btn-ink'}`}
+                <Link
+                  to="/signup"
+                  className={`mt-8 w-full text-center ${plan.highlight ? 'fw-btn-primary' : 'fw-btn-ink'}`}
                 >
                   {plan.cta}
-                </button>
+                </Link>
               </div>
             ))}
           </div>
@@ -237,12 +276,12 @@ export default function Landing({ onStart, onEnterApp }) {
           <div>
             <div className="fw-display text-xl text-white">Fieldwork.</div>
             <p className="mt-2 max-w-md">
-              Demo product concept from the CCC forensic engine. Not legal advice. You are responsible for the accuracy of disputes you send.
+              Standalone DIY product concept on the CCC forensic engine. Not legal advice. You are responsible for the accuracy of disputes you send.
             </p>
           </div>
-          <button type="button" onClick={onStart} className="fw-btn-primary self-start">
-            Launch demo <ArrowRight size={16} />
-          </button>
+          <Link to={user ? '/app' : '/signup'} className="fw-btn-primary self-start">
+            {user ? 'Open app' : 'Get started'} <ArrowRight size={16} />
+          </Link>
         </div>
       </footer>
     </div>
