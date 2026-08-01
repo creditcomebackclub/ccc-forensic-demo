@@ -2,7 +2,7 @@
  * Fieldwork HTML dispute letter — CCC forensic substance + Fieldwork skin.
  * Keeps useful ID / violation / demands tables; no CCC navy/gold chrome.
  */
-import { wrapFieldworkLetterHtml } from './fieldworkLetterCss';
+import { wrapFieldworkLetterHtml } from './fieldworkLetterCss.js';
 
 function esc(s) {
   return String(s ?? '')
