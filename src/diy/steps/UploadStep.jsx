@@ -57,6 +57,14 @@ export default function UploadStep({ onComplete }) {
   const startLive = async (file) => {
     setError('');
 
+    if (!engineReady) {
+      // No Fieldwork Anthropic key — keep demo UX with canned findings (no audit credit)
+      setPhase('analyzing');
+      setStepIdx(0);
+      finishSample();
+      return;
+    }
+
     if (auditsLeft < 1) {
       setError(
         `You’ve used all ${plan.auditCredits} forensic audits on ${plan.name} this period. Upgrade for a higher cap, or use the sample report to explore the UI.`,
@@ -66,12 +74,6 @@ export default function UploadStep({ onComplete }) {
 
     setPhase('analyzing');
     setStepIdx(0);
-
-    if (!engineReady) {
-      // No Fieldwork Anthropic key — keep demo UX with canned findings
-      finishSample();
-      return;
-    }
 
     try {
       const base64 = await readFileAsBase64(file);
