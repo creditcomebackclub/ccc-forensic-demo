@@ -18,5 +18,6 @@ e2e-individual-retest.local.mjs
 .claude/settings.local.json
 repomix-output.xml
 
-# Fieldwork reel capture intermediates (regenerate with scripts/render-fieldwork-reel.mjs)
+# Fieldwork reel / walkthrough capture intermediates
 public/videos/reel-frames/
+public/videos/walkthrough-raw/

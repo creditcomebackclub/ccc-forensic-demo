@@ -80,7 +80,7 @@ export default function Landing() {
       </section>
 
       {/* PAIN / RECOGNITION — one job */}
-      <section id="been-here" className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
+      <section id="been-here" className="scroll-mt-6 bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto max-w-6xl">
           <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Sound familiar</p>
           <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
@@ -115,7 +115,7 @@ export default function Landing() {
       </section>
 
       {/* PRODUCT DEMO VIDEO */}
-      <section id="demo" className="bg-[var(--fw-ink)] px-6 py-24 text-white md:px-8">
+      <section id="demo" className="scroll-mt-6 bg-[var(--fw-ink)] px-6 py-24 text-white md:px-8">
         <div className="mx-auto max-w-6xl">
           <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-signal)]">See it</p>
           <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
@@ -147,7 +147,7 @@ export default function Landing() {
       </section>
 
       {/* WHAT CHANGES */}
-      <section id="how" className="bg-white px-6 py-24 text-[var(--fw-ink)] md:px-8">
+      <section id="how" className="scroll-mt-6 bg-white px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto max-w-6xl">
           <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">What&apos;s different</p>
           <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
@@ -269,7 +269,7 @@ export default function Landing() {
       </section>
 
       {/* PRICING */}
-      <section id="pricing" className="bg-white px-6 py-24 text-[var(--fw-ink)] md:px-8">
+      <section id="pricing" className="scroll-mt-6 bg-white px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto max-w-6xl">
           <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Pricing</p>
           <h2 className="fw-display mt-3 text-4xl font-bold md:text-5xl">

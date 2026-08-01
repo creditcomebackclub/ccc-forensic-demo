@@ -1,11 +1,9 @@
 /**
  * Drive the real Fieldwork demo UI and record a product walkthrough MP4.
  * Usage: node scripts/render-fieldwork-walkthrough.mjs
- *
- * Requires: Vite on FIELDWORK_REEL_BASE, Playwright Chromium, ffmpeg.
  */
 import { chromium } from 'playwright';
-import { mkdirSync, existsSync, readdirSync, renameSync, rmSync } from 'fs';
+import { mkdirSync, existsSync, readdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { spawnSync } from 'child_process';
 
@@ -32,10 +30,10 @@ async function smoothScroll(page, y) {
   await page.evaluate(async (targetY) => {
     const start = window.scrollY;
     const dist = targetY - start;
-    const steps = 18;
+    const steps = 16;
     for (let i = 1; i <= steps; i++) {
       window.scrollTo(0, start + (dist * i) / steps);
-      await new Promise((r) => setTimeout(r, 30));
+      await new Promise((r) => setTimeout(r, 28));
     }
   }, y);
 }
@@ -58,72 +56,58 @@ await page.goto(BASE, { waitUntil: 'networkidle' });
 await page.evaluate(() => localStorage.clear());
 await page.goto(`${BASE}#/`, { waitUntil: 'networkidle' });
 await page.evaluate(() => document.fonts.ready);
-await pause(page, 1200);
+await pause(page, 1800);
 
-// Hero beat
-await pause(page, 1600);
-
-// Signup
-await page.getByRole('link', { name: /Try the demo|See what an audit/i }).first().click();
+// Hero → signup
+await page.getByRole('link', { name: /See what an audit looks like/i }).click();
 await page.waitForURL(/#\/signup/);
-await pause(page, 1000);
+await pause(page, 1100);
 
 await page.getByRole('checkbox').check();
-await pause(page, 600);
+await pause(page, 500);
 await page.getByRole('button', { name: /Enter Fieldwork/i }).click();
-await page.waitForURL(/#\/app/);
-await pause(page, 1400);
+await page.waitForURL(/#\/app$/);
+await pause(page, 1500);
 
 // Dashboard → new campaign
-const newCampaign = page.getByRole('link', { name: /New campaign|Start a campaign|Start your first/i }).first();
-if (await newCampaign.count()) {
-  await newCampaign.click();
-} else {
-  await page.getByRole('link', { name: 'New campaign' }).click();
-}
+await page.getByRole('link', { name: /New campaign/i }).first().click();
 await page.waitForURL(/campaign\/new/);
-await pause(page, 1000);
+await pause(page, 1100);
 
-// Upload sample
+// Upload sample + wait for analysis animation
 await page.getByRole('button', { name: /Use sample 3-bureau report/i }).click();
 await page.getByText(/Running furnisher-first audit/i).waitFor();
-// ANALYZE_STEPS × 900ms + buffer
 await pause(page, 5200);
-await page.getByText(/Step 02|Forensic readout|Your file/i).first().waitFor({ timeout: 15000 });
-await pause(page, 1600);
+await page.getByText(/Continue to dispute selection/i).waitFor({ timeout: 20000 });
+await pause(page, 1400);
 
-// Scroll audit findings a bit
-await smoothScroll(page, 420);
-await pause(page, 1200);
-await page.getByRole('button', { name: /Continue|Pick disputes|Select/i }).first().click();
+// Peek findings
+await smoothScroll(page, 480);
+await pause(page, 1400);
+await page.getByRole('button', { name: /Continue to dispute selection/i }).click();
 await pause(page, 1200);
 
-// Select step
+// Select → mail
 await page.getByText(/Pick your disputes/i).waitFor();
-await pause(page, 1000);
-await page.getByRole('button', { name: /Select recommended/i }).click();
 await pause(page, 900);
-await page.getByRole('button', { name: /Continue to mail|Mail/i }).first().click();
+await page.getByRole('button', { name: /Select recommended/i }).click();
+await pause(page, 800);
+await page.getByRole('button', { name: /Compose letters/i }).click();
 await pause(page, 1400);
 
-// Mail step
-await page.getByText(/Step 04|Certified|Lob|Send/i).first().waitFor();
-await smoothScroll(page, 200);
+// Mail via Lob
+await page.getByRole('button', { name: /Send via Lob/i }).waitFor();
+await smoothScroll(page, 260);
 await pause(page, 1400);
-const sendBtn = page.getByRole('button', { name: /Send .*credit|Send packets|Mail all|Send all/i }).first();
-if (await sendBtn.count()) {
-  await sendBtn.click();
-} else {
-  // Fallback: last primary action on mail step
-  await page.locator('button.fw-btn-primary, button.fw-btn-ink').last().click();
-}
+await page.getByRole('button', { name: /Send via Lob/i }).click();
+await page.getByText(/Building packet|Queued|Campaign in flight/i).first().waitFor();
 await pause(page, 2800);
 
 // Track
-await page.getByText(/Step 05|Tracking|In transit|In flight/i).first().waitFor({ timeout: 15000 });
+await page.getByText(/Campaign in flight/i).waitFor({ timeout: 15000 });
+await pause(page, 1600);
+await smoothScroll(page, 320);
 await pause(page, 2000);
-await smoothScroll(page, 280);
-await pause(page, 1800);
 
 const video = page.video();
 await context.close();
@@ -132,22 +116,6 @@ await browser.close();
 const webmPath = await video.path();
 console.log('Raw video:', webmPath);
 
-// Normalize to H.264 MP4, mild fade in/out, poster from ~8s (audit)
-const tmpMp4 = join(RAW_DIR, 'walkthrough.mp4');
-run('ffmpeg', [
-  '-y',
-  '-i', webmPath,
-  '-vf', 'fade=t=in:st=0:d=0.4,fade=t=out:st=0:d=0.5:alpha=0',
-  '-c:v', 'libx264',
-  '-crf', '18',
-  '-preset', 'medium',
-  '-pix_fmt', 'yuv420p',
-  '-movflags', '+faststart',
-  '-an',
-  tmpMp4,
-]);
-
-// Simpler: no broken fade-out (st=0 on out is wrong). Re-encode clean.
 run('ffmpeg', [
   '-y',
   '-i', webmPath,
@@ -163,7 +131,7 @@ run('ffmpeg', [
 
 run('ffmpeg', [
   '-y',
-  '-ss', '8',
+  '-ss', '12',
   '-i', OUT_MP4,
   '-frames:v', '1',
   '-update', '1',
@@ -172,11 +140,16 @@ run('ffmpeg', [
 ]);
 
 console.log('Wrote', OUT_MP4);
+const probe = spawnSync('ffprobe', [
+  '-v', 'error',
+  '-show_entries', 'format=duration',
+  '-of', 'default=nw=1:nk=1',
+  OUT_MP4,
+], { encoding: 'utf8' });
+console.log('Duration:', probe.stdout.trim(), 's');
+
 if (!existsSync(OUT_MP4)) process.exit(1);
 
-// Keep raw dir small — drop webm after success
 for (const f of readdirSync(RAW_DIR)) {
-  if (f.endsWith('.webm') || f === 'walkthrough.mp4') {
-    rmSync(join(RAW_DIR, f), { force: true });
-  }
+  if (f.endsWith('.webm')) rmSync(join(RAW_DIR, f), { force: true });
 }

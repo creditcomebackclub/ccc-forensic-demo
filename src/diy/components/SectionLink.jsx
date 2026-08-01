@@ -17,7 +17,11 @@ export function SectionLink({ section, className, children, onClick }) {
         e.preventDefault();
         onClick?.(e);
         if (location.pathname === '/') {
-          document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          const el = document.getElementById(section);
+          if (el) {
+            const y = el.getBoundingClientRect().top + window.scrollY - 12;
+            window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+          }
         } else {
           navigate({ pathname: '/', search: `?section=${section}` });
         }
