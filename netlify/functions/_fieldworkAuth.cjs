@@ -8,9 +8,9 @@ const { fieldworkSupabase } = require('./_fieldworkEnv.cjs');
 
 /** Included monthly credits by plan — keep in sync with src/diy/demoData.js */
 const PLAN_CREDITS = {
-  starter: { mail: 2, audit: 3, expert: 0 },
-  pro: { mail: 5, audit: 10, expert: 0 },
-  unlimited: { mail: 8, audit: 25, expert: 8 },
+  starter: { mail: 2, audit: 2, expert: 0 },
+  pro: { mail: 5, audit: 4, expert: 0 },
+  unlimited: { mail: 8, audit: 8, expert: 8 },
 };
 
 function planCredits(planId) {

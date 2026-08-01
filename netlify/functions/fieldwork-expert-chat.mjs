@@ -158,7 +158,7 @@ export const handler = async (event) => {
   // Local / unauthenticated demo path — no DB burn; hours soft-noted only.
   if (!admin || !user) {
     const fileContext = summarizeClientContext(
-      { full_name: 'Demo', plan_id: 'unlimited', mail_credits: 8, audit_credits: 25 },
+      { full_name: 'Demo', plan_id: 'unlimited', mail_credits: 8, audit_credits: 8 },
       [],
       payload.context || {},
     );

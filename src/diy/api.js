@@ -100,9 +100,9 @@ export async function getFieldworkStatus() {
 
 /** Keep in sync with netlify/functions/_fieldworkAuth.cjs + demoData PRICING_PLANS */
 function planCredits(planId) {
-  if (planId === 'starter') return { mail: 2, audit: 3, expert: 0 };
-  if (planId === 'unlimited') return { mail: 8, audit: 25, expert: 8 };
-  return { mail: 5, audit: 10, expert: 0 };
+  if (planId === 'starter') return { mail: 2, audit: 2, expert: 0 };
+  if (planId === 'unlimited') return { mail: 8, audit: 8, expert: 8 };
+  return { mail: 5, audit: 4, expert: 0 };
 }
 
 /** Direct Supabase bootstrap when Netlify functions aren't running (plain `vite`). */

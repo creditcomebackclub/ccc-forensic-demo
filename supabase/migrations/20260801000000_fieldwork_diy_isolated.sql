@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS public.fieldwork_subscribers (
   plan_id text NOT NULL DEFAULT 'pro'
     CHECK (plan_id IN ('starter', 'pro', 'unlimited')),
   mail_credits integer NOT NULL DEFAULT 5 CHECK (mail_credits >= 0),
-  audit_credits integer NOT NULL DEFAULT 10 CHECK (audit_credits >= 0),
+  audit_credits integer NOT NULL DEFAULT 4 CHECK (audit_credits >= 0),
   expert_chat_credits integer NOT NULL DEFAULT 0 CHECK (expert_chat_credits >= 0),
   signature_data text,
   stripe_customer_id text,
