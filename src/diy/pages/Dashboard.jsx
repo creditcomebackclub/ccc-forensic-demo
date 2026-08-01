@@ -92,9 +92,10 @@ export default function Dashboard() {
           <div>
             <div className="fw-mono text-[10px] uppercase tracking-wider text-[var(--fw-sea)]">When they answer</div>
             <p className="mt-1 text-sm text-[var(--fw-ink)]/85">
-              Analyze the reply (or mark no response). {plan.expertChats || planId === 'pro' || plan.name === 'Pro'
-                ? 'Pro drafts the follow-up letter for you.'
-                : 'Starter gives talking points; Pro auto-drafts.'}
+              Analyze the reply (or mark no response).{' '}
+              {planId === 'starter'
+                ? 'Starter gives talking points; upgrade to Pro to auto-draft.'
+                : 'Auto-draft the Phase 2 follow-up and mail it with the right enclosures.'}
             </p>
           </div>
           <Link to="/app/responses" className="fw-btn-ink shrink-0">
