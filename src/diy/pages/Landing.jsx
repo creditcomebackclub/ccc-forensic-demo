@@ -4,6 +4,7 @@ import { ArrowRight, BadgeCheck, Crosshair, FileSearch, Mail, Shield } from 'luc
 import { PRICING_PLANS, VALUE_PILLARS } from '../demoData';
 import { useFieldwork } from '../state';
 import { MarketingHeader, SiteFooter } from '../components/SiteChrome';
+import { SectionLink, useLandingSectionScroll } from '../components/SectionLink';
 
 const fadeUp = {
   hidden: { opacity: 0, y: 22 },
@@ -16,6 +17,7 @@ const fadeUp = {
 
 export default function Landing() {
   const { user } = useFieldwork();
+  useLandingSectionScroll();
 
   return (
     <div className="min-h-screen text-white">
@@ -70,9 +72,9 @@ export default function Landing() {
             <Link to={user ? '/app' : '/signup'} className="fw-btn-primary text-base">
               {user ? 'Open workspace' : 'See what an audit looks like'} <ArrowRight size={18} />
             </Link>
-            <a href="#demo" className="fw-btn-ghost text-base">
+            <SectionLink section="demo" className="fw-btn-ghost text-base">
               Watch the demo
-            </a>
+            </SectionLink>
           </motion.div>
         </div>
       </section>
@@ -117,10 +119,10 @@ export default function Landing() {
         <div className="mx-auto max-w-6xl">
           <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-signal)]">See it</p>
           <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
-            The product, in one breath.
+            Watch the actual demo.
           </h2>
           <p className="mt-5 max-w-2xl text-lg text-white/65">
-            Audit → findings → certified packets. Furnisher-first, your name on every letter.
+            Signup → sample audit → pick disputes → certified Lob packets → tracking. The real product flow, not a pitch deck.
           </p>
 
           <div className="relative mt-10 overflow-hidden rounded-lg border border-white/10 bg-black shadow-2xl">

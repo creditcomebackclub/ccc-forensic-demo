@@ -1,14 +1,15 @@
 import { Link } from 'react-router-dom';
 import Logo from './Logo';
+import { SectionLink } from './SectionLink';
 import { useFieldwork } from '../state';
 
 const FOOTER_COLS = [
   {
     title: 'Product',
     links: [
-      { to: '/#demo', label: 'Watch demo', hash: true },
-      { to: '/#how', label: 'How it works', hash: true },
-      { to: '/#pricing', label: 'Pricing', hash: true },
+      { section: 'demo', label: 'Watch demo' },
+      { section: 'how', label: 'How it works' },
+      { section: 'pricing', label: 'Pricing' },
       { to: '/signup', label: 'Try the demo' },
     ],
   },
@@ -36,7 +37,12 @@ export function MarketingHeader() {
       <Logo invert size={32} />
       <nav className="flex items-center gap-4 text-sm">
         <Link to="/about" className="hidden text-white/65 hover:text-white sm:inline">About</Link>
-        <a href="#pricing" className="hidden text-white/65 hover:text-white md:inline">Pricing</a>
+        <SectionLink section="pricing" className="hidden text-white/65 hover:text-white md:inline">
+          Pricing
+        </SectionLink>
+        <SectionLink section="how" className="hidden text-white/65 hover:text-white lg:inline">
+          How it works
+        </SectionLink>
         <Link to="/contact" className="hidden text-white/65 hover:text-white sm:inline">Contact</Link>
         {user ? (
           <Link to="/app" className="fw-btn-primary !py-2 !px-3 text-sm">Open app</Link>
@@ -72,13 +78,13 @@ export function SiteFooter({ dark = true }) {
               <ul className="mt-4 space-y-2.5">
                 {col.links.map((link) => (
                   <li key={link.label}>
-                    {link.hash ? (
-                      <a
-                        href={link.to.replace('/#', '#')}
+                    {link.section ? (
+                      <SectionLink
+                        section={link.section}
                         className={dark ? 'text-white/70 hover:text-white' : 'hover:text-[var(--fw-ink)]'}
                       >
                         {link.label}
-                      </a>
+                      </SectionLink>
                     ) : (
                       <Link
                         to={link.to}
