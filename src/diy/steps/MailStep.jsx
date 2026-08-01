@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowRight, CheckCircle2, Loader2, Package } from 'lucide-react';
 import { estimatePostageUsd, formatCreditCostRange, MAIL_PHASES } from '../mailEconomics';
@@ -124,6 +125,15 @@ export default function MailStep({ user, audit, selectedIds, mailCredits = 99, o
     <div>
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Step 04 · Mail</p>
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Review & send</h1>
+      {!user?.signatureData && (
+        <div className="mt-4 rounded-lg border border-[rgba(232,163,23,0.35)] bg-[rgba(232,163,23,0.1)] px-4 py-3 text-sm text-[var(--fw-ink)]">
+          No drawn signature on file yet — letters will show a blank line.{' '}
+          <Link to="/app/settings" className="font-semibold text-[var(--fw-sea)] hover:underline">
+            Draw it in Settings
+          </Link>
+          , then come back here.
+        </div>
+      )}
       <p className="mt-3 max-w-2xl text-lg text-[var(--fw-muted)]">
         One credit = one certified Lob packet ({formatCreditCostRange()} with enclosures).
         Letters go out in <strong className="font-semibold text-[var(--fw-ink)]">your name</strong>
