@@ -98,10 +98,11 @@ export async function getFieldworkStatus() {
   }
 }
 
+/** Keep in sync with netlify/functions/_fieldworkAuth.cjs + demoData PRICING_PLANS */
 function planCredits(planId) {
-  if (planId === 'starter') return 2;
-  if (planId === 'unlimited') return 10;
-  return 5;
+  if (planId === 'starter') return { mail: 2, audit: 3 };
+  if (planId === 'unlimited') return { mail: 8, audit: 25 };
+  return { mail: 5, audit: 10 };
 }
 
 /** Direct Supabase bootstrap when Netlify functions aren't running (plain `vite`). */
@@ -134,7 +135,8 @@ async function bootstrapFieldworkClient(profile = {}) {
         address_state: profile.address_state || '',
         address_zip: profile.address_zip || '',
         plan_id: planId,
-        mail_credits: planCredits(planId),
+        mail_credits: planCredits(planId).mail,
+        audit_credits: planCredits(planId).audit,
       })
       .select('*')
       .single();
@@ -149,8 +151,10 @@ async function bootstrapFieldworkClient(profile = {}) {
     if (profile.address_state != null) patch.address_state = profile.address_state;
     if (profile.address_zip != null) patch.address_zip = profile.address_zip;
     if (profile.plan_id) {
+      const credits = planCredits(profile.plan_id);
       patch.plan_id = profile.plan_id;
-      patch.mail_credits = planCredits(profile.plan_id);
+      patch.mail_credits = credits.mail;
+      patch.audit_credits = credits.audit;
     }
     const { data: updated, error: updErr } = await fieldworkSupabase
       .from('fieldwork_subscribers')

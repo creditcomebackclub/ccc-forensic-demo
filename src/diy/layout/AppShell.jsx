@@ -23,7 +23,7 @@ const NAV = [
 ];
 
 export default function AppShell() {
-  const { user, plan, mailCredits, signOut, resetAll, startNewCampaign, runtime } = useFieldwork();
+  const { user, plan, mailCredits, auditCredits, signOut, resetAll, startNewCampaign, runtime } = useFieldwork();
   const navigate = useNavigate();
 
   return (
@@ -38,9 +38,10 @@ export default function AppShell() {
 
         <div className="mx-5 mb-4 rounded border border-white/10 bg-white/5 px-3 py-3">
           <div className="fw-mono text-[10px] uppercase tracking-wider text-white/40">Plan</div>
-          <div className="mt-1 flex items-baseline justify-between">
-            <span className="font-semibold">{plan.name}</span>
-            <span className="fw-mono text-sm text-[var(--fw-signal)]">{mailCredits} credits</span>
+          <div className="mt-1 font-semibold">{plan.name}</div>
+          <div className="mt-2 flex items-baseline justify-between gap-2 fw-mono text-[11px] text-[var(--fw-signal)]">
+            <span>{mailCredits} mail</span>
+            <span>{auditCredits} audits</span>
           </div>
         </div>
 

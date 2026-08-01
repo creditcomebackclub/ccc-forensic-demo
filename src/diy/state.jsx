@@ -90,6 +90,9 @@ export function FieldworkProvider({ children }) {
   const [mailCredits, setMailCredits] = useState(
     saved?.mailCredits ?? planById(saved?.planId || DEFAULT_PLAN_ID).mailCredits,
   );
+  const [auditCredits, setAuditCredits] = useState(
+    saved?.auditCredits ?? planById(saved?.planId || DEFAULT_PLAN_ID).auditCredits,
+  );
   const [audit, setAudit] = useState(saved?.audit || null);
   const [selectedIds, setSelectedIds] = useState(saved?.selectedIds || []);
   const [letters, setLetters] = useState(saved?.letters || []);
@@ -115,7 +118,9 @@ export function FieldworkProvider({ children }) {
     const sub = snap.subscriber;
     setUser(userFromSubscriber(sub, fallbackProfile));
     setPlanId(sub.plan_id || DEFAULT_PLAN_ID);
-    setMailCredits(typeof sub.mail_credits === 'number' ? sub.mail_credits : planById(sub.plan_id).mailCredits);
+    const plan = planById(sub.plan_id);
+    setMailCredits(typeof sub.mail_credits === 'number' ? sub.mail_credits : plan.mailCredits);
+    setAuditCredits(typeof sub.audit_credits === 'number' ? sub.audit_credits : plan.auditCredits);
     const nextBilling = mapBilling(snap.billing);
     if (nextBilling.length) setBillingHistory(nextBilling);
     const nextDocs = mapDocuments(snap.documents);
@@ -173,6 +178,7 @@ export function FieldworkProvider({ children }) {
         user,
         planId,
         mailCredits,
+        auditCredits,
         audit,
         selectedIds,
         letters,
@@ -182,7 +188,7 @@ export function FieldworkProvider({ children }) {
         billingHistory,
       }),
     );
-  }, [user, planId, mailCredits, audit, selectedIds, letters, campaigns, documents, wizardStep, billingHistory]);
+  }, [user, planId, mailCredits, auditCredits, audit, selectedIds, letters, campaigns, documents, wizardStep, billingHistory]);
 
   const signUp = useCallback(async (profile, chosenPlanId = DEFAULT_PLAN_ID) => {
     const nextPlan = planById(chosenPlanId);
@@ -191,6 +197,7 @@ export function FieldworkProvider({ children }) {
       setUser({ ...DEMO_USER, ...profile });
       setPlanId(nextPlan.id);
       setMailCredits(nextPlan.mailCredits);
+      setAuditCredits(nextPlan.auditCredits);
       setBillingHistory([
         {
           id: `inv_${Date.now()}`,
@@ -257,6 +264,7 @@ export function FieldworkProvider({ children }) {
     setUser(null);
     setPlanId(DEFAULT_PLAN_ID);
     setMailCredits(planById(DEFAULT_PLAN_ID).mailCredits);
+    setAuditCredits(planById(DEFAULT_PLAN_ID).auditCredits);
     setAudit(null);
     setSelectedIds([]);
     setLetters([]);
@@ -268,6 +276,10 @@ export function FieldworkProvider({ children }) {
 
   const completeUpload = useCallback((auditOverride, meta = {}) => {
     const nextAudit = auditOverride || DEMO_AUDIT;
+    // Live forensic runs burn an audit credit; canned sample demos do not.
+    if (auditOverride) {
+      setAuditCredits((c) => Math.max(0, c - 1));
+    }
     setAudit(nextAudit);
     const highs = nextAudit.accounts.filter((a) => a.priority === 'high').map((a) => a.id);
     setSelectedIds(highs.length ? highs : nextAudit.accounts.slice(0, 2).map((a) => a.id));
@@ -291,6 +303,7 @@ export function FieldworkProvider({ children }) {
     const next = planById(nextId);
     setPlanId(next.id);
     setMailCredits(next.mailCredits);
+    setAuditCredits(next.auditCredits);
     setBillingHistory((prev) => [
       {
         id: `inv_${Date.now()}`,
@@ -348,6 +361,7 @@ export function FieldworkProvider({ children }) {
     plan,
     planId,
     mailCredits,
+    auditCredits,
     audit,
     selectedIds,
     setSelectedIds,

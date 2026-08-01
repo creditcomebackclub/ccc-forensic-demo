@@ -4,17 +4,17 @@ import { CREDIT_PACKS, formatCreditCostRange, MAIL_PHASES } from '../mailEconomi
 import { useFieldwork } from '../state';
 
 export default function Billing() {
-  const { planId, plan, mailCredits, changePlan, buyCreditPack, billingHistory } = useFieldwork();
+  const { planId, plan, mailCredits, auditCredits, changePlan, buyCreditPack, billingHistory } = useFieldwork();
 
   return (
     <div className="mx-auto max-w-5xl">
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Billing</p>
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Plan & credits</h1>
       <p className="mt-3 max-w-2xl text-lg text-[var(--fw-muted)]">
-        Mail credits are priced against real Lob certified packets ({formatCreditCostRange()} with enclosures) — not fantasy postage.
+        Mail credits are priced against real Lob certified packets ({formatCreditCostRange()} with enclosures). Forensic audits are capped per plan so API cost stays honest.
       </p>
 
-      <div className="mt-8 grid gap-4 sm:grid-cols-2">
+      <div className="mt-8 grid gap-4 sm:grid-cols-3">
         <div className="rounded-lg bg-[var(--fw-ink)] p-6 text-white">
           <div className="fw-mono text-[10px] uppercase tracking-wider text-white/40">Current plan</div>
           <div className="fw-display mt-2 text-4xl font-bold">{plan.name}</div>
@@ -25,6 +25,13 @@ export default function Billing() {
           <div className="fw-display mt-2 text-4xl font-bold">{mailCredits}</div>
           <div className="mt-1 text-sm text-[var(--fw-muted)]">
             Includes {plan.mailCredits} / month · 1 credit = 1 opening or follow-up packet
+          </div>
+        </div>
+        <div className="rounded-lg border border-[var(--fw-line)] bg-white p-6">
+          <div className="fw-mono text-[10px] uppercase tracking-wider text-[var(--fw-muted)]">Audits remaining</div>
+          <div className="fw-display mt-2 text-4xl font-bold">{auditCredits}</div>
+          <div className="mt-1 text-sm text-[var(--fw-muted)]">
+            Cap {plan.auditCredits} / month · live 3-bureau forensic runs
           </div>
         </div>
       </div>

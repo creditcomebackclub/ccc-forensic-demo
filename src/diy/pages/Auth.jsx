@@ -146,7 +146,9 @@ export default function Auth() {
                       />
                       <span>
                         <span className="font-semibold">{p.name}</span>
-                        <span className="ml-2 text-white/45">{p.mailCredits} credits</span>
+                        <span className="ml-2 text-white/45">
+                          {p.auditCredits} audits · {p.mailCredits} mail
+                        </span>
                       </span>
                     </span>
                     <span className="fw-mono">${p.price}/mo</span>

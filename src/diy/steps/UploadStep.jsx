@@ -19,12 +19,13 @@ function readFileAsBase64(file) {
 }
 
 export default function UploadStep({ onComplete }) {
-  const { user } = useFieldwork();
+  const { user, plan, auditCredits } = useFieldwork();
   const [phase, setPhase] = useState('idle'); // idle | analyzing
   const [stepIdx, setStepIdx] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState('');
   const [engineReady, setEngineReady] = useState(false);
+  const auditsLeft = typeof auditCredits === 'number' ? auditCredits : plan.auditCredits;
 
   useEffect(() => {
     getFieldworkStatus().then((s) => {
@@ -55,6 +56,14 @@ export default function UploadStep({ onComplete }) {
 
   const startLive = async (file) => {
     setError('');
+
+    if (auditsLeft < 1) {
+      setError(
+        `You’ve used all ${plan.auditCredits} forensic audits on ${plan.name} this period. Upgrade for a higher cap, or use the sample report to explore the UI.`,
+      );
+      return;
+    }
+
     setPhase('analyzing');
     setStepIdx(0);
 
@@ -95,6 +104,9 @@ export default function UploadStep({ onComplete }) {
         {engineReady
           ? ' Drop a real report for a live furnisher-first audit — findings render in this same UI.'
           : ' This demo runs a canned forensic sample so you can feel the product instantly.'}
+      </p>
+      <p className="mt-2 fw-mono text-[11px] uppercase tracking-[0.18em] text-[var(--fw-sea)]">
+        {auditsLeft} of {plan.auditCredits} audits left · {plan.name}
       </p>
 
       <AnimatePresence mode="wait">

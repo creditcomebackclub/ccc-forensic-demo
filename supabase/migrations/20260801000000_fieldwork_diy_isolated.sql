@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS public.fieldwork_subscribers (
   address_zip text NOT NULL DEFAULT '',
   plan_id text NOT NULL DEFAULT 'pro'
     CHECK (plan_id IN ('starter', 'pro', 'unlimited')),
-  mail_credits integer NOT NULL DEFAULT 12 CHECK (mail_credits >= 0),
+  mail_credits integer NOT NULL DEFAULT 5 CHECK (mail_credits >= 0),
+  audit_credits integer NOT NULL DEFAULT 10 CHECK (audit_credits >= 0),
   stripe_customer_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()

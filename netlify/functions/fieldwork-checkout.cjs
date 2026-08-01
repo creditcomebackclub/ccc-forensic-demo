@@ -5,11 +5,16 @@
  * can keep working without touching any live payments.
  */
 const https = require('https');
-const { requireFieldworkUser, getOrCreateSubscriber, fwRest, json } = require('./_fieldworkAuth.cjs');
+const {
+  requireFieldworkUser,
+  getOrCreateSubscriber,
+  fwRest,
+  json,
+  PLAN_CREDITS,
+  planCredits,
+} = require('./_fieldworkAuth.cjs');
 const { fieldworkStripe, fieldworkSupabase } = require('./_fieldworkEnv.cjs');
 
-// Credits sized for real Lob packets (~$12–15 with Phase 1/2 enclosures).
-const PLAN_CREDITS = { starter: 2, pro: 5, unlimited: 10 };
 const PLAN_AMOUNT = { starter: 4900, pro: 9900, unlimited: 14900 };
 
 function stripeForm(path, secretKey, params) {
@@ -47,6 +52,7 @@ exports.handler = async (event) => {
     const planId = body.plan_id || 'pro';
     if (!PLAN_CREDITS[planId]) return json(400, { error: 'Invalid plan_id' });
 
+    const credits = planCredits(planId);
     const subscriber = await getOrCreateSubscriber(caller, { plan_id: planId, email: caller.email });
     const stripe = fieldworkStripe();
 
@@ -55,7 +61,8 @@ exports.handler = async (event) => {
       const { url, serviceKey } = fieldworkSupabase();
       const patch = {
         plan_id: planId,
-        mail_credits: PLAN_CREDITS[planId],
+        mail_credits: credits.mail,
+        audit_credits: credits.audit,
         updated_at: new Date().toISOString(),
       };
       await fwRest(`/rest/v1/fieldwork_subscribers?id=eq.${subscriber.id}`, 'PATCH', serviceKey, url, patch);
@@ -70,7 +77,8 @@ exports.handler = async (event) => {
         isolated: true,
         message: 'FIELDWORK_STRIPE_SECRET_KEY not set — applied plan in Fieldwork DB only.',
         plan_id: planId,
-        mail_credits: PLAN_CREDITS[planId],
+        mail_credits: credits.mail,
+        audit_credits: credits.audit,
       });
     }
 

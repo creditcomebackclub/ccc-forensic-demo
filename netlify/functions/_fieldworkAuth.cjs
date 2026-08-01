@@ -6,6 +6,17 @@
 const https = require('https');
 const { fieldworkSupabase } = require('./_fieldworkEnv.cjs');
 
+/** Included monthly credits by plan — keep in sync with src/diy/demoData.js */
+const PLAN_CREDITS = {
+  starter: { mail: 2, audit: 3 },
+  pro: { mail: 5, audit: 10 },
+  unlimited: { mail: 8, audit: 25 },
+};
+
+function planCredits(planId) {
+  return PLAN_CREDITS[planId] || PLAN_CREDITS.pro;
+}
+
 function httpJson(method, urlString, headers, body) {
   return new Promise((resolve, reject) => {
     const u = new URL(urlString);
@@ -85,7 +96,7 @@ async function getOrCreateSubscriber(caller, profile = {}) {
   }
 
   const planId = profile.plan_id || 'pro';
-  const credits = planId === 'starter' ? 2 : planId === 'unlimited' ? 10 : 5;
+  const credits = planCredits(planId);
   const row = {
     user_id: caller.userId,
     email: profile.email || caller.email,
@@ -95,7 +106,8 @@ async function getOrCreateSubscriber(caller, profile = {}) {
     address_state: profile.address_state || '',
     address_zip: profile.address_zip || '',
     plan_id: planId,
-    mail_credits: credits,
+    mail_credits: credits.mail,
+    audit_credits: credits.audit,
   };
 
   const created = await fwRest('/rest/v1/fieldwork_subscribers', 'POST', serviceKey, url, row);
@@ -126,4 +138,6 @@ module.exports = {
   fwRest,
   httpJson,
   json,
+  PLAN_CREDITS,
+  planCredits,
 };

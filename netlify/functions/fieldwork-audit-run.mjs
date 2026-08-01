@@ -110,7 +110,7 @@ export const handler = async (event) => {
   if (!subscriberId) {
     const { data: sub } = await admin
       .from('fieldwork_subscribers')
-      .select('id')
+      .select('id, audit_credits')
       .eq('user_id', user.id)
       .maybeSingle();
     subscriberId = sub?.id || null;
@@ -124,12 +124,39 @@ export const handler = async (event) => {
 
   const { data: owned } = await admin
     .from('fieldwork_subscribers')
-    .select('id')
+    .select('id, audit_credits')
     .eq('id', subscriberId)
     .eq('user_id', user.id)
     .maybeSingle();
   if (!owned) {
     return json(403, { error: 'Subscriber mismatch' });
+  }
+
+  const remaining = typeof owned.audit_credits === 'number' ? owned.audit_credits : 0;
+  if (remaining < 1) {
+    return json(402, {
+      error: 'Audit credit limit reached for this billing period. Upgrade your plan or wait for the next cycle.',
+      audit_credits: 0,
+    });
+  }
+
+  // Reserve one audit credit before enqueue (optimistic lock).
+  const { data: reserved, error: reserveErr } = await admin
+    .from('fieldwork_subscribers')
+    .update({
+      audit_credits: remaining - 1,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', subscriberId)
+    .eq('audit_credits', remaining)
+    .select('id, audit_credits')
+    .maybeSingle();
+
+  if (reserveErr || !reserved) {
+    return json(402, {
+      error: 'Could not reserve an audit credit — none left or concurrent run. Try again.',
+      audit_credits: remaining,
+    });
   }
 
   const { data: job, error: jobErr } = await admin
@@ -143,6 +170,14 @@ export const handler = async (event) => {
     .single();
 
   if (jobErr || !job) {
+    // Refund reserved credit if job insert fails.
+    await admin
+      .from('fieldwork_subscribers')
+      .update({
+        audit_credits: remaining,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', subscriberId);
     return json(500, { error: jobErr?.message || 'Could not create audit job' });
   }
 
@@ -151,5 +186,6 @@ export const handler = async (event) => {
     isolated: true,
     mode: 'queued',
     jobId: job.id,
+    audit_credits: reserved.audit_credits,
   });
 };

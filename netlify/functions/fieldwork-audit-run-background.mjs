@@ -77,6 +77,32 @@ export const handler = async (event) => {
     } catch (patchErr) {
       console.error('failed to patch job error state', patchErr);
     }
+    // Refund the audit credit reserved at enqueue.
+    try {
+      const { data: jobRow } = await admin
+        .from('fieldwork_audit_jobs')
+        .select('subscriber_id')
+        .eq('id', jobId)
+        .maybeSingle();
+      if (jobRow?.subscriber_id) {
+        const { data: sub } = await admin
+          .from('fieldwork_subscribers')
+          .select('audit_credits')
+          .eq('id', jobRow.subscriber_id)
+          .maybeSingle();
+        if (sub && typeof sub.audit_credits === 'number') {
+          await admin
+            .from('fieldwork_subscribers')
+            .update({
+              audit_credits: sub.audit_credits + 1,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', jobRow.subscriber_id);
+        }
+      }
+    } catch (refundErr) {
+      console.error('failed to refund audit credit', refundErr);
+    }
     return { statusCode: 500, body: err.message || 'Audit failed' };
   }
 };

@@ -3,7 +3,7 @@ import { ArrowRight, Crosshair, FileSearch, Mail, Sparkles } from 'lucide-react'
 import { useFieldwork } from '../state';
 
 export default function Dashboard() {
-  const { user, plan, mailCredits, audit, campaigns, letters, runtime } = useFieldwork();
+  const { user, plan, mailCredits, auditCredits, audit, campaigns, letters, runtime } = useFieldwork();
   const first = user.name.split(' ')[0];
   const active = campaigns[0];
 
@@ -15,13 +15,21 @@ export default function Dashboard() {
         Your furnisher-first workspace. Audit reports, pick disputes, mail certified letters, and track response windows — as a subscriber, not a client of an agency.
       </p>
 
-      <div className="mt-10 grid gap-4 md:grid-cols-3">
+      <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-lg border border-[var(--fw-line)] bg-white p-5">
           <div className="fw-mono text-[10px] uppercase tracking-wider text-[var(--fw-muted)]">Subscription</div>
           <div className="fw-display mt-2 text-3xl font-bold">{plan.name}</div>
           <div className="mt-1 text-sm text-[var(--fw-muted)]">${plan.price}/mo · demo billing</div>
           <Link to="/app/billing" className="mt-4 inline-flex text-sm font-semibold text-[var(--fw-sea)] hover:underline">
             Manage plan
+          </Link>
+        </div>
+        <div className="rounded-lg border border-[var(--fw-line)] bg-white p-5">
+          <div className="fw-mono text-[10px] uppercase tracking-wider text-[var(--fw-muted)]">Audits left</div>
+          <div className="fw-display mt-2 text-3xl font-bold">{auditCredits}</div>
+          <div className="mt-1 text-sm text-[var(--fw-muted)]">of {plan.auditCredits} / month on {plan.name}</div>
+          <Link to="/app/billing" className="mt-4 inline-flex text-sm font-semibold text-[var(--fw-sea)] hover:underline">
+            See plan caps
           </Link>
         </div>
         <div className="rounded-lg border border-[var(--fw-line)] bg-white p-5">

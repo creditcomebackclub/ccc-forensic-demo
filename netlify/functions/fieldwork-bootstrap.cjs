@@ -7,6 +7,7 @@ const {
   getOrCreateSubscriber,
   fwRest,
   json,
+  planCredits,
 } = require('./_fieldworkAuth.cjs');
 const { fieldworkSupabase } = require('./_fieldworkEnv.cjs');
 
@@ -46,8 +47,10 @@ exports.handler = async (event) => {
       if (body.address_state != null) patch.address_state = body.address_state;
       if (body.address_zip != null) patch.address_zip = body.address_zip;
       if (body.plan_id) {
+        const credits = planCredits(body.plan_id);
         patch.plan_id = body.plan_id;
-        patch.mail_credits = body.plan_id === 'starter' ? 2 : body.plan_id === 'unlimited' ? 10 : 5;
+        patch.mail_credits = credits.mail;
+        patch.audit_credits = credits.audit;
       }
       const updated = await fwRest(
         `/rest/v1/fieldwork_subscribers?id=eq.${subscriber.id}`,
