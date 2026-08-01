@@ -143,19 +143,31 @@ export async function uploadFieldworkDocument({
     });
   if (upErr) throw upErr;
 
-  const { data: row, error: dbErr } = await fieldworkSupabase
+  const baseRow = {
+    id,
+    subscriber_id: subId,
+    name: file.name,
+    kind,
+    storage_path: storagePath,
+  };
+  let { data: row, error: dbErr } = await fieldworkSupabase
     .from('fieldwork_documents')
     .insert({
-      id,
-      subscriber_id: subId,
-      name: file.name,
-      kind,
-      storage_path: storagePath,
+      ...baseRow,
       byte_size: file.size,
       content_type: file.type || null,
     })
     .select('*')
     .single();
+
+  // Older Fieldwork DBs before 20260802060000 — retry without meta columns.
+  if (dbErr && /byte_size|content_type/i.test(dbErr.message || '')) {
+    ({ data: row, error: dbErr } = await fieldworkSupabase
+      .from('fieldwork_documents')
+      .insert(baseRow)
+      .select('*')
+      .single());
+  }
 
   if (dbErr) {
     await fieldworkSupabase.storage.from(BUCKET).remove([storagePath]);
