@@ -253,33 +253,54 @@ async function pollFieldworkAuditJob(jobId, { timeoutMs = 240000 } = {}) {
 
 const LOCAL_AUDIT_URL = import.meta.env.VITE_FIELDWORK_AUDIT_URL || 'http://127.0.0.1:8787/audit';
 
+function abortAfter(ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timer),
+  };
+}
+
 /** Prefer the local audit server (no 30s lambda-local cap) when it's running. */
 async function tryLocalAuditServer(payload) {
-  if (!import.meta.env.DEV) return null;
+  // Always try in browser local/dev builds. Safari may lack AbortSignal.timeout.
+  const force = import.meta.env.VITE_FIELDWORK_FORCE_LOCAL_AUDIT === '1';
+  if (!import.meta.env.DEV && !force) return null;
+
+  const healthUrl = LOCAL_AUDIT_URL.replace(/\/audit\/?$/, '/health');
+  const healthCtl = abortAfter(1500);
   try {
-    const health = await fetch(LOCAL_AUDIT_URL.replace(/\/audit\/?$/, '/health'), {
-      signal: AbortSignal.timeout(800),
-    });
+    const health = await fetch(healthUrl, { signal: healthCtl.signal });
     if (!health.ok) return null;
-  } catch {
+  } catch (err) {
+    console.warn('[fieldwork] local audit server not reachable at', healthUrl, err?.message || err);
     return null;
+  } finally {
+    healthCtl.clear();
   }
 
-  const res = await fetch(LOCAL_AUDIT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(300000),
-  });
-  const rawText = await res.text();
-  let body = {};
+  console.info('[fieldwork] using local audit server', LOCAL_AUDIT_URL);
+  const runCtl = abortAfter(300000);
   try {
-    body = rawText ? JSON.parse(rawText) : {};
-  } catch {
-    body = { error: rawText?.slice(0, 280) || `Local audit ${res.status}` };
+    const res = await fetch(LOCAL_AUDIT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: runCtl.signal,
+    });
+    const rawText = await res.text();
+    let body = {};
+    try {
+      body = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      body = { error: rawText?.slice(0, 280) || `Local audit ${res.status}` };
+    }
+    if (!res.ok) throw new Error(body.error || `Local audit failed (${res.status})`);
+    return body;
+  } finally {
+    runCtl.clear();
   }
-  if (!res.ok) throw new Error(body.error || `Local audit failed (${res.status})`);
-  return body;
 }
 
 /** Live forensic audit via FIELDWORK_ANTHROPIC (Fieldwork UI model). */
