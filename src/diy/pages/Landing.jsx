@@ -117,10 +117,10 @@ export default function Landing() {
         <div className="mx-auto max-w-6xl">
           <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-signal)]">See it</p>
           <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
-            Watch a sample audit open.
+            The product, in one breath.
           </h2>
           <p className="mt-5 max-w-2xl text-lg text-white/65">
-            No pitch deck. The actual product — signup, sample report, furnisher-first findings.
+            Audit → findings → certified packets. Furnisher-first, your name on every letter.
           </p>
 
           <div className="relative mt-10 overflow-hidden rounded-lg border border-white/10 bg-black shadow-2xl">

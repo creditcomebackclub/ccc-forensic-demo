@@ -14,6 +14,7 @@ import Campaigns from './pages/Campaigns';
 import Documents from './pages/Documents';
 import Billing from './pages/Billing';
 import Settings from './pages/Settings';
+import DemoReel from './pages/DemoReel';
 
 function RequireAuth({ children }) {
   const { user } = useFieldwork();
@@ -38,6 +39,7 @@ export default function DiyApp() {
           <Route path="/terms" element={<Terms />} />
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/croa" element={<Croa />} />
+          <Route path="/reel/:sceneId" element={<DemoReel />} />
           <Route
             path="/signup"
             element={(
