@@ -17,13 +17,21 @@ import Settings from './pages/Settings';
 import DemoReel from './pages/DemoReel';
 
 function RequireAuth({ children }) {
-  const { user } = useFieldwork();
+  const { user, authReady } = useFieldwork();
+  if (!authReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--fw-paper)] text-[var(--fw-muted)]">
+        Loading workspace…
+      </div>
+    );
+  }
   if (!user) return <Navigate to="/signup" replace />;
   return children;
 }
 
 function PublicOnly({ children }) {
-  const { user } = useFieldwork();
+  const { user, authReady } = useFieldwork();
+  if (!authReady) return null;
   if (user) return <Navigate to="/app" replace />;
   return children;
 }

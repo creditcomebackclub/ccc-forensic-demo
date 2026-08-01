@@ -8,6 +8,38 @@ async function authHeader() {
   return { Authorization: `Bearer ${token}` };
 }
 
+export async function fieldworkSignUp({ email, password, name }) {
+  if (!fieldworkSupabase) throw new Error('Fieldwork Supabase is not configured');
+  const { data, error } = await fieldworkSupabase.auth.signUp({
+    email,
+    password,
+    options: { data: { full_name: name || '' } },
+  });
+  if (error) throw error;
+  if (!data.session) {
+    throw new Error('Account created but no session returned. Check email confirmation settings.');
+  }
+  return data;
+}
+
+export async function fieldworkSignIn({ email, password }) {
+  if (!fieldworkSupabase) throw new Error('Fieldwork Supabase is not configured');
+  const { data, error } = await fieldworkSupabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data;
+}
+
+export async function fieldworkSignOut() {
+  if (!fieldworkSupabase) return;
+  await fieldworkSupabase.auth.signOut();
+}
+
+export async function fieldworkGetSession() {
+  if (!fieldworkSupabase) return null;
+  const { data } = await fieldworkSupabase.auth.getSession();
+  return data.session || null;
+}
+
 async function fwFetch(path, options = {}) {
   const headers = {
     'Content-Type': 'application/json',
@@ -64,7 +96,7 @@ export async function fieldworkCheckout(planId) {
   });
 }
 
-/** Live forensic audit via FIELDWORK_ANTHROPIC (CCC logic → Fieldwork UI model). */
+/** Live forensic audit via FIELDWORK_ANTHROPIC (Fieldwork UI model). */
 export async function runFieldworkAudit({ base64, mediaType, fileName, mode }) {
   return fwFetch('fieldwork-audit-run', {
     method: 'POST',

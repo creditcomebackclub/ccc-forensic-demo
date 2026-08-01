@@ -7,7 +7,15 @@ import {
   PRICING_PLANS,
 } from './demoData';
 import { CREDIT_PACKS } from './mailEconomics';
-import { getFieldworkStatus, fieldworkCloudEnabled } from './api';
+import {
+  bootstrapFieldwork,
+  fieldworkCloudEnabled,
+  fieldworkGetSession,
+  fieldworkSignIn,
+  fieldworkSignOut,
+  fieldworkSignUp,
+  getFieldworkStatus,
+} from './api';
 
 const STORAGE_KEY = 'fieldwork-saas-v3';
 
@@ -25,6 +33,54 @@ function loadState() {
 
 function planById(id) {
   return PRICING_PLANS.find((p) => p.id === id) || PRICING_PLANS.find((p) => p.id === DEFAULT_PLAN_ID);
+}
+
+function userFromSubscriber(subscriber, fallback = {}) {
+  return {
+    name: subscriber.full_name || fallback.name || '',
+    email: subscriber.email || fallback.email || '',
+    address: {
+      line1: subscriber.address_line1 || fallback.address?.line1 || '',
+      city: subscriber.address_city || fallback.address?.city || '',
+      state: subscriber.address_state || fallback.address?.state || '',
+      zip: subscriber.address_zip || fallback.address?.zip || '',
+    },
+    subscriberId: subscriber.id,
+  };
+}
+
+function mapBilling(rows) {
+  if (!Array.isArray(rows) || !rows.length) return [];
+  return rows.map((r) => ({
+    id: r.id,
+    date: (r.created_at || '').slice(0, 10),
+    label: r.label,
+    amount: Math.round((r.amount_cents || 0) / 100),
+    status: r.status || 'Paid',
+  }));
+}
+
+function mapDocuments(rows) {
+  if (!Array.isArray(rows) || !rows.length) return [];
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    kind: r.kind || 'other',
+    uploadedAt: r.created_at,
+  }));
+}
+
+function mapCampaigns(rows) {
+  if (!Array.isArray(rows) || !rows.length) return [];
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    createdAt: r.created_at,
+    letterCount: (r.selected_account_ids || []).length,
+    status: r.status,
+    letters: [],
+    auditSummary: r.audit_json?.summary || null,
+  }));
 }
 
 export function FieldworkProvider({ children }) {
@@ -50,8 +106,23 @@ export function FieldworkProvider({ children }) {
     isolated: true,
     message: 'Checking Fieldwork lane…',
   });
+  const [authReady, setAuthReady] = useState(!fieldworkCloudEnabled);
 
   const plan = planById(planId);
+
+  const applyBootstrap = useCallback((snap, fallbackProfile = {}) => {
+    if (!snap?.subscriber) return;
+    const sub = snap.subscriber;
+    setUser(userFromSubscriber(sub, fallbackProfile));
+    setPlanId(sub.plan_id || DEFAULT_PLAN_ID);
+    setMailCredits(typeof sub.mail_credits === 'number' ? sub.mail_credits : planById(sub.plan_id).mailCredits);
+    const nextBilling = mapBilling(snap.billing);
+    if (nextBilling.length) setBillingHistory(nextBilling);
+    const nextDocs = mapDocuments(snap.documents);
+    if (nextDocs.length) setDocuments(nextDocs);
+    const nextCamps = mapCampaigns(snap.campaigns);
+    if (nextCamps.length) setCampaigns(nextCamps);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +138,33 @@ export function FieldworkProvider({ children }) {
     });
     return () => { cancelled = true; };
   }, []);
+
+  // Restore Fieldwork Supabase session → bootstrap subscriber
+  useEffect(() => {
+    if (!fieldworkCloudEnabled) {
+      setAuthReady(true);
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const session = await fieldworkGetSession();
+        if (cancelled) return;
+        if (session) {
+          const snap = await bootstrapFieldwork({});
+          if (!cancelled) applyBootstrap(snap, saved?.user || {});
+        } else if (saved?.user?.subscriberId) {
+          // Stale cloud user in localStorage without session
+          setUser(null);
+        }
+      } catch {
+        // Keep local demo state if bootstrap unreachable
+      } finally {
+        if (!cancelled) setAuthReady(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [applyBootstrap, saved?.user]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -86,31 +184,75 @@ export function FieldworkProvider({ children }) {
     );
   }, [user, planId, mailCredits, audit, selectedIds, letters, campaigns, documents, wizardStep, billingHistory]);
 
-  const signUp = useCallback((profile, chosenPlanId = DEFAULT_PLAN_ID) => {
+  const signUp = useCallback(async (profile, chosenPlanId = DEFAULT_PLAN_ID) => {
     const nextPlan = planById(chosenPlanId);
-    setUser({ ...DEMO_USER, ...profile });
-    setPlanId(nextPlan.id);
-    setMailCredits(nextPlan.mailCredits);
-    setBillingHistory([
-      {
-        id: `inv_${Date.now()}`,
-        date: new Date().toISOString().slice(0, 10),
-        label: `${nextPlan.name} plan · first month`,
-        amount: nextPlan.price,
-        status: 'Paid (demo)',
-      },
-    ]);
-  }, []);
+
+    if (!fieldworkCloudEnabled) {
+      setUser({ ...DEMO_USER, ...profile });
+      setPlanId(nextPlan.id);
+      setMailCredits(nextPlan.mailCredits);
+      setBillingHistory([
+        {
+          id: `inv_${Date.now()}`,
+          date: new Date().toISOString().slice(0, 10),
+          label: `${nextPlan.name} plan · first month`,
+          amount: nextPlan.price,
+          status: 'Paid (demo)',
+        },
+      ]);
+      return;
+    }
+
+    if (!profile.email || !profile.password) {
+      throw new Error('Email and password are required');
+    }
+
+    await fieldworkSignUp({
+      email: profile.email,
+      password: profile.password,
+      name: profile.name,
+    });
+
+    const snap = await bootstrapFieldwork({
+      email: profile.email,
+      full_name: profile.name,
+      address_line1: profile.address?.line1 || DEMO_USER.address.line1,
+      address_city: profile.address?.city || DEMO_USER.address.city,
+      address_state: profile.address?.state || DEMO_USER.address.state,
+      address_zip: profile.address?.zip || DEMO_USER.address.zip,
+      plan_id: nextPlan.id,
+    });
+    applyBootstrap(snap, profile);
+  }, [applyBootstrap]);
+
+  const signIn = useCallback(async ({ email, password }) => {
+    if (!fieldworkCloudEnabled) {
+      throw new Error('Cloud sign-in requires Fieldwork Supabase keys');
+    }
+    await fieldworkSignIn({ email, password });
+    const snap = await bootstrapFieldwork({ email });
+    applyBootstrap(snap, { email });
+  }, [applyBootstrap]);
 
   const updateProfile = useCallback((profile) => {
     setUser((prev) => ({ ...prev, ...profile, address: { ...prev.address, ...(profile.address || {}) } }));
   }, []);
 
-  const signOut = useCallback(() => {
+  const signOut = useCallback(async () => {
+    try {
+      await fieldworkSignOut();
+    } catch {
+      /* ignore */
+    }
     setUser(null);
   }, []);
 
-  const resetAll = useCallback(() => {
+  const resetAll = useCallback(async () => {
+    try {
+      await fieldworkSignOut();
+    } catch {
+      /* ignore */
+    }
     localStorage.removeItem(STORAGE_KEY);
     setUser(null);
     setPlanId(DEFAULT_PLAN_ID);
@@ -217,6 +359,7 @@ export function FieldworkProvider({ children }) {
     setWizardStep,
     billingHistory,
     signUp,
+    signIn,
     updateProfile,
     signOut,
     resetAll,
@@ -226,6 +369,7 @@ export function FieldworkProvider({ children }) {
     completeMail,
     startNewCampaign,
     runtime,
+    authReady,
   };
 
   return <FieldworkContext.Provider value={value}>{children}</FieldworkContext.Provider>;
