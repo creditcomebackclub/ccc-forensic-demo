@@ -58,7 +58,7 @@ exports.handler = async (event) => {
     return json(200, {
       isolated: true,
       campaign: created.body[0],
-      message: 'Seeded into fieldwork_campaigns only — CCC CRM untouched.',
+      message: 'Seeded into fieldwork_campaigns only.',
     });
   } catch (e) {
     return json(e.statusCode || 500, { error: e.message || 'Seed failed' });

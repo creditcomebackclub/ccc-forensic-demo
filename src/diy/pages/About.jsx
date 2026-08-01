@@ -46,9 +46,8 @@ export default function About() {
 
           <h2 className="fw-display !mt-12 text-2xl font-bold text-[var(--fw-ink)]">How we’re organized</h2>
           <p>
-            Fieldwork is a standalone software product, separate from any done-for-you credit-repair agency
-            desk. Your subscriber data, billing, and mail credits live in the Fieldwork lane — not mixed into
-            someone else’s client CRM.
+            Fieldwork is its own software company. Your subscriber data, billing, and mail credits live in
+            Fieldwork’s systems — built for self-serve DIY, not a done-for-you agency desk.
           </p>
 
           <h2 className="fw-display !mt-12 text-2xl font-bold text-[var(--fw-ink)]">Talk to us</h2>

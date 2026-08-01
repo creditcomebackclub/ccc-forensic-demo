@@ -15,7 +15,7 @@ npm run dev
 
 **Fieldwork** is a clickable DIY credit-repair product — marketing site + subscriber app (dashboard, campaign wizard, campaigns, documents, billing, settings). Hash routes: `#/`, `#/signup`, `#/app`, etc.
 
-**Isolation (hard requirement):** Fieldwork does **not** touch the CCC agency setup. It uses `fieldwork_*` tables, `fieldwork-*` Netlify functions, and `FIELDWORK_*` / `VITE_FIELDWORK_*` credentials only — never CCC Supabase/Lob/Anthropic keys. Default local run is `localStorage` demo mode. See [docs/FIELDWORK_ISOLATION.md](docs/FIELDWORK_ISOLATION.md).
+**Separate company / hard isolation:** Fieldwork is its own product lane (ideally its own Supabase org). It uses `fieldwork_*` tables, `fieldwork-*` Netlify functions, and `FIELDWORK_*` / `VITE_FIELDWORK_*` credentials only — never agency Supabase/Lob/Anthropic keys. Customer-facing Fieldwork UI must not mention CCC. Default local run is `localStorage` demo mode. See [docs/FIELDWORK_ISOLATION.md](docs/FIELDWORK_ISOLATION.md).
 
 ## What is built
 
