@@ -342,6 +342,7 @@ export function FieldworkProvider({ children }) {
 
   const changePlan = useCallback(async (nextId) => {
     const next = planById(nextId);
+    // Optimistic local update for snappy UI
     setPlanId(next.id);
     setMailCredits(next.mailCredits);
     setAuditCredits(next.auditCredits);
@@ -358,10 +359,19 @@ export function FieldworkProvider({ children }) {
     ]);
 
     // Persist plan + included credits to Fieldwork Supabase (not local-only).
-    if (fieldworkCloudEnabled) {
-      const snap = await bootstrapFieldwork({ plan_id: next.id });
-      if (snap?.subscriber) applyBootstrap(snap, user || {});
+    if (!fieldworkCloudEnabled) return;
+
+    const snap = await bootstrapFieldwork({ plan_id: next.id }, { timeoutMs: 15000 });
+    if (!snap?.subscriber) {
+      throw new Error('Plan switch did not reach Fieldwork — is netlify dev running?');
     }
+    if (snap.subscriber.plan_id !== next.id) {
+      // Snap-back bug: don't apply stale pro row over the optimistic Campaign UI
+      throw new Error(
+        `Plan did not save (server still has ${snap.subscriber.plan_id}). Hard-refresh and try again.`,
+      );
+    }
+    applyBootstrap(snap, user || {});
   }, [applyBootstrap, user]);
 
   const buyCreditPack = useCallback((packId) => {

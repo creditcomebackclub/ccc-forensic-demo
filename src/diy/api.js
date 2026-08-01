@@ -221,16 +221,23 @@ export async function bootstrapFieldwork(profile, { timeoutMs } = {}) {
     return { mode: 'demo', isolated: true };
   }
   const hasSig = profile && Object.prototype.hasOwnProperty.call(profile, 'signature_data');
+  const hasPlan = Boolean(profile?.plan_id);
   try {
     return await fwFetch('fieldwork-bootstrap', {
       method: 'POST',
       body: JSON.stringify(profile || {}),
-      // Signature data URLs are large — give the PATCH room to finish.
-      timeoutMs: timeoutMs || (hasSig ? 20000 : 4000),
+      // Signature data URLs / plan patches need more than the default 4s.
+      timeoutMs: timeoutMs || (hasSig || hasPlan ? 20000 : 4000),
     });
   } catch (err) {
     // Plain `vite` has no Netlify functions — fall back to RLS client writes.
-    if (err?.status === 404 || err?.name === 'AbortError' || /404|Failed to fetch|aborted/i.test(err?.message || '')) {
+    // Also fall back on 5xx so a broken function doesn't block plan switches.
+    if (
+      err?.status === 404
+      || err?.status >= 500
+      || err?.name === 'AbortError'
+      || /404|Failed to fetch|aborted|network/i.test(err?.message || '')
+    ) {
       return bootstrapFieldworkClient(profile || {});
     }
     throw err;

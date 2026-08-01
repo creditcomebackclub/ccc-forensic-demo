@@ -74,6 +74,22 @@ exports.handler = async (event) => {
       }
       if (Array.isArray(updated.body) && updated.body[0]) {
         Object.assign(subscriber, updated.body[0]);
+      } else {
+        // Prefer:return=representation sometimes empty — re-read so plan switches stick.
+        const refreshed = await fwRest(
+          `/rest/v1/fieldwork_subscribers?id=eq.${subscriber.id}&select=*`,
+          'GET',
+          serviceKey,
+          url,
+        );
+        if (Array.isArray(refreshed.body) && refreshed.body[0]) {
+          Object.assign(subscriber, refreshed.body[0]);
+        }
+      }
+      if (body.plan_id && subscriber.plan_id !== body.plan_id) {
+        const err = new Error(`Plan did not persist (still ${subscriber.plan_id}). Try again.`);
+        err.statusCode = 500;
+        throw err;
       }
     }
 
