@@ -21,3 +21,6 @@ repomix-output.xml
 # Fieldwork reel / walkthrough capture intermediates
 public/videos/reel-frames/
 public/videos/walkthrough-raw/
+public/videos/audio/helix-*.mp3
+public/videos/audio/bed*.mp3
+public/videos/audio/fieldwork-bed.wav

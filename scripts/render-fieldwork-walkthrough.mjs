@@ -11,6 +11,7 @@ const BASE = process.env.FIELDWORK_REEL_BASE || 'http://localhost:5173/diy.html'
 const RAW_DIR = join(process.cwd(), 'public/videos/walkthrough-raw');
 const OUT_MP4 = join(process.cwd(), 'public/videos/fieldwork-product-demo.mp4');
 const POSTER = join(process.cwd(), 'public/videos/fieldwork-demo-poster.jpg');
+const BED_WAV = join(process.cwd(), 'public/videos/audio/fieldwork-badass.wav');
 const W = 1440;
 const H = 900;
 
@@ -116,6 +117,7 @@ await browser.close();
 const webmPath = await video.path();
 console.log('Raw video:', webmPath);
 
+const silentMp4 = join(RAW_DIR, 'silent.mp4');
 run('ffmpeg', [
   '-y',
   '-i', webmPath,
@@ -124,8 +126,34 @@ run('ffmpeg', [
   '-crf', '18',
   '-preset', 'medium',
   '-pix_fmt', 'yuv420p',
-  '-movflags', '+faststart',
   '-an',
+  silentMp4,
+]);
+
+// Dark tech bed (no VO — music carries the energy)
+console.log('Generating badass bed…');
+run('python3', [join(process.cwd(), 'scripts/gen-fieldwork-bed.py'), BED_WAV]);
+
+const dur = spawnSync(
+  'ffprobe',
+  ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', silentMp4],
+  { encoding: 'utf8' },
+).stdout.trim();
+const fadeOutStart = Math.max(0, Number(dur) - 1.6).toFixed(3);
+
+run('ffmpeg', [
+  '-y',
+  '-i', silentMp4,
+  '-i', BED_WAV,
+  '-filter_complex',
+  `[1:a]atrim=0:${dur},afade=t=in:st=0:d=0.35,afade=t=out:st=${fadeOutStart}:d=1.6,volume=0.78,alimiter=limit=0.95[a]`,
+  '-map', '0:v',
+  '-map', '[a]',
+  '-c:v', 'copy',
+  '-c:a', 'aac',
+  '-b:a', '192k',
+  '-shortest',
+  '-movflags', '+faststart',
   OUT_MP4,
 ]);
 
@@ -139,15 +167,7 @@ run('ffmpeg', [
   POSTER,
 ]);
 
-console.log('Wrote', OUT_MP4);
-const probe = spawnSync('ffprobe', [
-  '-v', 'error',
-  '-show_entries', 'format=duration',
-  '-of', 'default=nw=1:nk=1',
-  OUT_MP4,
-], { encoding: 'utf8' });
-console.log('Duration:', probe.stdout.trim(), 's');
-
+console.log('Wrote', OUT_MP4, `(${dur}s + music)`);
 if (!existsSync(OUT_MP4)) process.exit(1);
 
 for (const f of readdirSync(RAW_DIR)) {
