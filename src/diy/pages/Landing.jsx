@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowRight, BadgeCheck, Crosshair, FileSearch, Mail, Shield } from 'lucide-react';
-import { PRICING_PLANS, STANDALONE_PILLARS } from '../demoData';
+import { PRICING_PLANS, VALUE_PILLARS } from '../demoData';
 import { useFieldwork } from '../state';
 
 const fadeUp = {
@@ -18,6 +18,7 @@ export default function Landing() {
 
   return (
     <div className="min-h-screen text-white">
+      {/* HERO */}
       <section className="relative min-h-[100svh] overflow-hidden fw-atmosphere">
         <div className="absolute inset-0 fw-grid-overlay pointer-events-none" />
         <div className="absolute inset-0 fw-field-scan pointer-events-none" />
@@ -30,14 +31,17 @@ export default function Landing() {
           <div className="fw-display text-2xl font-extrabold tracking-tight">
             Fieldwork<span className="text-[var(--fw-signal)]">.</span>
           </div>
-          <div className="flex items-center gap-3 text-sm">
+          <div className="flex items-center gap-4 text-sm">
+            <a href="#pricing" className="hidden text-white/70 hover:text-white sm:inline">
+              Pricing
+            </a>
             {user ? (
               <Link to="/app" className="fw-btn-primary !py-2 !px-3 text-sm">
                 Open app
               </Link>
             ) : (
               <Link to="/signup" className="fw-btn-primary !py-2 !px-3 text-sm">
-                Try the demo
+                Start free demo
               </Link>
             )}
           </div>
@@ -51,7 +55,7 @@ export default function Landing() {
             animate="show"
             custom={0}
           >
-            Standalone DIY credit repair
+            Furnisher-first credit repair
           </motion.p>
           <motion.h1
             className="fw-display max-w-4xl text-[clamp(3.2rem,9vw,6.4rem)] font-extrabold text-white"
@@ -71,7 +75,7 @@ export default function Landing() {
             animate="show"
             custom={2}
           >
-            A subscriber app — not an agency desk. Upload your report, get a Metro 2 / FCRA audit, choose disputes, mail certified letters in your name, track the clocks.
+            Upload your report. See what’s wrong — field by field. Mail certified disputes in your name. No agency retainer. No handoff.
           </motion.p>
           <motion.div
             className="mt-10 flex flex-wrap items-center gap-4"
@@ -81,81 +85,67 @@ export default function Landing() {
             custom={3}
           >
             <Link to={user ? '/app' : '/signup'} className="fw-btn-primary text-base">
-              {user ? 'Open workspace' : 'Launch the app'} <ArrowRight size={18} />
+              {user ? 'Open workspace' : 'See a sample audit'} <ArrowRight size={18} />
             </Link>
-            <a href="#product" className="fw-btn-ghost text-base">
-              How the service works
+            <a href="#method" className="fw-btn-ghost text-base">
+              Why furnishers first
             </a>
           </motion.div>
         </div>
       </section>
 
-      {/* STANDALONE PRODUCT */}
-      <section id="product" className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
+      {/* HOW IT WORKS — one job */}
+      <section id="how" className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto max-w-6xl">
-          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">As a standalone service</p>
+          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">How it works</p>
           <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
-            Marketing site out front. Subscriber app behind the login.
+            Three moves. You stay in control.
           </h2>
           <p className="mt-5 max-w-2xl text-lg text-[var(--fw-muted)]">
-            Fieldwork ships as its own product surface — own tables, own API keys, own Stripe — sealed off from the CCC agency Forensic Suite. DIY traffic cannot touch your agency Lob/Claude setup.
+            Fieldwork is the toolkit. You decide what to dispute, what to mail, and when to stop.
           </p>
 
           <div className="mt-14 grid gap-10 md:grid-cols-3">
-            {STANDALONE_PILLARS.map((p) => (
+            {VALUE_PILLARS.map((p, i) => (
               <div key={p.title} className="border-t border-[var(--fw-line)] pt-6">
-                <h3 className="fw-display text-2xl font-bold">{p.title}</h3>
+                <div className="fw-mono text-[11px] uppercase tracking-[0.2em] text-[var(--fw-sea)]">
+                  Step 0{i + 1}
+                </div>
+                <h3 className="fw-display mt-3 text-2xl font-bold">{p.title}</h3>
                 <p className="mt-3 leading-relaxed text-[var(--fw-muted)]">{p.body}</p>
               </div>
             ))}
           </div>
-
-          {/* Architecture sketch */}
-          <div className="mt-14 overflow-hidden rounded-lg bg-[var(--fw-ink)] p-6 text-white md:p-8">
-            <div className="fw-mono text-[11px] uppercase tracking-[0.2em] text-[var(--fw-signal)]">Runtime shape</div>
-            <div className="mt-6 grid gap-4 font-[Figtree] text-sm md:grid-cols-4">
-              {[
-                { t: 'App', d: 'React SaaS · dashboard, campaigns, billing' },
-                { t: 'Auth + data', d: 'Supabase Auth · per-user RLS · document vault' },
-                { t: 'Engine', d: 'Audit / letter jobs · Metro 2 prompts · Anthropic' },
-                { t: 'Fulfillment', d: 'Lob certified mail · webhooks · Stripe credits' },
-              ].map((col) => (
-                <div key={col.t} className="rounded border border-white/10 bg-white/5 px-4 py-4">
-                  <div className="fw-display text-lg font-bold">{col.t}</div>
-                  <p className="mt-2 text-white/60">{col.d}</p>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </section>
 
+      {/* METHOD */}
       <section id="method" className="bg-white px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto max-w-6xl">
-          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Why furnishers first</p>
+          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">The method</p>
           <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
-            Bureaus repeat what furnishers report. So we start where the data is born.
+            Credit bureaus repeat what furnishers report.
           </h2>
           <p className="mt-5 max-w-2xl text-lg text-[var(--fw-muted)]">
-            Fieldwork reads your credit file like a compliance forensic — Metro 2 field numbers, FCRA citations, cross-bureau conflicts — then builds letters aimed at the companies reporting the errors.
+            So we start with the companies putting the data on your file — not a vague “dispute everything” letter to the bureaus.
           </p>
 
           <div className="mt-14 grid gap-10 md:grid-cols-3">
             {[
               {
                 icon: FileSearch,
-                title: 'Field-level audit',
-                body: 'DOFD, Compliance Condition Codes, balances, status/PHP chronology — cited to Metro 2 and FCRA, not vague “inaccurate” fluff.',
+                title: 'Metro 2, not vibes',
+                body: 'We flag real reporting defects — DOFD, compliance codes, balances, payment history — with the field numbers and FCRA hooks your letter needs.',
               },
               {
                 icon: Crosshair,
-                title: 'You choose the fights',
-                body: 'Pick the accounts worth disputing. Preview plain-English findings before anything is mailed. You’re the decision-maker.',
+                title: 'You pick the targets',
+                body: 'See every finding in plain English. Select the accounts worth fighting. Skip the noise.',
               },
               {
                 icon: Mail,
-                title: 'Certified mail, tracked',
-                body: 'Generate furnisher letters, send via Lob certified mail, and watch delivery + response windows in one timeline.',
+                title: 'Certified, then tracked',
+                body: 'Letters go out in your name via certified mail. Delivery status and 30-day response clocks live in one place.',
               },
             ].map(({ icon: Icon, title, body }) => (
               <div key={title} className="border-t border-[var(--fw-line)] pt-6">
@@ -168,24 +158,25 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* AUDIT PREVIEW */}
       <section className="bg-[var(--fw-ink)] px-6 py-24 text-white md:px-8">
         <div className="mx-auto grid max-w-6xl items-center gap-12 lg:grid-cols-2">
           <div>
-            <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-signal)]">Audit preview</p>
+            <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-signal)]">Inside the audit</p>
             <h2 className="fw-display mt-3 text-4xl font-bold md:text-5xl">
-              Sleek findings.
+              Clear enough to act.
               <br />
-              Serious citations.
+              Precise enough to matter.
             </h2>
             <p className="mt-5 text-lg text-[rgba(232,238,242,0.72)]">
-              Every issue ties a Metro 2 field to a statute — so your letter isn’t a template rant. It’s a documented accuracy challenge.
+              Each finding pairs a Metro 2 field with a statute — so you’re not guessing what to say, and neither is the letter.
             </p>
             <ul className="mt-8 space-y-3 text-[rgba(232,238,242,0.85)]">
               {[
-                'Field 25 DOFD re-aging detection',
-                'Field 20 XB / investigation hygiene',
-                'Cross-bureau balance conflicts (§607(b))',
-                'Past-due vs balance impossibilities',
+                'Re-aged dates of first delinquency',
+                'Stale dispute codes that never cleared',
+                'Balances that don’t match across bureaus',
+                'Past-due amounts that can’t be right',
               ].map((item) => (
                 <li key={item} className="flex items-start gap-3">
                   <BadgeCheck className="mt-0.5 shrink-0 text-[var(--fw-signal)]" size={18} />
@@ -210,29 +201,34 @@ export default function Landing() {
               </p>
               <div className="mt-5 grid gap-3 text-sm">
                 <div className="rounded border border-white/10 bg-black/20 px-3 py-2">
-                  <div className="fw-mono text-[10px] uppercase text-white/40">Reported</div>
-                  <div className="mt-1">DOFD 03/2023 (post-acquisition)</div>
+                  <div className="fw-mono text-[10px] uppercase text-white/40">On your report</div>
+                  <div className="mt-1">DOFD 03/2023 (after the debt was sold)</div>
                 </div>
                 <div className="rounded border border-[rgba(46,230,166,0.25)] bg-[rgba(46,230,166,0.06)] px-3 py-2">
-                  <div className="fw-mono text-[10px] uppercase text-[var(--fw-signal)]">Challenge</div>
-                  <div className="mt-1">Trace DOFD to original Synchrony delinquency</div>
+                  <div className="fw-mono text-[10px] uppercase text-[var(--fw-signal)]">What you challenge</div>
+                  <div className="mt-1">Trace DOFD to the original creditor delinquency</div>
                 </div>
               </div>
               <div className="mt-5 flex items-center gap-2 text-xs text-white/50">
                 <Shield size={14} className="text-[var(--fw-signal)]" />
-                Furnisher-first letter ready · 30-day clock
+                Ready for a furnisher-first letter
               </div>
             </div>
           </div>
         </div>
       </section>
 
+      {/* PRICING */}
       <section id="pricing" className="bg-[var(--fw-paper)] px-6 py-24 text-[var(--fw-ink)] md:px-8">
         <div className="mx-auto max-w-6xl">
           <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Pricing</p>
-          <h2 className="fw-display mt-3 text-4xl font-bold md:text-5xl">Software that earns its keep.</h2>
+          <h2 className="fw-display mt-3 text-4xl font-bold md:text-5xl">
+            Pay for tools.
+            <br />
+            Keep the playbook.
+          </h2>
           <p className="mt-4 max-w-xl text-lg text-[var(--fw-muted)]">
-            Subscribe for audits + mail credits. Agency retainers run higher and they own the playbook — Fieldwork puts the forensic workflow in your hands.
+            Agencies charge more and run the case for you. Fieldwork is the opposite: a monthly toolkit with mail credits, built for people who want to drive.
           </p>
 
           <div className="mt-12 grid gap-5 lg:grid-cols-3">
@@ -268,6 +264,10 @@ export default function Landing() {
               </div>
             ))}
           </div>
+
+          <p className="mt-8 max-w-2xl text-sm text-[var(--fw-muted)]">
+            Mail credits cover certified postage. Unused credits don’t roll forever in the live product — the point is steady campaigns, not stockpiling.
+          </p>
         </div>
       </section>
 
@@ -276,11 +276,11 @@ export default function Landing() {
           <div>
             <div className="fw-display text-xl text-white">Fieldwork.</div>
             <p className="mt-2 max-w-md">
-              Standalone DIY product concept on the CCC forensic engine. Not legal advice. You are responsible for the accuracy of disputes you send.
+              DIY credit-repair software. Not legal advice. You choose what to dispute and remain the sender of record on every letter.
             </p>
           </div>
           <Link to={user ? '/app' : '/signup'} className="fw-btn-primary self-start">
-            {user ? 'Open app' : 'Get started'} <ArrowRight size={16} />
+            {user ? 'Open app' : 'Try the demo'} <ArrowRight size={16} />
           </Link>
         </div>
       </footer>

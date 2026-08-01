@@ -219,9 +219,14 @@ export const PRICING_PLANS = [
     name: 'Starter',
     price: 29,
     mailCredits: 3,
-    blurb: 'One audit cycle and your first certified letters.',
-    features: ['Full Metro 2 / FCRA audit', '3 certified letters / mo', 'Furnisher-first letter studio', 'Delivery tracking'],
-    cta: 'Start Starter',
+    blurb: 'Get your first forensic audit and mail your opening wave.',
+    features: [
+      'Full Metro 2 / FCRA audit',
+      '3 certified letters / month',
+      'Furnisher-first letter drafts',
+      'Delivery tracking',
+    ],
+    cta: 'Choose Starter',
     highlight: false,
   },
   {
@@ -229,9 +234,15 @@ export const PRICING_PLANS = [
     name: 'Pro',
     price: 59,
     mailCredits: 12,
-    blurb: 'For active campaigns — response analysis included.',
-    features: ['Everything in Starter', '12 certified letters / mo', 'Response analyzer', 'Cross-bureau conflict map', 'Priority letter queue'],
-    cta: 'Go Pro',
+    blurb: 'For people running a real campaign — not a one-off letter.',
+    features: [
+      'Everything in Starter',
+      '12 certified letters / month',
+      'Response analyzer',
+      'Cross-bureau conflict map',
+      'Priority mail queue',
+    ],
+    cta: 'Choose Pro',
     highlight: true,
   },
   {
@@ -239,9 +250,14 @@ export const PRICING_PLANS = [
     name: 'Campaign',
     price: 99,
     mailCredits: 30,
-    blurb: 'Heavy hitters running multi-furnisher waves.',
-    features: ['Unlimited audits', '30 certified letters / mo', 'Phase-ready escalations toolkit', 'Exportable evidence pack'],
-    cta: 'Run Campaign',
+    blurb: 'Multiple furnishers, thicker files, longer fights.',
+    features: [
+      'Unlimited audits',
+      '30 certified letters / month',
+      'Escalation letter toolkit',
+      'Exportable evidence pack',
+    ],
+    cta: 'Choose Campaign',
     highlight: false,
   },
 ];
@@ -261,18 +277,21 @@ export const DEMO_DOCUMENTS = [
   { id: 'doc_report', name: 'PrivacyGuard_3bureau_sample.pdf', kind: 'Credit report', uploadedAt: '2026-08-01T14:20:00Z' },
 ];
 
-/** How Fieldwork works as a standalone service (product architecture copy). */
-export const STANDALONE_PILLARS = [
+/** Customer-facing “how it works” pillars for the marketing site. */
+export const VALUE_PILLARS = [
   {
-    title: 'Consumer SaaS, not an agency desk',
-    body: 'You subscribe, upload, decide, and mail in your own name. No LPOA. Fieldwork is the forensic toolkit — you stay the sender of record.',
+    title: 'Audit the file',
+    body: 'Drop in a 3-bureau report. Fieldwork maps Metro 2 fields and surfaces FCRA-grounded issues — in language you can actually use.',
   },
   {
-    title: 'Sealed off from CCC ops',
-    body: 'Own fieldwork_* database tables, own FIELDWORK_* API keys, own Stripe. The agency Forensic Suite — clients, LPOA, Lob, Claude — is never billed or written by DIY traffic.',
+    title: 'Choose the fights',
+    body: 'Select the furnishers and findings worth disputing. Nothing mails until you say so. Your name is on every letter.',
   },
   {
-    title: 'Campaigns you can run yourself',
-    body: 'Each wave is a campaign: audit → select → certified mail → 30-day clocks → response upload. Upgrade plans when you need more mail credits or response analysis.',
+    title: 'Send and track',
+    body: 'Spend mail credits on certified delivery. Watch status, sit the response window, upload what comes back.',
   },
 ];
+
+/** @deprecated use VALUE_PILLARS — kept for any stray imports during transition */
+export const STANDALONE_PILLARS = VALUE_PILLARS;
