@@ -22,15 +22,9 @@ function formatAddress(user) {
   return { line1, loc };
 }
 
-function phaseLabel(phaseId) {
-  return phaseId === 'phase2'
-    ? 'Phase 2 follow-up · prior dispute + response enclosed'
-    : 'Phase 1 direct dispute · FCRA §623 / Metro 2 / Reg V';
-}
-
 function enclosuresLine(phaseId) {
   if (phaseId === 'phase2') {
-    return 'Enclosures: (1) Government-issued photo ID; (2) Proof of current address; (3) Prior Phase 1 letter; (4) Furnisher response; (5) Certified mail return receipt';
+    return 'Enclosures: (1) Government-issued photo ID; (2) Proof of current address; (3) Prior dispute letter; (4) Furnisher response; (5) Certified mail return receipt';
   }
   return 'Enclosures: (1) Government-issued photo ID; (2) Proof of current address';
 }
@@ -90,9 +84,6 @@ export function buildFieldworkLetter(user, account, phaseId = 'phase1') {
     </tr>`).join('');
 
   const body = `
-<p class="fw-letter-mark">Fieldwork<span>.</span></p>
-<p class="fw-phase">${esc(phaseLabel(phaseId))}</p>
-
 <div class="date-line">${esc(date)}</div>
 
 <div class="sender-block">
