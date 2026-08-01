@@ -329,12 +329,13 @@ function normalizeClientSummary(row) {
     billingType: row.billing_type || null,
     billingStartDate: row.billing_start_date || null,
     billingTier: row.billing_tier || null,
+    recurringActive: !!row.recurring_active,
     exitReason: row.exit_reason || null,
     statusChangedAt: row.status_changed_at || null,
   };
 }
 
-const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at';
+const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,recurring_active,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at';
 
 function hydrateClientRecord(row, audits, letters, portal = null) {
   const latestActivity = [
@@ -383,6 +384,7 @@ function hydrateClientRecord(row, audits, letters, portal = null) {
     billingType: row.billing_type || null,
     billingStartDate: row.billing_start_date || null,
     billingTier: row.billing_tier || null,
+    recurringActive: !!row.recurring_active,
     exitReason: row.exit_reason || null,
     statusChangedAt: row.status_changed_at || null,
     referredBy: row.referred_by || null,

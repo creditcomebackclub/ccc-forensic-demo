@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, User, Save, DollarSign, Bell, Users, ShieldAlert } from 'lucide-react';
+import { X, Check, User, Save, DollarSign, Bell, Users, ShieldAlert, CreditCard } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 import { getSettings, saveSettings } from '../utils/settings';
+import { nmiConfigured } from '../utils/billingApi';
 
 export default function SettingsModal({ onClose, displayName, email }) {
   const [activeTab, setActiveTab] = useState('profile');
@@ -145,6 +146,20 @@ export default function SettingsModal({ onClose, displayName, email }) {
 
             {activeTab === 'pricing' && (
               <div className="space-y-5">
+                <div className={`flex items-start gap-3 p-3 rounded-sm border ${nmiConfigured() ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+                  <CreditCard size={16} className={nmiConfigured() ? 'text-green-700 mt-0.5' : 'text-amber-700 mt-0.5'} />
+                  <div>
+                    <div className={`text-[12px] font-bold ${nmiConfigured() ? 'text-green-800' : 'text-amber-900'}`}>
+                      Payments (NMI / Zen): {nmiConfigured() ? 'Tokenization key present' : 'Not configured'}
+                    </div>
+                    <p className="text-[11px] text-gray-600 mt-1 leading-relaxed">
+                      Browser Collect.js uses <code className="text-[10px]">VITE_NMI_TOKENIZATION_KEY</code>.
+                      Server charge/vault requires Netlify env <code className="text-[10px]">NMI_SECURITY_KEY</code>,
+                      <code className="text-[10px]"> NMI_WEBHOOK_SECRET</code>, and
+                      <code className="text-[10px]"> BILLING_AUTO_CHARGE=true</code> before cron/audit auto-charges run.
+                    </p>
+                  </div>
+                </div>
                 <p className="text-[12px] text-gray-500">
                   These fees are dynamically injected into a client's Limited Power of Attorney based on their assigned Service Tier — set per-client in the Billing panel, not here. Each tier's real fee schedule is below.
                 </p>

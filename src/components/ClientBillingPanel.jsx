@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
 import { supabase } from '../utils/supabase';
-import { Check, X, DollarSign, Edit2, Link } from 'lucide-react';
+import { Check, X, DollarSign, Edit2, Link, CreditCard } from 'lucide-react';
 import { computeClientCommission } from '../utils/affiliateCommission';
+import NmiCollectForm from './NmiCollectForm';
+import { chargeDue, fetchCardOnFile, vaultCard, nmiConfigured } from '../utils/billingApi';
 
 const T = {
   navy: '#1B2A4A',
@@ -176,6 +178,10 @@ export default function ClientBillingPanel({ client, onChanged }) {
   const [payingCommission, setPayingCommission] = useState(false);
   const [commissionPayAmount, setCommissionPayAmount] = useState('');
   const [commissionPayDate, setCommissionPayDate] = useState(today);
+  const [card, setCard] = useState(null);
+  const [showVaultForm, setShowVaultForm] = useState(false);
+  const [charging, setCharging] = useState(false);
+  const [vaultBusy, setVaultBusy] = useState(false);
 
   useEffect(() => {
     // Raw rows keyed by id — affiliateCommission.js reads .commission_rate
@@ -190,6 +196,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
     supabase.from('commission_payouts').select('covered_tx_ids, amount').eq('client_id', client.id).then(({ data }) => {
       if (data) setCommissionPayouts(data);
     });
+    fetchCardOnFile(client.id).then(setCard).catch(() => setCard(null));
   }, [client.id]);
 
   const ledger = Array.isArray(client.ledger) ? client.ledger : [];
@@ -286,7 +293,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
     // the caller pick the real payment date instead of always "now" — see
     // the inline date picker this opens into below.
     const stamp = paidOnDate ? new Date(paidOnDate + 'T12:00:00').toISOString() : new Date().toISOString();
-    const updated = ledger.map(t => t.id === id ? { ...t, status: 'Paid', paid_at: t.paid_at || stamp } : t);
+    const updated = ledger.map(t => t.id === id ? { ...t, status: 'Paid', paid_at: t.paid_at || stamp, source: t.source || 'manual' } : t);
     await save({ ledger: updated });
     setMarkingPaidId(null);
   };
@@ -337,12 +344,104 @@ export default function ClientBillingPanel({ client, onChanged }) {
             onSave={(v) => save({ billing_type: v })} 
           />
         </Row>
+
+        <Row label="Recurring Active">
+          <span className="text-[12px]" style={{ color: client.recurringActive ? '#15803D' : T.faint }}>
+            {client.recurringActive ? 'Yes — monthly auto-charge on' : 'No — waiting for first successful sale'}
+          </span>
+        </Row>
+
+        <Row label="Card on File">
+          <div className="flex flex-col items-end gap-1.5">
+            <span className="text-[12px]" style={{ color: card?.card_last4 ? T.ink : T.faint }}>
+              {card?.card_last4
+                ? `${card.card_type || 'Card'} ···· ${card.card_last4}${card.card_expiry ? ` · ${card.card_expiry}` : ''}`
+                : 'No card vaulted'}
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowVaultForm((v) => !v)}
+                className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border"
+                style={{ borderColor: T.border, color: T.navy }}
+              >
+                {showVaultForm ? 'Cancel' : (card?.card_last4 ? 'Replace card' : 'Add card')}
+              </button>
+              {balanceDue > 0 && card?.card_last4 && (
+                <button
+                  type="button"
+                  disabled={charging}
+                  onClick={async () => {
+                    if (!confirm(`Charge $${balanceDue.toFixed(2)} to card on file?`)) return;
+                    setCharging(true);
+                    try {
+                      const result = await chargeDue({ clientId: client.id });
+                      if (result.declined) alert(result.error || 'Card declined');
+                      else if (onChanged) onChanged();
+                    } catch (e) {
+                      alert(e.message || 'Charge failed');
+                    } finally {
+                      setCharging(false);
+                    }
+                  }}
+                  className="text-[10px] uppercase tracking-wider px-2 py-1 rounded text-white flex items-center gap-1"
+                  style={{ background: T.navy }}
+                >
+                  <CreditCard size={11} />
+                  {charging ? 'Charging…' : 'Charge due'}
+                </button>
+              )}
+            </div>
+          </div>
+        </Row>
+
+        {showVaultForm && (
+          <div className="mt-2">
+            {nmiConfigured() ? (
+              <NmiCollectForm
+                buttonLabel={vaultBusy ? 'Saving…' : 'Save card ($0 auth)'}
+                disabled={vaultBusy}
+                onToken={async (tokenPayload) => {
+                  setVaultBusy(true);
+                  try {
+                    const result = await vaultCard({
+                      clientId: client.id,
+                      paymentToken: tokenPayload.paymentToken,
+                      cardLast4: tokenPayload.cardLast4,
+                      cardType: tokenPayload.cardType,
+                      cardExpiry: tokenPayload.cardExpiry,
+                      initiatedBy: 'staff',
+                    });
+                    setCard({
+                      card_last4: result.cardLast4 || tokenPayload.cardLast4,
+                      card_type: result.cardType || tokenPayload.cardType,
+                      card_expiry: result.cardExpiry || tokenPayload.cardExpiry,
+                    });
+                    setShowVaultForm(false);
+                    if (onChanged) onChanged();
+                  } catch (e) {
+                    alert(e.message || 'Could not vault card');
+                  } finally {
+                    setVaultBusy(false);
+                  }
+                }}
+              />
+            ) : (
+              <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                NMI tokenization key not configured in this environment.
+              </div>
+            )}
+          </div>
+        )}
         
         {client.billingStatus === 'Active' && (
           <div className="mt-2 bg-green-50 text-green-800 text-[11px] px-3 py-2 rounded-md border border-green-200 flex items-start gap-2">
             <Check size={14} className="mt-0.5 flex-shrink-0" />
             <div>
-              <strong>Billing is active.</strong> Client will be included in the automated billing cycle (once gateway is integrated).
+              <strong>Billing is active.</strong>{' '}
+              {client.recurringActive
+                ? 'Monthly auto-charge runs when BILLING_AUTO_CHARGE is enabled.'
+                : 'Card may be on file; first sale (after audit delivery) activates recurring.'}
             </div>
           </div>
         )}
