@@ -6,13 +6,9 @@ async function getUserId() {
   return user.id;
 }
 
-// clientId is the real key — two clients named identically (which does
-// happen) would otherwise silently overwrite each other's ID/address
-// documents, since slug(clientName) collapses to the same storage path and
-// the old upsert conflicted on client_name. clientId is required for
-// uploads; it's optional on getDocuments only because LobMailer's caller
-// doesn't have one on hand (letters rows aren't client_id-keyed) and falls
-// back to the pre-existing name-based lookup there.
+// clientId is the real key — two clients named identically would otherwise
+// silently overwrite each other's ID/address documents. Required for both
+// uploads and getDocuments (name-only lookup removed).
 //
 // ownerUserId is optional and only needed when the caller isn't the
 // document's owner — e.g. ClientPortal.jsx uploads on behalf of the client,
@@ -84,9 +80,16 @@ export async function uploadArbitraryDocument(clientId, clientName, label, file,
 
 export async function getDocuments(clientName, clientId) {
   const userId = await getUserId();
-  let query = supabase.from('documents').select('*').eq('user_id', userId);
-  query = clientId ? query.eq('client_id', clientId) : query.eq('client_name', clientName);
-  const { data, error } = await query;
+  // Mail/enclosure path requires clientId — name-only lookup can attach the
+  // wrong client's ID/address when two clients share a name under one firm.
+  if (!clientId) {
+    throw new Error('getDocuments requires a clientId');
+  }
+  const { data, error } = await supabase
+    .from('documents')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('client_id', clientId);
   if (error) throw error;
   return data || [];
 }

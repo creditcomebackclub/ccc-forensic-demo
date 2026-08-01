@@ -95,10 +95,6 @@ export async function getUnanalyzedResponseStats() {
   }
 }
 
-export async function countUnanalyzedResponses() {
-  return (await getUnanalyzedResponseStats()).count;
-}
-
 export async function getNewLeadsCount() {
   const { count } = await supabase
     .from('clients')

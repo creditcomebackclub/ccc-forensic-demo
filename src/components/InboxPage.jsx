@@ -195,31 +195,17 @@ export default function InboxPage({ isAdmin, onNavigate }) {
         getUnanalyzedResponseStats(),
       ]);
 
-      // Audit complete (has audits, zero letters) and address-confirm rows
-      // come from the audits table directly — narrow columns only.
-      const [auditOnlyRes, pendingAddrRes, unmaledLettersRes] = await Promise.all([
-        // Clients with ≥1 audit but 0 letters
-        supabase.rpc('inbox_audit_only_clients', { p_limit: 100 }).maybeSingle()
-          .then(() => supabase.from('clients')
-            .select('id,name,is_vip,audit_count:audits(count),letter_count:letters(count),latest_audit_at:audits(saved_at)')
-            .gt('audit_count', 0)
-            .limit(1) // placeholder — see below
-          ).catch(() => ({ data: [] })),
-        // Audits with pending/confirm address status
-        supabase.from('audits')
-          .select('client_id,client_name,furnisher:audit->accounts->furnisher,account_id:audit->accounts->id,address_status:audit->accounts->addressStatus,is_vip:clients!inner(is_vip)')
-          .in('audit->accounts->addressStatus', ['PENDING', 'CONFIRM'])
-          .limit(300)
-          .then((r) => ({ data: [] })) // JSON path filtering not supported in PostgREST — use dedicated query below
-          .catch(() => ({ data: [] })),
-        // Unmailed letters (excluding Phase 3)
-        supabase.from('letters')
-          .select('id,client_id,client_name,furnisher,phase,saved_at,mailed_date,covered_furnishers,lob_id,tracking_number')
-          .is('mailed_date', null)
-          .not('phase', 'ilike', 'Phase 3%')
-          .order('saved_at', { ascending: true })
-          .limit(300),
-      ]);
+      // Unmailed letters feed the audit-only subtraction below. Address-
+      // confirm rows are derived from the audits JSONB scan that follows —
+      // PostgREST cannot filter nested account addressStatus in one query.
+      const { data: unmailedLetters, error: unmailedError } = await supabase.from('letters')
+        .select('id,client_id,client_name,furnisher,phase,saved_at,mailed_date,covered_furnishers,lob_id,tracking_number')
+        .is('mailed_date', null)
+        .not('phase', 'ilike', 'Phase 3%')
+        .order('saved_at', { ascending: true })
+        .limit(300);
+      if (unmailedError) throw unmailedError;
+      const unmaledLettersRes = { data: unmailedLetters || [] };
 
       // PostgREST can't filter inside JSONB arrays in a single query.
       // Fetch audit+client data for address-confirm in two steps: get audits

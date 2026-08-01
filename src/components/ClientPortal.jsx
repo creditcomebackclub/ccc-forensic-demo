@@ -453,7 +453,7 @@ export default function ClientPortal({ session, onSignOut }) {
         </div>
       </div>
       
-      <ConciergeChat clientId={session.user.id} accessToken={session.access_token} />
+      <ConciergeChat clientId={clientMeta?.id || null} accessToken={session.access_token} />
     </div>
   );
 }

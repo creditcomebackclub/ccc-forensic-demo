@@ -301,47 +301,54 @@ function ResponsesSection({ clientId, clientName, letters, setAnalyzingLetter })
           });
         }
       } catch (e) {
-        // Migration may not yet be present in a preview database. Legacy
-        // responses below remain available rather than breaking the page.
+        // Migration may not yet be present in a preview database.
         console.warn('Response evidence table unavailable:', e.message || e);
       }
 
-      // Get the user_id for this client from client_profiles
+      // Legacy folder scan (pre-response_evidence). Prefer firm-owned roots
+      // (clients.user_id / letter.user_id) and also the client's auth uid
+      // folder when linked — new uploads live under firmUid/response-evidence
+      // and are already covered by listResponseEvidence above.
+      const evidenceLetterIds = new Set(allResponses.map((r) => r.letterId).filter(Boolean));
+      const rootIds = new Set();
+      if (clientId) {
+        const { data: clientRow } = await supabase
+          .from('clients')
+          .select('user_id')
+          .eq('id', clientId)
+          .limit(1);
+        if (clientRow?.[0]?.user_id) rootIds.add(clientRow[0].user_id);
+      }
       const profileQuery = clientId
         ? supabase.from('client_profiles').select('user_id').eq('client_id', clientId).limit(1)
         : supabase.from('client_profiles').select('user_id').eq('full_name', clientName).limit(1);
       const { data: cp } = await profileQuery;
-
-      if (!cp || cp.length === 0 || !cp[0].user_id) {
-        setResponses(allResponses);
-        setLoading(false);
-        return;
+      if (cp?.[0]?.user_id) rootIds.add(cp[0].user_id);
+      for (const letter of letters || []) {
+        if (letter.user_id) rootIds.add(letter.user_id);
+        if (letter.userId) rootIds.add(letter.userId);
       }
 
-      const userId = cp[0].user_id;
-      const { data: files } = await supabase.storage
-        .from('responses')
-        .list(userId, { limit: 50, sortBy: { column: 'created_at', order: 'desc' } });
-
-      if (!files || files.length === 0) { setResponses(allResponses); setLoading(false); return; }
-
-      // For each folder (letter ID), list files inside and group multi-page
-      // uploads into a single response entry — a 3-photo response should be
-      // one row with one Analyze button, not three
-      for (const folder of files.filter((folder) => folder.name !== 'response-evidence')) {
-        const { data: folderFiles } = await supabase.storage
+      for (const rootId of rootIds) {
+        const { data: files } = await supabase.storage
           .from('responses')
-          .list(userId + '/' + folder.name, { limit: 50 });
-        if (folderFiles && folderFiles.length > 0) {
-          // Match folder name (letter ID) to a letter to get furnisher
-          const matchedLetter = letters.find(l => l.id === folder.name);
-          const hasPhase3 = matchedLetter ? letters.some(pl => pl.furnisher === matchedLetter.furnisher && pl.phase?.startsWith('Phase 3')) : false;
-          // Hide system artifacts: PDF pages converted to JPEGs for Lob
-          // exhibit embedding live in the same folder but aren't uploads
-          const visible = folderFiles.filter(f => !f.name.startsWith(CONVERTED_PREFIX));
-          groupResponseFiles(visible).forEach(batch => {
+          .list(rootId, { limit: 50, sortBy: { column: 'created_at', order: 'desc' } });
+        if (!files || files.length === 0) continue;
+
+        for (const folder of files.filter((folder) => folder.name !== 'response-evidence')) {
+          if (evidenceLetterIds.has(folder.name)) continue;
+          const { data: folderFiles } = await supabase.storage
+            .from('responses')
+            .list(rootId + '/' + folder.name, { limit: 50 });
+          if (!folderFiles || folderFiles.length === 0) continue;
+          const matchedLetter = letters.find((l) => l.id === folder.name);
+          const hasPhase3 = matchedLetter
+            ? letters.some((pl) => pl.furnisher === matchedLetter.furnisher && pl.phase?.startsWith('Phase 3'))
+            : false;
+          const visible = folderFiles.filter((f) => !f.name.startsWith(CONVERTED_PREFIX));
+          groupResponseFiles(visible).forEach((batch) => {
             allResponses.push({
-              files: batch.files.map(f => ({ path: userId + '/' + folder.name + '/' + f.name, fileName: f.name })),
+              files: batch.files.map((f) => ({ path: rootId + '/' + folder.name + '/' + f.name, fileName: f.name })),
               letterId: folder.name,
               furnisher: matchedLetter ? matchedLetter.furnisher : folder.name,
               phase: matchedLetter ? matchedLetter.phase : 'Phase 1',

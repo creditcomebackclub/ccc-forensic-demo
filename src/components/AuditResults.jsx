@@ -85,10 +85,14 @@ function SeverityBar({ severity }) {
 // client_id migration plan; clients.name has no unique constraint.
 async function lookupClientEmail(clientName, clientId) {
   if (!clientName && !clientId) return null;
+  // When clientId is known, stay on id-keyed tables only — never fall through
+  // to full_name/name (same-named clients would get the wrong email).
   if (clientId) {
     const { data: cm } = await supabase.from('clients').select('email').eq('id', clientId).limit(1);
     const email = cm && cm.length > 0 ? cm[0].email : null;
     if (email) return email;
+    const { data: cp } = await supabase.from('client_profiles').select('email').eq('client_id', clientId).limit(1);
+    return (cp && cp.length > 0 && cp[0].email) || null;
   }
   const { data: cp } = await supabase.from('client_profiles').select('email,full_name').eq('full_name', clientName).limit(1);
   let email = cp && cp.length > 0 ? cp[0].email : null;
