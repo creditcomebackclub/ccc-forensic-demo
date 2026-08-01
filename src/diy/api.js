@@ -251,7 +251,10 @@ async function pollFieldworkAuditJob(jobId, { timeoutMs = 240000 } = {}) {
   throw new Error('Audit timed out — check the netlify terminal for fieldwork-audit-run-background');
 }
 
-const LOCAL_AUDIT_URL = import.meta.env.VITE_FIELDWORK_AUDIT_URL || 'http://127.0.0.1:8787/audit';
+// Same-origin Vite proxy → scripts/fieldwork-audit-local.mjs (see vite.config.js).
+// Avoids Safari/CORS issues with direct 127.0.0.1 calls and netlify's 30s cap.
+const LOCAL_AUDIT_URL = import.meta.env.VITE_FIELDWORK_AUDIT_URL || '/fieldwork-local-audit';
+const LOCAL_HEALTH_URL = import.meta.env.VITE_FIELDWORK_AUDIT_HEALTH_URL || '/fieldwork-local-health';
 
 function abortAfter(ms) {
   const controller = new AbortController();
@@ -262,20 +265,18 @@ function abortAfter(ms) {
   };
 }
 
-/** Prefer the local audit server (no 30s lambda-local cap) when it's running. */
-async function tryLocalAuditServer(payload) {
-  // Always try in browser local/dev builds. Safari may lack AbortSignal.timeout.
-  const force = import.meta.env.VITE_FIELDWORK_FORCE_LOCAL_AUDIT === '1';
-  if (!import.meta.env.DEV && !force) return null;
-
-  const healthUrl = LOCAL_AUDIT_URL.replace(/\/audit\/?$/, '/health');
-  const healthCtl = abortAfter(1500);
+/** Local audit via Vite proxy → :8787 (no lambda-local 30s cap). */
+async function runLocalAuditServer(payload) {
+  const healthCtl = abortAfter(2000);
   try {
-    const health = await fetch(healthUrl, { signal: healthCtl.signal });
-    if (!health.ok) return null;
+    const health = await fetch(LOCAL_HEALTH_URL, { signal: healthCtl.signal });
+    if (!health.ok) {
+      throw new Error(`Local audit health check failed (${health.status})`);
+    }
   } catch (err) {
-    console.warn('[fieldwork] local audit server not reachable at', healthUrl, err?.message || err);
-    return null;
+    throw new Error(
+      'Local audit server not running. In a second terminal: npm run audit:fieldwork',
+    );
   } finally {
     healthCtl.clear();
   }
@@ -316,11 +317,12 @@ export async function runFieldworkAudit({ base64, mediaType, fileName, mode, sub
     subscriberId: subscriberId || undefined,
   };
 
-  // Local: use scripts/fieldwork-audit-local.mjs (bypasses netlify 30s hard cap).
-  const local = await tryLocalAuditServer(payload);
-  if (local?.audit) return local;
+  // Dev: NEVER use netlify functions for the heavy Anthropic pass (30s hard cap).
+  if (import.meta.env.DEV) {
+    return runLocalAuditServer(payload);
+  }
 
-  // Production / fallback: Netlify function (enqueue + background, or inline in some envs).
+  // Production: enqueue + background worker + poll.
   const queued = await fwFetch('fieldwork-audit-run', {
     method: 'POST',
     timeoutMs: 300000,
@@ -329,10 +331,7 @@ export async function runFieldworkAudit({ base64, mediaType, fileName, mode, sub
 
   if (queued?.audit) return queued;
   if (!queued?.jobId) {
-    throw new Error(
-      queued?.error
-      || 'Audit did not return a job id. For local PDF audits run: npm run audit:fieldwork',
-    );
+    throw new Error(queued?.error || 'Audit did not return a job id');
   }
 
   const auth = await authHeader();

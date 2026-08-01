@@ -65,6 +65,21 @@ export default defineConfig({
         target: 'http://localhost:8888',
         changeOrigin: true,
       },
+      // Fieldwork local audit server (scripts/fieldwork-audit-local.mjs) —
+      // same-origin proxy so Safari doesn't hit CORS / 127.0.0.1 quirks,
+      // and so we never go through netlify-cli's hardcoded 30s lambda timeout.
+      '/fieldwork-local-audit': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true,
+        rewrite: () => '/audit',
+        timeout: 300_000,
+        proxyTimeout: 300_000,
+      },
+      '/fieldwork-local-health': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true,
+        rewrite: () => '/health',
+      },
     },
   },
 });
