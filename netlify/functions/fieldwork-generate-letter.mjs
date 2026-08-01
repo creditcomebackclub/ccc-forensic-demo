@@ -21,9 +21,18 @@ function json(status, body) {
   };
 }
 
+function stripProductChrome(html) {
+  return String(html || '')
+    // Never mail product/phase banners — consumer is sole sender of record
+    .replace(/<p[^>]*class=["'][^"']*fw-letter-mark[^"']*["'][^>]*>[\s\S]*?<\/p>/gi, '')
+    .replace(/<p[^>]*class=["'][^"']*fw-phase[^"']*["'][^>]*>[\s\S]*?<\/p>/gi, '')
+    .replace(/<[^>]*>\s*Fieldwork\s*\.?\s*<\/[^>]*>/gi, '')
+    .replace(/PHASE\s*[12]\s*[—\-].*?(?=<\/|$)/gi, '');
+}
+
 function injectFieldworkCss(html) {
   if (!html) return html;
-  let out = html.trim();
+  let out = stripProductChrome(html.trim());
   // Strip any model-supplied style blocks — we own the skin
   out = out.replace(/<style[\s\S]*?<\/style>/gi, '');
   if (out.includes('</head>')) {
@@ -89,7 +98,8 @@ export const handler = async (event) => {
     const instructions = [
       `Today is ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.`,
       `Phase: ${phaseId}.`,
-      'Generate ONE Fieldwork HTML dispute letter with id-table, list-table, and demands-table.',
+      'Generate ONE plain consumer HTML dispute letter with id-table, list-table, and demands-table.',
+      'Do NOT include Fieldwork branding, Phase 1/2 banners, or any product mark.',
       '',
       'Consumer (sender of record):',
       JSON.stringify(user, null, 2),
