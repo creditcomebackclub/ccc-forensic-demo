@@ -59,7 +59,6 @@ export const handler = async (event) => {
     return json(503, {
       error: 'FIELDWORK_ANTHROPIC_API_KEY not configured',
       mode: 'demo',
-      usesCccKeys: false,
     });
   }
 
@@ -130,7 +129,6 @@ export const handler = async (event) => {
       product: 'fieldwork',
       isolated: true,
       mode: 'engine',
-      usesCccKeys: false,
       audit,
     });
   } catch (err) {
@@ -138,7 +136,6 @@ export const handler = async (event) => {
     return json(500, {
       error: err.message || 'Audit failed',
       mode: 'engine',
-      usesCccKeys: false,
     });
   }
 };

@@ -1,6 +1,6 @@
 /**
  * Public readiness probe for the Fieldwork lane.
- * Does not read or expose CCC credentials.
+ * Only reports Fieldwork credential presence — never other product keys.
  */
 const { isFieldworkConfigured } = require('./_fieldworkEnv.cjs');
 
@@ -16,11 +16,10 @@ exports.handler = async () => {
       mode: configured ? 'cloud' : (anthropicConfigured ? 'engine-demo' : 'demo'),
       anthropicConfigured,
       message: configured
-        ? 'Fieldwork backend credentials detected (FIELDWORK_* only).'
+        ? 'Fieldwork cloud credentials connected.'
         : anthropicConfigured
-          ? 'Fieldwork Anthropic key present — live audits/letters available; storage still local demo.'
-          : 'Demo mode — localStorage + canned sample. CCC agency keys are never used.',
-      usesCccKeys: false,
+          ? 'Live audits/letters available; subscriber storage still local until Supabase is connected.'
+          : 'Demo mode — sample audit on this device.',
     }),
   };
 };

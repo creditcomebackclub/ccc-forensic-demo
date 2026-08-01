@@ -38,7 +38,6 @@ export async function getFieldworkStatus() {
       product: 'fieldwork',
       isolated: true,
       mode: 'demo',
-      usesCccKeys: false,
       message: 'Status endpoint unreachable — running local demo mode.',
     };
   }

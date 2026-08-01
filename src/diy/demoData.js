@@ -273,7 +273,7 @@ export const DEFAULT_PLAN_ID = 'pro';
 export const ANALYZE_STEPS = [
   'Reading bureau segments…',
   'Mapping Metro 2 base fields…',
-  'Checking DOFD / CCC / balance integrity…',
+  'Checking DOFD / compliance codes / balance integrity…',
   'Surfacing furnisher-first dispute targets…',
 ];
 

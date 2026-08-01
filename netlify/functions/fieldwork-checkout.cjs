@@ -68,7 +68,7 @@ exports.handler = async (event) => {
       return json(200, {
         mode: 'demo',
         isolated: true,
-        message: 'FIELDWORK_STRIPE_SECRET_KEY not set — applied plan in Fieldwork DB only. CCC billing untouched.',
+        message: 'FIELDWORK_STRIPE_SECRET_KEY not set — applied plan in Fieldwork DB only.',
         plan_id: planId,
         mail_credits: PLAN_CREDITS[planId],
       });

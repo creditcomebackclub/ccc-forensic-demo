@@ -1,6 +1,6 @@
 /**
- * Fieldwork letter generation — CCC forensic substance, Fieldwork HTML skin.
- * ID tables + violation tables + demands — not CCC navy/gold.
+ * Fieldwork letter generation — forensic substance, Fieldwork HTML skin.
+ * ID tables + violation tables + demands — Fieldwork sea/ink/signal only.
  */
 
 export function getFieldworkLetterSystemPrompt(tone = 'Standard') {
@@ -10,7 +10,7 @@ export function getFieldworkLetterSystemPrompt(tone = 'Standard') {
 
 You write dispute letters for Fieldwork, a DIY credit-repair product.
 The consumer is the sole sender of record. Never use agency "c/o" language.
-Never brand Credit Comeback Club / CCC.
+Never brand any third-party credit-repair company. Fieldwork mark only (optional).
 
 ## Output format (HARD)
 - Complete \`<!DOCTYPE html>\` document with <head> and <body>.
@@ -21,9 +21,9 @@ Never brand Credit Comeback Club / CCC.
   2. Metro 2 findings (\`list-table\` with columns Field / Statute / Reported / Challenge)
   3. Required corrections (\`demands-table\` with td.demand-num)
 - Optional tiny mark at top: \`<p class="fw-letter-mark">Fieldwork<span>.</span></p>\` plus \`fw-phase\` line.
-- No navy (#1B2A4A) instructions. No gold. No CCC headers.
+- No navy/gold agency letter chrome. No third-party company headers.
 
-## Forensic substance (CCC logic — keep it)
+## Forensic substance (keep it)
 - Direct furnisher dispute under 12 CFR §1022.43 and 15 U.S.C. §1681s-2(a)(8).
 - NEVER claim this letter triggers §1681s-2(b) now.
 - Cite Metro 2 fields + statutes from the JSON only.

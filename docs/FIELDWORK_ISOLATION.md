@@ -14,7 +14,7 @@ Fieldwork is a **separate product lane**. It must not read, write, or bill throu
 
 | Concern | CCC Forensic Suite | Fieldwork DIY |
 |---|---|---|
-| Supabase | Existing CCC project | **Prefer a second project** (or same project with only `fieldwork_*` tables) |
+| Supabase | Existing CCC project | **Separate Supabase org + project** (Fieldwork as its own company) |
 | Anthropic | `ANTHROPIC_API_KEY` | `FIELDWORK_ANTHROPIC_API_KEY` |
 | Lob | `LOB_TEST_KEY` / `LOB_LIVE_KEY` | `FIELDWORK_LOB_TEST_KEY` / `FIELDWORK_LOB_LIVE_KEY` |
 | Stripe | N/A (manual ledger today) | `FIELDWORK_STRIPE_*` |
@@ -42,14 +42,14 @@ Fieldwork **reuses CCC forensic logic** (prompts, schemas, DOFD/balance guards) 
 With no `VITE_FIELDWORK_SUPABASE_*` / `FIELDWORK_*` set:
 
 - UI runs entirely on `localStorage`
-- `GET /.netlify/functions/fieldwork-status` reports `mode: "demo"`, `usesCccKeys: false`
+- `GET /.netlify/functions/fieldwork-status` reports `mode: "demo"` (Fieldwork-only)
 - CCC production data and keys are never contacted
 - Set **only** `FIELDWORK_ANTHROPIC_API_KEY` (+ `netlify dev`) to enable live audits/letters while keeping storage local
 
 ## Enabling cloud mode later
 
-1. Create (recommended) a new Supabase project for Fieldwork.
+1. Create a **new Supabase organization** (and project) for Fieldwork — treat it as a separate company.
 2. Apply **only** the Fieldwork migration (or full migrations if greenfield).
-3. Set Netlify/`netlify.toml` env for Fieldwork keys listed in `.env.example`.
+3. Set Netlify / `.env.local` Fieldwork keys listed in `.env.example` (`FIELDWORK_*` / `VITE_FIELDWORK_*`).
 4. Set `VITE_FIELDWORK_SUPABASE_URL` + `VITE_FIELDWORK_SUPABASE_ANON_KEY` for the DIY build.
-5. Leave CCC keys unchanged.
+5. Leave CCC keys / org unchanged. Customer-facing Fieldwork UI must not mention CCC.

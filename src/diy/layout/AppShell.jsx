@@ -96,8 +96,7 @@ export default function AppShell() {
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-[var(--fw-line)] bg-[rgba(242,245,247,0.92)] px-4 py-3 backdrop-blur md:px-8">
           <div className="fw-mono text-[10px] uppercase tracking-[0.2em] text-[var(--fw-muted)]">
-            Fieldwork · {runtime.mode} · isolated from CCC
-            {runtime.usesCccKeys ? ' · WARNING: CCC keys detected' : ''}
+            Fieldwork · {runtime.mode === 'demo' ? 'demo' : runtime.mode}
           </div>
           <button
             type="button"

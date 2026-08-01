@@ -108,8 +108,10 @@ export default function Dashboard() {
       <div className="mt-10 flex items-start gap-3 rounded-lg border border-[rgba(22,158,111,0.2)] bg-[rgba(46,230,166,0.08)] px-4 py-4 text-sm">
         <Sparkles size={16} className="mt-0.5 shrink-0 text-[var(--fw-signal-dim)]" />
         <p className="text-[var(--fw-ink)]/80">
-          <strong className="font-semibold">Isolated from CCC:</strong> {runtime.message || 'Fieldwork uses its own tables and FIELDWORK_* keys.'}
-          {' '}Agency Forensic Suite data, Lob, and Claude accounts are not used unless you deliberately configure separate Fieldwork credentials.
+          <strong className="font-semibold">Your workspace.</strong>{' '}
+          {runtime.anthropicConfigured
+            ? 'Live forensic audits are available on this Fieldwork account.'
+            : 'Demo mode uses a sample audit so you can walk the full flow. Connect Fieldwork credentials when you’re ready for live reports.'}
         </p>
       </div>
     </div>

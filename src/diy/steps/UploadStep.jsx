@@ -87,7 +87,7 @@ export default function UploadStep({ onComplete }) {
       <p className="mt-3 text-lg text-[var(--fw-muted)]">
         PrivacyGuard, IdentityIQ, or any 3-bureau PDF/HTML export.
         {engineReady
-          ? ' Live Fieldwork audits use the same forensic engine as CCC — findings still render in this UI.'
+          ? ' Drop a real report for a live furnisher-first audit — findings render in this same UI.'
           : ' This demo runs a canned forensic sample so you can feel the product instantly.'}
       </p>
 

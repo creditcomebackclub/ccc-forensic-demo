@@ -48,7 +48,6 @@ export function FieldworkProvider({ children }) {
   const [runtime, setRuntime] = useState({
     mode: fieldworkCloudEnabled ? 'cloud' : 'demo',
     isolated: true,
-    usesCccKeys: false,
     message: 'Checking Fieldwork lane…',
   });
 
@@ -61,7 +60,6 @@ export function FieldworkProvider({ children }) {
         setRuntime({
           mode: status.mode || (fieldworkCloudEnabled ? 'cloud' : 'demo'),
           isolated: status.isolated !== false,
-          usesCccKeys: Boolean(status.usesCccKeys),
           anthropicConfigured: Boolean(status.anthropicConfigured),
           message: status.message || '',
         });

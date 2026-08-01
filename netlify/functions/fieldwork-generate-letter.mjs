@@ -64,7 +64,6 @@ export const handler = async (event) => {
       product: 'fieldwork',
       mode: 'local',
       format: 'html',
-      usesCccKeys: false,
       letter: fallback,
     });
   }
@@ -123,7 +122,6 @@ export const handler = async (event) => {
       product: 'fieldwork',
       mode: letter === fallback ? 'local-fallback' : 'engine',
       format: 'html',
-      usesCccKeys: false,
       letter,
     });
   } catch (err) {
@@ -132,7 +130,6 @@ export const handler = async (event) => {
       product: 'fieldwork',
       mode: 'local-fallback',
       format: 'html',
-      usesCccKeys: false,
       letter: fallback,
       warning: err.message || 'Engine failed; used Fieldwork HTML builder',
     });
