@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useFieldwork } from '../state';
 import Logo from '../components/Logo';
+import ExpertChat from '../components/ExpertChat';
 
 const NAV = [
   { to: '/app', end: true, label: 'Home', icon: LayoutDashboard },
@@ -23,7 +24,7 @@ const NAV = [
 ];
 
 export default function AppShell() {
-  const { user, plan, mailCredits, auditCredits, signOut, resetAll, startNewCampaign, runtime } = useFieldwork();
+  const { user, plan, planId, mailCredits, auditCredits, expertChatCredits, signOut, resetAll, startNewCampaign, runtime } = useFieldwork();
   const navigate = useNavigate();
 
   return (
@@ -39,9 +40,10 @@ export default function AppShell() {
         <div className="mx-5 mb-4 rounded border border-white/10 bg-white/5 px-3 py-3">
           <div className="fw-mono text-[10px] uppercase tracking-wider text-white/40">Plan</div>
           <div className="mt-1 font-semibold">{plan.name}</div>
-          <div className="mt-2 flex items-baseline justify-between gap-2 fw-mono text-[11px] text-[var(--fw-signal)]">
+          <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 fw-mono text-[11px] text-[var(--fw-signal)]">
             <span>{mailCredits} mail</span>
             <span>{auditCredits} audits</span>
+            {planId === 'unlimited' ? <span>{expertChatCredits} expert</span> : null}
           </div>
         </div>
 
@@ -126,6 +128,9 @@ export default function AppShell() {
           </div>
         </footer>
       </div>
+
+      {/* Campaign-only FAB — Fieldwork expert chat (adapted from CCC Concierge pattern) */}
+      <ExpertChat />
     </div>
   );
 }

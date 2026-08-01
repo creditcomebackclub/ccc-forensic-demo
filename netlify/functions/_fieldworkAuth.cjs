@@ -8,9 +8,9 @@ const { fieldworkSupabase } = require('./_fieldworkEnv.cjs');
 
 /** Included monthly credits by plan — keep in sync with src/diy/demoData.js */
 const PLAN_CREDITS = {
-  starter: { mail: 2, audit: 3 },
-  pro: { mail: 5, audit: 10 },
-  unlimited: { mail: 8, audit: 25 },
+  starter: { mail: 2, audit: 3, expert: 0 },
+  pro: { mail: 5, audit: 10, expert: 0 },
+  unlimited: { mail: 8, audit: 25, expert: 8 },
 };
 
 function planCredits(planId) {
@@ -108,6 +108,7 @@ async function getOrCreateSubscriber(caller, profile = {}) {
     plan_id: planId,
     mail_credits: credits.mail,
     audit_credits: credits.audit,
+    expert_chat_credits: credits.expert,
   };
 
   const created = await fwRest('/rest/v1/fieldwork_subscribers', 'POST', serviceKey, url, row);

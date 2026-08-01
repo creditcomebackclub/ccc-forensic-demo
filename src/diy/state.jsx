@@ -93,6 +93,9 @@ export function FieldworkProvider({ children }) {
   const [auditCredits, setAuditCredits] = useState(
     saved?.auditCredits ?? planById(saved?.planId || DEFAULT_PLAN_ID).auditCredits,
   );
+  const [expertChatCredits, setExpertChatCredits] = useState(
+    saved?.expertChatCredits ?? planById(saved?.planId || DEFAULT_PLAN_ID).expertChats,
+  );
   const [audit, setAudit] = useState(saved?.audit || null);
   const [selectedIds, setSelectedIds] = useState(saved?.selectedIds || []);
   const [letters, setLetters] = useState(saved?.letters || []);
@@ -121,6 +124,9 @@ export function FieldworkProvider({ children }) {
     const plan = planById(sub.plan_id);
     setMailCredits(typeof sub.mail_credits === 'number' ? sub.mail_credits : plan.mailCredits);
     setAuditCredits(typeof sub.audit_credits === 'number' ? sub.audit_credits : plan.auditCredits);
+    setExpertChatCredits(
+      typeof sub.expert_chat_credits === 'number' ? sub.expert_chat_credits : plan.expertChats,
+    );
     const nextBilling = mapBilling(snap.billing);
     if (nextBilling.length) setBillingHistory(nextBilling);
     const nextDocs = mapDocuments(snap.documents);
@@ -179,6 +185,7 @@ export function FieldworkProvider({ children }) {
         planId,
         mailCredits,
         auditCredits,
+        expertChatCredits,
         audit,
         selectedIds,
         letters,
@@ -188,7 +195,7 @@ export function FieldworkProvider({ children }) {
         billingHistory,
       }),
     );
-  }, [user, planId, mailCredits, auditCredits, audit, selectedIds, letters, campaigns, documents, wizardStep, billingHistory]);
+  }, [user, planId, mailCredits, auditCredits, expertChatCredits, audit, selectedIds, letters, campaigns, documents, wizardStep, billingHistory]);
 
   const signUp = useCallback(async (profile, chosenPlanId = DEFAULT_PLAN_ID) => {
     const nextPlan = planById(chosenPlanId);
@@ -198,6 +205,7 @@ export function FieldworkProvider({ children }) {
       setPlanId(nextPlan.id);
       setMailCredits(nextPlan.mailCredits);
       setAuditCredits(nextPlan.auditCredits);
+      setExpertChatCredits(nextPlan.expertChats);
       setBillingHistory([
         {
           id: `inv_${Date.now()}`,
@@ -265,6 +273,7 @@ export function FieldworkProvider({ children }) {
     setPlanId(DEFAULT_PLAN_ID);
     setMailCredits(planById(DEFAULT_PLAN_ID).mailCredits);
     setAuditCredits(planById(DEFAULT_PLAN_ID).auditCredits);
+    setExpertChatCredits(planById(DEFAULT_PLAN_ID).expertChats);
     setAudit(null);
     setSelectedIds([]);
     setLetters([]);
@@ -304,6 +313,7 @@ export function FieldworkProvider({ children }) {
     setPlanId(next.id);
     setMailCredits(next.mailCredits);
     setAuditCredits(next.auditCredits);
+    setExpertChatCredits(next.expertChats);
     setBillingHistory((prev) => [
       {
         id: `inv_${Date.now()}`,
@@ -362,6 +372,8 @@ export function FieldworkProvider({ children }) {
     planId,
     mailCredits,
     auditCredits,
+    expertChatCredits,
+    setExpertChatCredits,
     audit,
     selectedIds,
     setSelectedIds,

@@ -51,6 +51,7 @@ exports.handler = async (event) => {
         patch.plan_id = body.plan_id;
         patch.mail_credits = credits.mail;
         patch.audit_credits = credits.audit;
+        patch.expert_chat_credits = credits.expert;
       }
       const updated = await fwRest(
         `/rest/v1/fieldwork_subscribers?id=eq.${subscriber.id}`,

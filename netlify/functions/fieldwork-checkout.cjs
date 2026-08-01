@@ -63,6 +63,7 @@ exports.handler = async (event) => {
         plan_id: planId,
         mail_credits: credits.mail,
         audit_credits: credits.audit,
+        expert_chat_credits: credits.expert,
         updated_at: new Date().toISOString(),
       };
       await fwRest(`/rest/v1/fieldwork_subscribers?id=eq.${subscriber.id}`, 'PATCH', serviceKey, url, patch);
@@ -79,6 +80,7 @@ exports.handler = async (event) => {
         plan_id: planId,
         mail_credits: credits.mail,
         audit_credits: credits.audit,
+        expert_chat_credits: credits.expert,
       });
     }
 

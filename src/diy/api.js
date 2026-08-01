@@ -100,9 +100,9 @@ export async function getFieldworkStatus() {
 
 /** Keep in sync with netlify/functions/_fieldworkAuth.cjs + demoData PRICING_PLANS */
 function planCredits(planId) {
-  if (planId === 'starter') return { mail: 2, audit: 3 };
-  if (planId === 'unlimited') return { mail: 8, audit: 25 };
-  return { mail: 5, audit: 10 };
+  if (planId === 'starter') return { mail: 2, audit: 3, expert: 0 };
+  if (planId === 'unlimited') return { mail: 8, audit: 25, expert: 8 };
+  return { mail: 5, audit: 10, expert: 0 };
 }
 
 /** Direct Supabase bootstrap when Netlify functions aren't running (plain `vite`). */
@@ -137,6 +137,7 @@ async function bootstrapFieldworkClient(profile = {}) {
         plan_id: planId,
         mail_credits: planCredits(planId).mail,
         audit_credits: planCredits(planId).audit,
+        expert_chat_credits: planCredits(planId).expert,
       })
       .select('*')
       .single();
@@ -155,6 +156,7 @@ async function bootstrapFieldworkClient(profile = {}) {
       patch.plan_id = profile.plan_id;
       patch.mail_credits = credits.mail;
       patch.audit_credits = credits.audit;
+      patch.expert_chat_credits = credits.expert;
     }
     const { data: updated, error: updErr } = await fieldworkSupabase
       .from('fieldwork_subscribers')
@@ -376,6 +378,19 @@ export async function generateFieldworkLetter({ user, account, phaseId, tone }) 
       account,
       phaseId: phaseId || 'phase1',
       tone: tone || 'Standard',
+    }),
+  });
+}
+
+/** Campaign expert chat — Fieldwork-only; never CCC concierge / agents API. */
+export async function sendFieldworkExpertChat({ message, history, context }) {
+  return fwFetch('fieldwork-expert-chat', {
+    method: 'POST',
+    timeoutMs: 45000,
+    body: JSON.stringify({
+      message,
+      history: history || [],
+      context: context || {},
     }),
   });
 }
