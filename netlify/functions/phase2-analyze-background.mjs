@@ -264,7 +264,10 @@ export const handler = async (event) => {
               text: `Today: ${today()}\nClient: ${letter.client_name}\nBureau target (must match output.bureau): ${expectedBureau}\nPhase label: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nPRIOR BUREAU-RESPONSE ANALYSIS (JSON — staff already reviewed; continue bureau path):\n${JSON.stringify(prior, null, 2)}\n\nEXHIBIT A — ORIGINAL PHASE 3 BUREAU DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`,
             },
             ...pageBlocks,
-            { type: 'text', text: `Draft the supplemental Phase 3 follow-up letter to ${expectedBureau}. Output bureau must be "${expectedBureau}".` },
+            {
+              type: 'text',
+              text: `Draft the supplemental Phase 3 follow-up letter to ${expectedBureau}. Output bureau must be "${expectedBureau}". HARD RULE: letterHtml must not contain the substring "1681s-2(a)" anywhere — not even when quoting or restating Phase 1 issues. Reframe those arguments on §1681s-2(b) (Seamans) or §1681i(a)(5)(A).`,
+            },
           ],
         }];
       } else {
@@ -293,47 +296,74 @@ export const handler = async (event) => {
         : (isBureauResponse ? 'Analyzing bureau response against Phase 3 dispute' : 'Analyzing response against Phase 1 demands'),
     }, true);
 
-    const stream = anthropic.messages.stream({
-      model: MODEL,
-      // 64000 (matches audit-run-background). 32000 was fine while ledgers
-      // came back illegible and analyses stayed thin, but a legible enclosure
-      // produces a much richer analysis plus three full Phase 3 letters and
-      // hit the cap mid-generation (stop_reason: max_tokens). The three-letter
-      // output is itself the main cost — the schema requires equifax,
-      // experian and transunion even when the account reports to only one
-      // bureau; a future optimization is to generate only the bureaus the
-      // account is actually on.
-      max_tokens: isBureauFollowUp ? 24000 : (isBureauResponse ? 12000 : 64000),
-      system: isBureauFollowUp ? BUREAU_FOLLOW_UP_SYSTEM : (isBureauResponse ? BUREAU_SYSTEM : FURNISHER_SYSTEM),
-      messages,
-      output_config: {
-        format: {
-          type: 'json_schema',
-          schema: isBureauFollowUp
-            ? BUREAU_FOLLOW_UP_SCHEMA
-            : (isBureauResponse ? BUREAU_RESPONSE_SCHEMA : PHASE2_SCHEMA),
+    // 64000 (matches audit-run-background). 32000 was fine while ledgers
+    // came back illegible and analyses stayed thin, but a legible enclosure
+    // produces a much richer analysis plus three full Phase 3 letters and
+    // hit the cap mid-generation (stop_reason: max_tokens). The three-letter
+    // output is itself the main cost — the schema requires equifax,
+    // experian and transunion even when the account reports to only one
+    // bureau; a future optimization is to generate only the bureaus the
+    // account is actually on.
+    const runModel = async (modelMessages, stageLabel) => {
+      if (stageLabel) await updateJob({ stage: stageLabel }, true);
+      const stream = anthropic.messages.stream({
+        model: MODEL,
+        max_tokens: isBureauFollowUp ? 24000 : (isBureauResponse ? 12000 : 64000),
+        system: isBureauFollowUp ? BUREAU_FOLLOW_UP_SYSTEM : (isBureauResponse ? BUREAU_SYSTEM : FURNISHER_SYSTEM),
+        messages: modelMessages,
+        output_config: {
+          format: {
+            type: 'json_schema',
+            schema: isBureauFollowUp
+              ? BUREAU_FOLLOW_UP_SCHEMA
+              : (isBureauResponse ? BUREAU_RESPONSE_SCHEMA : PHASE2_SCHEMA),
+          },
         },
-      },
-    });
-    let chars = 0;
-    stream.on('text', (delta) => { chars += delta.length; onTokens(Math.round(chars / 4)); });
-    const msg = await stream.finalMessage();
+      });
+      let chars = 0;
+      stream.on('text', (delta) => { chars += delta.length; onTokens(Math.round(chars / 4)); });
+      const msg = await stream.finalMessage();
+      const usage = msg.usage || {};
+      console.log('[phase2-usage]', JSON.stringify({
+        input: usage.input_tokens || 0, output: usage.output_tokens || 0,
+        cache_read: usage.cache_read_input_tokens || 0, cache_write: usage.cache_creation_input_tokens || 0,
+        stop_reason: msg.stop_reason,
+      }));
+      if (msg.stop_reason === 'max_tokens') {
+        throw new Error('The analysis hit the output limit before finishing. Try again.');
+      }
+      if (msg.stop_reason === 'refusal') {
+        throw new Error('The model declined this request. Check the response content and try again.');
+      }
+      const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+      return { parsed: JSON.parse(text), usage };
+    };
 
-    const u = msg.usage || {};
-    console.log('[phase2-usage]', JSON.stringify({
-      input: u.input_tokens || 0, output: u.output_tokens || 0,
-      cache_read: u.cache_read_input_tokens || 0, cache_write: u.cache_creation_input_tokens || 0,
-      stop_reason: msg.stop_reason,
-    }));
-    if (msg.stop_reason === 'max_tokens') {
-      throw new Error('The analysis hit the output limit before finishing. Try again.');
+    let { parsed: analysis, usage: u } = await runModel(messages);
+    // One automatic rebuild if the follow-up draft slips §1681s-2(a) — the same
+    // flank the Phase 3 citation lint exists to catch. Prompt hardening alone
+    // is not enough when Exhibit A / analysis JSON still contain Phase 1 (a) cites.
+    if (isBureauFollowUp && analysis?.letterHtml && String(analysis.letterHtml).includes('1681s-2(a)')) {
+      console.warn('[phase2] bureau_follow_up cited 1681s-2(a); requesting one rewrite');
+      const rewriteMessages = [
+        ...messages,
+        {
+          role: 'user',
+          content: [{
+            type: 'text',
+            text: `CRITICAL CORRECTION: The draft below contains the forbidden substring "1681s-2(a)". Return a complete corrected JSON object for this follow-up. letterHtml must contain ZERO occurrences of "1681s-2(a)" in any subsection. Rebuild every such argument on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete. Keep the same bureau/focusIssues intent. Do not mention that a correction was required.\n\nBAD DRAFT letterHtml:\n${analysis.letterHtml}`,
+          }],
+        },
+      ];
+      const rebuilt = await runModel(rewriteMessages, 'Rewriting follow-up to remove §1681s-2(a)');
+      analysis = rebuilt.parsed;
+      u = {
+        input_tokens: (u.input_tokens || 0) + (rebuilt.usage.input_tokens || 0),
+        output_tokens: (u.output_tokens || 0) + (rebuilt.usage.output_tokens || 0),
+        cache_read_input_tokens: (u.cache_read_input_tokens || 0) + (rebuilt.usage.cache_read_input_tokens || 0),
+        cache_creation_input_tokens: (u.cache_creation_input_tokens || 0) + (rebuilt.usage.cache_creation_input_tokens || 0),
+      };
     }
-    if (msg.stop_reason === 'refusal') {
-      throw new Error('The model declined this request. Check the response content and try again.');
-    }
-
-    const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-    const analysis = JSON.parse(text);
 
     // Inject standard letter CSS only for the furnisher workflow, which is
     // the one that generates Phase 3 letters. Bureau analysis records facts

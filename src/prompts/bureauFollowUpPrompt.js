@@ -10,9 +10,14 @@ Draft ONE supplemental Phase 3 CRA dispute letter (HTML) to the same consumer re
 LEGAL FRAME:
 - This remains a Phase 3 CRA letter under 15 U.S.C. §1681i (and related CRA duties).
 - Argue inadequate / incomplete reinvestigation where the prior issues were IGNORED or only PARTIALLY_ADDRESSED, or where the bureau VERIFIED WITHOUT SUBSTANCE.
-- Do NOT cite 15 U.S.C. §1681s-2(a) in a CRA letter.
-- Prefer §1681i verify-or-delete / reasonable reinvestigation framing and, where appropriate, §1681s-2(b) materiality after CRA notice (Seamans) — do not invent facts the exhibits do not support.
+- Prefer §1681i verify-or-delete / reasonable reinvestigation framing and, where appropriate, §1681s-2(b) materiality after CRA notice (Seamans v. Temple University) — do not invent facts the exhibits do not support.
 - Do not claim a credit-report change unless the bureau response itself states it; a "verified" stamp is not proof the file is accurate.
+
+HARD RULE — CITATION LINT (NON-NEGOTIABLE):
+Phase 3 CRA letters must NEVER contain the string "1681s-2(a)" anywhere, in any subsection — (a), (a)(1), (a)(3), (a)(5), all of it. This letter is addressed to a bureau; §1681s-2(a) is the furnisher's duty and citing it here has already been quoted back by opposing counsel as an exploitable flank (that subsection carries no private right of action, per §1681s-2(c)(1)).
+- Do NOT copy §1681s-2(a) citations from Exhibit A, Exhibit B, or the prior analysis JSON even if they appear there (Phase 1 framing often uses (a); this letter must not).
+- Every argument that would otherwise cite §1681s-2(a) — including Field 20 / XB / dispute-notation issues — must be rebuilt on §1681s-2(b) materiality (Seamans v. Temple University, 744 F.3d 853 (3d Cir. 2014)) or §1681i(a)(5)(A) verify-or-delete instead. Same underlying facts, no exposed flank.
+- Allowed citations include §1681i, §1681i(a)(1)(A), §1681i(a)(2), §1681i(a)(5)(A), §1681s-2(b), §1681n, Johnson v. MBNA, Seamans — never §1681s-2(a).
 
 SCOPE RULES:
 - Target ONLY the unresolved material issues from issueAnalysis (outcome IGNORED, PARTIALLY_ADDRESSED, or UNCLEAR with a concrete gap).
@@ -31,4 +36,6 @@ OUTPUT:
 - letterHtml: complete HTML document (<!DOCTYPE html>...) with navy section headers, tables, print-ready CSS matching prior Phase 3 letters
 - documentQuality: enclosureLegible + issues[]
 
-Letter must include today's date, client identity from the Phase 3 letter, CRA address block appropriate to the bureau, RE line tying to the prior dispute, issue table, concrete demands, and signature block. State "Sent via Certified Mail" with no tracking number placeholder.`;
+Letter must include today's date, client identity from the Phase 3 letter, CRA address block appropriate to the bureau, RE line tying to the prior dispute (cite §1681i in the RE line — never §1681s-2(a)), issue table, concrete demands, and signature block. State "Sent via Certified Mail" with no tracking number placeholder.
+
+Before returning, silently scan letterHtml: if it contains "1681s-2(a)" anywhere, rewrite those passages before outputting.`;
