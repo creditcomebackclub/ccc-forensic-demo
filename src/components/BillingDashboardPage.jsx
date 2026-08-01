@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { DollarSign, TrendingUp, TrendingDown, AlertCircle, Clock, CheckCircle, ChevronRight, Activity, Users, Layers, Repeat, UserMinus, Percent, CalendarClock, Timer, Landmark, Receipt, Plus, X } from 'lucide-react';
 import { listExpenses, addExpense, updateExpense, deleteExpense } from '../utils/storage';
 import { supabase } from '../utils/supabase';
-import { computeClientCommission, commissionRate } from '../utils/affiliateCommission';
+import { computeClientCommission, commissionRate, recognizedTransactions } from '../utils/affiliateCommission';
 import { DEFAULT_TIER_PRICING } from '../utils/pricing';
 
 const T = {
@@ -31,13 +31,6 @@ const money0 = (n) => `$${Math.round(Number(n || 0)).toLocaleString()}`;
 const ym = (dateStr) => (dateStr ? String(dateStr).slice(0, 7) : '');
 const daysBetween = (a, b) => Math.floor((a - b) / 86400000);
 
-// Unified revenue recognition: a Payment row, OR an Invoice flipped to Paid.
-// This matches ClientBillingPanel's totalPaid so global and per-client agree.
-const recognizedAmount = (tx) => {
-  if (tx.type === 'Payment') return parseFloat(tx.amount || 0);
-  if (tx.type === 'Invoice' && tx.status === 'Paid') return parseFloat(tx.amount || 0);
-  return 0;
-};
 // Date revenue is recognized on: payment date, or an invoice's paid_at (fallback to its date).
 const recognitionDate = (tx) => (tx.type === 'Invoice' ? (tx.paid_at || tx.date) : tx.date);
 const isFwf = (tx) => /first\s*work|fwf|setup\s*fee|initial\s*fee/i.test(tx.description || '');
@@ -425,22 +418,26 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
     let hasOverdue30 = false;
 
     if (Array.isArray(c.ledger)) {
-      c.ledger.forEach(tx => {
-        allTransactions.push({ ...tx, clientName: c.name, clientId: c.id });
-        const rec = recognizedAmount(tx);
-
-        if (rec > 0) {
-          lifetimeRevenue += rec;
-          const recDate = new Date(recognitionDate(tx));
-          if (recDate >= thirtyDaysAgo) collected30Days += rec;
-          const idx = monthIdx[ym(recognitionDate(tx))];
-          if (idx !== undefined) months[idx].value += rec;
-          if (isFwf(tx)) fwfCollected += rec;
-          if (tx.type === 'Invoice' && tx.paid_at && tx.date) {
-            const d = daysBetween(new Date(tx.paid_at), new Date(tx.date));
-            if (d >= 0 && d < 365) { payToDays += d; payToCount++; }
-          }
+      // Cash recognition (once per event) — shared with affiliate commission so
+      // NMI Invoice-Paid + Payment pairs do not 2× lifetime revenue.
+      const recognized = recognizedTransactions(c);
+      recognized.forEach((tx) => {
+        const rec = parseFloat(tx.amount || 0);
+        if (rec <= 0) return;
+        lifetimeRevenue += rec;
+        const recDate = new Date(recognitionDate(tx));
+        if (recDate >= thirtyDaysAgo) collected30Days += rec;
+        const idx = monthIdx[ym(recognitionDate(tx))];
+        if (idx !== undefined) months[idx].value += rec;
+        if (isFwf(tx)) fwfCollected += rec;
+        if (tx.type === 'Invoice' && tx.paid_at && tx.date) {
+          const d = daysBetween(new Date(tx.paid_at), new Date(tx.date));
+          if (d >= 0 && d < 365) { payToDays += d; payToCount++; }
         }
+      });
+
+      c.ledger.forEach((tx) => {
+        allTransactions.push({ ...tx, clientName: c.name, clientId: c.id });
 
         // Open (unpaid) invoices → outstanding + aging + dunning
         if (tx.type === 'Invoice' && tx.status !== 'Paid') {

@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import { supabase } from '../utils/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, toast } from 'react-hot-toast';
-import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-react';
+import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool, CreditCard } from 'lucide-react';
 import { getSettings } from '../utils/settings';
 import { getTierPricing, describeTierFee } from '../utils/pricing';
 import { uploadDocument } from '../utils/documents';
+import NmiCollectForm from './NmiCollectForm';
+import { vaultCard, nmiConfigured } from '../utils/billingApi';
 
 export default function ClientSetupFlow({ session, onComplete, initialStep = 'password' }) {
   const [step, setStep] = useState(initialStep); // password | onboarding
@@ -95,6 +97,10 @@ function ClientOnboardingModal({ session, onComplete }) {
   const [settings, setSettings] = useState(null);
   const [billingTier, setBillingTier] = useState(null);
   const [monitoringService, setMonitoringService] = useState('Privacy Guard');
+  const [docsClientId, setDocsClientId] = useState(null);
+  const [cardSaved, setCardSaved] = useState(false);
+  const [cardMeta, setCardMeta] = useState(null);
+  const [vaulting, setVaulting] = useState(false);
   const canvasRef = React.useRef(null);
   const isDrawing = React.useRef(false);
 
@@ -118,13 +124,16 @@ function ClientOnboardingModal({ session, onComplete }) {
           if (!auditError && auditRows?.length) setHasAudit(true);
 
           const clientQuery = clientProfile.client_id
-            ? supabase.from('clients').select('billing_tier,monitoring_service').eq('id', clientProfile.client_id).limit(1)
-            : supabase.from('clients').select('billing_tier,monitoring_service').eq('name', clientProfile.full_name).limit(1);
+            ? supabase.from('clients').select('id,billing_tier,monitoring_service').eq('id', clientProfile.client_id).limit(1)
+            : supabase.from('clients').select('id,billing_tier,monitoring_service').eq('name', clientProfile.full_name).limit(1);
           const { data: clientRows } = await clientQuery;
           const clientRow = clientRows && clientRows[0];
           if (clientRow) {
             setBillingTier(clientRow.billing_tier || null);
             setMonitoringService(clientRow.monitoring_service || 'Privacy Guard');
+            if (clientRow.id) setDocsClientId(clientRow.id);
+          } else if (clientProfile.client_id) {
+            setDocsClientId(clientProfile.client_id);
           }
         }
       } catch (e) {
@@ -249,7 +258,11 @@ function ClientOnboardingModal({ session, onComplete }) {
           const { data: clientRows, error: clientErr } = await clientRowQuery;
           if (clientErr) throw clientErr;
           const clientRow = clientRows && clientRows[0];
-          if (clientRow) { docsClientId = clientRow.id; docsOwnerUserId = clientRow.user_id; }
+          if (clientRow) {
+            docsClientId = clientRow.id;
+            docsOwnerUserId = clientRow.user_id;
+            setDocsClientId(clientRow.id);
+          }
         }
       } catch (e) {
         docsResolveFailed = true;
@@ -388,11 +401,42 @@ function ClientOnboardingModal({ session, onComplete }) {
       }
 
       toast.success('Agreements signed securely!', { id: toastId });
-      setStep(5);
+      setLoading(false);
+      setStep(5); // Payment method (required)
     } catch (e) {
       console.error('[Enrollment] handleComplete failed:', e);
       toast.error(e.message || 'Could not complete setup', { id: toastId });
       setLoading(false);
+    }
+  };
+
+  const handleVaultCard = async (tokenPayload) => {
+    if (!docsClientId) {
+      toast.error('Client record not linked yet. Contact Credit Comeback Club before adding a card.');
+      return;
+    }
+    setVaulting(true);
+    const toastId = toast.loading('Saving your card securely…');
+    try {
+      const result = await vaultCard({
+        clientId: docsClientId,
+        paymentToken: tokenPayload.paymentToken,
+        cardLast4: tokenPayload.cardLast4,
+        cardType: tokenPayload.cardType,
+        cardExpiry: tokenPayload.cardExpiry,
+        initiatedBy: 'onboarding',
+      });
+      setCardSaved(true);
+      setCardMeta({
+        last4: result.cardLast4 || tokenPayload.cardLast4,
+        type: result.cardType || tokenPayload.cardType,
+      });
+      toast.success('Card saved. You will not be charged until your audit is delivered.', { id: toastId });
+      setStep(6);
+    } catch (e) {
+      toast.error(e.message || 'Could not save card', { id: toastId });
+    } finally {
+      setVaulting(false);
     }
   };
 
@@ -401,6 +445,7 @@ function ClientOnboardingModal({ session, onComplete }) {
     { title: 'Proof of Address', icon: <FileText size={16} /> },
     { title: 'Your Signature', icon: <PenTool size={16} /> },
     { title: 'Review & Sign', icon: <Check size={16} /> },
+    { title: 'Payment', icon: <CreditCard size={16} /> },
     { title: 'Success', icon: <Check size={16} /> }
   ];
 
@@ -412,15 +457,15 @@ function ClientOnboardingModal({ session, onComplete }) {
           <img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="CCC" 
             className="w-16 h-16 object-cover rounded-2xl mx-auto mb-4 shadow-[0_0_20px_rgba(251,191,36,0.3)] border-2 border-amber-400" />
           <h1 className="ccc-display text-2xl text-slate-900 font-bold mb-2">Complete Your Enrollment</h1>
-          <p className="text-sm text-gray-500 font-medium">Step {step} of 4 — {steps[step - 1].title}</p>
+          <p className="text-sm text-gray-500 font-medium">Step {Math.min(step, 5)} of 5 — {steps[Math.min(step, 5) - 1].title}</p>
         </div>
 
         {/* Progress bar */}
-        <div className="flex gap-2 mb-8 px-4 max-w-lg mx-auto">
-          {steps.map((s, i) => (
+        <div className="flex gap-2 mb-8 px-4 max-w-3xl mx-auto">
+          {steps.slice(0, 5).map((s, i) => (
             <div key={i} className="flex-1">
-              <div className={`h-2 rounded-full transition-all duration-300 ${i + 1 <= step ? 'bg-slate-900' : 'bg-gray-200'}`} />
-              <div className={`text-[9px] uppercase tracking-wider font-bold mt-2 text-center transition-colors duration-300 ${i + 1 === step ? 'text-slate-900' : 'text-gray-400'}`}>
+              <div className={`h-2 rounded-full transition-all duration-300 ${i + 1 <= Math.min(step, 5) ? 'bg-slate-900' : 'bg-gray-200'}`} />
+              <div className={`text-[9px] uppercase tracking-wider font-bold mt-2 text-center transition-colors duration-300 ${i + 1 === Math.min(step, 5) ? 'text-slate-900' : 'text-gray-400'}`}>
                 {s.title}
               </div>
             </div>
@@ -591,7 +636,7 @@ function ClientOnboardingModal({ session, onComplete }) {
                         <li>• {feeScheduleLine}</li>
                         <li>• <strong className="text-slate-700">Credit Monitoring ({monitoringService}):</strong> approx. ${monitoringFeeAmount}/mo (Maintained directly by client).</li>
                       </ul>
-                      <p><strong className="text-slate-900">Billing:</strong> First Work Fee is due at enrollment before dispute work commences. Monthly fees are billed in advance on the anniversary of enrollment.</p>
+                      <p><strong className="text-slate-900">Billing:</strong> A payment method is collected at enrollment with a $0 verification. The First Work Fee and initial month (if applicable) are charged only after your forensic audit is delivered. Monthly fees then bill on the anniversary of that first charge.</p>
                       <p><strong className="text-slate-900">No Guarantee:</strong> CCC makes no guarantee of specific outcomes. Results depend on individual credit profiles and creditor responses.</p>
                       <p><strong className="text-slate-900">Prohibited Practices:</strong> CCC does not provide legal advice, dispute accurate/verifiable information, or create new credit identities.</p>
                       <p><strong className="text-slate-900">CROA Compliance & Cancellation:</strong> This agreement complies with the Credit Repair Organizations Act. No advance fees are charged for work not yet performed. You have the right to cancel without penalty within 3 business days of signing.</p>
@@ -621,13 +666,56 @@ function ClientOnboardingModal({ session, onComplete }) {
                 </div>
               )}
 
-              {/* Step 5 - Success */}
+              {/* Step 5 - Payment method ($0 vault) */}
               {step === 5 && (
+                <div className="space-y-6">
+                  <div className="text-center">
+                    <h2 className="text-lg font-bold text-slate-900 mb-2">Add a Payment Method</h2>
+                    <p className="text-sm text-gray-500 leading-relaxed max-w-md mx-auto">
+                      We verify your card with a $0 authorization so we can bill automatically after your forensic audit is delivered. No charge today.
+                    </p>
+                  </div>
+
+                  {!docsClientId ? (
+                    <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                      Your client record is not linked yet, so we cannot save a card. Contact Credit Comeback Club before finishing enrollment.
+                    </div>
+                  ) : (
+                    <NmiCollectForm
+                      onToken={handleVaultCard}
+                      buttonLabel={vaulting ? 'Saving…' : 'Save card & continue'}
+                      disabled={vaulting}
+                    />
+                  )}
+
+                  {!nmiConfigured() && (
+                    <button
+                      onClick={() => {
+                        toast('Payments not configured in this environment — continuing without a card.', { icon: '⚠️' });
+                        setStep(6);
+                      }}
+                      className="w-full text-xs font-semibold text-gray-400 hover:text-slate-900 uppercase tracking-wider py-2 transition-colors"
+                    >
+                      Continue without card (dev only)
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Step 6 - Success */}
+              {step === 6 && (
                 <div className="space-y-6 text-center">
                   <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2 text-green-600">
                     <Check size={32} strokeWidth={3} />
                   </div>
                   <h2 className="text-xl font-bold text-slate-900">Enrollment Complete!</h2>
+
+                  {cardSaved && cardMeta?.last4 && (
+                    <p className="text-xs text-gray-500">
+                      Card on file ending in <strong className="text-slate-800">{cardMeta.last4}</strong>
+                      {cardMeta.type ? ` (${cardMeta.type})` : ''}. Charged only after audit delivery.
+                    </p>
+                  )}
                   
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-left max-w-sm mx-auto shadow-sm">
                     {hasAudit ? (

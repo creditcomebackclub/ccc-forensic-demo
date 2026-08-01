@@ -438,7 +438,7 @@ export default function ClientPortal({ session, onSignOut }) {
             )}
             
             {activeTab === 'billing' && (
-              <BillingTab clientMeta={clientMeta} />
+              <BillingTab clientMeta={clientMeta} onRefresh={loadData} />
             )}
             
             {activeTab === 'vip' && isVip && (

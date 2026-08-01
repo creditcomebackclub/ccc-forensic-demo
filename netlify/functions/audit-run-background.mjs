@@ -901,6 +901,22 @@ export const handler = async (event) => {
       }
     })();
 
+    // First-sale billing trigger (LPOA + portal + vault + audit). Non-fatal.
+    if (savedClientId) {
+      (async () => {
+        try {
+          const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+          await fetch(base + '/.netlify/functions/billing-on-audit-delivered', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + serviceKey },
+            body: JSON.stringify({ clientId: savedClientId, userId: job.user_id }),
+          });
+        } catch (e) {
+          console.warn('[audit] billing-on-audit-delivered trigger failed (non-fatal):', e.message);
+        }
+      })();
+    }
+
     const totals = usageLog.reduce((s, u) => ({
       input: s.input + u.input, output: s.output + u.output,
       cache_read: s.cache_read + u.cache_read, cache_write: s.cache_write + u.cache_write,

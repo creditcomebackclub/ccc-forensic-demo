@@ -14,14 +14,71 @@
 // made a $1 partial payout appear to settle every transaction it referenced.
 // Dollar amounts are now the source of truth; covered_tx_ids remains only a
 // legacy/audit hint while manual billing is still backed by the JSON ledger.
+//
+// Cash recognition must count each real cash event once. Live NMI sales mark
+// Invoice(s) Paid AND append a Payment for the same amount — counting both
+// would 2× commission and revenue. Prefer Payments; keep standalone Paid
+// Invoices (legacy "Mark as Paid" with no matching Payment).
 
-function isRecognized(tx) {
-  return tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid');
+function round2(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
 }
 
+function dayKey(tx) {
+  if (!tx) return '';
+  if (tx.type === 'Invoice') return String(tx.paid_at || tx.date || '').slice(0, 10);
+  return String(tx.date || tx.paid_at || '').slice(0, 10);
+}
+
+/**
+ * Cash-recognized ledger rows for commission / lifetime revenue.
+ * - All Payment rows count.
+ * - Paid Invoices count only when not already covered by a Payment
+ *   (shared payment_transaction_id / nmi_transaction_id, or same-day
+ *   same-amount match for loosely linked entries).
+ */
 export function recognizedTransactions(client) {
-  const ledger = Array.isArray(client.ledger) ? client.ledger : [];
-  return ledger.filter(isRecognized);
+  const ledger = Array.isArray(client?.ledger) ? client.ledger : [];
+  const payments = ledger.filter((tx) => tx && tx.type === 'Payment');
+
+  const coveredKeys = new Set();
+  for (const p of payments) {
+    if (p.payment_transaction_id) coveredKeys.add(`pt:${p.payment_transaction_id}`);
+    if (p.nmi_transaction_id) coveredKeys.add(`nmi:${p.nmi_transaction_id}`);
+  }
+
+  // Consume Payments once for amount+date matching so one Payment cannot
+  // suppress two unrelated Paid Invoices of the same amount on the same day.
+  const matchSlots = payments.map((p) => ({
+    amount: round2(p.amount),
+    day: dayKey(p),
+    used: false,
+  }));
+
+  const standalonePaidInvoices = [];
+  for (const tx of ledger) {
+    if (!tx || tx.type !== 'Invoice' || tx.status !== 'Paid') continue;
+
+    if (tx.payment_transaction_id && coveredKeys.has(`pt:${tx.payment_transaction_id}`)) continue;
+    if (tx.nmi_transaction_id && coveredKeys.has(`nmi:${tx.nmi_transaction_id}`)) continue;
+
+    const invAmount = round2(tx.amount);
+    const invDay = dayKey(tx);
+    const invoiceDate = String(tx.date || '').slice(0, 10);
+    const slot = matchSlots.find((s) => (
+      !s.used
+      && Math.abs(s.amount - invAmount) < 0.005
+      && (s.day === invDay || s.day === invoiceDate)
+    ));
+    if (slot) {
+      slot.used = true;
+      continue;
+    }
+
+    standalonePaidInvoices.push(tx);
+  }
+
+  return [...payments, ...standalonePaidInvoices];
 }
 
 export function recognizedTotal(client) {

@@ -684,99 +684,142 @@ exports.handler = async () => {
   let lobDeliveriesCount = 0;
 
   // --- 4. Run Automated Billing Sweep ---
+  // First invoices / FWF are created when staff flips Active (billing-on-active),
+  // with audit-delivery as catch-up if Active was set earlier.
+  // Cron only generates monthly invoices when recurring_active, charges vault,
+  // processes soft-decline retries, and keeps dunning/pause.
   let billingAlerts = [];
   try {
+    const {
+      loadTierPricing,
+      monthlyInvoiceForTier,
+      chargeClientDue,
+      processDueRetries,
+      nmiConfig,
+      unpaidInvoices: unpaidFromLedger,
+      balanceDue: calcBalanceDue,
+      round2,
+    } = require('./_shared/billing-charge-core.cjs');
+
+    const pricing = await loadTierPricing();
+    const autoCharge = nmiConfig().autoCharge;
+
+    // 4a. Soft-decline retry queue
+    try {
+      await processDueRetries(today);
+    } catch (retryErr) {
+      console.error('Billing retry sweep failed:', retryErr);
+    }
+
     const activeClients = await listAllRows(
-      '/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date,billing_tier&order=id.asc',
+      '/rest/v1/clients?billing_status=eq.Active&select=id,name,email,ledger,billing_start_date,billing_tier,billing_type,recurring_active&order=id.asc',
       supabaseUrl,
       supabaseKey
     );
-    
-    for (const c of activeClients) {
-      const ledger = Array.isArray(c.ledger) ? c.ledger : [];
-      // Amount Due = sum of unpaid invoices only, matching the UI logic in
-      // ClientBillingPanel/BillingTab (commit 3d24663). round2 avoids float drift.
-      const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
-      let balanceDue = round2(ledger.reduce((sum, tx) => {
-        if (tx.type === 'Invoice' && tx.status !== 'Paid') return sum + (parseFloat(tx.amount) || 0);
-        return sum;
-      }, 0));
 
-      // 1. Calculate Next Invoice Date for Pre-Reminders
-      if (c.billing_start_date) {
+    for (const c of activeClients) {
+      let ledger = Array.isArray(c.ledger) ? c.ledger : [];
+      let balDue = calcBalanceDue(ledger);
+
+      // Monthly invoices only for recurring_active Automated Recurring clients
+      if (c.recurring_active && c.billing_type === 'Automated Recurring' && c.billing_tier !== 'Paid In Full' && c.billing_start_date) {
         const invoices = ledger.filter(t => t.type === 'Invoice');
         const payments = ledger.filter(t => t.type === 'Payment');
-        // "Already billed before" must include Payment-type rows, not just
-        // Invoice rows — clients backfilled with manually-logged payment
-        // history (no Invoice rows at all) were previously treated as
-        // brand new and re-charged the one-time "Initial Month & First
-        // Work Fee" on top of months of real payments (caught 2026-07-23:
-        // Austin Mote, William Pope, Stefani Bryant all got a bogus $154
-        // invoice despite an active payment history).
         const billingEvents = [...invoices, ...payments];
         const hasPriorBilling = billingEvents.length > 0;
-        const lastEvent = billingEvents.sort((a, b) => b.date.localeCompare(a.date))[0];
-        const lastDateStr = lastEvent ? lastEvent.date : c.billing_start_date;
-        const daysSinceLastBilling = Math.floor((new Date(today) - new Date(lastDateStr)) / (1000 * 60 * 60 * 24));
+        if (hasPriorBilling) {
+          const lastEvent = billingEvents.sort((a, b) => b.date.localeCompare(a.date))[0];
+          const lastDateStr = lastEvent.date;
+          const daysSinceLastBilling = Math.floor((new Date(today) - new Date(lastDateStr)) / (1000 * 60 * 60 * 24));
+          const daysUntilDue = 30 - daysSinceLastBilling;
 
-        const daysUntilDue = hasPriorBilling ? (30 - daysSinceLastBilling) : (0 - daysSinceLastBilling);
-
-        if (c.billing_tier !== 'Paid In Full' || !hasPriorBilling) {
           if (daysUntilDue === 5 && c.email && sgKey) {
             await sendgridEmail(c.email, 'Upcoming Invoice in 5 Days', '<p>Hi ' + c.name + ',</p><p>This is a quick reminder that your service fee will be due in 5 days.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
           } else if (daysUntilDue === 3 && c.email && sgKey) {
             await sendgridEmail(c.email, 'Upcoming Invoice in 3 Days', '<p>Hi ' + c.name + ',</p><p>Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
           }
-        }
 
-        // 2. Generate Invoice if due today (or overdue)
-        const isDue = (!hasPriorBilling && daysSinceLastBilling >= 0) || (hasPriorBilling && daysSinceLastBilling >= 30);
+          if (daysSinceLastBilling >= 30) {
+            const monthly = monthlyInvoiceForTier(c.billing_tier || 'Standard', pricing);
+            if (monthly) {
+              const newTx = {
+                id: require('crypto').randomUUID(),
+                date: today,
+                type: 'Invoice',
+                amount: monthly.amount,
+                description: monthly.description,
+                status: 'Due',
+                created_at: new Date().toISOString(),
+                source: 'nmi',
+              };
+              ledger = [...ledger, newTx];
+              balDue = round2(balDue + monthly.amount);
+              await supabaseRequest(
+                '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),
+                'PATCH', { ledger }, supabaseUrl, supabaseKey
+              );
+              if (c.email && sgKey) {
+                await sendgridEmail(c.email, 'Invoice Due Today', '<p>Hi ' + c.name + ',</p><p>Your service fee of $' + monthly.amount.toFixed(2) + ' is due today. Please log in to your client portal to remit payment.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+              }
 
-        if (isDue) {
-          let amount = 99.00;
-          let description = 'Monthly Service Fee';
-
-          if (!hasPriorBilling) {
-            if (c.billing_tier === 'Standard') { amount = 154.00; description = 'Initial Month & First Work Fee'; }
-            else if (c.billing_tier === 'VIP') { amount = 248.00; description = 'VIP Initial Month & First Work Fee'; }
-            else if (c.billing_tier === 'Paid In Full') { amount = 499.00; description = 'Paid In Full Service'; }
-            else { amount = 99.00; description = 'Initial Service Fee'; }
-          } else {
-            if (c.billing_tier === 'Standard') { amount = 79.00; description = 'Standard Monthly Service Fee'; }
-            else if (c.billing_tier === 'VIP') { amount = 149.00; description = 'VIP Monthly Service Fee'; }
-          }
-
-          if (hasPriorBilling && c.billing_tier === 'Paid In Full') {
-             // Do not generate recurring invoices for Paid In Full
-          } else {
-            const newTx = {
-              id: require('crypto').randomUUID(),
-              date: today,
-              type: 'Invoice',
-              amount: amount,
-              description: description,
-              status: 'Due',
-              created_at: new Date().toISOString()
-            };
-            ledger.push(newTx);
-            balanceDue = round2(balanceDue + amount);
-            
-            await supabaseRequest(
-              '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),
-              'PATCH', { ledger }, supabaseUrl, supabaseKey
-            );
-
-            if (c.email && sgKey) {
-              await sendgridEmail(c.email, 'Invoice Due Today', '<p>Hi ' + c.name + ',</p><p>Your service fee of $' + amount.toFixed(2) + ' is due today. Please log in to your client portal to remit payment.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+              // Immediate vault charge for the new invoice
+              if (autoCharge) {
+                try {
+                  await chargeClientDue({
+                    clientId: c.id,
+                    initiatedBy: 'cron',
+                    invoiceIds: [newTx.id],
+                    attemptNumber: 1,
+                  });
+                  // Refresh ledger after charge
+                  const refreshed = await supabaseRequest(
+                    '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id) + '&select=ledger,billing_status&limit=1',
+                    'GET', null, supabaseUrl, supabaseKey
+                  );
+                  const row = Array.isArray(refreshed.body) ? refreshed.body[0] : null;
+                  if (row) {
+                    ledger = Array.isArray(row.ledger) ? row.ledger : ledger;
+                    balDue = calcBalanceDue(ledger);
+                  }
+                } catch (chargeErr) {
+                  console.error('Auto-charge failed for', c.id, chargeErr);
+                }
+              }
             }
           }
         }
       }
 
-      // 3. Check for PAST DUE invoices
+      // Also charge any Due invoices without a future next_retry_at (first attempt)
+      if (autoCharge && c.recurring_active) {
+        const dueNow = unpaidFromLedger(ledger).filter((inv) => !inv.next_retry_at);
+        if (dueNow.length) {
+          try {
+            await chargeClientDue({
+              clientId: c.id,
+              initiatedBy: 'cron',
+              invoiceIds: dueNow.map((i) => i.id),
+              attemptNumber: 1,
+            });
+            const refreshed = await supabaseRequest(
+              '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id) + '&select=ledger&limit=1',
+              'GET', null, supabaseUrl, supabaseKey
+            );
+            const row = Array.isArray(refreshed.body) ? refreshed.body[0] : null;
+            if (row) {
+              ledger = Array.isArray(row.ledger) ? row.ledger : ledger;
+              balDue = calcBalanceDue(ledger);
+            }
+          } catch (chargeErr) {
+            console.error('Due-invoice charge failed for', c.id, chargeErr);
+          }
+        }
+      }
+
+      // PAST DUE dunning / pause
       const unpaidInvoices = ledger.filter(t => t.type === 'Invoice' && t.status === 'Due');
       let isPausedNow = false;
-      
+
       for (const inv of unpaidInvoices) {
         const daysPastDue = Math.floor((new Date(today) - new Date(inv.date)) / (1000 * 60 * 60 * 24));
         if (daysPastDue === 1 && c.email && sgKey) {
@@ -789,17 +832,15 @@ exports.handler = async () => {
           }
           await supabaseRequest(
             '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),
-            'PATCH', { billing_status: 'Paused', exit_reason: 'non_payment' }, supabaseUrl, supabaseKey
+            'PATCH', { billing_status: 'Paused', exit_reason: 'non_payment', recurring_active: false }, supabaseUrl, supabaseKey
           );
           isPausedNow = true;
-          billingAlerts.push({ client: c.name, type: 'PAUSED', balance: balanceDue });
+          billingAlerts.push({ client: c.name, type: 'PAUSED', balance: balDue });
         }
       }
 
-
-      // Simple heuristic: if balance > 0, they are overdue/due
-      if (balanceDue > 0 && !isPausedNow) {
-        billingAlerts.push({ client: c.name, type: 'DUE', balance: balanceDue });
+      if (balDue > 0 && !isPausedNow) {
+        billingAlerts.push({ client: c.name, type: 'DUE', balance: balDue });
       }
     }
   } catch (e) {
