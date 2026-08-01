@@ -251,28 +251,67 @@ async function pollFieldworkAuditJob(jobId, { timeoutMs = 240000 } = {}) {
   throw new Error('Audit timed out — check the netlify terminal for fieldwork-audit-run-background');
 }
 
+const LOCAL_AUDIT_URL = import.meta.env.VITE_FIELDWORK_AUDIT_URL || 'http://127.0.0.1:8787/audit';
+
+/** Prefer the local audit server (no 30s lambda-local cap) when it's running. */
+async function tryLocalAuditServer(payload) {
+  if (!import.meta.env.DEV) return null;
+  try {
+    const health = await fetch(LOCAL_AUDIT_URL.replace(/\/audit\/?$/, '/health'), {
+      signal: AbortSignal.timeout(800),
+    });
+    if (!health.ok) return null;
+  } catch {
+    return null;
+  }
+
+  const res = await fetch(LOCAL_AUDIT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(300000),
+  });
+  const rawText = await res.text();
+  let body = {};
+  try {
+    body = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    body = { error: rawText?.slice(0, 280) || `Local audit ${res.status}` };
+  }
+  if (!res.ok) throw new Error(body.error || `Local audit failed (${res.status})`);
+  return body;
+}
+
 /** Live forensic audit via FIELDWORK_ANTHROPIC (Fieldwork UI model). */
 export async function runFieldworkAudit({ base64, mediaType, fileName, mode, subscriberId }) {
   if (!base64) throw new Error('base64 report required');
   if (base64.length > 12_000_000) throw new Error('Report too large for Fieldwork audit pass');
 
-  // Local netlify.dev runs the engine inline on this endpoint (can take 1–4 min).
-  // Production returns { jobId } and we kick the background worker + poll.
+  const payload = {
+    base64,
+    mediaType: mediaType || 'application/pdf',
+    fileName: fileName || 'credit-report.pdf',
+    mode: mode || 'combined',
+    subscriberId: subscriberId || undefined,
+  };
+
+  // Local: use scripts/fieldwork-audit-local.mjs (bypasses netlify 30s hard cap).
+  const local = await tryLocalAuditServer(payload);
+  if (local?.audit) return local;
+
+  // Production / fallback: Netlify function (enqueue + background, or inline in some envs).
   const queued = await fwFetch('fieldwork-audit-run', {
     method: 'POST',
     timeoutMs: 300000,
-    body: JSON.stringify({
-      base64,
-      mediaType: mediaType || 'application/pdf',
-      fileName: fileName || 'credit-report.pdf',
-      mode: mode || 'combined',
-      subscriberId: subscriberId || undefined,
-    }),
+    body: JSON.stringify(payload),
   });
 
   if (queued?.audit) return queued;
   if (!queued?.jobId) {
-    throw new Error(queued?.error || 'Audit did not return a job id');
+    throw new Error(
+      queued?.error
+      || 'Audit did not return a job id. For local PDF audits run: npm run audit:fieldwork',
+    );
   }
 
   const auth = await authHeader();
@@ -285,9 +324,9 @@ export async function runFieldworkAudit({ base64, mediaType, fileName, mode, sub
     body: JSON.stringify({
       jobId: queued.jobId,
       base64,
-      mediaType: mediaType || 'application/pdf',
-      fileName: fileName || 'credit-report.pdf',
-      mode: mode || 'combined',
+      mediaType: payload.mediaType,
+      fileName: payload.fileName,
+      mode: payload.mode,
     }),
   }).catch(() => {
     /* 202 / network race — polling will surface real failures */

@@ -77,7 +77,10 @@ export default function UploadStep({ onComplete }) {
       onComplete(res.audit, { fileName: file.name, mode: res.mode });
     } catch (err) {
       console.error(err);
-      setError(err.message || 'Live audit failed — try the sample report, or check FIELDWORK_ANTHROPIC_API_KEY + netlify functions.');
+      setError(
+        err.message
+        || 'Live audit failed. For local PDFs run `npm run audit:fieldwork` in a second terminal, then retry upload.',
+      );
       setPhase('idle');
       setStepIdx(0);
     }
