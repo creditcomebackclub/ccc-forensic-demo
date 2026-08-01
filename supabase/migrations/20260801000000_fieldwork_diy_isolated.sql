@@ -94,6 +94,29 @@ CREATE TABLE IF NOT EXISTS public.fieldwork_documents (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Live-expert queue: AI brief (account + concerns) forwarded for human pickup.
+CREATE TABLE IF NOT EXISTS public.fieldwork_expert_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  subscriber_id uuid NOT NULL REFERENCES public.fieldwork_subscribers (id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'claimed', 'replied', 'closed')),
+  concern text NOT NULL DEFAULT '',
+  account_focus text NOT NULL DEFAULT '',
+  subscriber_summary text NOT NULL DEFAULT '',
+  ai_brief jsonb NOT NULL DEFAULT '{}'::jsonb,
+  transcript_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+  agent_reply text,
+  claimed_by text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS fieldwork_expert_requests_queue_idx
+  ON public.fieldwork_expert_requests (status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS fieldwork_expert_requests_subscriber_idx
+  ON public.fieldwork_expert_requests (subscriber_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS public.fieldwork_billing_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   subscriber_id uuid NOT NULL REFERENCES public.fieldwork_subscribers (id) ON DELETE CASCADE,
@@ -119,6 +142,7 @@ ALTER TABLE public.fieldwork_audit_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fieldwork_letters ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fieldwork_documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fieldwork_billing_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fieldwork_expert_requests ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY fieldwork_subscribers_select_own ON public.fieldwork_subscribers
   FOR SELECT TO authenticated
@@ -156,6 +180,14 @@ CREATE POLICY fieldwork_documents_own ON public.fieldwork_documents
 CREATE POLICY fieldwork_billing_own ON public.fieldwork_billing_events
   FOR SELECT TO authenticated
   USING (subscriber_id IN (SELECT id FROM public.fieldwork_subscribers WHERE user_id = auth.uid()));
+
+CREATE POLICY fieldwork_expert_requests_select_own ON public.fieldwork_expert_requests
+  FOR SELECT TO authenticated
+  USING (subscriber_id IN (SELECT id FROM public.fieldwork_subscribers WHERE user_id = auth.uid()));
+
+CREATE POLICY fieldwork_expert_requests_insert_own ON public.fieldwork_expert_requests
+  FOR INSERT TO authenticated
+  WITH CHECK (subscriber_id IN (SELECT id FROM public.fieldwork_subscribers WHERE user_id = auth.uid()));
 
 -- Storage: only under fieldwork-docs/{auth.uid()}/...
 CREATE POLICY fieldwork_docs_select_own ON storage.objects

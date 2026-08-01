@@ -39,7 +39,7 @@ export default function Billing() {
             <div className="fw-mono text-[10px] uppercase tracking-wider text-[var(--fw-muted)]">Expert chat left</div>
             <div className="fw-display mt-2 text-4xl font-bold">{expertChatCredits}</div>
             <div className="mt-1 text-sm text-[var(--fw-muted)]">
-              {plan.expertChats} / month · weekdays 9am–5pm Mountain
+              {plan.expertChats} / month · AI brief to live expert · 9am–5pm MT
             </div>
           </div>
         ) : null}

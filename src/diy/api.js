@@ -395,4 +395,21 @@ export async function sendFieldworkExpertChat({ message, history, context }) {
   });
 }
 
+/**
+ * Queue a live expert with an AI brief (account in question + concerns).
+ * Stores on fieldwork_expert_requests; optional FIELDWORK_EXPERT_WEBHOOK_URL notify.
+ */
+export async function requestFieldworkExpertHandoff({ message, concern, history, context }) {
+  return fwFetch('fieldwork-expert-handoff', {
+    method: 'POST',
+    timeoutMs: 45000,
+    body: JSON.stringify({
+      message,
+      concern,
+      history: history || [],
+      context: context || {},
+    }),
+  });
+}
+
 export { fieldworkCloudEnabled };

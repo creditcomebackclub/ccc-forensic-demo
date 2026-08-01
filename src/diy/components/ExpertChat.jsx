@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { MessageCircle, Send, X } from 'lucide-react';
+import { Headset, MessageCircle, Send, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { sendFieldworkExpertChat } from '../api';
+import { requestFieldworkExpertHandoff, sendFieldworkExpertChat } from '../api';
 import { useFieldwork } from '../state';
 
 const SUGGESTIONS = [
@@ -12,7 +12,22 @@ const SUGGESTIONS = [
 
 function greeting(name) {
   const first = (name || 'there').split(' ')[0];
-  return `Hi ${first} — I’m your Fieldwork campaign expert. Ask about your audit, mail credits, or the next certified packet. Weekdays 9am–5pm Mountain · 8 messages / month.`;
+  return `Hi ${first} — I’m your Fieldwork campaign expert. Ask about an account or next packet. When you want a human, I’ll forward a brief on the account + your concerns to a live expert. Weekdays 9am–5pm Mountain · 8 messages / month.`;
+}
+
+function workspaceContext(audit, documents) {
+  return {
+    audit: audit
+      ? {
+          summary: audit.summary || null,
+          accounts: (audit.accounts || []).slice(0, 12),
+        }
+      : null,
+    documents: (documents || []).slice(0, 12).map((d) => ({
+      name: d.name,
+      kind: d.kind,
+    })),
+  };
 }
 
 export default function ExpertChat() {
@@ -32,6 +47,8 @@ export default function ExpertChat() {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [handoffDone, setHandoffDone] = useState(false);
+  const [lastBrief, setLastBrief] = useState(null);
   const endRef = useRef(null);
 
   const creditsLeft = typeof expertChatCredits === 'number'
@@ -41,9 +58,17 @@ export default function ExpertChat() {
   useEffect(() => {
     if (!isOpen) return;
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isOpen, loading]);
+  }, [messages, isOpen, loading, lastBrief]);
 
   if (planId !== 'unlimited') return null;
+
+  const applyCredit = (data) => {
+    if (typeof data?.expert_chat_credits === 'number') {
+      setExpertChatCredits(data.expert_chat_credits);
+    } else {
+      setExpertChatCredits((c) => Math.max(0, c - 1));
+    }
+  };
 
   const sendMessage = async (overrideText = null) => {
     const textToSend = typeof overrideText === 'string' ? overrideText : input;
@@ -61,6 +86,14 @@ export default function ExpertChat() {
     }
 
     const userMsg = textToSend.trim();
+    // Natural-language handoff
+    if (/^(talk to|connect me|live expert|human expert|real (person|expert))/i.test(userMsg)) {
+      if (typeof overrideText !== 'string') setInput('');
+      setMessages((prev) => [...prev, { role: 'user', text: userMsg }]);
+      await runHandoff(userMsg, { alreadyPostedUser: true });
+      return;
+    }
+
     if (typeof overrideText !== 'string') setInput('');
     setMessages((prev) => [...prev, { role: 'user', text: userMsg }]);
     setLoading(true);
@@ -70,43 +103,83 @@ export default function ExpertChat() {
       const data = await sendFieldworkExpertChat({
         message: userMsg,
         history,
-        context: {
-          audit: audit
-            ? {
-                summary: audit.summary || null,
-                accounts: (audit.accounts || []).slice(0, 12),
-              }
-            : null,
-          documents: (documents || []).slice(0, 12).map((d) => ({
-            name: d.name,
-            kind: d.kind,
-          })),
-        },
+        context: workspaceContext(audit, documents),
       });
-
-      if (typeof data.expert_chat_credits === 'number') {
-        setExpertChatCredits(data.expert_chat_credits);
-      } else {
-        setExpertChatCredits((c) => Math.max(0, c - 1));
-      }
-
+      applyCredit(data);
       setMessages((prev) => [
         ...prev,
         { role: 'assistant', text: data.reply || 'No reply returned.' },
       ]);
     } catch (err) {
       const outside = err?.body?.outsideHours || /business hours/i.test(err?.message || '');
-      if (!outside) {
-        // Failed after possible reserve — keep local count unless server said otherwise
-        if (typeof err?.body?.expert_chat_credits === 'number') {
-          setExpertChatCredits(err.body.expert_chat_credits);
-        }
+      if (!outside && typeof err?.body?.expert_chat_credits === 'number') {
+        setExpertChatCredits(err.body.expert_chat_credits);
       }
       setMessages((prev) => [
         ...prev,
         {
           role: 'assistant',
           text: err?.message || 'I’m having trouble connecting right now. Try again shortly.',
+        },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runHandoff = async (concernText = '', { alreadyPostedUser } = {}) => {
+    if (loading || handoffDone) return;
+    if (creditsLeft < 1) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: 'You’re out of expert-chat messages this period, so I can’t queue a live handoff right now.',
+        },
+      ]);
+      return;
+    }
+
+    const typed = (concernText || input || '').trim();
+    const userLine = typed || 'Talk to a live expert';
+    const concern = typed || 'Please review my campaign';
+    if (!alreadyPostedUser) {
+      setMessages((prev) => [...prev, { role: 'user', text: userLine }]);
+    }
+
+    setLoading(true);
+    try {
+      const history = alreadyPostedUser
+        ? messages
+        : [...messages, { role: 'user', text: userLine }];
+      const data = await requestFieldworkExpertHandoff({
+        concern,
+        message: concern,
+        history,
+        context: workspaceContext(audit, documents),
+      });
+      applyCredit(data);
+      setHandoffDone(true);
+      setLastBrief({
+        account: data.account_focus || '',
+        concerns: data.concerns || [],
+        summary: data.subscriber_summary || '',
+        outsideHours: Boolean(data.outsideHours),
+      });
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: data.reply || data.subscriber_summary || 'Live expert queued.' },
+      ]);
+      setInput('');
+    } catch (err) {
+      if (typeof err?.body?.expert_chat_credits === 'number') {
+        setExpertChatCredits(err.body.expert_chat_credits);
+      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: err?.message || 'Could not queue a live expert right now.',
         },
       ]);
     } finally {
@@ -124,7 +197,7 @@ export default function ExpertChat() {
             exit={{ opacity: 0, y: 16, scale: 0.96 }}
             transition={{ duration: 0.2 }}
             className="absolute bottom-16 right-0 flex w-[min(22rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-[var(--fw-line)] bg-white shadow-[0_18px_50px_rgba(7,19,31,0.22)]"
-            style={{ height: 420 }}
+            style={{ height: 440 }}
           >
             <div className="flex items-center justify-between bg-[var(--fw-ink)] px-4 py-3 text-white">
               <div className="min-w-0">
@@ -133,7 +206,7 @@ export default function ExpertChat() {
                   <span className="text-sm font-semibold tracking-wide">Campaign expert</span>
                 </div>
                 <div className="mt-0.5 fw-mono text-[10px] uppercase tracking-[0.16em] text-white/45">
-                  {creditsLeft} msgs left · 9–5 MT
+                  {creditsLeft} msgs left · AI + live brief
                 </div>
               </div>
               <button
@@ -160,6 +233,27 @@ export default function ExpertChat() {
                   </div>
                 </div>
               ))}
+
+              {lastBrief && (
+                <div className="rounded-lg border border-[var(--fw-sea)]/30 bg-white px-3 py-2.5 text-[12px] text-[var(--fw-ink)]">
+                  <div className="fw-mono text-[10px] uppercase tracking-[0.16em] text-[var(--fw-sea)]">
+                    Brief forwarded to live expert
+                  </div>
+                  {lastBrief.account ? (
+                    <div className="mt-1.5 font-semibold">Account: {lastBrief.account}</div>
+                  ) : null}
+                  {lastBrief.concerns?.length ? (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[var(--fw-muted)]">
+                      {lastBrief.concerns.slice(0, 4).map((c) => (
+                        <li key={c}>{c}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {lastBrief.outsideHours ? (
+                    <p className="mt-1.5 text-[var(--fw-muted)]">Queued for next business-hours window (9am–5pm MT).</p>
+                  ) : null}
+                </div>
+              )}
 
               {messages.length === 1 && creditsLeft > 0 && (
                 <div className="flex flex-col items-start gap-2 pl-1">
@@ -194,13 +288,25 @@ export default function ExpertChat() {
             </div>
 
             <div className="border-t border-[var(--fw-line)] bg-white p-3">
+              {!handoffDone && creditsLeft > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => runHandoff(input)}
+                  disabled={loading}
+                  className="mb-2 inline-flex w-full items-center justify-center gap-1.5 rounded border border-[var(--fw-line)] bg-[var(--fw-paper)] px-3 py-2 text-[12px] font-semibold text-[var(--fw-ink)] hover:border-[var(--fw-sea)] disabled:opacity-50"
+                >
+                  <Headset size={14} className="text-[var(--fw-sea)]" />
+                  Talk to a live expert
+                  <span className="font-normal text-[var(--fw-muted)]">· sends AI brief</span>
+                </button>
+              ) : null}
               <div className="relative">
                 <input
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                  placeholder={creditsLeft < 1 ? 'Message cap reached' : 'Ask about your campaign…'}
+                  placeholder={creditsLeft < 1 ? 'Message cap reached' : 'Ask about an account…'}
                   disabled={creditsLeft < 1 || loading}
                   className="w-full rounded-lg border border-[var(--fw-line)] bg-[var(--fw-paper)] py-2.5 pl-3 pr-10 text-[15px] text-[var(--fw-ink)] outline-none focus:border-[var(--fw-sea)] disabled:opacity-50"
                 />
