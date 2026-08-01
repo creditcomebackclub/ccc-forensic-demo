@@ -6,6 +6,7 @@ const FOOTER_COLS = [
   {
     title: 'Product',
     links: [
+      { to: '/#demo', label: 'Watch demo', hash: true },
       { to: '/#how', label: 'How it works', hash: true },
       { to: '/#pricing', label: 'Pricing', hash: true },
       { to: '/signup', label: 'Try the demo' },

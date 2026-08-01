@@ -70,8 +70,8 @@ export default function Landing() {
             <Link to={user ? '/app' : '/signup'} className="fw-btn-primary text-base">
               {user ? 'Open workspace' : 'See what an audit looks like'} <ArrowRight size={18} />
             </Link>
-            <a href="#how" className="fw-btn-ghost text-base">
-              How it works
+            <a href="#demo" className="fw-btn-ghost text-base">
+              Watch the demo
             </a>
           </motion.div>
         </div>
@@ -108,6 +108,38 @@ export default function Landing() {
                 <p className="mt-3 leading-relaxed text-[var(--fw-muted)]">{item.body}</p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* PRODUCT DEMO VIDEO */}
+      <section id="demo" className="bg-[var(--fw-ink)] px-6 py-24 text-white md:px-8">
+        <div className="mx-auto max-w-6xl">
+          <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-signal)]">See it</p>
+          <h2 className="fw-display mt-3 max-w-3xl text-4xl font-bold md:text-5xl">
+            Watch a sample audit open.
+          </h2>
+          <p className="mt-5 max-w-2xl text-lg text-white/65">
+            No pitch deck. The actual product — signup, sample report, furnisher-first findings.
+          </p>
+
+          <div className="relative mt-10 overflow-hidden rounded-lg border border-white/10 bg-black shadow-2xl">
+            <video
+              className="aspect-video w-full bg-black object-cover"
+              controls
+              playsInline
+              preload="metadata"
+              poster="/videos/fieldwork-demo-poster.jpg"
+            >
+              <source src="/videos/fieldwork-product-demo.mp4" type="video/mp4" />
+              Your browser does not support the video tag.
+            </video>
+          </div>
+
+          <div className="mt-8">
+            <Link to={user ? '/app' : '/signup'} className="fw-btn-primary inline-flex">
+              {user ? 'Open workspace' : 'Try it yourself'} <ArrowRight size={16} />
+            </Link>
           </div>
         </div>
       </section>
