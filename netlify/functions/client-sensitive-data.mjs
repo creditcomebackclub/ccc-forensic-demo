@@ -82,18 +82,21 @@ export const handler = async (event) => {
   try { payload = JSON.parse(event.body || '{}'); }
   catch (e) { return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
 
-  const { action, clientName } = payload;
-  if (!clientName) return { statusCode: 400, body: JSON.stringify({ error: 'clientName required' }) };
+  const { action, clientName, clientId } = payload;
+  if (!clientId && !clientName) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'clientId or clientName required' }) };
+  }
   if (action !== 'read' && action !== 'write') {
     return { statusCode: 400, body: JSON.stringify({ error: 'action must be "read" or "write"' }) };
   }
 
-  const { data: clientRow, error: clientErr } = await db
-    .from('clients')
-    .select('id, email')
-    .eq('name', clientName)
-    .limit(1)
-    .maybeSingle();
+  // clientId preferred — clients.name is not unique and same-named clients
+  // would otherwise read/write each other's encrypted SSN/password rows.
+  let clientQuery = db.from('clients').select('id, email').limit(1);
+  clientQuery = clientId
+    ? clientQuery.eq('id', clientId)
+    : clientQuery.eq('name', clientName);
+  const { data: clientRow, error: clientErr } = await clientQuery.maybeSingle();
   if (clientErr || !clientRow) {
     return { statusCode: 404, body: JSON.stringify({ error: 'Client not found' }) };
   }

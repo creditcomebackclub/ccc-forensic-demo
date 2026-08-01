@@ -70,6 +70,11 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
   const [verified, setVerified] = useState(false);
 
   useEffect(() => {
+    if (!letter.clientId) {
+      console.warn('LobMailer: letter missing clientId — skipping document enclosure lookup');
+      setDocs([]);
+      return;
+    }
     getDocuments(letter.clientName, letter.clientId).then(setDocs).catch(console.error);
   }, [letter.clientName, letter.clientId]);
 
@@ -506,9 +511,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // returned nothing for them.
       if (!res.duplicate) {
         try {
+          // No name/ilike fallthrough when clientId is set — a miss means no email.
           const notifyCpQuery = letter.clientId
             ? supabase.from('client_profiles').select('email,full_name').eq('client_id', letter.clientId).limit(1)
-            : supabase.from('client_profiles').select('email,full_name').ilike('full_name', letter.clientName).limit(1);
+            : supabase.from('client_profiles').select('email,full_name').eq('full_name', letter.clientName).limit(1);
           const { data: cp } = await notifyCpQuery;
           if (cp && cp.length > 0 && cp[0].email) {
             const { data: { session } } = await supabase.auth.getSession();

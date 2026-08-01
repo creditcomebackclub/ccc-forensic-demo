@@ -79,7 +79,7 @@ function Field({ label, value, onSave, type = 'text', placeholder = '', align = 
 // Encrypted field (SSN last-4 / monitoring password). Unlike Field, the
 // plaintext value is never part of the bulk client list — it's fetched and
 // decrypted on demand, only when staff explicitly click reveal or edit.
-function PasswordField({ clientName, field, onSaved }) {
+function PasswordField({ clientName, clientId, field, onSaved }) {
   const [editing, setEditing] = useState(false);
   const [visible, setVisible] = useState(false);
   const [val, setVal] = useState('');
@@ -91,7 +91,7 @@ function PasswordField({ clientName, field, onSaved }) {
     setBusy(true);
     setError('');
     try {
-      const data = await readClientSensitiveData(clientName);
+      const data = await readClientSensitiveData(clientName, clientId);
       const value = (field === 'ssnLast4' ? data.ssnLast4 : data.monitoringPassword) || '';
       setRevealed(value);
       return value;
@@ -126,7 +126,7 @@ function PasswordField({ clientName, field, onSaved }) {
     setBusy(true);
     setError('');
     try {
-      await writeClientSensitiveData(clientName, { [field]: val });
+      await writeClientSensitiveData(clientName, { [field]: val }, clientId);
       setRevealed(val);
       setEditing(false);
       setVisible(false);
@@ -322,7 +322,7 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
             onSave={(v) => save({ date_of_birth: v })} />
         </Row>
         <Row label="SSN last 4">
-          <PasswordField clientName={client.name} field="ssnLast4" onSaved={onChanged} />
+          <PasswordField clientName={client.name} clientId={client.id} field="ssnLast4" onSaved={onChanged} />
         </Row>
       </Section>
 
@@ -337,7 +337,7 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
             onSave={(v) => save({ monitoring_email: v })} />
         </Row>
         <Row label="Password">
-          <PasswordField clientName={client.name} field="monitoringPassword" onSaved={onChanged} />
+          <PasswordField clientName={client.name} clientId={client.id} field="monitoringPassword" onSaved={onChanged} />
         </Row>
         <Row label="Portal">
           <a href={client.monitoringPortalUrl || 'https://www.privacyguard.com'}

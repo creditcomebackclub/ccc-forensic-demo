@@ -3,7 +3,6 @@ import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog,
 import ProspectChatWidget from './components/ProspectChatWidget';
 import { Toaster } from 'react-hot-toast';
 import { supabase } from './utils/supabase';
-import { getProfile } from './utils/storage';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit } from './utils/api';
 import { getUnanalyzedResponseStats } from './utils/actionItems';
 import { computeClientCommission } from './utils/affiliateCommission';

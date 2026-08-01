@@ -77,24 +77,6 @@ export function validateBatch(files) {
   return null;
 }
 
-export function buildBatchPaths(basePath, files) {
-  const batchId = Date.now();
-  return files.map((f, i) => {
-    const ext = (String(f.name || '').split('.').pop() || 'jpg').toLowerCase();
-    const page = String(i + 1).padStart(2, '0');
-    return { file: f, path: `${basePath}/response_${batchId}_p${page}.${ext}` };
-  });
-}
-
-export async function uploadResponseBatch(supabase, basePath, files) {
-  const entries = buildBatchPaths(basePath, files);
-  for (const { file, path } of entries) {
-    const { error } = await supabase.storage.from('responses').upload(path, file, { upsert: true });
-    if (error) throw error;
-  }
-  return entries.map((e) => e.path);
-}
-
 // Groups a letter folder's files into logical response batches — every page
 // of a multi-photo upload collapses into one entry so the admin list shows
 // (and analyzes) one row per response, not one row per page.

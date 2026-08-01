@@ -146,7 +146,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
   const handleExportCSV = () => {
     const headers = ['Client Name', 'Email', 'Phone', 'Date Referred', 'Status', 'Commissions Paid', 'Score Increase'];
     const rows = clients.map(c => {
-      const status = getClientStatus(c.name).label;
+      const status = getClientStatus(c).label;
       const scoreIncrease = c.scoreIncrease != null ? `+${c.scoreIncrease} pts` : 'N/A';
       return [
         `"${c.name}"`,
@@ -170,8 +170,13 @@ export default function AffiliatePortal({ session, onSignOut }) {
     document.body.removeChild(link);
   };
 
-  const getClientStatus = (clientName) => {
-    const clientLetters = letters.filter(l => l.client_name === clientName);
+  const lettersForClient = (client) => letters.filter((l) => (
+    (client?.id && l.client_id === client.id)
+    || (!l.client_id && l.client_name === client?.name)
+  ));
+
+  const getClientStatus = (client) => {
+    const clientLetters = lettersForClient(client);
     if (clientLetters.length === 0) return { label: 'Pending Start', tone: 'neutral' };
     const deleted = clientLetters.filter(l => l.response_outcome === 'deleted');
     if (deleted.length > 0) return { label: deleted.length + ' Deletion' + (deleted.length > 1 ? 's' : ''), tone: 'green' };
@@ -292,7 +297,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
             <div className="affiliate-stats">
               {[
                 { label: 'Clients Referred', value: clients.length, icon: <Users size={16} style={{ color: textAccentColor }} strokeWidth={1.75} /> },
-                { label: 'Active Campaigns', value: clients.filter(c => getClientStatus(c.name).tone !== 'neutral').length, icon: <TrendingUp size={16} style={{ color: textAccentColor }} strokeWidth={1.75} /> },
+                { label: 'Active Campaigns', value: clients.filter(c => getClientStatus(c).tone !== 'neutral').length, icon: <TrendingUp size={16} style={{ color: textAccentColor }} strokeWidth={1.75} /> },
                 { label: 'Deletions Achieved', value: deletions, icon: <CheckCircle size={16} style={{ color: textAccentColor }} strokeWidth={1.75} /> },
                 { label: 'Commission Pending', value: '$' + pendingCommission.toFixed(2), icon: <DollarSign size={16} style={{ color: textAccentColor }} strokeWidth={1.75} /> },
               ].map(({ label, value, icon }) => (
@@ -407,7 +412,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                 </div>
               ) : (
                 clients.slice(0, 5).map(c => {
-                  const status = getClientStatus(c.name);
+                  const status = getClientStatus(c);
                   const style = toneStyles[status.tone];
                   
                   const scoreIncrease = c.scoreIncrease != null ? `+${c.scoreIncrease} pts` : null;
@@ -460,9 +465,9 @@ export default function AffiliatePortal({ session, onSignOut }) {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {clients.map(c => {
-                  const status = getClientStatus(c.name);
+                  const status = getClientStatus(c);
                   const style = toneStyles[status.tone];
-                  const clientLetters = letters.filter(l => l.client_name === c.name);
+                  const clientLetters = lettersForClient(c);
                   const mailed = clientLetters.filter(l => l.mailed_date).length;
                   const delivered = clientLetters.filter(l => l.tracking_status === 'Delivered').length;
                   const deleted = clientLetters.filter(l => l.response_outcome === 'deleted').length;

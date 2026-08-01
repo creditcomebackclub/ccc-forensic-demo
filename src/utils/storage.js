@@ -21,17 +21,6 @@ async function getUserId() {
   return user.id;
 }
 
-export async function getProfile() {
-  const userId = await getUserId();
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-  if (error) throw error;
-  return data;
-}
-
 // clientId is optional and preferred over clientName when present — see
 // the client_id migration plan; clients.name has no unique constraint.
 // Genuinely absent for a lead purely synthesized from orphan audits/letters
@@ -268,6 +257,7 @@ function normalizeLetter(l) {
     id: l.id,
     clientId: l.client_id || null,
     clientName: l.client_name,
+    userId: l.user_id || null,
     furnisher: l.furnisher,
     accountId: l.account_id,
     phase: l.phase,
@@ -428,31 +418,6 @@ export async function listClientSummaries({ limit = 50, cursor = null, search = 
     clients: page,
     totalCount: Number(rows[0]?.total_count || 0),
     nextCursor: hasMore && last ? { lastActivity: last.lastActivity, id: last.id } : null,
-  };
-}
-
-// Some operational views intentionally need to inspect the whole *compact*
-// CRM summary set (never the old all-audits/all-letter-HTML export). Page
-// through the cursor RPC so PostgREST's default response cap cannot silently
-// hide clients once the firm grows past 1,000 active records.
-export async function listAllClientSummaries({ pageSize = 100, search = null, maxPages = 100 } = {}) {
-  const clients = [];
-  let cursor = null;
-  let totalCount = 0;
-  let pages = 0;
-
-  do {
-    const page = await listClientSummaries({ limit: pageSize, cursor, search });
-    clients.push(...page.clients);
-    totalCount = page.totalCount;
-    cursor = page.nextCursor;
-    pages += 1;
-  } while (cursor && pages < maxPages);
-
-  return {
-    clients,
-    totalCount,
-    truncated: !!cursor,
   };
 }
 

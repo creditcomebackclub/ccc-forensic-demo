@@ -141,7 +141,12 @@ export async function generateCombinedCleanupLetter(client, inquiries) {
   let signatureData = null;
   let profileAddress = null;
   try {
-    const { data: cp } = await supabase.from('client_profiles').select('signature_data').eq('full_name', client.name).limit(1);
+    // client.id preferred — full_name alone can pull another same-named
+    // client's signature into a mailed cleanup letter.
+    const cpQuery = client.id
+      ? supabase.from('client_profiles').select('signature_data').eq('client_id', client.id).limit(1)
+      : supabase.from('client_profiles').select('signature_data').eq('full_name', client.name).limit(1);
+    const { data: cp } = await cpQuery;
     if (cp && cp.length > 0 && cp[0].signature_data) {
       signatureData = cp[0].signature_data;
     }

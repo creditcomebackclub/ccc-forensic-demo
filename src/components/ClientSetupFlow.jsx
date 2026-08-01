@@ -233,25 +233,49 @@ function ClientOnboardingModal({ session, onComplete }) {
       // admin CRM's DocumentManager, which reads that table keyed on
       // client_id + the owning staff user_id, not just a storage path.
       let docsClientId = null, docsOwnerUserId = null, docsClientName = userEmail;
+      let docsResolveFailed = false;
       try {
-        const { data: cpForDocs } = await supabase.from('client_profiles').select('full_name,client_id').eq('email', userEmail).single();
+        const { data: cpForDocs, error: cpErr } = await supabase
+          .from('client_profiles')
+          .select('full_name,client_id')
+          .eq('email', userEmail)
+          .maybeSingle();
+        if (cpErr) throw cpErr;
         if (cpForDocs) {
           docsClientName = cpForDocs.full_name || userEmail;
           const clientRowQuery = cpForDocs.client_id
             ? supabase.from('clients').select('id,user_id').eq('id', cpForDocs.client_id).limit(1)
             : supabase.from('clients').select('id,user_id').eq('name', cpForDocs.full_name).limit(1);
-          const { data: clientRows } = await clientRowQuery;
+          const { data: clientRows, error: clientErr } = await clientRowQuery;
+          if (clientErr) throw clientErr;
           const clientRow = clientRows && clientRows[0];
           if (clientRow) { docsClientId = clientRow.id; docsOwnerUserId = clientRow.user_id; }
         }
-      } catch (e) { console.warn('Could not resolve client record for document upload:', e); }
+      } catch (e) {
+        docsResolveFailed = true;
+        console.warn('Could not resolve client record for document upload:', e);
+      }
 
-      if (idFile) await labeled('Upload ID', () => (docsClientId && docsOwnerUserId)
-        ? uploadDocument(docsClientId, docsClientName, 'id', idFile, docsOwnerUserId)
-        : uploadFile(idFile, `${userId}/id.${idFile.name.split('.').pop()}`));
-      if (addressFile) await labeled('Upload address doc', () => (docsClientId && docsOwnerUserId)
-        ? uploadDocument(docsClientId, docsClientName, 'address', addressFile, docsOwnerUserId)
-        : uploadFile(addressFile, `${userId}/address.${addressFile.name.split('.').pop()}`));
+      // Never fall back to client-docs for ID/address — those uploads leave no
+      // documents row and are invisible in the admin CRM. Fail closed so the
+      // client can retry once their profile is linked to a clients row.
+      if ((idFile || addressFile) && (!docsClientId || !docsOwnerUserId)) {
+        throw new Error(
+          docsResolveFailed
+            ? 'Could not look up your client record (temporary network or server error). Please try finishing enrollment again in a moment.'
+            : 'Could not resolve your client record for identity documents. Contact Credit Comeback Club before finishing enrollment so your ID and address files are saved correctly.'
+        );
+      }
+      if (idFile) {
+        await labeled('Upload ID', () =>
+          uploadDocument(docsClientId, docsClientName, 'id', idFile, docsOwnerUserId)
+        );
+      }
+      if (addressFile) {
+        await labeled('Upload address doc', () =>
+          uploadDocument(docsClientId, docsClientName, 'address', addressFile, docsOwnerUserId)
+        );
+      }
 
       // Always mark onboarding complete in DB — do this even if subsequent steps fail
       await labeled('Save enrollment record', () =>
