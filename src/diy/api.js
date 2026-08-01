@@ -282,7 +282,8 @@ async function runLocalAuditServer(payload) {
   }
 
   console.info('[fieldwork] using local audit server', LOCAL_AUDIT_URL);
-  const runCtl = abortAfter(300000);
+  // Full 3-bureau PDFs often take 4–8+ minutes; keep the tab open.
+  const runCtl = abortAfter(900000);
   try {
     const res = await fetch(LOCAL_AUDIT_URL, {
       method: 'POST',
@@ -302,7 +303,7 @@ async function runLocalAuditServer(payload) {
     return body;
   } catch (err) {
     if (err?.name === 'AbortError') {
-      throw new Error('Local audit aborted/timed out after 5 minutes — check the audit:fieldwork terminal');
+      throw new Error('Local audit aborted/timed out after 15 minutes — check the audit:fieldwork terminal');
     }
     throw err;
   } finally {
