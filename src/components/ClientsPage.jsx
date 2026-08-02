@@ -1175,8 +1175,13 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             letter={followUpBureauLetter.letter}
             client={followUpBureauLetter.client}
             evidence={followUpBureauLetter.evidence || null}
-            onClose={() => setFollowUpBureauLetter(null)}
-            onSaved={() => { refreshSelectedClient(); }}
+            onClose={() => {
+              // Refresh only after closing. Refreshing on save temporarily
+              // removes selectedClient, unmounting/remounting this panel and
+              // causing its mount effect to launch another paid model job.
+              setFollowUpBureauLetter(null);
+              refreshSelectedClient();
+            }}
           />
         )}
         {escalatingLetter && (
