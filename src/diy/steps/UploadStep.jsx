@@ -19,7 +19,8 @@ function readFileAsBase64(file) {
 }
 
 export default function UploadStep({ onComplete }) {
-  const { user, plan, auditCredits } = useFieldwork();
+  const { user, plan, auditCredits, isGuestDemo } = useFieldwork();
+  const guest = isGuestDemo || user?.guest;
   const [phase, setPhase] = useState('idle'); // idle | analyzing
   const [stepIdx, setStepIdx] = useState(0);
   const [dragOver, setDragOver] = useState(false);
@@ -99,17 +100,29 @@ export default function UploadStep({ onComplete }) {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Step 01 · Upload</p>
-      <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Drop your credit report</h1>
+      <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">
+        Step 01 · {guest ? 'Sample audit' : 'Upload'}
+      </p>
+      <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">
+        {guest ? 'Run a sample audit' : 'Drop your credit report'}
+      </h1>
       <p className="mt-3 text-lg text-[var(--fw-muted)]">
-        PrivacyGuard, IdentityIQ, or any 3-bureau PDF/HTML export.
-        {engineReady
-          ? ' Drop a real report for a live furnisher-first audit — findings render in this same UI.'
-          : ' This demo runs a canned forensic sample so you can feel the product instantly.'}
+        {guest
+          ? 'Guest tour uses a canned 3-bureau sample so you can walk the full flow — no file upload needed.'
+          : (
+            <>
+              PrivacyGuard, IdentityIQ, or any 3-bureau PDF/HTML export.
+              {engineReady
+                ? ' Drop a real report for a live furnisher-first audit — findings render in this same UI.'
+                : ' This demo runs a canned forensic sample so you can feel the product instantly.'}
+            </>
+          )}
       </p>
-      <p className="mt-2 fw-mono text-[11px] uppercase tracking-[0.18em] text-[var(--fw-sea)]">
-        {auditsLeft} of {plan.auditCredits} audits left · {plan.name}
-      </p>
+      {!guest && (
+        <p className="mt-2 fw-mono text-[11px] uppercase tracking-[0.18em] text-[var(--fw-sea)]">
+          {auditsLeft} of {plan.auditCredits} audits left · {plan.name}
+        </p>
+      )}
 
       <AnimatePresence mode="wait">
         {phase === 'idle' ? (
@@ -120,49 +133,63 @@ export default function UploadStep({ onComplete }) {
             exit={{ opacity: 0, y: -8 }}
             className="mt-10"
           >
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragOver(false);
-                const file = e.dataTransfer.files?.[0];
-                if (file) startLive(file);
-                else startSample();
-              }}
-              className={`relative overflow-hidden rounded-lg border-2 border-dashed px-6 py-16 text-center transition ${
-                dragOver
-                  ? 'border-[var(--fw-signal-dim)] bg-[rgba(46,230,166,0.08)]'
-                  : 'border-[var(--fw-line)] bg-white'
-              }`}
-            >
-              <div className="absolute inset-0 fw-field-scan opacity-60 pointer-events-none" />
-              <FileUp className="relative mx-auto text-[var(--fw-sea)]" size={36} strokeWidth={1.5} />
-              <p className="relative mt-4 text-lg font-semibold">Drag & drop a report</p>
-              <p className="relative mt-1 text-sm text-[var(--fw-muted)]">
-                PDF, HTML, or TXT · {engineReady ? 'live forensic audit when key is set' : 'demo accepts anything'}
-              </p>
-              <div className="relative mt-8 flex flex-wrap items-center justify-center gap-3">
-                <button type="button" onClick={startSample} className="fw-btn-ink">
-                  <Sparkles size={16} /> Use sample 3-bureau report
+            {guest ? (
+              <div className="relative overflow-hidden rounded-lg border border-[var(--fw-line)] bg-white px-6 py-14 text-center">
+                <div className="absolute inset-0 fw-field-scan opacity-60 pointer-events-none" />
+                <Sparkles className="relative mx-auto text-[var(--fw-sea)]" size={36} strokeWidth={1.5} />
+                <p className="relative mt-4 text-lg font-semibold">Sample 3-bureau report</p>
+                <p className="relative mt-1 text-sm text-[var(--fw-muted)]">
+                  Midland, Capital One, and more — Metro 2 findings ready to dispute
+                </p>
+                <button type="button" onClick={startSample} className="fw-btn-ink relative mt-8">
+                  <Sparkles size={16} /> Run sample audit
                 </button>
-                <label className="fw-btn-ghost cursor-pointer !border-[var(--fw-line)] !text-[var(--fw-ink)]">
-                  Upload file
-                  <input
-                    type="file"
-                    accept=".pdf,.html,.htm,.txt,application/pdf,text/html,text/plain"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) startLive(file);
-                    }}
-                  />
-                </label>
               </div>
-            </div>
+            ) : (
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOver(false);
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) startLive(file);
+                  else startSample();
+                }}
+                className={`relative overflow-hidden rounded-lg border-2 border-dashed px-6 py-16 text-center transition ${
+                  dragOver
+                    ? 'border-[var(--fw-signal-dim)] bg-[rgba(46,230,166,0.08)]'
+                    : 'border-[var(--fw-line)] bg-white'
+                }`}
+              >
+                <div className="absolute inset-0 fw-field-scan opacity-60 pointer-events-none" />
+                <FileUp className="relative mx-auto text-[var(--fw-sea)]" size={36} strokeWidth={1.5} />
+                <p className="relative mt-4 text-lg font-semibold">Drag & drop a report</p>
+                <p className="relative mt-1 text-sm text-[var(--fw-muted)]">
+                  PDF, HTML, or TXT · {engineReady ? 'live forensic audit when key is set' : 'or use the sample'}
+                </p>
+                <div className="relative mt-8 flex flex-wrap items-center justify-center gap-3">
+                  <button type="button" onClick={startSample} className="fw-btn-ink">
+                    <Sparkles size={16} /> Use sample 3-bureau report
+                  </button>
+                  <label className="fw-btn-ghost cursor-pointer !border-[var(--fw-line)] !text-[var(--fw-ink)]">
+                    Upload file
+                    <input
+                      type="file"
+                      accept=".pdf,.html,.htm,.txt,application/pdf,text/html,text/plain"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) startLive(file);
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
             {error ? (
               <p className="mt-4 text-sm text-[#b93d30]">{error}</p>
             ) : null}

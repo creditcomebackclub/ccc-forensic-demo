@@ -3,7 +3,10 @@ import { ArrowRight, Crosshair, FileSearch, Mail, Sparkles } from 'lucide-react'
 import { useFieldwork } from '../state';
 
 export default function Dashboard() {
-  const { user, plan, planId, mailCredits, auditCredits, audit, campaigns, letters, runtime } = useFieldwork();
+  const {
+    user, plan, planId, mailCredits, auditCredits, audit, campaigns, letters, runtime, isGuestDemo,
+  } = useFieldwork();
+  const guest = isGuestDemo || user?.guest;
   const first = user.name.split(' ')[0];
   const active = campaigns[0];
 
@@ -63,12 +66,16 @@ export default function Dashboard() {
             <h2 className="fw-display mt-2 text-3xl font-bold md:text-4xl">
               {audit
                 ? `${audit.summary.actionableAccounts} furnisher targets ready`
-                : 'Upload a report. Dispute at the source.'}
+                : guest
+                  ? 'Run a sample audit. Dispute at the source.'
+                  : 'Upload a report. Dispute at the source.'}
             </h2>
             <p className="mt-3 max-w-xl text-white/65">
               {audit
                 ? 'Your Metro 2 / FCRA audit is loaded. Select disputes, compose letters, and spend mail credits.'
-                : 'Fieldwork runs a field-level forensic audit, then you choose what to mail — in your name, via certified Lob.'}
+                : guest
+                  ? 'Guest tour uses a canned 3-bureau sample — walk audit, select, mail, and responses without uploading files.'
+                  : 'Fieldwork runs a field-level forensic audit, then you choose what to mail — in your name, via certified Lob.'}
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">

@@ -52,7 +52,9 @@ export default function Responses() {
     saveResponseAnalysis,
     beginFollowUpMail,
     responseAnalyses,
+    isGuestDemo,
   } = useFieldwork();
+  const guest = isGuestDemo || user?.guest;
 
   const inputRef = useRef(null);
   const mailedLetters = useMemo(() => {
@@ -76,6 +78,7 @@ export default function Responses() {
     mailedLetters[0]?.accountId || accountOptions[0]?.id || '',
   );
   const [files, setFiles] = useState([]);
+  const [useSampleReply, setUseSampleReply] = useState(true);
   const [nonResponse, setNonResponse] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -132,8 +135,12 @@ export default function Responses() {
       setError('Pick the account (and prior letter if you have one) first.');
       return;
     }
-    if (!nonResponse && !files.length && !draft) {
-      setError('Upload the furnisher response, or mark “no response received.”');
+    if (!nonResponse && !files.length && !(guest && useSampleReply) && !draft) {
+      setError(
+        guest
+          ? 'Use the sample furnisher reply, or mark “no response received.”'
+          : 'Upload the furnisher response, or mark “no response received.”',
+      );
       return;
     }
     if (draft && !canAutoDraft) {
@@ -145,7 +152,11 @@ export default function Responses() {
     setError('');
     try {
       let res;
+      const useLocalSample = guest && (nonResponse || useSampleReply || !files.length);
       try {
+        if (useLocalSample) {
+          throw new Error('guest-sample');
+        }
         res = await analyzeFieldworkResponse({
           user,
           account: selectedAccount,
@@ -156,7 +167,7 @@ export default function Responses() {
           planId,
         });
       } catch (err) {
-        // Offline / no netlify — local demo path
+        // Offline / no netlify / guest sample — local demo path
         if (!draft || canAutoDraft) {
           const localAnalysis = nonResponse
             ? {
@@ -170,7 +181,7 @@ export default function Responses() {
             ? buildFieldworkLetter(user, selectedAccount, 'phase2', localAnalysis)
             : null;
           res = {
-            mode: 'demo',
+            mode: guest ? 'guest-demo' : 'demo',
             canDraft: canAutoDraft,
             analysis: localAnalysis,
             followUpLetter: localLetter,
@@ -227,10 +238,16 @@ export default function Responses() {
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Responses</p>
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">What they claimed</h1>
       <p className="mt-3 text-lg text-[var(--fw-muted)]">
-        Upload the furnisher’s reply. Fieldwork maps it against your demands —
-        {canAutoDraft
-          ? ' then drafts the follow-up packet letter for you.'
-          : ' Starter gives talking points; Pro auto-drafts the next letter.'}
+        {guest
+          ? 'Walk a canned furnisher reply (or mark non-response). No file upload in the guest tour.'
+          : (
+            <>
+              Upload the furnisher’s reply. Fieldwork maps it against your demands —
+              {canAutoDraft
+                ? ' then drafts the follow-up packet letter for you.'
+                : ' Starter gives talking points; Pro auto-drafts the next letter.'}
+            </>
+          )}
       </p>
 
       {!audit && mailedLetters.length === 0 && (
@@ -292,7 +309,24 @@ export default function Responses() {
           <span>No response received within 30 days (analyze as non-response)</span>
         </label>
 
-        {!nonResponse && (
+        {!nonResponse && guest && (
+          <label className="flex items-start gap-2 rounded-lg border border-[var(--fw-line)] bg-[rgba(20,80,95,0.04)] px-4 py-3 text-sm">
+            <input
+              type="checkbox"
+              checked={useSampleReply}
+              onChange={(e) => setUseSampleReply(e.target.checked)}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-semibold">Use sample furnisher reply</span>
+              <span className="mt-0.5 block text-[var(--fw-muted)]">
+                Midland-style dodge letter — maps claimed vs dodged without uploading a file.
+              </span>
+            </span>
+          </label>
+        )}
+
+        {!nonResponse && !guest && (
           <div className="rounded-lg border-2 border-dashed border-[var(--fw-line)] px-4 py-8 text-center">
             <Upload className="mx-auto text-[var(--fw-sea)]" size={26} strokeWidth={1.5} />
             <p className="mt-2 font-semibold">Furnisher response PDF or images</p>

@@ -27,7 +27,10 @@ export default function Documents() {
     uploadDocument,
     removeDocument,
     runtime,
+    isGuestDemo,
+    user,
   } = useFieldwork();
+  const guest = isGuestDemo || user?.guest;
   const inputRef = useRef(null);
   const [kind, setKind] = useState('Photo ID');
   const [dragOver, setDragOver] = useState(false);
@@ -96,9 +99,15 @@ export default function Documents() {
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Documents</p>
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Evidence vault</h1>
       <p className="mt-3 text-lg text-[var(--fw-muted)]">
-        Your ID, address proof, furnisher replies, and mail receipts — stored for real
-        {cloud ? ' in Fieldwork Supabase' : ' in this browser until cloud keys are set'}.
-        Credit reports stay here for you; they are never mailed to the furnisher.
+        {guest
+          ? 'Sample ID, address proof, and report metadata for the guest tour — create an account to upload real files.'
+          : (
+            <>
+              Your ID, address proof, furnisher replies, and mail receipts — stored for real
+              {cloud ? ' in Fieldwork Supabase' : ' in this browser until cloud keys are set'}.
+              Credit reports stay here for you; they are never mailed to the furnisher.
+            </>
+          )}
       </p>
 
       <div className="mt-6 flex flex-wrap gap-2 text-xs">
@@ -109,7 +118,7 @@ export default function Documents() {
           Proof of address {hasAddress ? 'ready' : 'needed'}
         </span>
         <span className="rounded border border-[var(--fw-line)] px-2 py-1 text-[var(--fw-muted)]">
-          {cloud ? 'Cloud vault on' : `Demo vault · ${runtime.mode || 'local'}`}
+          {guest ? 'Guest sample vault' : (cloud ? 'Cloud vault on' : `Demo vault · ${runtime.mode || 'local'}`)}
         </span>
       </div>
 
@@ -128,78 +137,94 @@ export default function Documents() {
         </div>
       </div>
 
-      <div className="mt-8">
-        <label className="block">
-          <span className="fw-mono text-[11px] uppercase tracking-wider text-[var(--fw-muted)]">File type</span>
-          <select
-            value={kind}
-            onChange={(e) => setKind(e.target.value)}
-            className="mt-1.5 w-full rounded border border-[var(--fw-line)] bg-white px-3 py-2.5 text-sm outline-none ring-[var(--fw-sea)] focus:ring-1 md:max-w-sm"
-          >
-            {KINDS.map((k) => (
-              <option key={k.id} value={k.id}>{k.id}</option>
-            ))}
-          </select>
-          <p className="mt-1.5 text-xs text-[var(--fw-muted)]">
-            {KINDS.find((k) => k.id === kind)?.hint}
-            {(kind === 'Photo ID' || kind === 'Proof of address')
-              ? ' · Re-upload replaces the previous file.'
-              : ''}
-          </p>
-        </label>
+      {!guest && (
+        <div className="mt-8">
+          <label className="block">
+            <span className="fw-mono text-[11px] uppercase tracking-wider text-[var(--fw-muted)]">File type</span>
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value)}
+              className="mt-1.5 w-full rounded border border-[var(--fw-line)] bg-white px-3 py-2.5 text-sm outline-none ring-[var(--fw-sea)] focus:ring-1 md:max-w-sm"
+            >
+              {KINDS.map((k) => (
+                <option key={k.id} value={k.id}>{k.id}</option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-xs text-[var(--fw-muted)]">
+              {KINDS.find((k) => k.id === kind)?.hint}
+              {(kind === 'Photo ID' || kind === 'Proof of address')
+                ? ' · Re-upload replaces the previous file.'
+                : ''}
+            </p>
+          </label>
 
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-            addFiles(e.dataTransfer.files);
-          }}
-          className={`mt-4 rounded-lg border-2 border-dashed px-6 py-10 text-center transition ${
-            dragOver
-              ? 'border-[var(--fw-signal-dim)] bg-[rgba(46,230,166,0.08)]'
-              : 'border-[var(--fw-line)] bg-white'
-          }`}
-        >
-          {busy
-            ? <Loader2 className="mx-auto animate-spin text-[var(--fw-sea)]" size={28} />
-            : <FileUp className="mx-auto text-[var(--fw-sea)]" size={28} strokeWidth={1.5} />}
-          <p className="mt-3 font-semibold">{busy ? 'Uploading…' : 'Drop files here'}</p>
-          <p className="mt-1 text-sm text-[var(--fw-muted)]">PDF, JPG, or PNG · max 15 MB</p>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => inputRef.current?.click()}
-            className="fw-btn-ink mt-5 disabled:opacity-50"
-          >
-            Choose files
-          </button>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              addFiles(e.target.files);
-              e.target.value = '';
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              addFiles(e.dataTransfer.files);
             }}
-          />
+            className={`mt-4 rounded-lg border-2 border-dashed px-6 py-10 text-center transition ${
+              dragOver
+                ? 'border-[var(--fw-signal-dim)] bg-[rgba(46,230,166,0.08)]'
+                : 'border-[var(--fw-line)] bg-white'
+            }`}
+          >
+            {busy
+              ? <Loader2 className="mx-auto animate-spin text-[var(--fw-sea)]" size={28} />
+              : <FileUp className="mx-auto text-[var(--fw-sea)]" size={28} strokeWidth={1.5} />}
+            <p className="mt-3 font-semibold">{busy ? 'Uploading…' : 'Drop files here'}</p>
+            <p className="mt-1 text-sm text-[var(--fw-muted)]">PDF, JPG, or PNG · max 15 MB</p>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => inputRef.current?.click()}
+              className="fw-btn-ink mt-5 disabled:opacity-50"
+            >
+              Choose files
+            </button>
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                addFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
+          </div>
+          {status && <p className="mt-3 text-sm text-[var(--fw-sea)]">{status}</p>}
+          {error && (
+            <p className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">{error}</p>
+          )}
         </div>
-        {status && <p className="mt-3 text-sm text-[var(--fw-sea)]">{status}</p>}
-        {error && (
-          <p className="mt-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">{error}</p>
-        )}
-      </div>
+      )}
 
       <div className="mt-10 rounded-lg border border-[rgba(20,80,95,0.15)] bg-[rgba(20,80,95,0.04)] px-4 py-4 text-sm leading-relaxed text-[var(--fw-ink)]/85">
-        <strong className="font-semibold">Responses → follow-up letters.</strong>{' '}
-        After you file a reply (or mark no response), open{' '}
-        <Link to="/app/responses" className="font-semibold text-[var(--fw-sea)] hover:underline">
-          Responses
-        </Link>
-        {' '}to analyze what they claimed. Files you upload here (and from Responses) land in this vault for enclosure packs.
+        {guest ? (
+          <>
+            <strong className="font-semibold">Guest tour.</strong>{' '}
+            This list shows the kinds of files a real account keeps for mail packets.
+            Open{' '}
+            <Link to="/app/responses" className="font-semibold text-[var(--fw-sea)] hover:underline">
+              Responses
+            </Link>
+            {' '}to walk a sample reply analysis — no uploads in the tour.
+          </>
+        ) : (
+          <>
+            <strong className="font-semibold">Responses → follow-up letters.</strong>{' '}
+            After you file a reply (or mark no response), open{' '}
+            <Link to="/app/responses" className="font-semibold text-[var(--fw-sea)] hover:underline">
+              Responses
+            </Link>
+            {' '}to analyze what they claimed. Files you upload here (and from Responses) land in this vault for enclosure packs.
+          </>
+        )}
       </div>
 
       <ul className="mt-6 divide-y divide-[var(--fw-line)] overflow-hidden rounded-lg border border-[var(--fw-line)] bg-white">
@@ -222,12 +247,14 @@ export default function Documents() {
                   {' · '}
                   {doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleString() : '—'}
                   {' · '}
-                  {stored
-                    ? (doc.cloud || doc.storagePath ? 'stored in cloud' : 'stored locally')
-                    : 'metadata only — re-upload'}
+                  {guest
+                    ? 'sample (tour only)'
+                    : stored
+                      ? (doc.cloud || doc.storagePath ? 'stored in cloud' : 'stored locally')
+                      : 'metadata only — re-upload'}
                 </div>
               </div>
-              {stored && (
+              {!guest && stored && (
                 <button
                   type="button"
                   onClick={() => openDoc(doc)}
@@ -237,14 +264,16 @@ export default function Documents() {
                   <ExternalLink size={16} />
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => onRemove(doc)}
-                className="rounded p-2 text-[var(--fw-muted)] hover:bg-black/5 hover:text-[var(--fw-ink)]"
-                title="Remove"
-              >
-                <Trash2 size={16} />
-              </button>
+              {!guest && (
+                <button
+                  type="button"
+                  onClick={() => onRemove(doc)}
+                  className="rounded p-2 text-[var(--fw-muted)] hover:bg-black/5 hover:text-[var(--fw-ink)]"
+                  title="Remove"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
             </li>
           );
         })}

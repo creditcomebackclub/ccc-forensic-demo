@@ -38,9 +38,16 @@ export default function CampaignWizard() {
     setLetterOverrides,
     completeUpload,
     completeMail,
+    isGuestDemo,
   } = useFieldwork();
+  const guest = isGuestDemo || user?.guest;
+  const nav = NAV.map((step) => (
+    step.id === 'upload' && guest
+      ? { ...step, label: 'Sample' }
+      : step
+  ));
 
-  const stepIndex = NAV.findIndex((n) => n.id === wizardStep);
+  const stepIndex = nav.findIndex((n) => n.id === wizardStep);
 
   const canVisit = (id) => {
     if (id === 'upload') return true;
@@ -62,7 +69,7 @@ export default function CampaignWizard() {
       </div>
 
       <nav className="mb-8 flex gap-1 overflow-x-auto pb-1">
-        {NAV.map((item, idx) => {
+        {nav.map((item, idx) => {
           const Icon = item.icon;
           const active = item.id === wizardStep;
           const unlocked = canVisit(item.id);
@@ -93,7 +100,7 @@ export default function CampaignWizard() {
       <div className="mb-8 h-0.5 w-full bg-black/5">
         <div
           className="h-full bg-[var(--fw-signal-dim)] transition-all duration-500"
-          style={{ width: `${((stepIndex + 1) / NAV.length) * 100}%` }}
+          style={{ width: `${((stepIndex + 1) / nav.length) * 100}%` }}
         />
       </div>
 
