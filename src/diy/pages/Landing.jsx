@@ -60,7 +60,7 @@ export default function Landing() {
             animate="show"
             custom={2}
           >
-            You paid someone else to fix this. Or you tried alone and hit a wall. Fieldwork gives you the forensic readout and the certified letters — in your name, on your timeline.
+            You paid every month and still got vague updates. You tried DIY and got buried in templates. Fieldwork shows what’s actually wrong and helps you send certified letters in your name, on your timeline.
           </motion.p>
           <motion.div
             className="mt-10 flex flex-wrap items-center gap-4"
