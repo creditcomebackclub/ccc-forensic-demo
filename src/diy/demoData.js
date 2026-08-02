@@ -288,6 +288,7 @@ export const ANALYZE_STEPS = [
   'Reading bureau segments…',
   'Mapping Metro 2 base fields…',
   'Checking DOFD / compliance codes / balance integrity…',
+  'Cross-checking Experian · Equifax · TransUnion…',
   'Surfacing furnisher-first dispute targets…',
 ];
 

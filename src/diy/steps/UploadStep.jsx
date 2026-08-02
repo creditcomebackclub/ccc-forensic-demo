@@ -4,29 +4,43 @@ import { Sparkles } from 'lucide-react';
 import { ANALYZE_STEPS } from '../demoData';
 import { useFieldwork } from '../state';
 
+/** Time each checklist line stays active — long enough to read. */
+const STEP_MS = 1600;
+/** Beat after the last step lights green before handing off. */
+const HOLD_MS = 1200;
+
 export default function UploadStep({ onComplete }) {
   const { isGuestDemo, user, runtime } = useFieldwork();
   const guest = isGuestDemo || user?.guest || runtime?.mode === 'guest-demo';
   const [phase, setPhase] = useState('idle'); // idle | analyzing
   const [stepIdx, setStepIdx] = useState(0);
 
+  // Advance checklist one line at a time
   useEffect(() => {
     if (phase !== 'analyzing') return undefined;
     if (stepIdx >= ANALYZE_STEPS.length) return undefined;
-    const t = setTimeout(() => setStepIdx((s) => s + 1), 900);
+    const t = setTimeout(() => setStepIdx((s) => s + 1), STEP_MS);
     return () => clearTimeout(t);
   }, [phase, stepIdx]);
 
-  const finishSample = () => {
-    const wait = Math.max(400, (ANALYZE_STEPS.length - stepIdx) * 200);
-    setTimeout(() => onComplete(null, { fileName: 'PrivacyGuard_3bureau_sample.pdf' }), wait);
-  };
+  // Only finish after every line has completed + a short hold
+  useEffect(() => {
+    if (phase !== 'analyzing') return undefined;
+    if (stepIdx < ANALYZE_STEPS.length) return undefined;
+    const t = setTimeout(() => {
+      onComplete(null, { fileName: 'PrivacyGuard_3bureau_sample.pdf' });
+    }, HOLD_MS);
+    return () => clearTimeout(t);
+  }, [phase, stepIdx, onComplete]);
 
   const startSample = () => {
     setPhase('analyzing');
     setStepIdx(0);
-    finishSample();
   };
+
+  const progress = phase === 'analyzing'
+    ? Math.min(1, (stepIdx + (stepIdx < ANALYZE_STEPS.length ? 0.35 : 1)) / ANALYZE_STEPS.length)
+    : 0;
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -75,20 +89,49 @@ export default function UploadStep({ onComplete }) {
             <div className="relative">
               <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-signal)]">Analyzing</p>
               <h2 className="fw-display mt-3 text-3xl font-bold">Running furnisher-first audit…</h2>
+
+              <div className="mt-6 h-1 overflow-hidden rounded-full bg-white/10">
+                <motion.div
+                  className="h-full rounded-full bg-[var(--fw-signal)]"
+                  initial={{ width: '0%' }}
+                  animate={{ width: `${Math.round(progress * 100)}%` }}
+                  transition={{ duration: 0.45, ease: 'easeOut' }}
+                />
+              </div>
+              <p className="mt-2 fw-mono text-[10px] uppercase tracking-[0.18em] text-white/40">
+                {stepIdx >= ANALYZE_STEPS.length
+                  ? 'Audit complete'
+                  : `Step ${Math.min(stepIdx + 1, ANALYZE_STEPS.length)} of ${ANALYZE_STEPS.length}`}
+              </p>
+
               <ul className="mt-8 space-y-3">
                 {ANALYZE_STEPS.map((label, i) => {
                   const done = i < stepIdx;
-                  const active = i === stepIdx;
+                  const active = i === stepIdx && stepIdx < ANALYZE_STEPS.length;
                   return (
-                    <li
+                    <motion.li
                       key={label}
-                      className={`flex items-center gap-3 text-sm transition ${
+                      initial={false}
+                      animate={{
+                        opacity: done || active ? 1 : 0.28,
+                        x: active ? 4 : 0,
+                      }}
+                      transition={{ duration: 0.35 }}
+                      className={`flex items-center gap-3 text-sm ${
                         done ? 'text-[var(--fw-signal)]' : active ? 'text-white' : 'text-white/30'
                       }`}
                     >
-                      <span className={`h-1.5 w-1.5 rounded-full ${done || active ? 'bg-[var(--fw-signal)]' : 'bg-white/20'}`} />
+                      <span
+                        className={`relative flex h-2 w-2 shrink-0 items-center justify-center rounded-full ${
+                          done || active ? 'bg-[var(--fw-signal)]' : 'bg-white/20'
+                        }`}
+                      >
+                        {active && (
+                          <span className="absolute inset-0 animate-ping rounded-full bg-[var(--fw-signal)] opacity-60" />
+                        )}
+                      </span>
                       {label}
-                    </li>
+                    </motion.li>
                   );
                 })}
               </ul>
