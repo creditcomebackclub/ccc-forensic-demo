@@ -12,7 +12,7 @@ export default function Dashboard() {
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Home</p>
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Welcome back, {first}</h1>
       <p className="mt-3 max-w-2xl text-lg text-[var(--fw-muted)]">
-        Your furnisher-first workspace. Audit reports, pick disputes, mail certified letters, and track response windows — as a subscriber, not a client of an agency.
+        You run the disputes. Audit the file, choose what to challenge, mail certified letters in your name, and watch the clocks — tools you control, not a black-box retainer.
       </p>
 
       <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
