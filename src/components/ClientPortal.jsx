@@ -14,7 +14,12 @@ import DocumentsTab from './client-portal/DocumentsTab';
 import VipTab from './client-portal/VipTab';
 import BillingTab from './client-portal/BillingTab';
 import ConciergeChat from './client-portal/ConciergeChat';
-import { clientCampaignLabel, isBureauCampaign } from '../utils/clientCampaignCopy';
+import {
+  clientCampaignLabel,
+  isAccountDisputeCampaign,
+  isBureauCampaign,
+  isFileUpdateCampaign,
+} from '../utils/clientCampaignCopy';
 
 export default function ClientPortal({ session, onSignOut }) {
   const [profile, setProfile] = useState(null);
@@ -250,11 +255,14 @@ export default function ClientPortal({ session, onSignOut }) {
   const deletions = letters.filter(l => l.response_outcome === 'deleted');
   const isVip = clientMeta && clientMeta.is_vip;
 
-  // Onboarding timeline (Overview tab) — stage computed from earliest Phase 1 mail date.
+  // Onboarding timeline (Overview tab) — stage from earliest account-dispute mail.
+  // File-update letters (PI / inquiries) do not start the dispute journey clock.
   const phase1Mailed = letters
-    .filter(l => !l.phase?.startsWith('Phase 3') && l.mailed_date)
+    .filter(l => isAccountDisputeCampaign(l.phase) && l.mailed_date)
     .sort((a, b) => new Date(a.mailed_date) - new Date(b.mailed_date));
   const earliestPhase1MailDate = phase1Mailed[0]?.mailed_date || null;
+  const accountDisputeLetters = letters.filter(l => isAccountDisputeCampaign(l.phase) || isBureauCampaign(l.phase));
+  const fileUpdateLetters = letters.filter(l => isFileUpdateCampaign(l.phase));
   const windowCloseDate = earliestPhase1MailDate
     ? new Date(new Date(earliestPhase1MailDate).getTime() + 30 * 86400000).toISOString()
     : null;
@@ -277,7 +285,11 @@ export default function ClientPortal({ session, onSignOut }) {
 
   const timeline = [];
   letters.forEach(l => {
-    if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: 'Dispute letter prepared — ' + l.furnisher, subtitle: clientCampaignLabel(l.phase), tone: 'blue' });
+    const fileUpdate = isFileUpdateCampaign(l.phase);
+    const preparedTitle = fileUpdate
+      ? 'File update prepared — ' + l.furnisher
+      : 'Dispute letter prepared — ' + l.furnisher;
+    if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: preparedTitle, subtitle: clientCampaignLabel(l.phase), tone: 'blue' });
     if (l.mailed_date) timeline.push({ date: l.mailed_date, icon: '✉️', title: 'Letter mailed via certified mail — ' + l.furnisher, subtitle: l.tracking_number ? 'USPS #' + l.tracking_number.slice(-8) : null, tone: 'default' });
 
     // Granular in-transit milestones from Lob webhook
@@ -298,11 +310,28 @@ export default function ClientPortal({ session, onSignOut }) {
       const bureauStatus = l.bureau_response_status;
       const subtitle = bureauUpdate
         ? (bureauStatus === 'analyzing' ? 'Staff is reviewing the bureau response' : bureauStatus === 'review_ready' ? 'Staff review is ready for the next decision' : bureauStatus === 'reviewed' ? 'Next campaign step recorded' : 'Response received and queued for staff review')
-        : null;
-      timeline.push({ date: l.response_date, icon: '📬', title: (bureauUpdate ? 'Bureau response received — ' : 'Response received — ') + l.furnisher, subtitle, tone: 'gold' });
+        : fileUpdate
+          ? 'File update response queued for staff review'
+          : null;
+      const receivedTitle = bureauUpdate
+        ? 'Bureau response received — '
+        : fileUpdate
+          ? 'File update response received — '
+          : 'Response received — ';
+      timeline.push({ date: l.response_date, icon: '📬', title: receivedTitle + l.furnisher, subtitle, tone: 'gold' });
     }
-    if (l.response_outcome === 'no_response') timeline.push({ date: l.response_date || l.mailed_date, icon: '⚠️', title: 'Response window closed — next action underway', subtitle: l.furnisher, tone: 'red' });
-    if (l.response_outcome === 'deleted') timeline.push({ date: l.response_date, icon: '🏆', title: 'DELETED — ' + l.furnisher, subtitle: 'Account removed from your credit report', tone: 'green', responseUrl: l.response_file_url || null });
+    if (l.response_outcome === 'no_response') {
+      const closedTitle = fileUpdate
+        ? 'File update window closed — next action underway'
+        : 'Response window closed — next action underway';
+      timeline.push({ date: l.response_date || l.mailed_date, icon: '⚠️', title: closedTitle, subtitle: l.furnisher, tone: 'red' });
+    }
+    if (l.response_outcome === 'deleted') {
+      const deletedSubtitle = fileUpdate
+        ? 'Item removed from your credit file'
+        : 'Account removed from your credit report';
+      timeline.push({ date: l.response_date, icon: '🏆', title: 'DELETED — ' + l.furnisher, subtitle: deletedSubtitle, tone: 'green', responseUrl: l.response_file_url || null });
+    }
   });
 
   if (clientMeta?.created_at) timeline.push({ date: clientMeta.created_at, icon: '👋', title: 'Enrolled in Credit Comeback Club', tone: 'blue' });
@@ -384,7 +413,8 @@ export default function ClientPortal({ session, onSignOut }) {
                 delivered={delivered}
                 responded={responded}
                 deletions={deletions}
-                totalDisputes={letters.length}
+                totalDisputes={accountDisputeLetters.length}
+                fileUpdateCount={fileUpdateLetters.length}
                 latestScores={latestScores}
                 auditHistory={auditHistory}
                 onboardingStage={onboardingStage}

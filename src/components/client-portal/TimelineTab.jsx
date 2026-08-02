@@ -100,8 +100,8 @@ export default function TimelineTab({ timeline, letters, accessToken }) {
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div>
-        <h2 className="text-xl font-bold text-slate-900">Dispute Journal</h2>
-        <p className="text-sm text-gray-500 mt-1">A chronological record of every action in your campaign.</p>
+        <h2 className="text-xl font-bold text-slate-900">Campaign Journal</h2>
+        <p className="text-sm text-gray-500 mt-1">A chronological record of account disputes, file updates, and bureau reviews.</p>
       </div>
 
       {/* Phase Progress */}

@@ -48,7 +48,7 @@ function PhaseProgressList({ items }) {
   if (!Array.isArray(items) || items.length === 0) return null;
   return (
     <div className="mt-4">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-2">Your dispute progress</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-2">Your campaign progress</div>
       <div className="overflow-hidden rounded-lg border border-gray-100">
         {items.map((item, index) => (
           <div key={(item.accountKey || item.furnisher || 'account') + '-' + index} className="flex items-start justify-between gap-3 border-t border-gray-50 px-3 py-2.5 first:border-t-0">

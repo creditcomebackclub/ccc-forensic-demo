@@ -128,7 +128,7 @@ function SignalCard({ label, value, helper, icon: Icon, tone = 'slate' }) {
 
 export default function OverviewTab({
   profile, clientMeta, firstName, mailed, delivered, responded, deletions,
-  totalDisputes, latestScores, auditHistory, onboardingStage, onboardingDates,
+  totalDisputes, fileUpdateCount = 0, latestScores, auditHistory, onboardingStage, onboardingDates,
 }) {
   const state = campaignState({ onboardingStage, mailed, delivered, responded, deletions });
   const StateIcon = state.icon;
@@ -138,7 +138,16 @@ export default function OverviewTab({
   const currentAverage = scoreAverage(currentScores);
   const scoreDelta = startingAverage && currentAverage ? currentAverage - startingAverage : null;
   const auditUpdated = auditHistory?.[0]?.saved_at ? formatDate(auditHistory[0].saved_at) : null;
-  const totalChallenges = totalDisputes || mailed.length;
+  const disputeCount = totalDisputes || 0;
+  const updateCount = fileUpdateCount || 0;
+  const totalChallenges = disputeCount + updateCount || mailed.length;
+  const challengeHelper = (() => {
+    const parts = [];
+    if (disputeCount > 0) parts.push(`${disputeCount} account dispute${disputeCount === 1 ? '' : 's'}`);
+    if (updateCount > 0) parts.push(`${updateCount} file update${updateCount === 1 ? '' : 's'}`);
+    if (parts.length === 0) return 'items in your campaign';
+    return parts.join(' · ');
+  })();
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
@@ -158,7 +167,7 @@ export default function OverviewTab({
             <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4 backdrop-blur-sm">
               <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">Active challenges</div>
               <div className="mt-2 text-3xl font-bold text-white">{totalChallenges}</div>
-              <div className="mt-1 text-[11px] text-slate-400">items in your campaign</div>
+              <div className="mt-1 text-[11px] text-slate-400">{challengeHelper}</div>
             </div>
             <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4 backdrop-blur-sm">
               <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-amber-200/70">Accounts removed</div>

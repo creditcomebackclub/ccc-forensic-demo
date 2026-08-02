@@ -2,7 +2,12 @@ import React, { useState } from 'react';
 import { Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getReturnReceiptUrl } from '../../utils/api';
-import { clientCampaignDetail, clientCampaignLabel, isBureauCampaign } from '../../utils/clientCampaignCopy';
+import {
+  clientCampaignDetail,
+  clientCampaignLabel,
+  isBureauCampaign,
+  isFileUpdateCampaign,
+} from '../../utils/clientCampaignCopy';
 
 const RESPONSE_WINDOW_DAYS = 30;
 const BUREAU_RESPONSE_WINDOW_DAYS = 45;
@@ -15,6 +20,7 @@ function daysBetween(aIso, bIso) {
 function responseCountdown(l) {
   if (l.response_outcome === 'deleted' || l.response_outcome === 'received' || l.response_outcome === 'no_response') return null;
   const isPhase3 = isBureauCampaign(l.phase);
+  const isFileUpdate = isFileUpdateCampaign(l.phase);
   const windowDays = isPhase3 ? BUREAU_RESPONSE_WINDOW_DAYS : RESPONSE_WINDOW_DAYS;
   if (l.mailed_date && !l.delivered_at) {
     return { label: `In Transit — ${windowDays}-day window begins upon delivery`, tone: 'text-gray-600 bg-gray-50 border-gray-200' };
@@ -28,19 +34,29 @@ function responseCountdown(l) {
     if (isPhase3) {
       return { label: 'Day ' + elapsed + ' of ' + windowDays + ' — Bureau investigation in progress', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
     }
+    if (isFileUpdate) {
+      return { label: 'Day ' + elapsed + ' of ' + windowDays + ' — File update in progress', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
+    }
     return { label: 'Day ' + elapsed + ' of ' + windowDays + ' — ' + remaining + ' day' + (remaining === 1 ? '' : 's') + ' remaining', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
   }
   
   if (isPhase3) {
     return { label: 'Bureau investigation window closed — final review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
   }
+  if (isFileUpdate) {
+    return { label: 'File update window closed — staff review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
+  }
   return { label: 'Response window closed — ready for escalation', tone: 'text-red-700 bg-red-50 border-red-200' };
 }
 
 function responseBadge(l) {
   const isBureau = isBureauCampaign(l.phase);
+  const isFileUpdate = isFileUpdateCampaign(l.phase);
   if (l.response_outcome === 'deleted') return { label: '🏆 Deleted', tone: 'bg-green-50 text-green-700 border-green-200' };
-  if (l.response_outcome === 'no_response') return { label: isBureau ? 'Bureau window closed' : 'No Response — Escalated', tone: 'bg-red-50 text-red-700 border-red-200' };
+  if (l.response_outcome === 'no_response') {
+    const closedLabel = isBureau ? 'Bureau window closed' : isFileUpdate ? 'File update window closed' : 'No Response — Escalated';
+    return { label: closedLabel, tone: 'bg-red-50 text-red-700 border-red-200' };
+  }
   if (l.response_outcome === 'received' && isBureau) {
     if (l.bureau_response_status === 'analyzing') return { label: 'Bureau Response Under Review', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
     if (l.bureau_response_status === 'review_ready') return { label: 'Bureau Review Ready', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
@@ -101,10 +117,10 @@ export default function DisputesTab({
 }) {
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
-      <h2 className="text-xl font-bold text-slate-900 mb-2">Your Dispute Letters</h2>
+      <h2 className="text-xl font-bold text-slate-900 mb-2">Your Campaign Letters</h2>
       {letters.length === 0 ? (
         <div className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-10 text-center shadow-sm">
-          <p className="text-sm text-gray-400">No dispute letters yet. Your campaign will begin shortly.</p>
+          <p className="text-sm text-gray-400">No campaign letters yet. Your campaign will begin shortly.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -112,11 +128,17 @@ export default function DisputesTab({
             <div key={l.id} className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
               {(() => {
                 const badge = responseBadge(l);
+                const isFileUpdate = isFileUpdateCampaign(l.phase);
+                const title = isBureauCampaign(l.phase)
+                  ? `Credit Bureau Review (re: ${l.furnisher})`
+                  : isFileUpdate
+                    ? `File update — ${l.furnisher}`
+                    : l.furnisher;
                 return <>
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <div className="text-sm font-bold text-slate-900">
-                    {isBureauCampaign(l.phase) ? `Credit Bureau Review (re: ${l.furnisher})` : l.furnisher}
+                    {title}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5">
                     {clientCampaignLabel(l.phase)} · {clientCampaignDetail(l.phase)}{l.type ? ' · Letter type ' + l.type : ''}
