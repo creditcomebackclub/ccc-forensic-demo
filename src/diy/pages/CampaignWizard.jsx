@@ -38,7 +38,6 @@ export default function CampaignWizard() {
     setLetterOverrides,
     completeUpload,
     completeMail,
-    isGuestDemo,
   } = useFieldwork();
   const nav = NAV.map((step) => (
     step.id === 'upload' ? { ...step, label: 'Sample' } : step
