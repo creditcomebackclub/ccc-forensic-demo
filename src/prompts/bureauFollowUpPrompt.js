@@ -51,4 +51,11 @@ OUTPUT:
 
 Letter must include today's date, client identity from the Phase 3 letter, CRA address block appropriate to the bureau, RE line tying to the prior dispute (cite §1681i in the RE line — never §1681s-2(a)), issue table, concrete demands, statutory procedure-description request under §1681i(a)(6)(B)(iii) and (a)(7), and signature block. State "Sent via Certified Mail" with no tracking number placeholder.
 
+SIGNATURE BLOCK (EXACT):
+- Do not use "Dear Sir or Madam", "Sincerely", or another courtesy opening/closing.
+- End with this exact structure so the system can inject the stored client signature without altering the printed name:
+___________________________
+[Consumer Full Name]
+Consumer — All Rights Reserved
+
 Before returning, silently scan letterHtml for every prohibited citation, substantive claim, and enclosure mismatch above. Rewrite those passages before outputting.`;

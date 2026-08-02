@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle, Loader2, X } from 'lucide-react';
 import { getRecentCompletedPhase2Result, runPhase2Job } from '../utils/phase2Jobs';
+import { hasInjectedSignature, injectSignatureImage } from '../utils/signatureInjection';
 import { saveLetter } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 
@@ -70,6 +71,23 @@ async function resolveCoveredFurnishers(letter, client) {
   return coverage;
 }
 
+async function resolveSignatureUrl(letter, client) {
+  const existing = client?.signatureData
+    || client?.lpoaSignatureData?.signatureUrl
+    || client?.lpoa_signature_data?.signatureUrl;
+  if (existing) return existing;
+
+  const clientId = client?.id || letter.clientId || letter.client_id;
+  if (!clientId) return null;
+  const [{ data: profileRows, error: profileError }, { data: clientRows, error: clientError }] = await Promise.all([
+    supabase.from('client_profiles').select('signature_data').eq('client_id', clientId).limit(1),
+    supabase.from('clients').select('lpoa_signature_data').eq('id', clientId).limit(1),
+  ]);
+  if (profileError) throw profileError;
+  if (clientError) throw clientError;
+  return profileRows?.[0]?.signature_data || clientRows?.[0]?.lpoa_signature_data?.signatureUrl || null;
+}
+
 /**
  * After staff chooses "Continue with bureau follow-up", draft a supplemental
  * Phase 3 letter from the prior bureau-response analysis + response pages.
@@ -136,6 +154,15 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
       if (draft.source_letter_id !== letter.id || draft.source_evidence_id !== evidence.id) {
         throw new Error('Follow-up source mismatch. Nothing was saved; re-run the draft from the intended bureau response.');
       }
+      const clientName = client?.name || letter.clientName || letter.client_name;
+      const signatureUrl = await resolveSignatureUrl(letter, client);
+      if (!signatureUrl) {
+        throw new Error('The client has no stored signature. Complete the LPOA/signature workflow before saving this follow-up.');
+      }
+      const signedLetterHtml = injectSignatureImage(draft.letterHtml, signatureUrl, clientName);
+      if (signedLetterHtml === draft.letterHtml && !hasInjectedSignature(draft.letterHtml, signatureUrl)) {
+        throw new Error('The follow-up signature block could not be located. The unsigned letter was not saved.');
+      }
 
       const phaseLabel = `Phase 3 — ${bureauLabel(bureau)} (Follow-up)`;
       const letterId = await saveLetter(
@@ -145,8 +172,8 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
           clientAccountId: letter.client_account_id || letter.clientAccountId || null,
           type: letter.type || null,
         },
-        { id: client?.id || letter.client_id || null, name: client?.name || letter.client_name },
-        draft.letterHtml,
+        { id: client?.id || letter.client_id || null, name: clientName },
+        signedLetterHtml,
         draft.summary || `Bureau follow-up to ${bureauLabel(bureau)}`,
         phaseLabel,
         `__phase3-${bureau}-followup`,
