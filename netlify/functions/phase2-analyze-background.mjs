@@ -304,6 +304,7 @@ export const handler = async (event) => {
     // experian and transunion even when the account reports to only one
     // bureau; a future optimization is to generate only the bureaus the
     // account is actually on.
+    let streamedTokenTotal = 0;
     const runModel = async (modelMessages, stageLabel) => {
       if (stageLabel) await updateJob({ stage: stageLabel }, true);
       const stream = anthropic.messages.stream({
@@ -321,8 +322,12 @@ export const handler = async (event) => {
         },
       });
       let chars = 0;
-      stream.on('text', (delta) => { chars += delta.length; onTokens(Math.round(chars / 4)); });
+      stream.on('text', (delta) => {
+        chars += delta.length;
+        onTokens(streamedTokenTotal + Math.round(chars / 4));
+      });
       const msg = await stream.finalMessage();
+      streamedTokenTotal += Math.round(chars / 4);
       const usage = msg.usage || {};
       console.log('[phase2-usage]', JSON.stringify({
         input: usage.input_tokens || 0, output: usage.output_tokens || 0,
@@ -503,7 +508,14 @@ export const handler = async (event) => {
       }
     }
 
-    await updateJob({ status: 'done', stage: 'Complete', result: analysis, usage: u, finished_at: new Date().toISOString() }, true);
+    await updateJob({
+      status: 'done',
+      stage: 'Complete',
+      tokens: streamedTokenTotal,
+      result: analysis,
+      usage: u,
+      finished_at: new Date().toISOString(),
+    }, true);
   } catch (e) {
     console.error('phase2-analyze failed:', e);
     if (evidence && job.kind !== 'bureau_follow_up') {
