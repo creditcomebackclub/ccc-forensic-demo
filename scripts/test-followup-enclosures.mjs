@@ -7,6 +7,10 @@ import {
   isPhase3FollowUpLetter,
   validateFollowUpSourceRelationships,
 } from '../src/utils/followUpEnclosures.js';
+import {
+  hasInjectedSignature,
+  injectSignatureImage,
+} from '../src/utils/signatureInjection.js';
 
 let failed = 0;
 function assert(condition, message) {
@@ -124,6 +128,27 @@ assert(
 );
 assert(extractHtmlBody(priorLetter.html) === '<p>Prior letter</p>', 'prior letter body is extracted without old packet enclosures');
 assert(extractHtmlStyles(priorLetter.html).includes('.section{color:navy}'), 'prior letter print styles are preserved');
+
+const signatureUrl = 'https://example.com/signature.png?token=a&b=2';
+const placeholderLetter = '<p>___________________________</p><p>Thomas Andrew Kilpatrick</p>';
+const injectedPlaceholder = injectSignatureImage(placeholderLetter, signatureUrl, 'Thomas Andrew Kilpatrick');
+assert(hasInjectedSignature(injectedPlaceholder, signatureUrl), 'signature replaces underscore placeholder');
+assert(injectedPlaceholder.includes('Thomas Andrew Kilpatrick'), 'placeholder injection preserves printed name');
+assert(
+  injectSignatureImage(injectedPlaceholder, signatureUrl, 'Thomas Andrew Kilpatrick') === injectedPlaceholder,
+  'signature injection is idempotent'
+);
+
+const legacyLetter = '<p>Thomas Andrew Kilpatrick</p><p>Address</p><p>Sincerely,</p><p>Thomas Andrew Kilpatrick</p>';
+const injectedLegacy = injectSignatureImage(legacyLetter, signatureUrl, 'Thomas Andrew Kilpatrick');
+assert(
+  injectedLegacy.indexOf('data-ccc-signature') > injectedLegacy.indexOf('Sincerely'),
+  'legacy letter inserts signature at final printed name, not address block'
+);
+assert(
+  injectedLegacy.indexOf('Thomas Andrew Kilpatrick') < injectedLegacy.indexOf('data-ccc-signature'),
+  'legacy address name remains before injected signature'
+);
 
 if (failed) {
   console.error(`\n${failed} failure(s)`);
