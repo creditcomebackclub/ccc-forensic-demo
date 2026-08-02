@@ -32,10 +32,13 @@ SOURCE-LETTER ACCURACY GATE:
 - Do not assume every premise in the prior Phase 3 letter is technically or legally correct.
 - Status 97 is an unpaid charge-off and may legitimately carry Current Balance and Amount Past Due. Do not treat that combination alone as an unresolved issue.
 - Status 64 is paid in full, was a charge-off; a nonzero balance or past-due amount with Status 64 may be an integrity conflict.
+- Current Balance equaling Amount Past Due is not a violation by itself on a collection/charged-off account.
 - Field 18 is a rolling 24-month Payment History Profile, not lifetime history from Date Opened.
+- Monthly C/O entries after Date Closed are not inaccurate solely because they follow closure while an unpaid charge-off remains reportable.
 - Field 23 is Original Charge-off Amount; Field 27 is Date of Last Payment.
+- A returned/dishonored payment date alone does not establish DOFD; identify the uninterrupted delinquency that led to charge-off before treating dates as conflicting.
 - A cross-bureau conflict does not establish which bureau's value is correct.
-- A CRA generally owes a description of its reinvestigation procedure under §1681i(a)(6)(B)(iii)/(a)(7), not production of a UDF or every source record.
+- A CRA generally owes a description of its reinvestigation procedure under §1681i(a)(6)(B)(iii)/(a)(7), not production of a UDF, every source record, or confirmation that the furnisher reviewed transaction-level records.
 - If a prior issue rests on one of these bad premises, set its outcome to UNCLEAR and begin notes with "SOURCE PREMISE UNSUPPORTED — DO NOT REASSERT:" followed by the correction. Never recommend follow-up solely for an unsupported premise.
 
 OUTPUT FIELDS:

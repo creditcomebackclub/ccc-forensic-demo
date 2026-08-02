@@ -79,7 +79,7 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_name,phase,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id',
+      + '&select=id,user_id,client_id,client_name,phase,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
@@ -335,6 +335,25 @@ exports.handler = async (event) => {
       // another tab.
       const letter = await findLetter(letterId, supabaseUrl, serviceKey);
       if (!letter) return { statusCode: 404, body: JSON.stringify({ error: 'Letter not found' }) };
+      if (String(letter.phase || '').startsWith('Phase 3')) {
+        const {
+          collectBureauFollowUpProblems,
+          collectPhase3CitationProblems,
+        } = await import('../../src/constants/metro2Fields.js');
+        const currentProblems = isBureauFollowUp(letter)
+          ? collectBureauFollowUpProblems(letter.html)
+          : collectPhase3CitationProblems(letter.html);
+        if (currentProblems.length > 0) {
+          return {
+            statusCode: 422,
+            body: JSON.stringify({
+              error: 'PHASE 3 CONTENT FAILED CURRENT PRODUCTION-SAFETY RULES — nothing was sent.',
+              issues: currentProblems,
+              blocked: true,
+            }),
+          };
+        }
+      }
       if (letter.enclosure_parse_blocked) {
         return {
           statusCode: 422,

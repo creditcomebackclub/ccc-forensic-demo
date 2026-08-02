@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle, Loader2, X } from 'lucide-react';
+import { collectBureauFollowUpProblems } from '../constants/metro2Fields';
 import { getRecentCompletedPhase2Result, runPhase2Job } from '../utils/phase2Jobs';
 import { hasInjectedSignature, injectSignatureImage } from '../utils/signatureInjection';
 import { saveLetter } from '../utils/storage';
@@ -134,6 +135,13 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
         draft = null;
       }
       if (draft) {
+        const currentProblems = collectBureauFollowUpProblems(draft.letterHtml);
+        if (currentProblems.length) {
+          throw new Error(
+            'The stored draft fails current production-safety rules; no new model job was started. '
+            + currentProblems.join(' ')
+          );
+        }
         setTokens(completedJob.tokens || 0);
       } else {
         draft = await runPhase2Job({
@@ -147,6 +155,10 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
       if (draft.enclosure_parse_blocked) {
         const issues = (draft.enclosure_parse_issues || []).join(' ');
         throw new Error(issues || 'Follow-up letter failed quality/citation checks. Review the response and try again.');
+      }
+      const currentProblems = collectBureauFollowUpProblems(draft.letterHtml);
+      if (currentProblems.length) {
+        throw new Error('Follow-up letter failed current production-safety checks. ' + currentProblems.join(' '));
       }
 
       const bureau = draft.bureau || bureauFromPhase(letter.phase);
