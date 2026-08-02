@@ -12,7 +12,7 @@ export default function Auth() {
   const location = useLocation();
   const initialMode = location.pathname.includes('login') ? 'signin' : 'signup';
   const [mode, setMode] = useState(initialMode); // signup | signin
-  const [name, setName] = useState('Alex Rivera');
+  const [name, setName] = useState('Frankie Fields');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [planId, setPlanId] = useState(DEFAULT_PLAN_ID);

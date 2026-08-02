@@ -1,8 +1,8 @@
 /** Demo audit payload — furnisher-first Metro 2 / FCRA findings for the DIY product tour. */
 
 export const DEMO_USER = {
-  name: 'Alex Rivera',
-  email: 'alex@example.com',
+  name: 'Frankie Fields',
+  email: 'frankie@example.com',
   address: {
     line1: '1842 Canyon Crest Dr',
     city: 'Grand Junction',
