@@ -439,7 +439,7 @@ function collectPhase3SubstantiveProblems(html) {
 
   const rules = [
     {
-      pattern: /(?:charge[\s-]?off.{0,220}logical impossib|logical impossib.{0,220}charge[\s-]?off|charge[\s-]?off.{0,180}(?:uncollectible|written off for tax)|charge[\s-]?off.{0,180}(?:cannot|can not).{0,100}(?:current balance|past due|financial obligation))/i,
+      pattern: /(?:charg(?:e|ed)[\s-]?off.{0,220}logical impossib|logical impossib.{0,220}charg(?:e|ed)[\s-]?off|charg(?:e|ed)[\s-]?off.{0,180}(?:uncollectible|written off for tax)|charg(?:e|ed)[\s-]?off.{0,180}(?:cannot|can not).{0,100}(?:current balance|past due|financial obligation))/i,
       problem: 'Claims that charge-off status cannot carry a balance or past-due amount. Status 97 is an unpaid charge-off and may legitimately report Fields 21/22; assert a conflict only when a supported paid status or other evidence makes the amount inaccurate.',
     },
     {
