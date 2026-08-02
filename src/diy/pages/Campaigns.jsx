@@ -76,7 +76,7 @@ export default function Campaigns() {
 
       {latestLetters.length > 0 && (
         <p className="mt-8 text-sm text-[var(--fw-muted)]">
-          Tip: upload furnisher responses in Documents, then open a follow-up campaign for Phase 2 analysis (wired to the existing response analyzer in production).
+          Tip: when a furnisher answers, open Responses to analyze the reply — Pro auto-drafts the follow-up letter.
         </p>
       )}
     </div>

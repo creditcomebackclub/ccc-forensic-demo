@@ -85,11 +85,13 @@ export async function uploadFieldworkDocument({
   file,
   subscriberId,
   existingDocs = [],
+  forceLocal = false,
 }) {
   assertFile(file);
   const now = new Date().toISOString();
 
-  if (!fieldworkCloudEnabled || !fieldworkSupabase) {
+  // Guest product tour (or no Fieldwork keys) — never write to a real subscriber vault.
+  if (forceLocal || !fieldworkCloudEnabled || !fieldworkSupabase) {
     if (file.size > DEMO_MAX_BYTES) {
       throw new Error(
         'Demo mode can only keep files under ~1.5 MB in the browser. Connect Fieldwork Supabase for full uploads.',

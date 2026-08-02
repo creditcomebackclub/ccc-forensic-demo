@@ -22,21 +22,23 @@ import {
 } from './documents';
 
 // v5: response analyses + mail handoff for Pro follow-up drafts.
-const STORAGE_KEY = 'fieldwork-saas-v5';
+const ACCOUNT_STORAGE_KEY = 'fieldwork-saas-v5';
+const GUEST_STORAGE_KEY = 'fieldwork-guest-demo-v1';
 const LEGACY_STORAGE_KEYS = ['fieldwork-saas-v4'];
 
 const FieldworkContext = createContext(null);
 
-function loadState() {
+function loadState(key) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(key);
     if (raw) return JSON.parse(raw);
-    for (const key of LEGACY_STORAGE_KEYS) {
-      const legacy = localStorage.getItem(key);
-      if (legacy) {
-        const parsed = JSON.parse(legacy);
-        localStorage.setItem(STORAGE_KEY, legacy);
-        return parsed;
+    if (key === ACCOUNT_STORAGE_KEY) {
+      for (const legacyKey of LEGACY_STORAGE_KEYS) {
+        const legacy = localStorage.getItem(legacyKey);
+        if (legacy) {
+          localStorage.setItem(ACCOUNT_STORAGE_KEY, legacy);
+          return JSON.parse(legacy);
+        }
       }
     }
     return null;
@@ -103,8 +105,29 @@ function mapCampaigns(rows) {
 }
 
 export function FieldworkProvider({ children }) {
-  const saved = useMemo(() => loadState(), []);
-  const [user, setUser] = useState(saved?.user || null);
+  // Guest product tour uses a separate storage key so it never pollutes real logins.
+  const [isGuestDemo, setIsGuestDemo] = useState(() => {
+    try {
+      return localStorage.getItem('fieldwork-guest-active') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const saved = useMemo(
+    () => loadState(isGuestDemo ? GUEST_STORAGE_KEY : ACCOUNT_STORAGE_KEY),
+    // Only hydrate from the active lane on first mount / guest toggle via enterGuestDemo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const [user, setUser] = useState(() => {
+    if (isGuestDemo) {
+      const g = loadState(GUEST_STORAGE_KEY);
+      return g?.user || { ...DEMO_USER, email: 'demo@fieldwork.local', guest: true };
+    }
+    // Never restore a guest user into the real account lane
+    if (saved?.user?.guest) return null;
+    return saved?.user || null;
+  });
   const [planId, setPlanId] = useState(saved?.planId || DEFAULT_PLAN_ID);
   const [mailCredits, setMailCredits] = useState(
     saved?.mailCredits ?? planById(saved?.planId || DEFAULT_PLAN_ID).mailCredits,
@@ -119,27 +142,33 @@ export function FieldworkProvider({ children }) {
   const [selectedIds, setSelectedIds] = useState(saved?.selectedIds || []);
   const [letters, setLetters] = useState(saved?.letters || []);
   const [campaigns, setCampaigns] = useState(saved?.campaigns || []);
-  const [documents, setDocuments] = useState(saved?.documents || DEMO_DOCUMENTS);
+  // Real accounts start with an empty vault — sample docs only in guest demo.
+  const [documents, setDocuments] = useState(
+    saved?.documents || (isGuestDemo ? DEMO_DOCUMENTS : []),
+  );
   const [wizardStep, setWizardStep] = useState(saved?.wizardStep || 'upload');
   const [mailPhaseId, setMailPhaseId] = useState(saved?.mailPhaseId || 'phase1');
   const [letterOverrides, setLetterOverrides] = useState(saved?.letterOverrides || {});
   const [responseAnalyses, setResponseAnalyses] = useState(saved?.responseAnalyses || []);
-  const [billingHistory, setBillingHistory] = useState(
-    saved?.billingHistory || [
-      { id: 'inv_001', date: '2026-08-01', label: 'Pro plan · August', amount: 99, status: 'Paid (demo)' },
-    ],
-  );
+  const [billingHistory, setBillingHistory] = useState(saved?.billingHistory || []);
   const [runtime, setRuntime] = useState({
-    mode: fieldworkCloudEnabled ? 'cloud' : 'demo',
+    mode: isGuestDemo ? 'guest-demo' : (fieldworkCloudEnabled ? 'cloud' : 'demo'),
     isolated: true,
     message: 'Checking Fieldwork lane…',
   });
-  const [authReady, setAuthReady] = useState(!fieldworkCloudEnabled);
+  const [authReady, setAuthReady] = useState(!fieldworkCloudEnabled || isGuestDemo);
 
   const plan = planById(planId);
 
   const applyBootstrap = useCallback((snap, fallbackProfile = {}) => {
     if (!snap?.subscriber) return;
+    // Leaving guest tour — cloud account is source of truth.
+    setIsGuestDemo(false);
+    try {
+      localStorage.removeItem('fieldwork-guest-active');
+    } catch {
+      /* ignore */
+    }
     const sub = snap.subscriber;
     setUser(userFromSubscriber(sub, fallbackProfile));
     setPlanId(sub.plan_id || DEFAULT_PLAN_ID);
@@ -149,12 +178,17 @@ export function FieldworkProvider({ children }) {
     setExpertChatCredits(
       typeof sub.expert_chat_credits === 'number' ? sub.expert_chat_credits : plan.expertChats,
     );
-    const nextBilling = mapBilling(snap.billing);
-    if (nextBilling.length) setBillingHistory(nextBilling);
-    const nextDocs = mapDocuments(snap.documents);
-    if (nextDocs.length) setDocuments(nextDocs);
-    const nextCamps = mapCampaigns(snap.campaigns);
-    if (nextCamps.length) setCampaigns(nextCamps);
+    // Always replace — empty server lists clear leftover sample campaigns from localStorage.
+    setBillingHistory(mapBilling(snap.billing));
+    setDocuments(mapDocuments(snap.documents));
+    setCampaigns(mapCampaigns(snap.campaigns));
+    setLetters([]);
+    setAudit(null);
+    setSelectedIds([]);
+    setWizardStep('upload');
+    setMailPhaseId('phase1');
+    setLetterOverrides({});
+    setResponseAnalyses([]);
   }, []);
 
   useEffect(() => {
@@ -172,8 +206,13 @@ export function FieldworkProvider({ children }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Restore Fieldwork Supabase session → bootstrap subscriber
+  // Restore Fieldwork Supabase session → bootstrap subscriber (skip guest tour)
   useEffect(() => {
+    if (isGuestDemo) {
+      setAuthReady(true);
+      setRuntime((r) => ({ ...r, mode: 'guest-demo', message: 'Guest product tour — not your account.' }));
+      return undefined;
+    }
     if (!fieldworkCloudEnabled) {
       setAuthReady(true);
       return undefined;
@@ -186,22 +225,29 @@ export function FieldworkProvider({ children }) {
         if (session) {
           const snap = await bootstrapFieldwork({});
           if (!cancelled) applyBootstrap(snap, saved?.user || {});
-        } else if (saved?.user?.subscriberId) {
-          // Stale cloud user in localStorage without session
+        } else if (saved?.user?.subscriberId || saved?.user?.guest) {
+          // Stale cloud / guest user in account storage without session
           setUser(null);
+          setCampaigns([]);
+          setLetters([]);
+          setAudit(null);
+          setDocuments([]);
         }
       } catch {
-        // Keep local demo state if bootstrap unreachable
+        // Keep local state if bootstrap unreachable
       } finally {
         if (!cancelled) setAuthReady(true);
       }
     })();
     return () => { cancelled = true; };
-  }, [applyBootstrap, saved?.user]);
+  }, [applyBootstrap, saved?.user, isGuestDemo]);
 
   useEffect(() => {
+    const key = isGuestDemo ? GUEST_STORAGE_KEY : ACCOUNT_STORAGE_KEY;
+    // Never persist a guest user into the real account key
+    if (!isGuestDemo && user?.guest) return;
     localStorage.setItem(
-      STORAGE_KEY,
+      key,
       JSON.stringify({
         user,
         planId,
@@ -221,20 +267,31 @@ export function FieldworkProvider({ children }) {
       }),
     );
   }, [
-    user, planId, mailCredits, auditCredits, expertChatCredits, audit, selectedIds,
+    isGuestDemo, user, planId, mailCredits, auditCredits, expertChatCredits, audit, selectedIds,
     letters, campaigns, documents, wizardStep, mailPhaseId, letterOverrides,
     responseAnalyses, billingHistory,
   ]);
 
   const signUp = useCallback(async (profile, chosenPlanId = DEFAULT_PLAN_ID) => {
     const nextPlan = planById(chosenPlanId);
+    // Exit guest tour before creating a real account
+    setIsGuestDemo(false);
+    try {
+      localStorage.removeItem('fieldwork-guest-active');
+    } catch {
+      /* ignore */
+    }
 
     if (!fieldworkCloudEnabled) {
-      setUser({ ...DEMO_USER, ...profile });
+      setUser({ ...DEMO_USER, ...profile, guest: false });
       setPlanId(nextPlan.id);
       setMailCredits(nextPlan.mailCredits);
       setAuditCredits(nextPlan.auditCredits);
       setExpertChatCredits(nextPlan.expertChats);
+      setCampaigns([]);
+      setLetters([]);
+      setAudit(null);
+      setDocuments([]);
       setBillingHistory([
         {
           id: `inv_${Date.now()}`,
@@ -260,10 +317,10 @@ export function FieldworkProvider({ children }) {
     const snap = await bootstrapFieldwork({
       email: profile.email,
       full_name: profile.name,
-      address_line1: profile.address?.line1 || DEMO_USER.address.line1,
-      address_city: profile.address?.city || DEMO_USER.address.city,
-      address_state: profile.address?.state || DEMO_USER.address.state,
-      address_zip: profile.address?.zip || DEMO_USER.address.zip,
+      address_line1: profile.address?.line1 || '',
+      address_city: profile.address?.city || '',
+      address_state: profile.address?.state || '',
+      address_zip: profile.address?.zip || '',
       plan_id: nextPlan.id,
     });
     applyBootstrap(snap, profile);
@@ -273,10 +330,52 @@ export function FieldworkProvider({ children }) {
     if (!fieldworkCloudEnabled) {
       throw new Error('Cloud sign-in requires Fieldwork Supabase keys');
     }
+    setIsGuestDemo(false);
+    try {
+      localStorage.removeItem('fieldwork-guest-active');
+    } catch {
+      /* ignore */
+    }
     await fieldworkSignIn({ email, password });
     const snap = await bootstrapFieldwork({ email });
     applyBootstrap(snap, { email });
   }, [applyBootstrap]);
+
+  /** Public product tour — sample audit/mail, never writes to a real subscriber. */
+  const enterGuestDemo = useCallback(() => {
+    const pro = planById('pro');
+    setIsGuestDemo(true);
+    try {
+      localStorage.setItem('fieldwork-guest-active', '1');
+    } catch {
+      /* ignore */
+    }
+    setUser({
+      ...DEMO_USER,
+      email: 'demo@fieldwork.local',
+      guest: true,
+    });
+    setPlanId(pro.id);
+    setMailCredits(pro.mailCredits);
+    setAuditCredits(pro.auditCredits);
+    setExpertChatCredits(pro.expertChats);
+    setAudit(null);
+    setSelectedIds([]);
+    setLetters([]);
+    setCampaigns([]);
+    setDocuments(DEMO_DOCUMENTS);
+    setWizardStep('upload');
+    setMailPhaseId('phase1');
+    setLetterOverrides({});
+    setResponseAnalyses([]);
+    setBillingHistory([]);
+    setRuntime({
+      mode: 'guest-demo',
+      isolated: true,
+      message: 'Guest product tour — sample data only. Create an account to keep real work.',
+    });
+    setAuthReady(true);
+  }, []);
 
   const updateProfile = useCallback(async (profile) => {
     const nextLocal = (prev) => ({
@@ -313,21 +412,40 @@ export function FieldworkProvider({ children }) {
   }, [applyBootstrap]);
 
   const signOut = useCallback(async () => {
+    if (isGuestDemo) {
+      setIsGuestDemo(false);
+      try {
+        localStorage.removeItem('fieldwork-guest-active');
+        localStorage.removeItem(GUEST_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+      setUser(null);
+      setCampaigns([]);
+      setLetters([]);
+      setAudit(null);
+      setDocuments([]);
+      return;
+    }
     try {
       await fieldworkSignOut();
     } catch {
       /* ignore */
     }
     setUser(null);
-  }, []);
+  }, [isGuestDemo]);
 
   const resetAll = useCallback(async () => {
+    if (isGuestDemo) {
+      enterGuestDemo();
+      return;
+    }
     try {
       await fieldworkSignOut();
     } catch {
       /* ignore */
     }
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(ACCOUNT_STORAGE_KEY);
     setUser(null);
     setPlanId(DEFAULT_PLAN_ID);
     setMailCredits(planById(DEFAULT_PLAN_ID).mailCredits);
@@ -337,13 +455,13 @@ export function FieldworkProvider({ children }) {
     setSelectedIds([]);
     setLetters([]);
     setCampaigns([]);
-    setDocuments(DEMO_DOCUMENTS);
+    setDocuments([]);
     setWizardStep('upload');
     setMailPhaseId('phase1');
     setLetterOverrides({});
     setResponseAnalyses([]);
     setBillingHistory([]);
-  }, []);
+  }, [enterGuestDemo, isGuestDemo]);
 
   const completeUpload = useCallback((auditOverride, meta = {}) => {
     const nextAudit = auditOverride || DEMO_AUDIT;
@@ -471,27 +589,32 @@ export function FieldworkProvider({ children }) {
 
   /** Persist a real file to fieldwork-docs (or demo localDataUrl). */
   const uploadDocument = useCallback(async (kind, file) => {
+    const guest = isGuestDemo || user?.guest;
     const { doc, removeIds } = await uploadFieldworkDocument({
       kind,
       file,
-      subscriberId: user?.subscriberId,
+      subscriberId: guest ? null : user?.subscriberId,
       existingDocs: documents,
+      forceLocal: guest,
     });
     setDocuments((prev) => [
       doc,
       ...prev.filter((d) => d.id !== doc.id && !removeIds.includes(d.id)),
     ]);
     return doc;
-  }, [documents, user?.subscriberId]);
+  }, [documents, isGuestDemo, user?.guest, user?.subscriberId]);
 
   const removeDocument = useCallback(async (doc) => {
     if (!doc?.id) return;
-    await deleteFieldworkDocument({
-      id: doc.id,
-      storagePath: doc.storagePath || null,
-    });
+    const guest = isGuestDemo || user?.guest;
+    if (!guest) {
+      await deleteFieldworkDocument({
+        id: doc.id,
+        storagePath: doc.storagePath || null,
+      });
+    }
     setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
-  }, []);
+  }, [isGuestDemo, user?.guest]);
 
   const value = {
     user,
@@ -525,6 +648,8 @@ export function FieldworkProvider({ children }) {
     updateProfile,
     signOut,
     resetAll,
+    enterGuestDemo,
+    isGuestDemo,
     completeUpload,
     changePlan,
     buyCreditPack,

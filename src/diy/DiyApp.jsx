@@ -16,6 +16,7 @@ import Responses from './pages/Responses';
 import Billing from './pages/Billing';
 import Settings from './pages/Settings';
 import DemoReel from './pages/DemoReel';
+import GuestDemoEntry from './pages/GuestDemoEntry';
 
 function RequireAuth({ children }) {
   const { user, authReady } = useFieldwork();
@@ -31,9 +32,10 @@ function RequireAuth({ children }) {
 }
 
 function PublicOnly({ children }) {
-  const { user, authReady } = useFieldwork();
+  const { user, authReady, isGuestDemo } = useFieldwork();
   if (!authReady) return null;
-  if (user) return <Navigate to="/app" replace />;
+  // Real accounts only — guest tour may visit signup/login without bounce
+  if (user && !isGuestDemo && !user.guest) return <Navigate to="/app" replace />;
   return children;
 }
 
@@ -65,6 +67,7 @@ export default function DiyApp() {
               </PublicOnly>
             )}
           />
+          <Route path="/demo" element={<GuestDemoEntry />} />
           <Route
             path="/app"
             element={(

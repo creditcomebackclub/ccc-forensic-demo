@@ -10,6 +10,7 @@ const FOOTER_COLS = [
       { section: 'demo', label: 'Watch demo' },
       { section: 'how', label: 'How it works' },
       { section: 'pricing', label: 'Pricing' },
+      { to: '/demo', label: 'Try the product' },
       { to: '/signup', label: 'Get started' },
       { to: '/login', label: 'Log in' },
     ],
@@ -45,10 +46,13 @@ export function MarketingHeader() {
           How it works
         </SectionLink>
         <Link to="/contact" className="hidden text-white/65 hover:text-white sm:inline">Contact</Link>
-        {user ? (
+        {user && !user.guest ? (
           <Link to="/app" className="fw-btn-primary !py-2 !px-3 text-sm">Open app</Link>
         ) : (
           <>
+            <Link to="/demo" className="hidden text-white/80 hover:text-white md:inline">
+              Try the product
+            </Link>
             <Link to="/login" className="hidden text-white/80 hover:text-white sm:inline">
               Log in
             </Link>

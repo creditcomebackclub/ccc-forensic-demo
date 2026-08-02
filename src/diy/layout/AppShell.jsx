@@ -26,8 +26,21 @@ const NAV = [
 ];
 
 export default function AppShell() {
-  const { user, plan, planId, mailCredits, auditCredits, expertChatCredits, signOut, resetAll, startNewCampaign, runtime } = useFieldwork();
+  const {
+    user,
+    plan,
+    planId,
+    mailCredits,
+    auditCredits,
+    expertChatCredits,
+    signOut,
+    resetAll,
+    startNewCampaign,
+    runtime,
+    isGuestDemo,
+  } = useFieldwork();
   const navigate = useNavigate();
+  const guest = isGuestDemo || user?.guest;
 
   return (
     <div className="min-h-screen bg-[var(--fw-paper)] text-[var(--fw-ink)] md:flex">
@@ -35,9 +48,18 @@ export default function AppShell() {
         <div className="flex items-center justify-between px-5 py-5">
           <Logo invert to="/" size={26} wordmarkClass="!text-lg" />
           <span className="fw-mono rounded border border-white/15 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-white/50 md:hidden">
-            SaaS demo
+            {guest ? 'Guest tour' : 'Workspace'}
           </span>
         </div>
+        {guest && (
+          <div className="mx-5 mb-3 rounded border border-[rgba(46,230,166,0.35)] bg-[rgba(46,230,166,0.08)] px-3 py-2.5 text-xs leading-relaxed text-white/85">
+            Guest product tour — sample data only.{' '}
+            <Link to="/signup" className="font-semibold text-[var(--fw-signal)] hover:underline">
+              Create an account
+            </Link>
+            {' '}to keep real work.
+          </div>
+        )}
 
         <div className="mx-5 mb-4 rounded border border-white/10 bg-white/5 px-3 py-3">
           <div className="fw-mono text-[10px] uppercase tracking-wider text-white/40">Plan</div>
@@ -77,11 +99,11 @@ export default function AppShell() {
               type="button"
               onClick={() => {
                 signOut();
-                navigate('/');
+                navigate(guest ? '/' : '/login');
               }}
               className="inline-flex flex-1 items-center justify-center gap-1.5 rounded border border-white/15 px-2 py-1.5 text-xs text-white/70 hover:bg-white/5"
             >
-              <LogOut size={12} /> Sign out
+              <LogOut size={12} /> {guest ? 'Exit tour' : 'Sign out'}
             </button>
             <button
               type="button"
@@ -101,7 +123,7 @@ export default function AppShell() {
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-[var(--fw-line)] bg-[rgba(242,245,247,0.92)] px-4 py-3 backdrop-blur md:px-8">
           <div className="fw-mono text-[10px] uppercase tracking-[0.2em] text-[var(--fw-muted)]">
-            Fieldwork · {runtime.mode === 'demo' ? 'demo' : runtime.mode}
+            Fieldwork · {guest ? 'guest tour' : (runtime.mode === 'demo' ? 'local' : runtime.mode)}
           </div>
           <button
             type="button"

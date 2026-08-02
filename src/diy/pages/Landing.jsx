@@ -69,13 +69,13 @@ export default function Landing() {
             animate="show"
             custom={3}
           >
-            <Link to={user ? '/app' : '/signup'} className="fw-btn-primary text-base">
-              {user ? 'Open workspace' : 'See what an audit looks like'} <ArrowRight size={18} />
+            <Link to={user && !user.guest ? '/app' : '/demo'} className="fw-btn-primary text-base">
+              {user && !user.guest ? 'Open workspace' : 'Try the product'} <ArrowRight size={18} />
             </Link>
             <SectionLink section="demo" className="fw-btn-ghost text-base">
-              Watch the demo
+              Watch the video
             </SectionLink>
-            {!user && (
+            {(!user || user.guest) && (
               <Link to="/login" className="text-sm font-semibold text-white/70 hover:text-white">
                 Already have an account? Log in
               </Link>
@@ -127,7 +127,7 @@ export default function Landing() {
             Watch the actual demo.
           </h2>
           <p className="mt-5 max-w-2xl text-lg text-white/65">
-            Signup → sample audit → pick disputes → certified Lob packets → tracking. The real product flow, not a pitch deck.
+            Click through a sample audit → pick disputes → certified packets → tracking. Guest tour — no account required. Sign up when you want to keep real work.
           </p>
 
           <div className="relative mt-10 overflow-hidden rounded-lg border border-white/10 bg-black shadow-2xl">
@@ -143,10 +143,15 @@ export default function Landing() {
             </video>
           </div>
 
-          <div className="mt-8">
-            <Link to={user ? '/app' : '/signup'} className="fw-btn-primary inline-flex">
-              {user ? 'Open workspace' : 'Try it yourself'} <ArrowRight size={16} />
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link to={user && !user.guest ? '/app' : '/demo'} className="fw-btn-primary inline-flex">
+              {user && !user.guest ? 'Open workspace' : 'Try the product'} <ArrowRight size={16} />
             </Link>
+            {(!user || user.guest) && (
+              <Link to="/signup" className="fw-btn-ghost inline-flex">
+                Create account
+              </Link>
+            )}
           </div>
         </div>
       </section>
