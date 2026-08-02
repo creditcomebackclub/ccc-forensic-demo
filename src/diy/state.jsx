@@ -9,6 +9,7 @@ import {
 import { CREDIT_PACKS } from './mailEconomics';
 import {
   bootstrapFieldwork,
+  fieldworkCheckout,
   fieldworkCloudEnabled,
   fieldworkGetSession,
   fieldworkSignIn,
@@ -351,7 +352,6 @@ export function FieldworkProvider({ children }) {
       address_city: profile.address?.city || '',
       address_state: profile.address?.state || '',
       address_zip: profile.address?.zip || '',
-      plan_id: nextPlan.id,
     });
     applyBootstrap(snap, profile);
   }, [applyBootstrap]);
@@ -520,37 +520,58 @@ export function FieldworkProvider({ children }) {
 
   const changePlan = useCallback(async (nextId) => {
     const next = planById(nextId);
-    // Optimistic local update for snappy UI
-    setPlanId(next.id);
-    setMailCredits(next.mailCredits);
-    setAuditCredits(next.auditCredits);
-    setExpertChatCredits(next.expertChats);
-    setBillingHistory((prev) => [
-      {
-        id: `inv_${Date.now()}`,
-        date: new Date().toISOString().slice(0, 10),
-        label: `Switched to ${next.name}`,
-        amount: next.price,
-        status: 'Paid (demo)',
-      },
-      ...prev,
-    ]);
+    // Local offline demo mode still applies immediately.
+    if (!fieldworkCloudEnabled) {
+      setPlanId(next.id);
+      setMailCredits(next.mailCredits);
+      setAuditCredits(next.auditCredits);
+      setExpertChatCredits(next.expertChats);
+      setBillingHistory((prev) => [
+        {
+          id: `inv_${Date.now()}`,
+          date: new Date().toISOString().slice(0, 10),
+          label: `Switched to ${next.name}`,
+          amount: next.price,
+          status: 'Paid (demo)',
+        },
+        ...prev,
+      ]);
+      return;
+    }
 
-    // Persist plan + included credits to Fieldwork Supabase (not local-only).
+    // Cloud mode: server controls entitlements, so route through checkout.
+    const checkout = await fieldworkCheckout(next.id);
+    if (checkout.mode === 'stripe' && checkout.url) {
+      window.location.assign(checkout.url);
+      return;
+    }
+    // Fallback if Stripe key is not configured in this environment yet.
+    if (checkout.mode === 'demo') {
+      setPlanId(next.id);
+      setMailCredits(checkout.mail_credits ?? next.mailCredits);
+      setAuditCredits(checkout.audit_credits ?? next.auditCredits);
+      setExpertChatCredits(checkout.expert_chat_credits ?? next.expertChats);
+      setBillingHistory((prev) => [
+        {
+          id: `inv_${Date.now()}`,
+          date: new Date().toISOString().slice(0, 10),
+          label: `Switched to ${next.name}`,
+          amount: next.price,
+          status: 'Paid (demo)',
+        },
+        ...prev,
+      ]);
+      return;
+    }
+    throw new Error('Checkout did not return a redirect URL.');
+  }, []);
+
+  const refreshWorkspace = useCallback(async () => {
     if (!fieldworkCloudEnabled) return;
-
-    const snap = await bootstrapFieldwork({ plan_id: next.id }, { timeoutMs: 15000 });
-    if (!snap?.subscriber) {
-      throw new Error('Plan switch did not reach Fieldwork — is netlify dev running?');
-    }
-    if (snap.subscriber.plan_id !== next.id) {
-      // Snap-back bug: don't apply stale pro row over the optimistic Campaign UI
-      throw new Error(
-        `Plan did not save (server still has ${snap.subscriber.plan_id}). Hard-refresh and try again.`,
-      );
-    }
-    applyBootstrap(snap, user || {});
-  }, [applyBootstrap, user]);
+    if (isGuestDemo || user?.guest) return;
+    const snap = await bootstrapFieldwork({});
+    if (snap?.subscriber) applyBootstrap(snap, user || {});
+  }, [applyBootstrap, isGuestDemo, user]);
 
   const buyCreditPack = useCallback((packId) => {
     const pack = CREDIT_PACKS.find((p) => p.id === packId);
@@ -687,6 +708,7 @@ export function FieldworkProvider({ children }) {
     startNewCampaign,
     runtime,
     authReady,
+    refreshWorkspace,
   };
 
   return <FieldworkContext.Provider value={value}>{children}</FieldworkContext.Provider>;

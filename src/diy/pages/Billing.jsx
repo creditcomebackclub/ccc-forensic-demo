@@ -1,13 +1,46 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Check } from 'lucide-react';
 import { PRICING_PLANS } from '../demoData';
 import { CREDIT_PACKS, formatCreditCostRange, MAIL_PHASES } from '../mailEconomics';
 import { useFieldwork } from '../state';
 
 export default function Billing() {
-  const { planId, plan, mailCredits, auditCredits, expertChatCredits, changePlan, buyCreditPack, billingHistory } = useFieldwork();
+  const {
+    planId,
+    plan,
+    mailCredits,
+    auditCredits,
+    expertChatCredits,
+    changePlan,
+    buyCreditPack,
+    billingHistory,
+    refreshWorkspace,
+  } = useFieldwork();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [switching, setSwitching] = useState(null);
   const [switchError, setSwitchError] = useState('');
+  const [syncMessage, setSyncMessage] = useState('');
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || '');
+    if (!params.get('ok')) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await refreshWorkspace();
+        if (!cancelled) setSyncMessage('Payment received. Plan + credits synced from Stripe.');
+      } catch (err) {
+        if (!cancelled) setSyncMessage('Payment completed. Refresh in a few seconds if credits are still stale.');
+      } finally {
+        if (!cancelled) {
+          navigate('/app/billing', { replace: true });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [location.search, navigate, refreshWorkspace]);
 
   const onSwitchPlan = async (id) => {
     setSwitchError('');
@@ -113,6 +146,7 @@ export default function Billing() {
         })}
       </div>
       {switchError ? <p className="mt-3 text-sm text-[#b93d30]">{switchError}</p> : null}
+      {syncMessage ? <p className="mt-3 text-sm text-[var(--fw-sea)]">{syncMessage}</p> : null}
 
       <div className="mt-12">
         <h2 className="fw-display text-2xl font-bold">Top up credits</h2>

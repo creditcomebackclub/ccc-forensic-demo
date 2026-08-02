@@ -9,7 +9,7 @@ const {
   json,
   planCredits,
 } = require('./_fieldworkAuth.cjs');
-const { fieldworkSupabase } = require('./_fieldworkEnv.cjs');
+const { fieldworkStripe, fieldworkSupabase } = require('./_fieldworkEnv.cjs');
 
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
@@ -36,6 +36,15 @@ exports.handler = async (event) => {
 
     // Optional profile patch (never touches CCC tables)
     const hasSignaturePatch = Object.prototype.hasOwnProperty.call(body, 'signature_data');
+    const stripe = fieldworkStripe();
+    const wantsPlanMutation = Boolean(body.plan_id);
+    const demoBillingMode = !stripe.secretKey;
+    if (wantsPlanMutation && !demoBillingMode) {
+      const err = new Error('Plan changes are Stripe-managed. Use checkout from Billing.');
+      err.statusCode = 403;
+      throw err;
+    }
+
     if (body.full_name || body.address_line1 || body.plan_id || body.email || hasSignaturePatch) {
       const { url, serviceKey } = fieldworkSupabase();
       const patch = {

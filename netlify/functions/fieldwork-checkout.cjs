@@ -16,18 +16,28 @@ const {
 const { fieldworkStripe, fieldworkSupabase } = require('./_fieldworkEnv.cjs');
 
 const PLAN_AMOUNT = { starter: 4900, pro: 9900, unlimited: 14900 };
+const PLAN_PRICE_ENV_KEY = {
+  starter: 'FIELDWORK_STRIPE_PRICE_STARTER',
+  pro: 'FIELDWORK_STRIPE_PRICE_PRO',
+  unlimited: 'FIELDWORK_STRIPE_PRICE_UNLIMITED',
+};
 
-function stripeForm(path, secretKey, params) {
+function stripeRequest(method, path, secretKey, params = null) {
   return new Promise((resolve, reject) => {
-    const body = new URLSearchParams(params).toString();
+    const body = params ? new URLSearchParams(params).toString() : null;
+    const fullPath = method === 'GET' && body ? `${path}?${body}` : path;
     const req = https.request({
       hostname: 'api.stripe.com',
-      path,
-      method: 'POST',
+      path: fullPath,
+      method,
       headers: {
         Authorization: `Bearer ${secretKey}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Content-Length': Buffer.byteLength(body),
+        ...(method === 'POST'
+          ? {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Length': Buffer.byteLength(body || ''),
+          }
+          : {}),
       },
     }, (res) => {
       let raw = '';
@@ -38,7 +48,7 @@ function stripeForm(path, secretKey, params) {
       });
     });
     req.on('error', reject);
-    req.write(body);
+    if (body && method === 'POST') req.write(body);
     req.end();
   });
 }
@@ -97,17 +107,28 @@ exports.handler = async (event) => {
     const successUrl = body.success_url || 'https://example.com/diy.html#/app/billing?ok=1';
     const cancelUrl = body.cancel_url || 'https://example.com/diy.html#/app/billing?cancelled=1';
 
-    const session = await stripeForm('/v1/checkout/sessions', stripe.secretKey, {
+    let customerId = subscriber.stripe_customer_id || null;
+    if (customerId) {
+      const customerCheck = await stripeRequest('GET', `/v1/customers/${encodeURIComponent(customerId)}`, stripe.secretKey);
+      if (customerCheck.status >= 400 || customerCheck.body?.deleted) {
+        customerId = null;
+      }
+    }
+
+    const session = await stripeRequest('POST', '/v1/checkout/sessions', stripe.secretKey, {
       mode: 'subscription',
       success_url: successUrl,
       cancel_url: cancelUrl,
       client_reference_id: subscriber.id,
-      customer_email: subscriber.email,
+      ...(customerId ? { customer: customerId } : { customer_email: subscriber.email }),
       'line_items[0][price]': priceEnv,
       'line_items[0][quantity]': '1',
       'metadata[fieldwork_subscriber_id]': subscriber.id,
       'metadata[plan_id]': planId,
       'metadata[product]': 'fieldwork',
+      'subscription_data[metadata][fieldwork_subscriber_id]': subscriber.id,
+      'subscription_data[metadata][plan_id]': planId,
+      'subscription_data[metadata][product]': 'fieldwork',
     });
 
     if (session.status >= 400) {
@@ -119,6 +140,8 @@ exports.handler = async (event) => {
       isolated: true,
       url: session.body.url,
       session_id: session.body.id,
+      plan_id: planId,
+      stripe_price_env: PLAN_PRICE_ENV_KEY[planId],
     });
   } catch (e) {
     return json(e.statusCode || 500, { error: e.message || 'Checkout failed' });
