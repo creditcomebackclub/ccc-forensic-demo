@@ -9,6 +9,40 @@ const QUEUE_STALL_MS = 60 * 1000;   // never picked up by the function
 const RUN_STALL_MS = 3 * 60 * 1000; // running but no row updates
 const MAX_READ_FAILURES = 15;       // consecutive poll read errors
 
+// A follow-up can finish model generation and then fail during local
+// persistence (for example, while reconciling a legacy source letter).
+// Reuse that immutable, completed result for a short window instead of
+// charging for the same model work again.
+export async function getRecentCompletedPhase2Result({
+  letterId,
+  kind,
+  evidenceId,
+  maxAgeMs = 60 * 60 * 1000,
+}) {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not signed in.');
+  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+
+  let query = supabase
+    .from('phase2_jobs')
+    .select('id,result,tokens,finished_at')
+    .eq('user_id', user.id)
+    .eq('letter_id', letterId)
+    .eq('kind', kind)
+    .eq('status', 'done')
+    .gte('finished_at', cutoff)
+    .not('result', 'is', null)
+    .order('finished_at', { ascending: false })
+    .limit(1);
+  query = evidenceId
+    ? query.eq('response_evidence_id', evidenceId)
+    : query.is('response_evidence_id', null);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error('Could not check the completed analysis job: ' + error.message);
+  return data || null;
+}
+
 // filePaths: storage paths in the `responses` bucket, in page order. Omit
 // (or pass []) for kind: 'non_response'. evidenceId is optional for legacy
 // uploads but required by the bureau-response path so the server can verify

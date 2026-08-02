@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle, Loader2, X } from 'lucide-react';
-import { runPhase2Job } from '../utils/phase2Jobs';
+import { getRecentCompletedPhase2Result, runPhase2Job } from '../utils/phase2Jobs';
 import { saveLetter } from '../utils/storage';
+import { supabase } from '../utils/supabase';
 
 const AUTO_OK = new Set(['VERIFIED_WITHOUT_SUBSTANCE', 'PARTIAL_CORRECTION']);
 
@@ -18,6 +19,55 @@ function bureauFromPhase(phase) {
   if (p.includes('experian')) return 'experian';
   if (p.includes('transunion') || p.includes('trans union')) return 'transunion';
   return null;
+}
+
+async function resolveCoveredFurnishers(letter, client) {
+  const existing = letter.coveredFurnishers || letter.covered_furnishers || [];
+  if (existing.length) return existing;
+
+  const clientId = client?.id || letter.clientId || letter.client_id;
+  const userId = letter.userId || letter.user_id;
+  const furnisher = String(letter.furnisher || '').trim();
+  const clientAccountId = letter.clientAccountId || letter.client_account_id;
+  const accountId = letter.accountId || letter.account_id;
+  if (!clientId || !userId || !furnisher) {
+    throw new Error('The prior Phase 3 letter has no exact furnisher coverage and cannot be reconciled automatically.');
+  }
+
+  const findPhase1 = async (column, value) => {
+    let query = supabase
+      .from('letters')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('client_id', clientId)
+      .eq('furnisher', furnisher)
+      .like('phase', 'Phase 1%')
+      .limit(1);
+    if (column && value) query = query.eq(column, value);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  };
+
+  let phase1Matches = clientAccountId
+    ? await findPhase1('client_account_id', clientAccountId)
+    : [];
+  if (!phase1Matches.length && accountId) {
+    phase1Matches = await findPhase1('account_id', accountId);
+  }
+  if (!phase1Matches.length) {
+    throw new Error('The prior Phase 3 letter has no exact furnisher coverage and no matching Phase 1 source. Reconcile it before generating a follow-up.');
+  }
+
+  const coverage = [furnisher];
+  const { error: updateError } = await supabase
+    .from('letters')
+    .update({ covered_furnishers: coverage })
+    .eq('id', letter.id)
+    .eq('user_id', userId)
+    .eq('client_id', clientId);
+  if (updateError) throw new Error('Could not reconcile the prior Phase 3 coverage: ' + updateError.message);
+  return coverage;
 }
 
 /**
@@ -49,11 +99,31 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
       if (evidence.analysis_status !== 'analyzed' || !evidence.analysis) {
         throw new Error('Analyze the bureau response before generating a follow-up letter.');
       }
-      const draft = await runPhase2Job({
+      // Resolve legacy coverage before model work. Historic Phase 3 rows did
+      // not persist covered_furnishers even though their exact Phase 1 source
+      // is recoverable from client/account/furnisher identity.
+      const coveredFurnishers = await resolveCoveredFurnishers(letter, client);
+
+      const completedJob = await getRecentCompletedPhase2Result({
         letterId: letter.id,
         kind: 'bureau_follow_up',
         evidenceId: evidence.id,
-      }, setTokens);
+      });
+      let draft = completedJob?.result || null;
+      if (draft?.source_letter_id !== letter.id
+        || draft?.source_evidence_id !== evidence.id
+        || draft?.enclosure_parse_blocked) {
+        draft = null;
+      }
+      if (draft) {
+        setTokens(completedJob.tokens || 0);
+      } else {
+        draft = await runPhase2Job({
+          letterId: letter.id,
+          kind: 'bureau_follow_up',
+          evidenceId: evidence.id,
+        }, setTokens);
+      }
 
       if (!draft?.letterHtml) throw new Error('Follow-up job finished without letter HTML.');
       if (draft.enclosure_parse_blocked) {
@@ -65,10 +135,6 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
       if (!bureau) throw new Error('Could not determine bureau for the follow-up letter.');
       if (draft.source_letter_id !== letter.id || draft.source_evidence_id !== evidence.id) {
         throw new Error('Follow-up source mismatch. Nothing was saved; re-run the draft from the intended bureau response.');
-      }
-      const coveredFurnishers = letter.coveredFurnishers || letter.covered_furnishers || [];
-      if (!coveredFurnishers.length) {
-        throw new Error('The prior Phase 3 letter has no exact furnisher coverage. Reconcile it before saving a follow-up.');
       }
 
       const phaseLabel = `Phase 3 — ${bureauLabel(bureau)} (Follow-up)`;
