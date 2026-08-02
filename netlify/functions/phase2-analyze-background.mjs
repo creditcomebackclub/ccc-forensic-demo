@@ -330,7 +330,21 @@ export const handler = async (event) => {
         chars += delta.length;
         onTokens(streamedTokenTotal + Math.round(chars / 4));
       });
-      const msg = await stream.finalMessage();
+      // Structured-output models can spend several minutes reasoning before
+      // emitting the next text delta. Keep updated_at alive independently so
+      // the browser never mistakes model silence for a dead Netlify function.
+      const heartbeat = setInterval(() => {
+        void db.from('phase2_jobs')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', jobId);
+      }, 20 * 1000);
+      heartbeat.unref?.();
+      let msg;
+      try {
+        msg = await stream.finalMessage();
+      } finally {
+        clearInterval(heartbeat);
+      }
       streamedTokenTotal += Math.round(chars / 4);
       const usage = msg.usage || {};
       console.log('[phase2-usage]', JSON.stringify({
