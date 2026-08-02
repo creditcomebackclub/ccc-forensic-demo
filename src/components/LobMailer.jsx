@@ -1,6 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { X, Send, CheckCircle, AlertCircle, MapPin } from 'lucide-react';
 import { getDocuments, getDocumentBase64 } from '../utils/documents';
+import {
+  assertFollowUpEnclosureContract,
+  buildFollowUpEnclosurePlan,
+  extractHtmlBody,
+  extractHtmlStyles,
+  isPhase3FollowUpLetter,
+  validateFollowUpSourceRelationships,
+} from '../utils/followUpEnclosures';
 import { listMailArtifacts } from '../utils/mailArtifacts';
 import { inferMediaType } from '../utils/responseFiles';
 import { supabase } from '../utils/supabase';
@@ -41,7 +49,10 @@ async function callLob(action, payload) {
     body: JSON.stringify({ action, ...payload }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || data.message || 'Lob request failed');
+  if (!res.ok) {
+    const details = Array.isArray(data.issues) && data.issues.length ? ' ' + data.issues.join(' ') : '';
+    throw new Error((data.error || data.message || 'Lob request failed') + details);
+  }
   return data;
 }
 
@@ -80,6 +91,16 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
   const idDoc = docs.find((d) => d.doc_type === 'id');
   const addressDoc = docs.find((d) => d.doc_type === 'address');
+  const isBureauFollowUp = isPhase3FollowUpLetter(letter);
+  let followUpContractError = null;
+  let followUpPlan = [];
+  if (isBureauFollowUp) {
+    try {
+      followUpPlan = buildFollowUpEnclosurePlan(letter);
+    } catch (e) {
+      followUpContractError = e.message;
+    }
+  }
 
   const handleVerify = async () => {
     setVerifying(true);
@@ -120,6 +141,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
     if (String(letter.phase || '').startsWith('Phase 3')
       && (!Array.isArray(letter.coveredFurnishers) || letter.coveredFurnishers.length === 0)) {
       setError('PHASE 3 COVERAGE MISSING — assign the specific furnisher(s) this bureau letter covers before mailing. Nothing was sent.');
+      return;
+    }
+    if (isBureauFollowUp && followUpContractError) {
+      setError(followUpContractError);
       return;
     }
     setSending(true);
@@ -235,11 +260,85 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         return pages;
       };
 
-      // Build enclosure pages — different for Phase 3 vs Phase 1
+      // Build enclosure pages — different for follow-up Phase 3, initial
+      // Phase 3, and Phase 1.
       let enclosurePages = '';
       const isPhase3 = letter.phase && letter.phase.startsWith('Phase 3');
+      let followUpEnclosureManifest = null;
 
-      if (isPhase3) {
+      if (isBureauFollowUp) {
+        const sources = assertFollowUpEnclosureContract(letter);
+        const [{ data: priorLetter, error: priorError }, { data: evidence, error: evidenceError }] = await Promise.all([
+          supabase
+            .from('letters')
+            .select('id,user_id,client_id,client_name,phase,furnisher,covered_furnishers,html,date,saved_at')
+            .eq('id', sources.sourcePhase3LetterId)
+            .eq('client_id', letter.clientId)
+            .maybeSingle(),
+          supabase
+            .from('response_evidence')
+            .select('id,firm_user_id,client_id,letter_id,response_kind,storage_bucket,storage_paths,file_names,upload_status,received_at')
+            .eq('id', sources.sourceBureauResponseEvidenceId)
+            .eq('client_id', letter.clientId)
+            .maybeSingle(),
+        ]);
+        if (priorError) throw priorError;
+        if (evidenceError) throw evidenceError;
+
+        const relationship = validateFollowUpSourceRelationships({ followUp: letter, priorLetter, evidence });
+        const priorDate = priorLetter.date || (priorLetter.saved_at ? String(priorLetter.saved_at).slice(0, 10) : '');
+        enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
+          + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">'
+          + 'EXHIBIT A — Prior Phase 3 CRA Dispute Letter' + (priorDate ? ' (' + priorDate + ')' : '') + '</div>'
+          + extractHtmlStyles(priorLetter.html)
+          + extractHtmlBody(priorLetter.html)
+          + '</div>';
+
+        const bureauName = priorLetter.furnisher || letter.furnisher || 'Bureau';
+        const responseHeading = 'EXHIBIT B — ' + bureauName + ' Investigation Results';
+        for (let index = 0; index < relationship.paths.length; index += 1) {
+          enclosurePages += await renderResponseFile(
+            relationship.paths[index],
+            relationship.names[index],
+            responseHeading
+          );
+        }
+
+        const clientMetaQuery = supabase
+          .from('clients')
+          .select('lpoa_signature_data')
+          .eq('id', letter.clientId)
+          .limit(1);
+        const { data: clientMeta, error: clientMetaError } = await clientMetaQuery;
+        if (clientMetaError) throw clientMetaError;
+        const lpoaUrl = clientMeta?.[0]?.lpoa_signature_data?.lpoaUrl;
+        if (!lpoaUrl) {
+          throw new Error('FOLLOW-UP EXHIBIT C MISSING — this client has no signed Limited Power of Attorney. Nothing was sent.');
+        }
+        const lpoaRes = await fetch(lpoaUrl);
+        if (!lpoaRes.ok) {
+          throw new Error('FOLLOW-UP EXHIBIT C UNAVAILABLE — the Limited Power of Attorney could not be loaded. Nothing was sent.');
+        }
+        const lpoaHtml = await lpoaRes.text();
+        const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+        const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
+        const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+        const lpoaBody = stripLpoaHeader(bodyMatch ? bodyMatch[1] : lpoaHtml);
+        if (!lpoaBody.trim()) {
+          throw new Error('FOLLOW-UP EXHIBIT C EMPTY — the Limited Power of Attorney has no printable content. Nothing was sent.');
+        }
+        enclosurePages += '<div style="page-break-before:always;font-family:Arial,sans-serif;font-size:12px;">'
+          + lpoaStyle
+          + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">EXHIBIT C — Limited Power of Attorney</div>'
+          + lpoaBody + '</div>';
+
+        followUpEnclosureManifest = {
+          kind: 'bureau_follow_up_v1',
+          source_phase3_letter_id: sources.sourcePhase3LetterId,
+          source_bureau_response_evidence_id: sources.sourceBureauResponseEvidenceId,
+          response_storage_paths: relationship.paths,
+        };
+      } else if (isPhase3) {
         // Phase 3 enclosures: Exhibit A (Phase 1 letter(s)) + Exhibit B (furnisher response(s)) + LPOA
         // A single bureau letter can legitimately cover more than one
         // original furnisher (grouped by which bureau each account
@@ -464,6 +563,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         // Lob to print. A browser timestamp is unsafe: retrying after a
         // timeout would otherwise create a second physical letter.
         metadata: { letter_id: String(letter.id) },
+        enclosureManifest: followUpEnclosureManifest,
       });
 
       // A duplicate response means Lob already accepted this exact durable
@@ -577,6 +677,14 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
               )}
             </div>
           )}
+          {isBureauFollowUp && followUpContractError && (
+            <div className="mb-4 p-3 rounded border-2 border-red-500 bg-red-50">
+              <div className="text-[12px] font-bold text-red-800 uppercase tracking-wider mb-1">
+                Blocked — Follow-up Sources Missing
+              </div>
+              <div className="text-[12px] text-red-700">{followUpContractError}</div>
+            </div>
+          )}
           {step === 'confirm' && (
             <div className="space-y-4">
               <div>
@@ -602,18 +710,38 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
               <div className="border border-border rounded-sm p-3">
                 <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Enclosures</div>
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2 text-[12px]">
-                    {idDoc
-                      ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Government ID — {idDoc.file_name}</span></>
-                      : <><AlertCircle size={12} strokeWidth={2} className="text-amber-500" /><span className="text-ink-muted">No ID uploaded — upload in client Documents section</span></>}
+                {isBureauFollowUp ? (
+                  <div className="space-y-1.5">
+                    {followUpPlan.map((item) => (
+                      <div key={item.kind} className="flex items-start gap-2 text-[12px]">
+                        {item.kind === 'lpoa'
+                          ? <AlertCircle size={12} strokeWidth={2} className="text-amber-500 shrink-0 mt-0.5" />
+                          : <CheckCircle size={12} strokeWidth={2} className="text-green-600 shrink-0 mt-0.5" />}
+                        <span className="text-ink">
+                          {item.label}
+                          {item.sourceId && <span className="block text-[9px] text-ink-faint font-mono break-all">{item.sourceId}</span>}
+                          {item.kind === 'lpoa' && <span className="block text-[9px] text-ink-faint">Validated when the packet is built</span>}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="text-[10px] text-ink-muted pt-1">
+                      Phase 1, furnisher responses, ID, and proof of address are intentionally excluded.
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-[12px]">
-                    {addressDoc
-                      ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Proof of Address — {addressDoc.file_name}</span></>
-                      : <><AlertCircle size={12} strokeWidth={2} className="text-amber-500" /><span className="text-ink-muted">No proof of address — upload in client Documents section</span></>}
+                ) : (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-[12px]">
+                      {idDoc
+                        ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Government ID — {idDoc.file_name}</span></>
+                        : <><AlertCircle size={12} strokeWidth={2} className="text-amber-500" /><span className="text-ink-muted">No ID uploaded — upload in client Documents section</span></>}
+                    </div>
+                    <div className="flex items-center gap-2 text-[12px]">
+                      {addressDoc
+                        ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Proof of Address — {addressDoc.file_name}</span></>
+                        : <><AlertCircle size={12} strokeWidth={2} className="text-amber-500" /><span className="text-ink-muted">No proof of address — upload in client Documents section</span></>}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="border border-border rounded-sm p-3 bg-gray-50">
@@ -704,10 +832,12 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
                   aren't clicking a button that's guaranteed to fail. */}
               <button
                 onClick={handleSend}
-                disabled={sending || !verified || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip || letter.enclosureParseBlocked}
-                title={letter.enclosureParseBlocked ? 'Blocked: enclosure could not be reliably parsed — re-upload and re-analyze first' : (!verified ? 'Verify the address first' : undefined)}
+                disabled={sending || !verified || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip || letter.enclosureParseBlocked || !!followUpContractError}
+                title={letter.enclosureParseBlocked
+                  ? 'Blocked: enclosure could not be reliably parsed — re-upload and re-analyze first'
+                  : (followUpContractError || (!verified ? 'Verify the address first' : undefined))}
                 className="flex items-center gap-2 px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                style={{ backgroundColor: (sending || !verified || !toAddr.line1 || letter.enclosureParseBlocked) ? '#B5BBC9' : '#1B2A4A', color: (sending || !verified || !toAddr.line1 || letter.enclosureParseBlocked) ? '#FFFFFF' : '#C9A84C' }}
+                style={{ backgroundColor: (sending || !verified || !toAddr.line1 || letter.enclosureParseBlocked || followUpContractError) ? '#B5BBC9' : '#1B2A4A', color: (sending || !verified || !toAddr.line1 || letter.enclosureParseBlocked || followUpContractError) ? '#FFFFFF' : '#C9A84C' }}
               >
                 <Send size={13} strokeWidth={2} />
                 {sending ? 'Sending…' : 'Send Certified Mail'}

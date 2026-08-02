@@ -311,10 +311,28 @@ export function pendingVerification() {
 }
 
 const VALID_NUMS = new Set(Object.values(METRO2_FIELDS).map((f) => f.num.toUpperCase()));
+function normalizeFieldLabel(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/charge[\s-]?off/g, 'chargeoff')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const NAME_TOKENS = Object.values(METRO2_FIELDS).map((f) => ({
-  num: f.num.toUpperCase(), name: f.name,
-  head: f.name.toLowerCase().replace(/[^a-z ]/g, '').split(' ')[0],
+  num: f.num.toUpperCase(),
+  name: f.name,
+  normalized: normalizeFieldLabel(f.name),
+  head: normalizeFieldLabel(f.name).split(' ')[0],
 }));
+
+const FIELD_LABEL_ALIASES = [
+  { num: '23', normalized: 'chargeoff amount' },
+  { num: '25', normalized: 'date of first delinquency' },
+  { num: '25', normalized: 'dofd' },
+  { num: '27', normalized: 'last payment date' },
+];
 
 const CCC_VALUE_RE = /\bX[ABCDEFGHJR]\b/;
 
@@ -366,9 +384,33 @@ export function validateFieldCitations(html) {
 
     if (!label) continue;
 
-    const labelHead = label.toLowerCase().replace(/[^a-z ]/g, '').split(' ')[0];
-    if (labelHead.length <= 4) continue;
+    const normalizedLabel = normalizeFieldLabel(label);
+    if (normalizedLabel.startsWith('date of last activity')) {
+      const key = 'invalid-label:date-of-last-activity';
+      if (!seen.has(key)) {
+        seen.add(key);
+        problems.push(`Cites "Field ${num} — ${label}", but "Date of Last Activity" is not a verified Metro 2 Base Segment field label. Date of Last Payment is Field 27.`);
+      }
+      continue;
+    }
+
+    const exactName = NAME_TOKENS.find((t) => normalizedLabel.startsWith(t.normalized));
+    const aliasName = FIELD_LABEL_ALIASES.find((t) => normalizedLabel.startsWith(t.normalized));
+    const claimedNum = exactName?.num || aliasName?.num;
     const actual = NAME_TOKENS.find((t) => t.num === num);
+    if (claimedNum && claimedNum !== num) {
+      const claimed = NAME_TOKENS.find((t) => t.num === claimedNum);
+      const key = 'mislabel:' + num + ':' + claimedNum;
+      if (!seen.has(key)) {
+        seen.add(key);
+        problems.push(`Cites "Field ${num} — ${label}", but Field ${num} is ${actual?.name || 'a different field'}; "${claimed?.name || label}" is Field ${claimedNum}.`);
+      }
+      continue;
+    }
+    if (claimedNum === num) continue;
+
+    const labelHead = normalizedLabel.split(' ')[0];
+    if (labelHead.length <= 4) continue;
     if (actual && labelHead === actual.head) continue;
     const claimsAnother = NAME_TOKENS.find((t) => t.num !== num && t.head === labelHead && t.head.length > 4);
     if (actual && claimsAnother) {
@@ -379,11 +421,76 @@ export function validateFieldCitations(html) {
   return problems;
 }
 
-/** Statute + Metro 2 citation problems that block CRA Phase 3 / follow-up letters. */
+function plainText(html) {
+  return String(html || '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&sect;/gi, '§')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function collectPhase3SubstantiveProblems(html) {
+  const text = plainText(html);
+  if (!text) return [];
+
+  const rules = [
+    {
+      pattern: /(?:charg(?:e|ed)[\s-]?off.{0,220}logical impossib|logical impossib.{0,220}charg(?:e|ed)[\s-]?off|charg(?:e|ed)[\s-]?off.{0,180}(?:uncollectible|written off for tax)|charg(?:e|ed)[\s-]?off.{0,180}(?:cannot|can not).{0,100}(?:current balance|past due|financial obligation))/i,
+      problem: 'Claims that charge-off status cannot carry a balance or past-due amount. Status 97 is an unpaid charge-off and may legitimately report Fields 21/22; assert a conflict only when a supported paid status or other evidence makes the amount inaccurate.',
+    },
+    {
+      pattern: /(?:Field\s*18|Payment History Profile).{0,220}(?:since (?:the )?(?:account )?(?:was )?opened|from (?:the )?(?:account )?(?:opening|date opened)|lifetime (?:payment )?history|entire (?:payment )?history)/i,
+      problem: 'Demands lifetime payment history under Field 18. Field 18 is a rolling 24-month Payment History Profile, not history from account opening.',
+    },
+    {
+      pattern: /(?:demand|require|must (?:provide|produce)|statutorily (?:must|required)|obligat(?:e|ed|ion).{0,30}(?:provide|produce)).{0,180}(?:\bUDF\b|Universal Data Form|original[- ]source documentation|source records|all furnisher documents)/i,
+      problem: 'Treats UDF or source-document production as a CRA statutory duty. Request the §1681i(a)(6)(B)(iii)/(a)(7) description of the reinvestigation procedure; supporting records may be requested but are not guaranteed.',
+    },
+    {
+      pattern: /Johnson v\.?\s*MBNA.{0,180}(?:the CRA|the bureau|CRA reinvestigation|bureau reinvestigation)|(?:the CRA|the bureau).{0,180}Johnson v\.?\s*MBNA/i,
+      problem: 'Uses Johnson v. MBNA as the CRA reinvestigation standard. Johnson addresses a furnisher investigation under §1681s-2(b) after CRA notice; the CRA duty comes from §1681i.',
+    },
+  ];
+
+  return rules.filter(({ pattern }) => pattern.test(text)).map(({ problem }) => problem);
+}
+
+/** Statute, Metro 2, and substantive problems that block CRA Phase 3 letters. */
 export function collectPhase3CitationProblems(html) {
   const problems = validateFieldCitations(html);
   if (html && String(html).includes('1681s-2(a)')) {
     problems.push('Cites 15 U.S.C. §1681s-2(a), which must never appear in a Phase 3 CRA letter — this is the furnisher\'s duty, not the CRA\'s. Rebuild on §1681s-2(b) materiality (Seamans v. Temple University) or §1681i(a)(5)(A) verify-or-delete instead.');
+  }
+  problems.push(...collectPhase3SubstantiveProblems(html));
+  return problems;
+}
+
+/** Follow-up-specific lint, including the exact Lob enclosure contract. */
+export function collectBureauFollowUpProblems(html) {
+  const problems = collectPhase3CitationProblems(html);
+  const text = plainText(html);
+  const enclosureIndex = text.search(/\bEnclosures?\s*:/i);
+  if (enclosureIndex < 0) {
+    problems.push('Missing the required follow-up enclosures line for prior Phase 3, bureau response, and Limited Power of Attorney.');
+    return problems;
+  }
+
+  const enclosures = text.slice(enclosureIndex);
+  if (!/Exhibit A.{0,120}(?:Prior|Original).{0,60}Phase 3/i.test(enclosures)) {
+    problems.push('Follow-up Exhibit A must be the prior Phase 3 CRA dispute letter.');
+  }
+  if (!/Exhibit B.{0,160}(?:Bureau|Equifax|Experian|TransUnion).{0,80}(?:Response|Investigation Results)/i.test(enclosures)) {
+    problems.push('Follow-up Exhibit B must be the exact bureau response / investigation results.');
+  }
+  if (!/Exhibit C.{0,120}Limited Power of Attorney/i.test(enclosures)) {
+    problems.push('Follow-up Exhibit C must be the Limited Power of Attorney.');
+  }
+  if (/(?:Phase 1|Direct Furnisher Dispute|Furnisher Response|Government-Issued Photo ID|Proof of (?:Current )?Address|Credit Report Excerpt)/i.test(enclosures)) {
+    problems.push('Follow-up enclosures must not list Phase 1, a furnisher response, identity/address documents, or credit-report excerpts.');
   }
   return problems;
 }

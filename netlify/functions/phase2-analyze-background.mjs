@@ -18,7 +18,11 @@ import { BUREAU_RESPONSE_SYSTEM_PROMPT } from '../../src/prompts/bureauResponseP
 import { BUREAU_FOLLOW_UP_SYSTEM_PROMPT } from '../../src/prompts/bureauFollowUpPrompt.js';
 import { BUREAU_FOLLOW_UP_SCHEMA, BUREAU_RESPONSE_SCHEMA, PHASE2_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { inferMediaType, isAnalyzable } from '../../src/utils/responseFiles.js';
-import { collectPhase3CitationProblems, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
+import {
+  assertMapFullySourced,
+  collectBureauFollowUpProblems,
+  collectPhase3CitationProblems,
+} from '../../src/constants/metro2Fields.js';
 import { requireStaff } from './_requireAuth.cjs';
 
 assertMapFullySourced();
@@ -266,7 +270,7 @@ export const handler = async (event) => {
             ...pageBlocks,
             {
               type: 'text',
-              text: `Draft the supplemental Phase 3 follow-up letter to ${expectedBureau}. Output bureau must be "${expectedBureau}". HARD RULES for letterHtml: (1) must not contain the substring "1681s-2(a)" anywhere — reframe on §1681s-2(b) (Seamans) or §1681i(a)(5)(A); (2) Field 19 is Special Comment only — XA/XB/XC/XH/XR live in Field 20 (Compliance Condition Code). Prefer "Compliance Condition Code XB (Metro 2 Field 20)". Correct wrong Field N citations from exhibits/analysis; do not copy them.`,
+              text: `Draft the supplemental Phase 3 follow-up letter to ${expectedBureau}. Output bureau must be "${expectedBureau}". Correct unsupported premises from the prior letter/analysis instead of copying them. HARD RULES for letterHtml: no "1681s-2(a)"; Johnson governs the furnisher's §1681s-2(b) investigation, not the CRA; Seamans is limited to supported dispute-status issues; Field 19 is Special Comment and Field 20 is Compliance Condition Code; Field 23 is Original Charge-off Amount and Field 27 is Date of Last Payment; Field 18 is a rolling 24-month profile; Status 97 may legitimately carry a balance/past due and is not a logical impossibility; do not state that a CRA must produce a UDF/source documents — request the §1681i(a)(6)(B)(iii)/(a)(7) procedure description. Enclosures must be exactly Exhibit A prior Phase 3, Exhibit B bureau response, Exhibit C LPOA.`,
             },
           ],
         }];
@@ -345,21 +349,20 @@ export const handler = async (event) => {
     };
 
     let { parsed: analysis, usage: u } = await runModel(messages);
-    // One automatic rebuild if the follow-up draft fails citation lint
-    // (Metro 2 Field N/name mismatches OR §1681s-2(a)). Prompt hardening alone
-    // is not enough when Exhibit A / analysis JSON still contain Phase 1 framing
-    // or historically wrong Field 19 = CCC phrasing.
+    // One automatic rebuild if the follow-up fails production-safety lint.
+    // Prompt hardening alone is not enough when Exhibit A / analysis JSON
+    // still contain old citations, unsupported premises, or enclosure labels.
     if (isBureauFollowUp && analysis?.letterHtml) {
-      const citationProblems = collectPhase3CitationProblems(analysis.letterHtml);
+      const citationProblems = collectBureauFollowUpProblems(analysis.letterHtml);
       if (citationProblems.length) {
-        console.warn('[phase2] bureau_follow_up citation lint failed; requesting one rewrite', citationProblems);
+        console.warn('[phase2] bureau_follow_up production lint failed; requesting one rewrite', citationProblems);
         const rewriteMessages = [
           ...messages,
           {
             role: 'user',
             content: [{
               type: 'text',
-              text: `CRITICAL CORRECTION: The draft letterHtml failed citation lint. Return a complete corrected JSON object for this follow-up. Fix EVERY issue below — do not leave any of them in letterHtml. Keep the same bureau/focusIssues intent. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)" in any subsection; use §1681s-2(b) (Seamans) or §1681i(a)(5)(A).\n- Field 19 = Special Comment. Field 20 = Compliance Condition Code. XA/XB/XC/XH/XR live only in Field 20. Prefer "Compliance Condition Code XB (Metro 2 Field 20)".\n- Field 21 = Current Balance; Field 22 = Amount Past Due.\n\nBAD DRAFT letterHtml:\n${analysis.letterHtml}`,
+              text: `CRITICAL CORRECTION: The draft letterHtml failed production-safety lint. Return a complete corrected JSON object for this follow-up. Fix EVERY issue below — do not leave any of them in letterHtml. Keep only supported focus issues. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)"; use CRA duties under §1681i and describe the furnisher's separate §1681s-2(b) duty accurately.\n- Field 19 = Special Comment; Field 20 = Compliance Condition Code; Field 23 = Original Charge-off Amount; Field 27 = Date of Last Payment.\n- Status 97 may legitimately carry a balance/past due. Field 18 is a rolling 24-month profile.\n- Request the §1681i(a)(6)(B)(iii)/(a)(7) procedure description; do not claim a right to UDF/source-document production.\n- Enclosures: Exhibit A prior Phase 3; Exhibit B bureau response; Exhibit C LPOA. No Phase 1/furnisher response/ID/address.\n\nBAD DRAFT letterHtml:\n${analysis.letterHtml}`,
             }],
           },
         ];
@@ -429,29 +432,19 @@ export const handler = async (event) => {
       blockIssues.push(...(dq.issues && dq.issues.length ? dq.issues : ['An enclosed document could not be reliably read.']));
     }
 
-    // Citation lint (P1-2c): Metro 2 Field N/name mismatches + §1681s-2(a) in
-    // CRA letters. Prompt instructions are not enough when exhibits still
-    // carry Phase 1 framing or historically wrong Field 19 = CCC phrasing.
+    // Production-safety lint: citation, substantive, and enclosure failures.
     if (!isBureauResponse) {
       if (isBureauFollowUp) {
         const html = analysis && analysis.letterHtml;
         const bureau = (analysis && analysis.bureau) || bureauFromPhase(letter.phase) || 'bureau';
-        for (const p of collectPhase3CitationProblems(html)) {
-          blockIssues.push(
-            p.startsWith('Cites 15 U.S.C.')
-              ? `The generated ${bureau} follow-up letter ${p.charAt(0).toLowerCase()}${p.slice(1)}`
-              : `The generated ${bureau} follow-up letter has a Metro 2 field citation error: ${p}`
-          );
+        for (const p of collectBureauFollowUpProblems(html)) {
+          blockIssues.push(`The generated ${bureau} follow-up letter failed production-safety lint: ${p}`);
         }
       } else {
         for (const bureau of ['equifax', 'experian', 'transunion']) {
           const html = analysis && analysis.letters && analysis.letters[bureau];
           for (const p of collectPhase3CitationProblems(html)) {
-            blockIssues.push(
-              p.startsWith('Cites 15 U.S.C.')
-                ? `The generated ${bureau} letter ${p.charAt(0).toLowerCase()}${p.slice(1)}`
-                : `The generated ${bureau} letter has a Metro 2 field citation error: ${p}`
-            );
+            blockIssues.push(`The generated ${bureau} letter failed production-safety lint: ${p}`);
           }
         }
       }

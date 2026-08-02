@@ -28,6 +28,16 @@ ANALYSIS REQUIREMENTS:
 4. Recommend exactly one internal next-action bucket: resolved, follow_up, needs_documents, or escalated. This is a recommendation, not an automatic action.
 5. Keep summaries factual and concise. Do not quote or rely on facts you cannot read.
 
+SOURCE-LETTER ACCURACY GATE:
+- Do not assume every premise in the prior Phase 3 letter is technically or legally correct.
+- Status 97 is an unpaid charge-off and may legitimately carry Current Balance and Amount Past Due. Do not treat that combination alone as an unresolved issue.
+- Status 64 is paid in full, was a charge-off; a nonzero balance or past-due amount with Status 64 may be an integrity conflict.
+- Field 18 is a rolling 24-month Payment History Profile, not lifetime history from Date Opened.
+- Field 23 is Original Charge-off Amount; Field 27 is Date of Last Payment.
+- A cross-bureau conflict does not establish which bureau's value is correct.
+- A CRA generally owes a description of its reinvestigation procedure under §1681i(a)(6)(B)(iii)/(a)(7), not production of a UDF or every source record.
+- If a prior issue rests on one of these bad premises, set its outcome to UNCLEAR and begin notes with "SOURCE PREMISE UNSUPPORTED — DO NOT REASSERT:" followed by the correction. Never recommend follow-up solely for an unsupported premise.
+
 OUTPUT FIELDS:
 - classification: one classification code above
 - summary: a concise 2-4 sentence staff-facing summary

@@ -62,6 +62,8 @@ Scan every credit report for:
 - Balance > $0 on bankruptcy-discharged account → 11 U.S.C. §524
 - Current Balance (Field 21) > 0 when paid/settled
 - Amount Past Due (Field 22) > $0 on settled account
+- Status 97 means an unpaid balance reported as a loss (charge-off); it may legitimately carry a Current Balance and Amount Past Due. Charge-off is accounting treatment and does not extinguish the debt. Never flag that combination by itself or call it a logical impossibility.
+- Status 64 means paid in full, was a charge-off; a nonzero Current Balance or Amount Past Due with Status 64 is a supported integrity conflict.
 - Highest Credit / Original Loan Amount (Field 12) < current balance → impossible (except fee/interest accrual cases — note the caveat, don't overclaim)
 - Materially different balances across bureaus
 - On COLLECTION accounts specifically: Current Balance == Amount Past Due is NOT a violation — that is standard, expected Metro 2 reporting for a purchased charged-off account with no post-sale activity. The violation condition is Current Balance < Amount Past Due (or the balance itself being independently unsupportable — unauthorized fee accrual, post-sale interest on a non-interest-bearing account, etc.). Never cite a Field 21/22 violation on a collection account solely because balance equals past-due.
@@ -71,6 +73,7 @@ Scan every credit report for:
 - Status update date spread > 30 days
 
 **Field 18 (Payment History Profile) integrity:**
+- Field 18 is a rolling 24-month profile, not lifetime history. Never demand history from Date Opened through the present.
 - Zero/missing months on active derogatory account
 - Single-bureau suppression (full at EQ/EXP, blank at TU)
 - Sequential paradox: 30-late → Current → 30-late without cure
@@ -125,12 +128,12 @@ Verified against the CDIA base-segment field order (2026-07-24 full correction �
 | 7 | Consumer Account Number | Cross-bureau conflicts |
 | 8 | Portfolio Type | C=Line of credit, I=Installment, M=Mortgage, O=Open, R=Revolving |
 | 9 | Account Type | Two-digit code (e.g. 01 auto, 07 charge card, 48 collection) |
-| 10 | Date Opened | History length |
+| 10 | Date Opened | Origination or placement date; not the start of a lifetime Field 18 demand |
 | 11 | Credit Limit | — |
 | 12 | Highest Credit or Original Loan Amount | Impossible values (e.g. below current balance) |
 | 13 | Terms Duration | Must match agreement |
 | 14 | Terms Frequency | — |
-| 15 | Scheduled Monthly Payment Amount | Must be $0 on charge-offs |
+| 15 | Scheduled Monthly Payment Amount | Apply the portfolio-type rule in §3; do not assume every charge-off must report $0 |
 | 16 | Actual Payment Amount | — |
 | 17A | Account Status | THE most-cited; see codes below |
 | 17B | Payment Rating | Cross-check against 17A |
@@ -194,11 +197,11 @@ CRITICAL: 71/78/80/82/83/84 are TIME-BASED DELINQUENCY STAGES, not derogatory-ou
    - Specific identification of every record reviewed during investigation
    - Explanation of how those records support accuracy of each disputed element
    - Copies of documentation relied upon (redacted if necessary but sufficient to demonstrate verification)
-   - For charge-off accounts with active balance: (a) original credit agreement, (b) itemized transaction history showing how the balance was calculated post-charge-off, (c) internal records showing charge-off date and charge-off amount, (d) written explanation of how a charged-off account can simultaneously carry a current balance under Metro 2 standards
+   - For charge-off accounts where the amount itself is disputed: (a) original credit agreement, (b) itemized transaction history supporting the current balance, and (c) records showing charge-off date and Original Charge-off Amount (Field 23). Do not suggest that charge-off extinguishes the balance.
    - Confirmation of all Metro 2 corrections submitted to each CRA with dates and corrected field values
    - Form letters, "verified as reported" responses, or automated replies are deemed non-responsive and legally insufficient under Johnson v. MBNA, 357 F.3d 426
-14. Closing — before the signature block, add ONE devastating sentence that frames the core violation as a logical impossibility specific to this account. Examples by violation type:
-   - Charge-off with active balance: "A charged-off account reporting an active balance and past due amount is a logical impossibility — charge-off by definition represents debt deemed uncollectible and written off for tax purposes, and it cannot simultaneously carry an active financial obligation."
+14. Closing — before the signature block, add ONE precise sentence that frames the strongest supported inconsistency specific to this account. Examples by violation type:
+   - Paid charge-off with active balance: "Status 64 reports this account paid in full after charge-off, while Fields 21 and 22 continue to report an amount owed; those values cannot all be accurate at the same time."
    - Re-aged DOFD: "A Date of First Delinquency set after the Date of Last Payment is a mathematical impossibility that exposes this reporting as fabricated."
    - Cross-bureau asymmetry: "The same account cannot simultaneously have [X] at one bureau and [Y] at another — at least one version is definitionally false."
    - Status paradox: "An account cannot simultaneously be [Status A] and carry [contradictory data point] — this is a Metro 2 integrity failure with no lawful explanation."

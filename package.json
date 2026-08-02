@@ -9,7 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "dev:netlify": "netlify dev",
-    "test:metro2-citations": "node scripts/test-metro2-citations.mjs"
+    "test:metro2-citations": "node scripts/test-metro2-citations.mjs",
+    "test:followup-enclosures": "node scripts/test-followup-enclosures.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",
