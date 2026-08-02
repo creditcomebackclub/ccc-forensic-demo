@@ -6,6 +6,10 @@ import { listClientSummaries, getClientDetails, findClientIdByLegacyReference, d
 import { getReturnReceiptUrl } from '../utils/api';
 import { getSettings } from '../utils/settings';
 import { getTierPricing, describeTierFee } from '../utils/pricing';
+import { collectBureauFollowUpProblems, collectPhase3CitationProblems } from '../constants/metro2Fields';
+import { isPhase3FollowUpLetter } from '../utils/followUpEnclosures';
+import { hasInjectedSignature, injectSignatureImage } from '../utils/signatureInjection';
+import { supabase } from '../utils/supabase';
 import { archiveHistoricalMailpiece, getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
@@ -2306,7 +2310,33 @@ function LetterEditModal({ letter, onClose, onSaved }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const html = editorRef.current?.innerHTML || '';
+      let html = editorRef.current?.innerHTML || '';
+      if (String(letter.phase || '').startsWith('Phase 3')) {
+        const problems = isPhase3FollowUpLetter(letter)
+          ? collectBureauFollowUpProblems(html)
+          : collectPhase3CitationProblems(html);
+        if (problems.length) {
+          throw new Error('Phase 3 safety check failed: ' + problems.join(' '));
+        }
+      }
+
+      if (isPhase3FollowUpLetter(letter)) {
+        if (!letter.clientId) throw new Error('Client identity is missing; signature injection was blocked.');
+        const [{ data: profiles, error: profileError }, { data: clients, error: clientError }] = await Promise.all([
+          supabase.from('client_profiles').select('signature_data').eq('client_id', letter.clientId).limit(1),
+          supabase.from('clients').select('lpoa_signature_data,name').eq('id', letter.clientId).limit(1),
+        ]);
+        if (profileError) throw profileError;
+        if (clientError) throw clientError;
+        const signatureUrl = profiles?.[0]?.signature_data || clients?.[0]?.lpoa_signature_data?.signatureUrl;
+        const clientName = clients?.[0]?.name || letter.clientName;
+        if (!signatureUrl) throw new Error('The client has no stored signature.');
+        const signedHtml = injectSignatureImage(html, signatureUrl, clientName);
+        if (signedHtml === html && !hasInjectedSignature(html, signatureUrl)) {
+          throw new Error('The signature block could not be located.');
+        }
+        html = signedHtml;
+      }
       await updateLetter(letter.id, { html });
       if (onSaved) await onSaved();
       onClose();
