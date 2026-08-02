@@ -4,10 +4,10 @@ export const DEMO_USER = {
   name: 'Frankie Fields',
   email: 'frankie@example.com',
   address: {
-    line1: '1842 Canyon Crest Dr',
-    city: 'Grand Junction',
+    line1: '123 Credit Street',
+    city: 'Scoreville',
     state: 'CO',
-    zip: '81507',
+    zip: '80000',
   },
 };
 
