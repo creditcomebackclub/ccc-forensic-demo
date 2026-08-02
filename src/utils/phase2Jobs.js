@@ -5,8 +5,8 @@
 import { supabase } from './supabase';
 
 const POLL_MS = 1500;
-const QUEUE_STALL_MS = 60 * 1000;   // never picked up by the function
-const RUN_STALL_MS = 3 * 60 * 1000; // running but no row updates
+const QUEUE_STALL_MS = 3 * 60 * 1000;    // Netlify queue/cold-start allowance
+const RUN_STALL_MS = 12 * 60 * 1000;     // background function limit is 15m
 const MAX_READ_FAILURES = 15;       // consecutive poll read errors
 
 // A follow-up can finish model generation and then fail during local
@@ -106,7 +106,7 @@ export async function pollPhase2Job(jobId, onProgress) {
       throw new Error('The analysis job was never picked up by the server — check that the phase2-analyze function is deployed, then try again.');
     }
     if (data.status === 'running' && age > RUN_STALL_MS) {
-      throw new Error('The analysis stalled on the server (no progress for 3 minutes). Try again.');
+      throw new Error('The analysis has had no server heartbeat for 12 minutes. Check the Netlify function log before retrying so a still-running job is not duplicated.');
     }
 
     onProgress && onProgress(data.tokens || 0);
