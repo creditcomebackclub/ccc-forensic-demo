@@ -10,6 +10,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
+import { collectBureauFollowUpProblems } from '../src/constants/metro2Fields.js';
 import {
   hasInjectedSignature,
   injectSignatureImage,
@@ -94,6 +95,11 @@ async function main() {
     }
     if (hasInjectedSignature(letter.html, signatureUrl)) {
       console.log(`SKIP ${letter.id}: signature already present`);
+      continue;
+    }
+    const contentProblems = collectBureauFollowUpProblems(letter.html);
+    if (contentProblems.length) {
+      console.log(`SKIP ${letter.id}: ${contentProblems.length} production-safety issue(s)`);
       continue;
     }
     const signedHtml = injectSignatureImage(letter.html, signatureUrl, client.name);

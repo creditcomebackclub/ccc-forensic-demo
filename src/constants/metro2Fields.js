@@ -447,8 +447,28 @@ function collectPhase3SubstantiveProblems(html) {
       problem: 'Demands lifetime payment history under Field 18. Field 18 is a rolling 24-month Payment History Profile, not history from account opening.',
     },
     {
+      pattern: /(?:\bC\/O\b|charg(?:e|ed)[\s-]?off).{0,220}(?:months?\s+(?:after|following)|post[\s-]?closure).{0,100}(?:closure|closed)|(?:closure|closed).{0,220}(?:\bC\/O\b|charg(?:e|ed)[\s-]?off).{0,120}(?:inaccurate|unverif|correct|delete)/i,
+      problem: 'Treats monthly C/O/charge-off reporting after Date Closed as inaccurate or suspect solely because it follows closure. An unpaid charge-off may continue reporting after closure; require a separate concrete inconsistency.',
+    },
+    {
+      pattern: /(?:no provision.{0,100}(?:requiring|authorizing).{0,100}Amount Past Due.{0,60}(?:equal|equals).{0,60}Current Balance|Amount Past Due.{0,80}(?:equal|equals).{0,80}Current Balance.{0,180}(?:violation|not authorized|inaccurate))/i,
+      problem: 'Treats Amount Past Due equaling Current Balance as a violation. That equality is common on collection/charged-off accounts and is not inaccurate by itself.',
+    },
+    {
+      pattern: /(?:Fields?\s*17A\s*\/\s*21.{0,160}(?:Amount Past Due|Current Balance)|(?:Amount Past Due|Current Balance).{0,160}Fields?\s*17A\s*\/\s*21)/i,
+      problem: 'Uses Fields 17A/21 as the balance/past-due pair. Field 17A is Account Status; Current Balance is Field 21 and Amount Past Due is Field 22.',
+    },
+    {
+      pattern: /(?:Date of First Delinquency|DOFD).{0,420}(?:returned|dishonored) payment|(?:returned|dishonored) payment.{0,420}(?:Date of First Delinquency|DOFD)/i,
+      problem: 'Uses a returned/dishonored payment date to establish or contradict DOFD without proving the uninterrupted delinquency that led to charge-off. A payment-return date alone is not the DOFD.',
+    },
+    {
       pattern: /(?:demand|require|must (?:provide|produce)|statutorily (?:must|required)|obligat(?:e|ed|ion).{0,30}(?:provide|produce)).{0,180}(?:\bUDF\b|Universal Data Form|original[- ]source documentation|source records|all furnisher documents)/i,
       problem: 'Treats UDF or source-document production as a CRA statutory duty. Request the §1681i(a)(6)(B)(iii)/(a)(7) description of the reinvestigation procedure; supporting records may be requested but are not guaranteed.',
+    },
+    {
+      pattern: /(?:TransUnion|Experian|Equifax|the CRA)\s+must.{0,1200}(?:confirm|disclose).{0,220}(?:transaction-level records|every record reviewed|records reviewed by the furnisher|particular internal (?:document|record))/i,
+      problem: 'Treats disclosure of the furnisher\'s transaction-level/internal records review as a mandatory CRA duty. The statutory entitlement is the §1681i(a)(6)(B)(iii)/(a)(7) procedure description and furnisher contact information.',
     },
     {
       pattern: /Johnson v\.?\s*MBNA.{0,180}(?:the CRA|the bureau|CRA reinvestigation|bureau reinvestigation)|(?:the CRA|the bureau).{0,180}Johnson v\.?\s*MBNA/i,
@@ -473,6 +493,12 @@ export function collectPhase3CitationProblems(html) {
 export function collectBureauFollowUpProblems(html) {
   const problems = collectPhase3CitationProblems(html);
   const text = plainText(html);
+  if (/\bDear Sir or Madam\b/i.test(text)) {
+    problems.push('Uses "Dear Sir or Madam"; follow-up letters must address the bureau directly without a generic salutation.');
+  }
+  if (/\bSincerely\b/i.test(text)) {
+    problems.push('Uses "Sincerely"; follow-up letters must close with the exact consumer signature block and "Consumer — All Rights Reserved."');
+  }
   const enclosureIndex = text.search(/\bEnclosures?\s*:/i);
   if (enclosureIndex < 0) {
     problems.push('Missing the required follow-up enclosures line for prior Phase 3, bureau response, and Limited Power of Attorney.');

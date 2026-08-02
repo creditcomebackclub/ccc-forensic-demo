@@ -74,6 +74,26 @@ assert(has(
   collectPhase3CitationProblems('<p>Under Johnson v. MBNA, the bureau reinvestigation was unreasonable.</p>'),
   'furnisher investigation'
 ), 'Johnson CRA-duty misuse blocked');
+assert(has(
+  collectPhase3CitationProblems('<p>Amount Past Due Equal to Current Balance (Fields 17A/21)</p>'),
+  'Field 17A is Account Status'
+), 'Fields 17A/21 balance-past-due mislabel blocked');
+assert(has(
+  collectPhase3CitationProblems('<p>The CRRG contains no provision requiring or authorizing Amount Past Due to equal Current Balance.</p>'),
+  'common on collection'
+), 'equal collection balance/past-due fallacy blocked');
+assert(has(
+  collectPhase3CitationProblems('<p>The DOFD is October 20, but the ledger shows a returned payment dated October 11.</p>'),
+  'payment-return date alone'
+), 'returned-payment date as DOFD proof blocked');
+assert(has(
+  collectPhase3CitationProblems('<p>Field 18 shows C/O for every month, including months after the reported closure; correct or delete those entries.</p>'),
+  'unpaid charge-off may continue'
+), 'post-closure C/O-only challenge blocked');
+assert(has(
+  collectPhase3CitationProblems('<p>TransUnion must confirm in writing whether the furnisher reviewed transaction-level records.</p>'),
+  'procedure description'
+), 'mandatory transaction-record review disclosure blocked');
 assert(
   collectPhase3CitationProblems('<p>Status 64 reports paid in full, while Field 21 — Current Balance is $900.</p>').length === 0,
   'supported paid charge-off balance conflict passes'
@@ -89,6 +109,14 @@ const cleanFollowUp = `<p>Disputed information must be reinvestigated under §16
 Exhibit B: TransUnion Investigation Results (dated July 31, 2026);
 Exhibit C: Limited Power of Attorney.</p>`;
 assert(collectBureauFollowUpProblems(cleanFollowUp).length === 0, 'clean follow-up enclosure contract passes');
+assert(has(
+  collectBureauFollowUpProblems('<p>Dear Sir or Madam:</p>' + cleanFollowUp),
+  'generic salutation'
+), 'generic follow-up salutation blocked');
+assert(has(
+  collectBureauFollowUpProblems('<p>Sincerely,</p>' + cleanFollowUp),
+  'exact consumer signature block'
+), 'courtesy follow-up closing blocked');
 assert(has(
   collectBureauFollowUpProblems('<p>Enclosures: Exhibit A: Phase 1 Direct Furnisher Dispute; Exhibit B: Furnisher Response</p>'),
   'must not list'
