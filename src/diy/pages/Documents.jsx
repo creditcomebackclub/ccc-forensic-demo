@@ -91,8 +91,12 @@ export default function Documents() {
     }
   };
 
-  const hasId = documents.some((d) => d.kind === 'Photo ID' && (d.storagePath || d.localDataUrl));
-  const hasAddress = documents.some((d) => d.kind === 'Proof of address' && (d.storagePath || d.localDataUrl));
+  const hasId = documents.some((d) => (
+    d.kind === 'Photo ID' && (guest || d.storagePath || d.localDataUrl)
+  ));
+  const hasAddress = documents.some((d) => (
+    d.kind === 'Proof of address' && (guest || d.storagePath || d.localDataUrl)
+  ));
 
   return (
     <div className="mx-auto max-w-3xl">
