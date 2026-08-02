@@ -77,17 +77,17 @@ export default function Auth() {
         <div className="mt-6 flex gap-2 text-sm">
           <button
             type="button"
-            onClick={() => { setMode('signup'); setError(''); }}
+            onClick={() => { setError(''); navigate('/signup', { replace: true }); }}
             className={`rounded px-3 py-1.5 font-semibold ${mode === 'signup' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white'}`}
           >
             Sign up
           </button>
           <button
             type="button"
-            onClick={() => { setMode('signin'); setError(''); }}
+            onClick={() => { setError(''); navigate('/login', { replace: true }); }}
             className={`rounded px-3 py-1.5 font-semibold ${mode === 'signin' ? 'bg-white/15 text-white' : 'text-white/50 hover:text-white'}`}
           >
-            Sign in
+            Log in
           </button>
         </div>
 
