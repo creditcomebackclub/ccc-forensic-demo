@@ -12,7 +12,7 @@ export default function Dashboard() {
       <p className="fw-mono text-[11px] uppercase tracking-[0.22em] text-[var(--fw-sea)]">Home</p>
       <h1 className="fw-display mt-2 text-4xl font-bold md:text-5xl">Welcome back, {first}</h1>
       <p className="mt-3 max-w-2xl text-lg text-[var(--fw-muted)]">
-        You run the disputes. Audit the file, choose what to challenge, mail certified letters in your name, and watch the clocks — tools you control, not a black-box retainer.
+        Here’s where you stand this cycle — audits and mail left, campaigns in flight, and what’s ready for the next send.
       </p>
 
       <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
