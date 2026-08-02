@@ -194,23 +194,38 @@ export function FieldworkProvider({ children }) {
   useEffect(() => {
     let cancelled = false;
     getFieldworkStatus().then((status) => {
-      if (!cancelled) {
-        setRuntime({
+      if (cancelled) return;
+      setRuntime((prev) => {
+        // Don't overwrite an active guest tour with cloud/demo status.
+        if (prev.mode === 'guest-demo' || isGuestDemo) {
+          return {
+            ...prev,
+            isolated: true,
+            anthropicConfigured: Boolean(status.anthropicConfigured),
+            mode: 'guest-demo',
+            message: prev.message || 'Guest product tour — not your account.',
+          };
+        }
+        return {
           mode: status.mode || (fieldworkCloudEnabled ? 'cloud' : 'demo'),
           isolated: status.isolated !== false,
           anthropicConfigured: Boolean(status.anthropicConfigured),
           message: status.message || '',
-        });
-      }
+        };
+      });
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [isGuestDemo]);
 
   // Restore Fieldwork Supabase session → bootstrap subscriber (skip guest tour)
   useEffect(() => {
     if (isGuestDemo) {
       setAuthReady(true);
-      setRuntime((r) => ({ ...r, mode: 'guest-demo', message: 'Guest product tour — not your account.' }));
+      setRuntime((r) => ({
+        ...r,
+        mode: 'guest-demo',
+        message: 'Guest product tour — not your account.',
+      }));
       return undefined;
     }
     if (!fieldworkCloudEnabled) {
@@ -222,9 +237,24 @@ export function FieldworkProvider({ children }) {
       try {
         const session = await fieldworkGetSession();
         if (cancelled) return;
+        // Guest tour may flip on while this request was in flight — never clobber it.
+        const guestActive = (() => {
+          try {
+            return localStorage.getItem('fieldwork-guest-active') === '1';
+          } catch {
+            return false;
+          }
+        })();
+        if (guestActive) return;
         if (session) {
           const snap = await bootstrapFieldwork({});
-          if (!cancelled) applyBootstrap(snap, saved?.user || {});
+          if (cancelled) return;
+          try {
+            if (localStorage.getItem('fieldwork-guest-active') === '1') return;
+          } catch {
+            /* ignore */
+          }
+          applyBootstrap(snap, saved?.user || {});
         } else if (saved?.user?.subscriberId || saved?.user?.guest) {
           // Stale cloud / guest user in account storage without session
           setUser(null);

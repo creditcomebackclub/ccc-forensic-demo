@@ -40,11 +40,8 @@ export default function CampaignWizard() {
     completeMail,
     isGuestDemo,
   } = useFieldwork();
-  const guest = isGuestDemo || user?.guest;
   const nav = NAV.map((step) => (
-    step.id === 'upload' && guest
-      ? { ...step, label: 'Sample' }
-      : step
+    step.id === 'upload' ? { ...step, label: 'Sample' } : step
   ));
 
   const stepIndex = nav.findIndex((n) => n.id === wizardStep);
