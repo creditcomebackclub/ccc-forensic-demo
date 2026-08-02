@@ -79,11 +79,112 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_name,phase,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues',
+      + '&select=id,user_id,client_id,client_name,phase,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
   return Array.isArray(result.body) ? result.body[0] : null;
+}
+
+function isBureauFollowUp(letter) {
+  return /^Phase 3\b.*\(Follow-up\)/i.test(String(letter?.phase || ''))
+    || !!(letter?.source_phase3_letter_id || letter?.source_bureau_response_evidence_id);
+}
+
+function bureauFromPhase(phase) {
+  const value = String(phase || '').toLowerCase();
+  if (value.includes('equifax')) return 'equifax';
+  if (value.includes('experian')) return 'experian';
+  if (value.includes('transunion') || value.includes('trans union')) return 'transunion';
+  return null;
+}
+
+function sameStringSet(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || !left.length || !right.length) return false;
+  return JSON.stringify([...new Set(left.map(String))].sort())
+    === JSON.stringify([...new Set(right.map(String))].sort());
+}
+
+async function validateBureauFollowUpPreflight(letter, manifest, supabaseUrl, serviceKey) {
+  if (!isBureauFollowUp(letter)) return [];
+  const issues = [];
+  const sourceLetterId = letter.source_phase3_letter_id;
+  const sourceEvidenceId = letter.source_bureau_response_evidence_id;
+  if (!sourceLetterId || !sourceEvidenceId) {
+    return ['The saved follow-up does not identify both its exact prior Phase 3 letter and exact bureau response. Regenerate it before mailing.'];
+  }
+  if (!letter.client_id || !letter.user_id || sourceLetterId === letter.id) {
+    return ['The saved follow-up source relationship is incomplete or invalid. Reconcile it before mailing.'];
+  }
+
+  const [priorResult, evidenceResult, clientResult] = await Promise.all([
+    supabaseRequest(
+      '/rest/v1/letters?id=eq.' + encodeURIComponent(sourceLetterId)
+        + '&user_id=eq.' + encodeURIComponent(letter.user_id)
+        + '&select=id,user_id,client_id,phase,covered_furnishers,html',
+      'GET', null, supabaseUrl, serviceKey
+    ),
+    supabaseRequest(
+      '/rest/v1/response_evidence?id=eq.' + encodeURIComponent(sourceEvidenceId)
+        + '&select=id,firm_user_id,client_id,letter_id,response_kind,storage_bucket,storage_paths,file_names,upload_status',
+      'GET', null, supabaseUrl, serviceKey
+    ),
+    supabaseRequest(
+      '/rest/v1/clients?id=eq.' + encodeURIComponent(letter.client_id)
+        + '&select=id,user_id,lpoa_signature_data',
+      'GET', null, supabaseUrl, serviceKey
+    ),
+  ]);
+  if (!isSuccess(priorResult)) throw new Error(requestError(priorResult, 'Could not validate the prior Phase 3 enclosure'));
+  if (!isSuccess(evidenceResult)) throw new Error(requestError(evidenceResult, 'Could not validate the bureau-response enclosure'));
+  if (!isSuccess(clientResult)) throw new Error(requestError(clientResult, 'Could not validate the Limited Power of Attorney'));
+
+  const prior = Array.isArray(priorResult.body) ? priorResult.body[0] : null;
+  const evidence = Array.isArray(evidenceResult.body) ? evidenceResult.body[0] : null;
+  const client = Array.isArray(clientResult.body) ? clientResult.body[0] : null;
+  if (!prior
+    || prior.id !== sourceLetterId
+    || prior.user_id !== letter.user_id
+    || prior.client_id !== letter.client_id
+    || !String(prior.phase || '').startsWith('Phase 3')
+    || !bureauFromPhase(letter.phase)
+    || bureauFromPhase(prior.phase) !== bureauFromPhase(letter.phase)
+    || !sameStringSet(prior.covered_furnishers, letter.covered_furnishers)
+    || !String(prior.html || '').trim()) {
+    issues.push('Exhibit A is not a printable Phase 3 letter for the same client, firm, bureau, and furnisher coverage.');
+  }
+
+  const paths = Array.isArray(evidence?.storage_paths) ? evidence.storage_paths : [];
+  const names = Array.isArray(evidence?.file_names) ? evidence.file_names : [];
+  const expectedPrefix = `${letter.user_id}/response-evidence/${sourceEvidenceId}/`;
+  if (!evidence
+    || evidence.id !== sourceEvidenceId
+    || evidence.firm_user_id !== letter.user_id
+    || evidence.client_id !== letter.client_id
+    || evidence.letter_id !== sourceLetterId
+    || evidence.response_kind !== 'bureau'
+    || evidence.storage_bucket !== 'responses'
+    || evidence.upload_status !== 'received'
+    || paths.length === 0
+    || paths.some((path) => typeof path !== 'string' || !path.startsWith(expectedPrefix))
+    || names.length !== paths.length) {
+    issues.push('Exhibit B is not a complete bureau response to Exhibit A for this same client and firm.');
+  }
+  if (!client
+    || client.id !== letter.client_id
+    || client.user_id !== letter.user_id
+    || !client.lpoa_signature_data?.lpoaUrl) {
+    issues.push('Exhibit C is missing the client’s signed Limited Power of Attorney.');
+  }
+
+  if (!manifest
+    || manifest.kind !== 'bureau_follow_up_v1'
+    || manifest.source_phase3_letter_id !== sourceLetterId
+    || manifest.source_bureau_response_evidence_id !== sourceEvidenceId
+    || JSON.stringify(manifest.response_storage_paths || []) !== JSON.stringify(paths)) {
+    issues.push('The rendered packet manifest does not exactly match the saved follow-up sources.');
+  }
+  return issues;
 }
 
 async function findSubmission(letterId, supabaseUrl, serviceKey) {
@@ -221,7 +322,7 @@ exports.handler = async (event) => {
     }
 
     if (action === 'send_letter') {
-      const { toAddress, fromAddress, remoteUrl, description, metadata } = payload;
+      const { toAddress, fromAddress, remoteUrl, description, metadata, enclosureManifest } = payload;
       const letterId = metadata && metadata.letter_id;
       if (!letterId || !remoteUrl || !toAddress || !fromAddress) {
         return { statusCode: 400, body: JSON.stringify({ error: 'letter_id, rendered letter URL, and complete addresses are required' }) };
@@ -251,6 +352,22 @@ exports.handler = async (event) => {
         return {
           statusCode: 422,
           body: JSON.stringify({ error: 'PHASE 3 COVERAGE MISSING — assign the specific furnisher(s) this bureau letter covers before mailing.', blocked: true }),
+        };
+      }
+      const followUpIssues = await validateBureauFollowUpPreflight(
+        letter,
+        enclosureManifest,
+        supabaseUrl,
+        serviceKey
+      );
+      if (followUpIssues.length > 0) {
+        return {
+          statusCode: 422,
+          body: JSON.stringify({
+            error: 'BUREAU FOLLOW-UP ENCLOSURES INVALID — nothing was sent.',
+            issues: followUpIssues,
+            blocked: true,
+          }),
         };
       }
 

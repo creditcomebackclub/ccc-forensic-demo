@@ -139,7 +139,7 @@ export async function upsertFurnisherAddress(furnisherName, address) {
   if (error) console.warn('Could not save furnisher address:', error);
 }
 
-export async function saveLetter(account, client, html, summary, phase, idSuffix) {
+export async function saveLetter(account, client, html, summary, phase, idSuffix, metadata = {}) {
   const userId = await getUserId();
   const clientName = (client && client.name) || 'Unknown Client';
   const clientId = (client && client.id) || null;
@@ -189,6 +189,13 @@ export async function saveLetter(account, client, html, summary, phase, idSuffix
     date,
     html,
     summary: summary || null,
+    ...('coveredFurnishers' in metadata ? { covered_furnishers: metadata.coveredFurnishers || [] } : {}),
+    ...('enclosureParseBlocked' in metadata ? { enclosure_parse_blocked: !!metadata.enclosureParseBlocked } : {}),
+    ...('enclosureParseIssues' in metadata ? { enclosure_parse_issues: metadata.enclosureParseIssues || [] } : {}),
+    ...('sourcePhase3LetterId' in metadata ? { source_phase3_letter_id: metadata.sourcePhase3LetterId || null } : {}),
+    ...('sourceBureauResponseEvidenceId' in metadata
+      ? { source_bureau_response_evidence_id: metadata.sourceBureauResponseEvidenceId || null }
+      : {}),
   });
   if (error) throw error;
   return id;
@@ -215,6 +222,13 @@ export async function updateLetter(id, patch) {
   if ('bureauResponseStatus' in patch) mapped.bureau_response_status = patch.bureauResponseStatus;
   if ('bureauResponseReceivedAt' in patch) mapped.bureau_response_received_at = patch.bureauResponseReceivedAt;
   if ('bureauResponseAnalyzedAt' in patch) mapped.bureau_response_analyzed_at = patch.bureauResponseAnalyzedAt;
+  if ('coveredFurnishers' in patch) mapped.covered_furnishers = patch.coveredFurnishers || [];
+  if ('enclosureParseBlocked' in patch) mapped.enclosure_parse_blocked = !!patch.enclosureParseBlocked;
+  if ('enclosureParseIssues' in patch) mapped.enclosure_parse_issues = patch.enclosureParseIssues || [];
+  if ('sourcePhase3LetterId' in patch) mapped.source_phase3_letter_id = patch.sourcePhase3LetterId || null;
+  if ('sourceBureauResponseEvidenceId' in patch) {
+    mapped.source_bureau_response_evidence_id = patch.sourceBureauResponseEvidenceId || null;
+  }
 
   const { data, error } = await supabase
     .from('letters')
@@ -290,6 +304,8 @@ function normalizeLetter(l) {
     hasResponseFile: !!l.response_file_url || !!l.has_response_file,
     enclosureParseBlocked: l.enclosure_parse_blocked || false,
     enclosureParseIssues: l.enclosure_parse_issues || [],
+    sourcePhase3LetterId: l.source_phase3_letter_id || null,
+    sourceBureauResponseEvidenceId: l.source_bureau_response_evidence_id || null,
     clientAccountId: l.client_account_id || null,
     auditorName: l.auditor_name || null,
   };

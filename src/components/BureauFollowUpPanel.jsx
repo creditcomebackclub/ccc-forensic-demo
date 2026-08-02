@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle, Loader2, X } from 'lucide-react';
 import { runPhase2Job } from '../utils/phase2Jobs';
 import { saveLetter } from '../utils/storage';
-import { supabase } from '../utils/supabase';
 
 const AUTO_OK = new Set(['VERIFIED_WITHOUT_SUBSTANCE', 'PARTIAL_CORRECTION']);
 
@@ -64,6 +63,13 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
 
       const bureau = draft.bureau || bureauFromPhase(letter.phase);
       if (!bureau) throw new Error('Could not determine bureau for the follow-up letter.');
+      if (draft.source_letter_id !== letter.id || draft.source_evidence_id !== evidence.id) {
+        throw new Error('Follow-up source mismatch. Nothing was saved; re-run the draft from the intended bureau response.');
+      }
+      const coveredFurnishers = letter.coveredFurnishers || letter.covered_furnishers || [];
+      if (!coveredFurnishers.length) {
+        throw new Error('The prior Phase 3 letter has no exact furnisher coverage. Reconcile it before saving a follow-up.');
+      }
 
       const phaseLabel = `Phase 3 — ${bureauLabel(bureau)} (Follow-up)`;
       const letterId = await saveLetter(
@@ -77,16 +83,15 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
         draft.letterHtml,
         draft.summary || `Bureau follow-up to ${bureauLabel(bureau)}`,
         phaseLabel,
-        `__phase3-${bureau}-followup`
+        `__phase3-${bureau}-followup`,
+        {
+          coveredFurnishers,
+          enclosureParseBlocked: !!draft.enclosure_parse_blocked,
+          enclosureParseIssues: draft.enclosure_parse_issues || [],
+          sourcePhase3LetterId: draft.source_letter_id,
+          sourceBureauResponseEvidenceId: draft.source_evidence_id,
+        }
       );
-
-      await supabase.from('letters').update({
-        covered_furnishers: letter.coveredFurnishers?.length
-          ? letter.coveredFurnishers
-          : [letter.furnisher],
-        enclosure_parse_blocked: !!draft.enclosure_parse_blocked,
-        enclosure_parse_issues: draft.enclosure_parse_issues || [],
-      }).eq('id', letterId);
 
       setResult(draft);
       setSavedLetterId(letterId);
