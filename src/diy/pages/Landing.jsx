@@ -201,7 +201,7 @@ export default function Landing() {
               },
               {
                 icon: Crosshair,
-                title: 'You pick what worth fighting',
+                title: 'You pick what\'s worth fighting',
                 body: 'No mystery campaign. You see every finding, choose the accounts, and skip the ones that aren’t worth a stamp.',
               },
               {
