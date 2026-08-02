@@ -126,6 +126,7 @@ async function validateBureauFollowUpPreflight(letter, manifest, supabaseUrl, se
     ),
     supabaseRequest(
       '/rest/v1/response_evidence?id=eq.' + encodeURIComponent(sourceEvidenceId)
+        + '&firm_user_id=eq.' + encodeURIComponent(letter.user_id)
         + '&select=id,firm_user_id,client_id,letter_id,response_kind,storage_bucket,storage_paths,file_names,upload_status',
       'GET', null, supabaseUrl, serviceKey
     ),

@@ -279,6 +279,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             .from('response_evidence')
             .select('id,firm_user_id,client_id,letter_id,response_kind,storage_bucket,storage_paths,file_names,upload_status,received_at')
             .eq('id', sources.sourceBureauResponseEvidenceId)
+            .eq('client_id', letter.clientId)
             .maybeSingle(),
         ]);
         if (priorError) throw priorError;
