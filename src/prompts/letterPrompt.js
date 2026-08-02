@@ -13,8 +13,8 @@ function buildLetterSystemPrompt(tone) {
     : 'Firm, professional, factual, deadline-driven (30 days). State the violation and the required correction plainly — this is a formal legal notice, not a negotiation, but it does not need to be adversarial to be effective.';
 
   const closingInstruction = isAggressive
-    ? `Closing — before the signature block, add ONE devastating sentence that frames the core violation as a logical impossibility specific to this account. Examples by violation type:
-   - Charge-off with active balance: "A charged-off account reporting an active balance and past due amount is a logical impossibility — charge-off by definition represents debt deemed uncollectible and written off for tax purposes, and it cannot simultaneously carry an active financial obligation."
+    ? `Closing — before the signature block, add ONE precise sentence that frames the strongest supported inconsistency specific to this account. Examples by violation type:
+   - Paid charge-off with active balance: "Status 64 reports this account paid in full after charge-off, while Fields 21 and 22 continue to report an amount owed; those values cannot all be accurate at the same time."
    - Re-aged DOFD: "A Date of First Delinquency set after the Date of Last Payment is a mathematical impossibility that exposes this reporting as fabricated."
    - Cross-bureau asymmetry: "The same account cannot simultaneously have [X] at one bureau and [Y] at another — at least one version is definitionally false."
    - Status paradox: "An account cannot simultaneously be [Status A] and carry [contradictory data point] — this is a Metro 2 integrity failure with no lawful explanation."
@@ -35,6 +35,7 @@ function buildLetterSystemPrompt(tone) {
 - NO threatening to dispute with bureaus
 - NO thanking the creditor
 - Type C MUST include §1692g(b) validation alongside §1681s-2(a)
+- Status 97 is an unpaid charge-off and may legitimately carry a Current Balance and Amount Past Due. Never call that combination impossible or claim charge-off extinguishes the debt. Only assert a balance conflict when the evidence shows a paid status such as 13 or 61–65 (including Status 64).
 - LEGAL BOUNDARY (counsel has already exploited a violation of this once): this is a DIRECT dispute — it proceeds under 12 CFR §1022.43 and §1681s-2(a)(8) and does NOT trigger 15 U.S.C. §1681s-2(b), whose duties attach only after CRA notice under §1681i(a)(2). NEVER state the letter is submitted pursuant to §1681s-2(b); NEVER claim §1681s-2(b) obligations are triggered by this letter; NEVER claim a presently-available private right of action or §1681n statutory damages for this direct dispute (§1681s-2(a) has no private right of action — §1681s-2(c)). Referencing future §1681s-2(b)/§1681n exposure once CRA disputes follow is correct and encouraged; claiming it exists now is a misstatement the recipient's lawyers will quote back`
     : `- NO CCC branding in letter headers
 - NO "Forensic Credit Audit & Dispute Division" in letter body
@@ -46,6 +47,7 @@ function buildLetterSystemPrompt(tone) {
 - NO thanking the creditor
 - NO dramatic or inflammatory language ("logical impossibility," "fabricated," etc.) — state facts and the required correction
 - Type C MUST include §1692g(b) validation alongside §1681s-2(a)
+- Status 97 is an unpaid charge-off and may legitimately carry a Current Balance and Amount Past Due. Never call that combination impossible or claim charge-off extinguishes the debt. Only assert a balance conflict when the evidence shows a paid status such as 13 or 61–65 (including Status 64).
 - LEGAL BOUNDARY (counsel has already exploited a violation of this once): this is a DIRECT dispute — it proceeds under 12 CFR §1022.43 and §1681s-2(a)(8) and does NOT trigger 15 U.S.C. §1681s-2(b), whose duties attach only after CRA notice under §1681i(a)(2). NEVER state the letter is submitted pursuant to §1681s-2(b); NEVER claim §1681s-2(b) obligations are triggered by this letter; NEVER claim a presently-available private right of action or §1681n statutory damages for this direct dispute (§1681s-2(a) has no private right of action — §1681s-2(c)). Referencing future §1681s-2(b)/§1681n exposure once CRA disputes follow is correct and encouraged; claiming it exists now is a misstatement the recipient's lawyers will quote back`;
 
   return `# CCC FORENSIC AUDITOR — LETTER GENERATION PROMPT
@@ -72,7 +74,7 @@ ${failureToComply}
    - Specific identification of every record reviewed during investigation
    - Explanation of how those records support accuracy of each disputed element
    - Copies of documentation relied upon (redacted if necessary but sufficient to demonstrate verification)
-   - For charge-off accounts with active balance: (a) original credit agreement, (b) itemized transaction history showing how the balance was calculated post-charge-off, (c) internal records showing charge-off date and charge-off amount, (d) written explanation of how a charged-off account can simultaneously carry a current balance under Metro 2 standards
+   - For charge-off accounts where the amount itself is disputed: (a) original credit agreement, (b) itemized transaction history supporting the current balance, and (c) records showing the charge-off date and Original Charge-off Amount (Field 23). Never imply charge-off extinguishes the debt.
    - Confirmation of all Metro 2 corrections submitted to each CRA with dates and corrected field values
    - Form letters, "verified as reported" responses, or automated replies are deemed non-responsive and legally insufficient under Johnson v. MBNA, 357 F.3d 426
 14. ${closingInstruction}
