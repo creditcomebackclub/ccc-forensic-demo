@@ -10,9 +10,17 @@ const EVENT_PRIORITY = {
   dropped: 4,
 };
 
-function verifySignature(event) {
-  const key = process.env.SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY;
+function normalizePublicKey(value) {
+  const key = String(value || '').trim().replace(/\\n/g, '\n');
   if (!key) throw new Error('SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY is not configured.');
+  if (key.includes('-----BEGIN PUBLIC KEY-----')) return key;
+  const compact = key.replace(/\s+/g, '');
+  const lines = compact.match(/.{1,64}/g) || [];
+  return `-----BEGIN PUBLIC KEY-----\n${lines.join('\n')}\n-----END PUBLIC KEY-----`;
+}
+
+function verifySignature(event) {
+  const key = normalizePublicKey(process.env.SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY);
   const headers = event.headers || {};
   const signature = headers['x-twilio-email-event-webhook-signature'];
   const timestamp = headers['x-twilio-email-event-webhook-timestamp'];
@@ -20,7 +28,7 @@ function verifySignature(event) {
   const verifier = crypto.createVerify('sha256');
   verifier.update(String(timestamp) + String(event.body || ''));
   verifier.end();
-  return verifier.verify(key.replace(/\\n/g, '\n'), signature, 'base64');
+  return verifier.verify(key, signature, 'base64');
 }
 
 function artifactIdFrom(item) {
@@ -79,3 +87,4 @@ exports.handler = async (event) => {
   }
 };
 
+exports._normalizePublicKey = normalizePublicKey;
