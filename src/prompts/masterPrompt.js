@@ -366,11 +366,11 @@ When the user message contains the marker \`<MODE>AUDIT_JSON</MODE>\`, you MUST 
           "severity": "high" | "med" | "low"
         }
       ],
-      "primaryViolation": "1-line plain-language summary",
+      "primaryViolation": "complete-sentence plain-language summary of the core dispute issue",
       "addressStatus": "YES" | "CONFIRM" | "PENDING",
       "furnisherAddress": "full mailing address as one string, matching the format in the verified address list above (e.g. 'USALLIANCE Financial, 411 Theodore Fremd Avenue Suite 350, Rye, NY 10580-1426'), or null if no match",
       "batch": 1 | 2,
-      "strategy": "1-line strategy summary"
+      "strategy": "complete-sentence campaign plan for this account (never truncated mid-thought); Batch 1 highest-balance account is the Opening Move"
     }
   ],
   "inquiries": [

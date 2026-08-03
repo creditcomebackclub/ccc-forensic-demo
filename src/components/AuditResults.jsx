@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
 import { generateCombinedCleanupLetter } from '../utils/api';
-import { buildAuditPdfDoc, auditPdfFilename, blobToBase64 } from '../utils/auditPdf';
+import { buildAuditPdfDoc, auditPdfFilename, blobToBase64, defaultRecoveryBlueprintEmail } from '../utils/auditPdf';
 import { upsertFurnisherAddress } from '../utils/storage';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
@@ -103,28 +103,12 @@ async function lookupClientEmail(clientName, clientId) {
   return email || null;
 }
 
-function defaultAuditEmailBody(audit, clientEmail) {
-  const client = audit.client || {};
-  const firstName = (client.name || '').split(' ')[0] || 'there';
-  const scores = audit.scores || {};
-  const accountsTargeted = audit.accountsTargeted || (audit.accounts && audit.accounts.length) || 0;
-  const totalViolations = audit.totalViolations || 0;
-  return `Hi ${firstName},
-
-Your forensic audit is complete. Here's what we found across your three credit reports:
-
-Scores: Equifax ${scores.equifax ?? '—'} · Experian ${scores.experian ?? '—'} · TransUnion ${scores.transunion ?? '—'}
-
-We identified ${accountsTargeted} accounts with actionable violations and ${totalViolations} total violations under Metro 2®, FCRA, and FDCPA standards.
-
-Your dispute battle plan is attached. Review it and let us know if you have any questions — we'll be in touch with next steps once your first certified letters go out.
-
-— Chris & the Credit Comeback Club Team
-970-644-0063 | creditcomebackclub.com`;
+function defaultAuditEmailBody(audit) {
+  return defaultRecoveryBlueprintEmail({ audit });
 }
 
 function EmailAuditModal({ audit, clientEmail, onClose }) {
-  const [subject, setSubject] = useState('Your Credit Comeback Club Forensic Audit is Ready');
+  const [subject, setSubject] = useState('Your Credit Comeback Club Recovery Blueprint is Ready');
   const [body, setBody] = useState(() => defaultAuditEmailBody(audit));
   const [sending, setSending] = useState(false);
   const [error, setError] = useState(null);
@@ -195,7 +179,7 @@ function EmailAuditModal({ audit, clientEmail, onClose }) {
       <div className="bg-white rounded border border-border w-full max-w-lg flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-navy rounded-t">
           <div>
-            <div className="text-white text-[14px] font-medium ccc-display">Email Audit to Client</div>
+            <div className="text-white text-[14px] font-medium ccc-display">Email Blueprint to Client</div>
             <div className="text-gold text-[11px] uppercase tracking-wider mt-0.5">{audit.client?.name || 'Client'}</div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={18} strokeWidth={1.75} /></button>
@@ -401,7 +385,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
             style={clientEmail
               ? { borderColor: T.navy, color: T.navy, background: '#fff' }
               : { borderColor: T.border, color: '#9CA3AF', background: '#F3F4F6', cursor: 'not-allowed' }}>
-            <Mail size={13} strokeWidth={1.75} /> Email Audit to Client
+            <Mail size={13} strokeWidth={1.75} /> Email Blueprint to Client
           </button>
           <Menu items={[
             { label: 'New audit', onClick: onReset },
