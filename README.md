@@ -12,6 +12,7 @@ An internal operations platform and client portal for Credit Comeback Club. It s
 - A dashboard for active dispute campaigns, response windows, escalation readiness, Phase 3/4 workload, deletion outcomes, and portal adoption.
 - Client and lead management with lifecycle statuses, VIP handling, referral data, notes, document status, billing status, and case history.
 - An AI-assisted forensic audit workflow for uploaded credit reports, using CCC methodology and Metro 2 field references.
+- Staff-reviewed Recovery Blueprints generated deterministically from saved audit JSON, with versioned approval, immutable PDF archiving, email delivery, and audit-revision safeguards.
 - Phase 1 dispute letters, Phase 2 response analysis, Phase 3 CRA escalations, and Phase 4 CFPB/AG escalation generation.
 - Letter review, editing, mail fulfillment through Lob, delivery/return-receipt tracking, and a firm-wide in-flight letter tracker.
 - Document management, LPOA signing/audit logging, response-file uploads, and encrypted handling for selected sensitive client data.
@@ -19,7 +20,7 @@ An internal operations platform and client portal for Credit Comeback Club. It s
 
 ### Client and affiliate experiences
 
-- A client portal for onboarding, audit progress, disputes, timeline, documents, billing, VIP services, and concierge chat.
+- A client portal for onboarding, approved Recovery Blueprints, audit progress, disputes, timeline, documents, billing, VIP services, and concierge chat.
 - Public lead intake and referral flows.
 - Branded affiliate portal data, referral links, and commission visibility.
 
@@ -101,6 +102,7 @@ LOB_TEST_KEY=
 LOB_LIVE_KEY=
 LOB_WEBHOOK_SECRET=
 SENDGRID_API_KEY=
+SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY=
 ```
 
 Never expose `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, SendGrid, or Lob keys in client code or public build variables. In particular, remove any legacy `VITE_LOB_*` variables from Netlify and local environment files: only browser-safe values may use the `VITE_` prefix.
@@ -129,6 +131,7 @@ Before deploying to a new environment, verify:
 6. The scheduled `daily-cron` function, configured in `netlify.toml`.
 7. The `mail_artifacts` migration and private `documents` bucket access. A newly mailed letter should archive its exact Lob-rendered PDF; a return receipt is archived when Lob supplies it.
 8. Staff provisioning: create or invite each new team member through Supabase Auth, then use a trusted admin/backend path (or the Supabase dashboard) to create their `profiles` row with role `admin` or `auditor` before their first sign-in. Public signup never grants a staff role.
+9. Recovery Blueprint delivery: apply the `recovery_blueprints` migration, then configure SendGrid's signed Event Webhook to post delivery events to `/.netlify/functions/blueprint-email-events`. Store the SendGrid verification public key in `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY`.
 
 ## Build and deploy
 
@@ -158,3 +161,9 @@ npm run build
 ```
 
 For workflow changes, also test the relevant role and path in Netlify local development: staff/admin, client portal, affiliate portal, public intake, mail tracking, and any affected background function.
+
+Recovery Blueprint checks:
+
+```bash
+npm run test:recovery-blueprint
+```

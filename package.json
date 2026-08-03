@@ -14,7 +14,8 @@
     "test:followup-enclosures": "node scripts/test-followup-enclosures.mjs",
     "test:client-campaign-copy": "node scripts/test-client-campaign-copy.mjs",
     "test:pdf-page-chunks": "node scripts/test-pdf-page-chunks.mjs",
-    "test:audit-bureau-parses": "node scripts/test-audit-bureau-parses.mjs"
+    "test:audit-bureau-parses": "node scripts/test-audit-bureau-parses.mjs",
+    "test:recovery-blueprint": "node scripts/test-recovery-blueprint.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",

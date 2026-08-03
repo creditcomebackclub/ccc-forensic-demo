@@ -3,6 +3,7 @@ import { supabase } from '../utils/supabase';
 import { generateCombinedCleanupLetter } from '../utils/api';
 import { buildAuditPdfDoc, auditPdfFilename, blobToBase64 } from '../utils/auditPdf';
 import { upsertFurnisherAddress } from '../utils/storage';
+import RecoveryBlueprintStudio from './RecoveryBlueprintStudio';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
   FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale, MoreHorizontal, Pencil,
@@ -275,6 +276,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   const [selectedInquiryKeys, setSelectedInquiryKeys] = React.useState(new Set());
   const [clientEmail, setClientEmail] = React.useState(null);
   const [emailModalOpen, setEmailModalOpen] = React.useState(false);
+  const [blueprintOpen, setBlueprintOpen] = React.useState(false);
   const inqKey = (i) => i.furnisher + '|' + i.date;
 
   React.useEffect(() => {
@@ -335,11 +337,13 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   // Session-local editable copy — auditors can correct extraction errors
   // (balance, status, account number) before any letter is generated
   const [accounts, setAccounts] = useState(audit.accounts || []);
-  useEffect(() => { setAccounts(audit.accounts || []); }, [audit]);
+  const [correctionsDirty, setCorrectionsDirty] = useState(false);
+  useEffect(() => { setAccounts(audit.accounts || []); setCorrectionsDirty(false); }, [audit]);
   const auditView = { ...audit, accounts };
   const updateAccount = (id, patch) => {
     setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch, _edited: true } : a)));
     setSelectedAccount((s) => (s && s.id === id ? { ...s, ...patch, _edited: true } : s));
+    setCorrectionsDirty(true);
   };
 
   const totalBalance = accounts.reduce((sum, a) => sum + (a.balance || 0), 0);
@@ -388,22 +392,13 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
             </button>
           )}
           <button
-            onClick={function() { generateAuditPDF(auditView); }}
+            onClick={() => setBlueprintOpen(true)}
             className="flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] uppercase tracking-wider rounded-lg transition-colors"
             style={{ backgroundColor: T.navy, color: T.gold }}>
-            <Download size={13} strokeWidth={1.75} /> Download PDF
-          </button>
-          <button
-            onClick={() => clientEmail && setEmailModalOpen(true)}
-            disabled={!clientEmail}
-            title={!clientEmail ? 'Add client email first' : undefined}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] uppercase tracking-wider rounded-lg border transition-colors"
-            style={clientEmail
-              ? { borderColor: T.navy, color: T.navy, background: '#fff' }
-              : { borderColor: T.border, color: '#9CA3AF', background: '#F3F4F6', cursor: 'not-allowed' }}>
-            <Mail size={13} strokeWidth={1.75} /> Email Audit to Client
+            <Eye size={13} strokeWidth={1.75} /> Recovery Blueprint
           </button>
           <Menu items={[
+            { label: 'Download forensic detail (internal)', onClick: () => generateAuditPDF(auditView) },
             { label: 'New audit', onClick: onReset },
           ]} />
         </div>
@@ -411,6 +406,16 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
 
       {emailModalOpen && (
         <EmailAuditModal audit={auditView} clientEmail={clientEmail} onClose={() => setEmailModalOpen(false)} />
+      )}
+      {blueprintOpen && (
+        <RecoveryBlueprintStudio
+          audit={auditView}
+          accounts={accounts}
+          correctionsDirty={correctionsDirty}
+          clientEmail={clientEmail}
+          onCorrectionsSaved={() => setCorrectionsDirty(false)}
+          onClose={() => setBlueprintOpen(false)}
+        />
       )}
 
       {/* Success banner + background-generation status */}

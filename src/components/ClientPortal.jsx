@@ -14,6 +14,7 @@ import DocumentsTab from './client-portal/DocumentsTab';
 import VipTab from './client-portal/VipTab';
 import BillingTab from './client-portal/BillingTab';
 import ConciergeChat from './client-portal/ConciergeChat';
+import RecoveryPlanTab from './client-portal/RecoveryPlanTab';
 import {
   clientCampaignLabel,
   isAccountDisputeCampaign,
@@ -28,6 +29,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const [loading, setLoading] = useState(true);
   const [auditHistory, setAuditHistory] = useState([]);
   const [progressUpdates, setProgressUpdates] = useState([]);
+  const [recoveryBlueprints, setRecoveryBlueprints] = useState([]);
   const [activeTab, setActiveTab] = useState('overview');
   const [uploadingLetter, setUploadingLetter] = useState(null);
   const [clientDocs, setClientDocs] = useState({ id: null, address: null, other: [] });
@@ -98,6 +100,17 @@ export default function ClientPortal({ session, onSignOut }) {
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
         setProgressUpdates(progressRes.data || []);
+
+        // Blueprint delivery is additive and migration-safe: the rest of the
+        // portal still loads if the new table has not been deployed yet.
+        const blueprintsQuery = cp.client_id
+          ? supabase.from('recovery_blueprints').select('id,status,version,template_version,storage_path,file_name,approved_at,sent_at,report_date').eq('client_id', cp.client_id)
+          : supabase.from('recovery_blueprints').select('id,status,version,template_version,storage_path,file_name,approved_at,sent_at,report_date').eq('client_name', cp.full_name);
+        const { data: blueprintRows, error: blueprintError } = await blueprintsQuery
+          .in('status', ['approved', 'sent'])
+          .order('approved_at', { ascending: false });
+        if (blueprintError) console.warn('Recovery Blueprint portal data unavailable:', blueprintError.message);
+        else setRecoveryBlueprints(blueprintRows || []);
 
         const docRows = docsRes.data;
         if (docRows) {
@@ -345,6 +358,7 @@ export default function ClientPortal({ session, onSignOut }) {
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
+    ...(recoveryBlueprints.length ? [{ id: 'recovery-plan', label: '✨ Recovery Plan' }] : []),
     { id: 'progress', label: 'Progress' },
     { id: 'disputes', label: 'Disputes' },
     { id: 'timeline', label: 'Timeline' },
@@ -424,6 +438,10 @@ export default function ClientPortal({ session, onSignOut }) {
 
             {activeTab === 'progress' && (
               <ProgressTab updates={progressUpdates} />
+            )}
+
+            {activeTab === 'recovery-plan' && (
+              <RecoveryPlanTab blueprints={recoveryBlueprints} />
             )}
 
             {activeTab === 'documents' && (
