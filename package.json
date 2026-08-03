@@ -13,7 +13,8 @@
     "test:metro2-citations": "node scripts/test-metro2-citations.mjs",
     "test:followup-enclosures": "node scripts/test-followup-enclosures.mjs",
     "test:client-campaign-copy": "node scripts/test-client-campaign-copy.mjs",
-    "test:pdf-page-chunks": "node scripts/test-pdf-page-chunks.mjs"
+    "test:pdf-page-chunks": "node scripts/test-pdf-page-chunks.mjs",
+    "test:audit-bureau-parses": "node scripts/test-audit-bureau-parses.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.1",

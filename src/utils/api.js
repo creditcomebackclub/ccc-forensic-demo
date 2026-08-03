@@ -66,6 +66,10 @@ export async function runSingleBureauAudit(file, bureau, onProgress, clientSelec
   return runAuditJob({ mode: 'single', files: [{ file, bureau }], clientSelection }, onProgress);
 }
 
+export async function runMergeBureauAudits(clientSelection, onProgress) {
+  return runAuditJob({ mode: 'merge', files: [], clientSelection }, onProgress);
+}
+
 export async function generateLetter(account, client) {
   const t = today();
   const isTypeC = account && account.type === 'C';

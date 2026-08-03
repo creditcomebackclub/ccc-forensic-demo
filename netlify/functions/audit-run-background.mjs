@@ -17,7 +17,7 @@ import { normalizeFurnisher } from '../../src/utils/diffEngine.js';
 import { randomUUID } from 'crypto';
 import { requireStaff } from './_requireAuth.cjs';
 import {
-  buildReportContent, combinedAuditPrompt, singleBureauAuditPrompt,
+  buildReportContent, combinedAuditPrompt,
   bureauParsePrompt, mergeAuditPrompt, accountEnrichmentPrompt, todayLong,
 } from '../../src/utils/auditPrompts.js';
 import { describePdfChunk, splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
@@ -274,14 +274,35 @@ function isOwnedAuditUpload(path, userId, jobId) {
 
 function hasExpectedAuditFiles(job, userId, jobId) {
   const files = Array.isArray(job?.files) ? job.files : [];
+  if (!['combined', 'single', 'individual', 'merge'].includes(job?.mode)) return false;
+
+  // Merge jobs reuse staged bureau parses — no PDF upload required.
+  if (job.mode === 'merge') {
+    return files.length === 0 && !!job.selected_client_id;
+  }
+
   if (!files.length || !files.every((file) => isOwnedAuditUpload(file?.path, userId, jobId))) return false;
-  if (!['combined', 'single', 'individual'].includes(job?.mode)) return false;
   if (job.mode !== 'individual') return files.length === 1;
 
   if (files.length !== 3) return false;
   const bureaus = files.map((file) => String(file?.bureau || '').toLowerCase());
   return bureaus.length === new Set(bureaus).size
     && ['equifax', 'experian', 'transunion'].every((bureau) => bureaus.includes(bureau));
+}
+
+function normalizeBureauKey(bureau) {
+  const key = String(bureau || '').trim().toLowerCase();
+  if (key === 'eq' || key === 'equifax') return 'equifax';
+  if (key === 'exp' || key === 'experian') return 'experian';
+  if (key === 'tu' || key === 'transunion') return 'transunion';
+  return null;
+}
+
+function bureauDisplayName(key) {
+  if (key === 'equifax') return 'Equifax';
+  if (key === 'experian') return 'Experian';
+  if (key === 'transunion') return 'TransUnion';
+  return key || 'Bureau';
 }
 
 export const handler = async (event) => {
@@ -525,6 +546,212 @@ export const handler = async (event) => {
       parts.push(assertAuditOutput(parseAuditJSON(raw), chunkStage));
     }
     return assertAuditOutput(mergeAuditParseResults(parts));
+  }
+
+  async function resolveClientForParse(bureauParse) {
+    let clientName = (bureauParse?.client?.name || '').trim() || 'Unknown Client';
+    let clientId = null;
+    let explicitlyAttributed = false;
+
+    if (job.selected_client_id) {
+      const { data: picked } = await db.from('clients')
+        .select('id,name').eq('id', job.selected_client_id).eq('user_id', job.user_id).limit(1);
+      if (picked && picked.length === 1) {
+        clientName = picked[0].name;
+        clientId = picked[0].id;
+        explicitlyAttributed = true;
+      }
+    } else if (job.selected_client_is_new) {
+      explicitlyAttributed = true;
+    }
+
+    if (!explicitlyAttributed) {
+      try {
+        const escaped = clientName.replace(/[%_\\]/g, '\\$&');
+        const { data: nameMatches } = await db.from('clients')
+          .select('id,name').eq('user_id', job.user_id).ilike('name', escaped);
+        if (nameMatches && nameMatches.length === 1) {
+          clientName = nameMatches[0].name;
+          clientId = nameMatches[0].id;
+        }
+      } catch (e) {
+        console.warn('[audit] bureau-parse name lookup failed:', e.message);
+      }
+    }
+
+    if (!clientId && clientName) {
+      try {
+        const { data: exact } = await db.from('clients')
+          .select('id').eq('user_id', job.user_id).eq('name', clientName);
+        if (exact && exact.length === 1) {
+          clientId = exact[0].id;
+        } else if (!exact || exact.length === 0) {
+          const { data: created, error: createErr } = await db.from('clients')
+            .insert({
+              user_id: job.user_id,
+              name: clientName,
+              address: bureauParse?.client?.address || null,
+              status: 'lead',
+            })
+            .select('id').single();
+          if (createErr) throw createErr;
+          clientId = created.id;
+        }
+      } catch (e) {
+        console.warn('[audit] bureau-parse client resolve/create failed:', e.message);
+      }
+    }
+
+    return { clientName, clientId };
+  }
+
+  async function saveBureauParseRow({ bureauKey, bureauParse, pageCount = null, chunkCount = null }) {
+    const { clientName, clientId } = await resolveClientForParse(bureauParse);
+    const row = {
+      user_id: job.user_id,
+      client_id: clientId,
+      client_name: clientName,
+      bureau: bureauKey,
+      report_date: todayISO(),
+      parse: bureauParse,
+      source_job_id: jobId,
+      page_count: pageCount,
+      chunk_count: chunkCount,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Upsert by deleting prior row for this staff+client+bureau, then insert.
+    // Partial unique indexes make ON CONFLICT awkward across null client_id.
+    let del = db.from('audit_bureau_parses').delete().eq('user_id', job.user_id).eq('bureau', bureauKey);
+    if (clientId) del = del.eq('client_id', clientId);
+    else del = del.is('client_id', null).eq('client_name', clientName);
+    await del;
+
+    const { error } = await db.from('audit_bureau_parses').insert(row);
+    if (error) throw new Error('Could not save bureau parse: ' + error.message);
+
+    let readyQuery = db.from('audit_bureau_parses')
+      .select('bureau,updated_at')
+      .eq('user_id', job.user_id);
+    if (clientId) readyQuery = readyQuery.eq('client_id', clientId);
+    else readyQuery = readyQuery.is('client_id', null).eq('client_name', clientName);
+    const { data: readyRows } = await readyQuery;
+    const ready = [...new Set((readyRows || []).map((r) => normalizeBureauKey(r.bureau)).filter(Boolean))];
+
+    return {
+      kind: 'bureau_parse',
+      bureau: bureauKey,
+      bureauLabel: bureauDisplayName(bureauKey),
+      clientName,
+      clientId,
+      pageCount,
+      chunkCount,
+      readyBureaus: ready,
+      missingBureaus: ['equifax', 'experian', 'transunion'].filter((b) => !ready.includes(b)),
+      canMerge: ready.length === 3,
+      parse: bureauParse,
+    };
+  }
+
+  async function loadBureauParsesForMerge() {
+    if (!job.selected_client_id) {
+      throw new Error('Merge requires an existing client selection so the three bureau parses can be found.');
+    }
+    const { data, error } = await db.from('audit_bureau_parses')
+      .select('bureau,parse,client_id,client_name,updated_at')
+      .eq('user_id', job.user_id)
+      .eq('client_id', job.selected_client_id)
+      .order('updated_at', { ascending: false });
+    if (error) throw new Error('Could not load bureau parses: ' + error.message);
+
+    const byBureau = {};
+    for (const row of data || []) {
+      const key = normalizeBureauKey(row.bureau);
+      if (!key || byBureau[key]) continue;
+      byBureau[key] = assertBureauOutput(row.parse, bureauDisplayName(key));
+    }
+    for (const key of ['equifax', 'experian', 'transunion']) {
+      if (!byBureau[key]) {
+        throw new Error(`Missing ${bureauDisplayName(key)} parse for this client. Run Single Bureau for each bureau first, then merge.`);
+      }
+    }
+    return byBureau;
+  }
+
+  async function finalizeUnifiedAudit(audit, { skipEnrichment = false, files = [], today } = {}) {
+    if (!audit || !audit.client) throw new Error('Audit produced no client data.');
+
+    const dofdSuppressions = applyDofdDirectionalGuard(audit.accounts);
+    if (dofdSuppressions.length) {
+      console.warn('[dofd-guard] suppressed adverse-direction DOFD violation(s):', JSON.stringify(dofdSuppressions));
+      audit.dofdGuardSuppressions = dofdSuppressions;
+      audit.totalViolations = Math.max(0, (audit.totalViolations || 0) - dofdSuppressions.length);
+    }
+    const balanceSuppressions = applyCollectionBalanceGuard(audit.accounts);
+    if (balanceSuppressions.length) {
+      console.warn('[balance-guard] suppressed collection-account balance==past-due violation(s):', JSON.stringify(balanceSuppressions));
+      audit.collectionBalanceGuardSuppressions = balanceSuppressions;
+      audit.totalViolations = Math.max(0, (audit.totalViolations || 0) - balanceSuppressions.length);
+    }
+
+    audit.violationsByType = computeViolationsByType(audit.accounts);
+
+    if (!skipEnrichment) {
+      await progress('Enriching account details', 90)(0);
+      try {
+        const enrichmentContent = [];
+        let attachedReportPages = 0;
+        for (const f of files) {
+          const report = await downloadReport(f);
+          const chunks = await pdfChunksForReport(report);
+          if (chunks && chunks.length > 1) {
+            console.warn(`[audit] skipping oversized ${f.bureau || 'report'} PDF in enrichment (${chunks[0].totalPages} pages)`);
+            continue;
+          }
+          if (chunks && chunks[0]) attachedReportPages += chunks[0].totalPages;
+          if (attachedReportPages > 95) {
+            console.warn('[audit] enrichment page budget reached — skipping remaining report attachments');
+            continue;
+          }
+          enrichmentContent.push(buildReportContent(report.base64, '', report.mediaType)[0]);
+        }
+        enrichmentContent.push({ type: 'text', text: accountEnrichmentPrompt(today, audit.accounts) });
+
+        const enrichRaw = await claudeCall(enrichmentContent, {
+          schema: ACCOUNT_ENRICHMENT_SCHEMA, maxTokens: 4000, onTokens: progress('Enriching account details', 90),
+        });
+        const enrichment = assertEnrichmentOutput(parseAuditJSON(enrichRaw));
+        const byId = new Map((enrichment?.accounts || []).map((e) => [e.id, e]));
+        for (const acct of audit.accounts || []) {
+          const e = byId.get(acct.id);
+          acct.paymentRating = e ? e.paymentRating : null;
+          acct.dateOfFirstDelinquency = e ? e.dateOfFirstDelinquency : null;
+          acct.remarks = e ? e.remarks : null;
+          acct.disputeFlag = e ? !!e.disputeFlag : false;
+        }
+      } catch (e) {
+        console.warn('[audit-enrichment] failed (non-fatal, audit continues without these fields):', e.message);
+      }
+    }
+
+    const { clientName: savedClientName, clientId: savedClientId } = await saveAuditAs(job.user_id, audit, job);
+
+    (async () => {
+      try {
+        const clientName = savedClientName || (audit && audit.client && audit.client.name) || null;
+        if (!clientName) return;
+        const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+        await fetch(base + '/.netlify/functions/progress-narrative-background', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + serviceKey },
+          body: JSON.stringify({ clientName, clientId: savedClientId || null, userId: job.user_id }),
+        });
+      } catch (e) {
+        console.warn('[audit] progress-narrative trigger failed (non-fatal):', e.message);
+      }
+    })();
+
+    return audit;
   }
 
   // Mirrors client-side saveAudit(): starting-score auto-populate, audits
@@ -824,22 +1051,58 @@ export const handler = async (event) => {
     const t = todayLong();
     const files = job.files || [];
     let audit;
+    let jobResult = null;
 
-    if (job.mode === 'combined' || job.mode === 'single') {
+    if (job.mode === 'single') {
       const f = files[0];
       if (!f) throw new Error('No report file attached to this job.');
-      const stage = job.mode === 'single' ? 'Analyzing ' + (f.bureau || 'bureau') + ' report' : 'Analyzing 3-bureau report';
+      const bureauKey = normalizeBureauKey(f.bureau);
+      if (!bureauKey) throw new Error('Single bureau jobs require Equifax, Experian, or TransUnion.');
+      const bureauName = bureauDisplayName(bureauKey);
+      const stage = `Parsing ${bureauName} report`;
+      await progress(stage, 10)(0);
+      const report = await downloadReport(f);
+      const chunks = await pdfChunksForReport(report);
+      const bureauParse = await parseBureauReportChunked({
+        report, bureauName, stage, pct: 10, today: t,
+      });
+      await progress(`Saving ${bureauName} parse`, 90)(0);
+      jobResult = await saveBureauParseRow({
+        bureauKey,
+        bureauParse,
+        pageCount: chunks?.[0]?.totalPages || null,
+        chunkCount: chunks?.length || 1,
+      });
+    } else if (job.mode === 'merge') {
+      await progress('Loading staged bureau parses', 10)(0);
+      const parsed = await loadBureauParsesForMerge();
+      await progress('Cross-bureau reconciliation & ranking', 40)(0);
+      const mergeRaw = await claudeCall(
+        [{ type: 'text', text: mergeAuditPrompt(t, parsed.equifax, parsed.experian, parsed.transunion) }],
+        { schema: AUDIT_SCHEMA, onTokens: progress('Cross-bureau reconciliation & ranking', 40) },
+      );
+      audit = assertAuditOutput(parseAuditJSON(mergeRaw));
+      if (audit && audit.client) {
+        audit.client.scores = audit.client.scores || {};
+        if (parsed.equifax?.client?.score) audit.client.scores.equifax = parsed.equifax.client.score;
+        if (parsed.experian?.client?.score) audit.client.scores.experian = parsed.experian.client.score;
+        if (parsed.transunion?.client?.score) audit.client.scores.transunion = parsed.transunion.client.score;
+      }
+      audit = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files: [], today: t });
+      jobResult = audit;
+    } else if (job.mode === 'combined') {
+      const f = files[0];
+      if (!f) throw new Error('No report file attached to this job.');
+      const stage = 'Analyzing 3-bureau report';
       await progress(stage, null)(0);
       const report = await downloadReport(f);
       audit = await parseFullAuditChunked({
         report,
         stage,
-        promptForChunk: (chunk) => (
-          job.mode === 'single'
-            ? singleBureauAuditPrompt(t, f.bureau, chunk)
-            : combinedAuditPrompt(t, chunk)
-        ),
+        promptForChunk: (chunk) => combinedAuditPrompt(t, chunk),
       });
+      audit = await finalizeUnifiedAudit(audit, { files, today: t });
+      jobResult = audit;
     } else if (job.mode === 'individual') {
       const byBureau = {};
       for (const f of files) byBureau[(f.bureau || '').toLowerCase()] = f;
@@ -854,7 +1117,7 @@ export const handler = async (event) => {
         if (!f) throw new Error('Missing ' + key + ' file on this job.');
         await progress(stage, pct)(0);
         const report = await downloadReport(f);
-        const bureauName = key === 'equifax' ? 'Equifax' : key === 'experian' ? 'Experian' : 'TransUnion';
+        const bureauName = bureauDisplayName(key);
         parsed[key] = await parseBureauReportChunked({
           report, bureauName, stage, pct, today: t,
         });
@@ -871,111 +1134,11 @@ export const handler = async (event) => {
         if (parsed.experian?.client?.score) audit.client.scores.experian = parsed.experian.client.score;
         if (parsed.transunion?.client?.score) audit.client.scores.transunion = parsed.transunion.client.score;
       }
+      audit = await finalizeUnifiedAudit(audit, { files, today: t });
+      jobResult = audit;
     } else {
       throw new Error('Unknown audit mode: ' + job.mode);
     }
-
-    if (!audit || !audit.client) throw new Error('Audit produced no client data.');
-
-    // P0-2 (2026-07-23 defect report): must run BEFORE computeViolationsByType
-    // below, which counts from these same violations — a suppressed DOFD
-    // violation must not still show up in the type-count summary.
-    const dofdSuppressions = applyDofdDirectionalGuard(audit.accounts);
-    if (dofdSuppressions.length) {
-      console.warn('[dofd-guard] suppressed adverse-direction DOFD violation(s):', JSON.stringify(dofdSuppressions));
-      audit.dofdGuardSuppressions = dofdSuppressions;
-      audit.totalViolations = Math.max(0, (audit.totalViolations || 0) - dofdSuppressions.length);
-    }
-    const balanceSuppressions = applyCollectionBalanceGuard(audit.accounts);
-    if (balanceSuppressions.length) {
-      console.warn('[balance-guard] suppressed collection-account balance==past-due violation(s):', JSON.stringify(balanceSuppressions));
-      audit.collectionBalanceGuardSuppressions = balanceSuppressions;
-      audit.totalViolations = Math.max(0, (audit.totalViolations || 0) - balanceSuppressions.length);
-    }
-
-    // violationsByType is no longer part of the model's structured output
-    // (removed to fix the compiled-grammar-too-large 400 that was breaking
-    // every audit run) — it's pure duplication of accounts[].violations
-    // grouped by field and counted, so it's computed here instead. Same
-    // shape AuditResults.jsx already expects; that component needs no change.
-    audit.violationsByType = computeViolationsByType(audit.accounts);
-
-    // Retention Build 1a diff-engine fields (payment rating, DOFD, remarks,
-    // dispute flag) — didn't fit in AUDIT_SCHEMA's single call, so this is a
-    // second, small follow-up call scoped to just those 4 fields per
-    // already-identified account. Best-effort: any failure here is caught
-    // and swallowed — the audit above is already valid and saved regardless,
-    // exactly as if these 4 fields had never been reintroduced.
-    await progress('Enriching account details', 90)(0);
-    try {
-      const enrichmentContent = [];
-      let attachedReportPages = 0;
-      for (const f of files) {
-        const report = await downloadReport(f);
-        const chunks = await pdfChunksForReport(report);
-        if (chunks && chunks.length > 1) {
-          // Re-attaching a 100+ page PDF (or all chunks) would re-hit the
-          // Anthropic page cap. Enrichment is best-effort — skip oversized
-          // originals and rely on the already-extracted account list.
-          console.warn(`[audit] skipping oversized ${f.bureau || 'report'} PDF in enrichment (${chunks[0].totalPages} pages)`);
-          continue;
-        }
-        if (chunks && chunks[0]) attachedReportPages += chunks[0].totalPages;
-        if (attachedReportPages > 95) {
-          console.warn('[audit] enrichment page budget reached — skipping remaining report attachments');
-          continue;
-        }
-        enrichmentContent.push(buildReportContent(report.base64, '', report.mediaType)[0]);
-      }
-      enrichmentContent.push({ type: 'text', text: accountEnrichmentPrompt(t, audit.accounts) });
-
-      const enrichRaw = await claudeCall(enrichmentContent, {
-        schema: ACCOUNT_ENRICHMENT_SCHEMA, maxTokens: 4000, onTokens: progress('Enriching account details', 90),
-      });
-      const enrichment = assertEnrichmentOutput(parseAuditJSON(enrichRaw));
-      const byId = new Map((enrichment?.accounts || []).map((e) => [e.id, e]));
-      for (const acct of audit.accounts || []) {
-        const e = byId.get(acct.id);
-        acct.paymentRating = e ? e.paymentRating : null;
-        acct.dateOfFirstDelinquency = e ? e.dateOfFirstDelinquency : null;
-        acct.remarks = e ? e.remarks : null;
-        acct.disputeFlag = e ? !!e.disputeFlag : false;
-      }
-    } catch (e) {
-      console.warn('[audit-enrichment] failed (non-fatal, audit continues without these fields):', e.message);
-    }
-
-    const { clientName: savedClientName, clientId: savedClientId } = await saveAuditAs(job.user_id, audit, job);
-
-    // Retention Build 1b/1d — fire-and-forget, never awaited and never
-    // allowed to affect this job's success. This is the ONLY place that
-    // actually needs to trigger it: the client-side saveAudit() in
-    // src/utils/storage.js has the same trigger, but nothing in the browser
-    // calls that function anymore (the real upload flow is this background
-    // job) — so without this, progress-narrative-background.mjs would never
-    // fire in production. progress-narrative-background.mjs's own internal
-    // check no-ops if this client has fewer than 2 audits, so it's safe to
-    // call unconditionally after every save.
-    //
-    // Uses the name saveAuditAs actually saved under (canonicalized/staff-
-    // selected), not audit.client.name — the two can differ (case mismatch,
-    // explicit client selection) and a mismatch here means this fetch queries
-    // `audits`/`progress_updates` for a client_name that was never written,
-    // silently no-op'ing the narrative for every subsequent audit.
-    (async () => {
-      try {
-        const clientName = savedClientName || (audit && audit.client && audit.client.name) || null;
-        if (!clientName) return;
-        const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
-        await fetch(base + '/.netlify/functions/progress-narrative-background', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + serviceKey },
-          body: JSON.stringify({ clientName, clientId: savedClientId || null, userId: job.user_id }),
-        });
-      } catch (e) {
-        console.warn('[audit] progress-narrative trigger failed (non-fatal):', e.message);
-      }
-    })();
 
     const totals = usageLog.reduce((s, u) => ({
       input: s.input + u.input, output: s.output + u.output,
@@ -984,7 +1147,7 @@ export const handler = async (event) => {
     }), { input: 0, output: 0, cache_read: 0, cache_write: 0, est_cost_usd: 0 });
 
     await updateJob({
-      status: 'done', stage: 'Complete', pct: 100, result: audit,
+      status: 'done', stage: 'Complete', pct: 100, result: jobResult,
       usage: {
         model: AUDIT_MODEL,
         effort: AUDIT_EFFORT,

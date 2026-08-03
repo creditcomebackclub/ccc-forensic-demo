@@ -26,14 +26,25 @@ async function preflightSize(file) {
   }
 }
 
-export async function runAuditJob({ mode, files, clientSelection }, onProgress) {
+export async function runAuditJob({ mode, files = [], clientSelection }, onProgress) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not signed in.');
 
-  for (const f of files) await preflightSize(f.file);
+  if (mode === 'merge') {
+    if (clientSelection?.type !== 'existing' || !clientSelection.id) {
+      throw new Error('Merge requires an existing client with three saved bureau parses.');
+    }
+  } else {
+    if (!files.length) throw new Error('No report files attached.');
+    for (const f of files) await preflightSize(f.file);
+  }
 
   const jobId = crypto.randomUUID();
-  onProgress && onProgress({ stage: 'Uploading report' + (files.length > 1 ? 's' : ''), pct: null, tokens: 0 });
+  onProgress && onProgress({
+    stage: mode === 'merge' ? 'Starting bureau merge' : ('Uploading report' + (files.length > 1 ? 's' : '')),
+    pct: null,
+    tokens: 0,
+  });
 
   const fileMeta = [];
   for (const f of files) {

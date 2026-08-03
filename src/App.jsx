@@ -3,7 +3,7 @@ import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog,
 import ProspectChatWidget from './components/ProspectChatWidget';
 import { Toaster } from 'react-hot-toast';
 import { supabase } from './utils/supabase';
-import { runAudit, runTripleBureauAudit, runSingleBureauAudit } from './utils/api';
+import { runAudit, runTripleBureauAudit, runSingleBureauAudit, runMergeBureauAudits } from './utils/api';
 import { getUnanalyzedResponseStats } from './utils/actionItems';
 import { computeClientCommission } from './utils/affiliateCommission';
 import { getSettings } from './utils/settings';
@@ -12,6 +12,7 @@ import AffiliateProfilePanel from './components/AffiliateProfilePanel';
 const UploadZone = lazy(() => import('./components/UploadZone'));
 const AuditProgress = lazy(() => import('./components/AuditProgress'));
 const AuditResults = lazy(() => import('./components/AuditResults'));
+const BureauParseStatus = lazy(() => import('./components/BureauParseStatus'));
 const LetterViewer = lazy(() => import('./components/LetterViewer'));
 const ClientsPage = lazy(() => import('./components/ClientsPage'));
 const MethodologyPage = lazy(() => import('./components/MethodologyPage'));
@@ -615,14 +616,40 @@ export default function App() {
         setFileName('3-Bureau Individual Audit');
         res = await runTripleBureauAudit(payload.files, setAuditProgress, payload.clientSelection);
       } else if (payload.mode === 'single') {
-        setFileName(payload.bureau + ' Single Bureau Audit');
+        setFileName(payload.bureau + ' Single Bureau Parse');
         res = await runSingleBureauAudit(payload.file, payload.bureau, setAuditProgress, payload.clientSelection);
+      } else if (payload.mode === 'merge') {
+        setFileName('Merge bureau parses');
+        res = await runMergeBureauAudits(payload.clientSelection, setAuditProgress);
       }
       setAuditResult(res.audit);
       setState(STATE.RESULTS);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Audit failed');
+      setState(STATE.ERROR);
+    }
+  };
+
+  const handleMergeFromParseStatus = async () => {
+    if (!auditResult?.clientId) {
+      setError('Missing client id for merge — re-select the client and try Merge from the upload screen.');
+      setState(STATE.ERROR);
+      return;
+    }
+    setState(STATE.PROCESSING);
+    setError(null);
+    setFileName('Merge bureau parses');
+    try {
+      const res = await runMergeBureauAudits(
+        { type: 'existing', id: auditResult.clientId, name: auditResult.clientName },
+        setAuditProgress,
+      );
+      setAuditResult(res.audit);
+      setState(STATE.RESULTS);
+    } catch (err) {
+      console.error(err);
+      setError(err.message || 'Merge failed');
       setState(STATE.ERROR);
     }
   };
@@ -672,7 +699,14 @@ export default function App() {
               <>
                 {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
                 {state === STATE.PROCESSING && <AuditProgress fileName={fileName} progress={auditProgress} />}
-                {state === STATE.RESULTS && auditResult && (
+                {state === STATE.RESULTS && auditResult?.kind === 'bureau_parse' && (
+                  <BureauParseStatus
+                    result={auditResult}
+                    onMerge={handleMergeFromParseStatus}
+                    onReset={handleReset}
+                  />
+                )}
+                {state === STATE.RESULTS && auditResult && auditResult.kind !== 'bureau_parse' && (
                   <AuditResults audit={auditResult} onGenerateLetter={handleGenerateLetter} onReset={handleReset} onBackToClients={() => setView(VIEW.CLIENTS)} />
                 )}
                 {state === STATE.ERROR && <ErrorView error={error} onReset={handleReset} />}

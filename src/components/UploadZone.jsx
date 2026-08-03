@@ -1,6 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Upload, FileText, X, ChevronDown, ChevronUp, Info } from 'lucide-react';
 import ClientPicker from './ClientPicker';
+import {
+  BUREAU_PARSE_KEYS,
+  bureauDisplayName,
+  listBureauParsesForClient,
+  summarizeBureauParses,
+} from '../utils/auditBureauParses';
 
 // Brand tokens — matches the dashboard / clients card system
 const T = {
@@ -16,7 +22,7 @@ const T = {
 const MODES = [
   { id: 'combined', label: '3-Bureau Combined', desc: 'Single file containing all three bureaus — ScoreFusion, IdentityIQ, MyScoreIQ', badge: 'Fastest' },
   { id: 'individual', label: '3 Individual Reports', desc: 'One file per bureau — parsed independently for maximum accuracy', badge: 'Most Accurate' },
-  { id: 'single', label: 'Single Bureau', desc: 'One bureau report only — useful for monitoring a specific bureau mid-campaign' },
+  { id: 'single', label: 'Single Bureau → Merge', desc: 'One oversized bureau at a time, then merge into one audit (best for 100+ page PDFs)', badge: 'Large PDFs' },
 ];
 
 function DropZone({ label, file, onFile, onClear }) {
@@ -68,9 +74,36 @@ export default function UploadZone({ onAuditStart }) {
   const [files, setFiles] = useState({});
   const [showInfo, setShowInfo] = useState(false);
   const [clientSelection, setClientSelection] = useState(null);
+  const [parseSummary, setParseSummary] = useState(null);
+  const [parseLoadError, setParseLoadError] = useState(null);
 
   const setFile = (key, file) => setFiles((p) => ({ ...p, [key]: file }));
   const clearFile = (key) => setFiles((p) => { const n = { ...p }; delete n[key]; return n; });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (mode !== 'single' || clientSelection?.type !== 'existing') {
+        setParseSummary(null);
+        setParseLoadError(null);
+        return;
+      }
+      try {
+        const rows = await listBureauParsesForClient(clientSelection);
+        if (!cancelled) {
+          setParseSummary(summarizeBureauParses(rows));
+          setParseLoadError(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setParseSummary(null);
+          setParseLoadError(e.message || 'Could not load staged bureau parses');
+        }
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [mode, clientSelection]);
 
   const canSubmit = () => {
     if (!clientSelection) return false;
@@ -85,6 +118,11 @@ export default function UploadZone({ onAuditStart }) {
     if (mode === 'combined') onAuditStart({ mode: 'combined', file: files.combined, clientSelection });
     else if (mode === 'individual') onAuditStart({ mode: 'individual', files: { equifax: files.Equifax, experian: files.Experian, transunion: files.TransUnion }, clientSelection });
     else if (mode === 'single') onAuditStart({ mode: 'single', file: files[selectedBureau], bureau: selectedBureau, clientSelection });
+  };
+
+  const handleMerge = () => {
+    if (clientSelection?.type !== 'existing' || !parseSummary?.canMerge) return;
+    onAuditStart({ mode: 'merge', clientSelection });
   };
 
   return (
@@ -118,34 +156,33 @@ export default function UploadZone({ onAuditStart }) {
                   {on && <div className="w-2 h-2 rounded-full" style={{ background: T.gold }} />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-medium" style={{ color: T.ink }}>{m.label}</div>
-                  <div className="text-[11px]" style={{ color: T.muted }}>{m.desc}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[13px] font-semibold" style={{ color: T.ink }}>{m.label}</span>
+                    {m.badge && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                        style={{ background: on ? T.navy : '#EEF1F7', color: on ? T.gold : T.muted }}>
+                        {m.badge}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] mt-0.5" style={{ color: T.muted }}>{m.desc}</div>
                 </div>
-                {m.badge && (
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full shrink-0"
-                    style={{ background: '#FAF3DF', color: '#8F7524', fontWeight: 600 }}>{m.badge}</span>
-                )}
               </div>
             </div>
           );
         })}
       </div>
 
-      <div className="mb-4">
-        <button onClick={() => setShowInfo(!showInfo)} className="flex items-center gap-1.5 text-[11px] hover:text-ink" style={{ color: T.muted }}>
-          <Info size={13} strokeWidth={1.75} />
-          {showInfo ? 'Hide' : 'Show'} cost &amp; timing info
-          {showInfo ? <ChevronUp size={12} strokeWidth={2} /> : <ChevronDown size={12} strokeWidth={2} />}
-        </button>
-        {showInfo && (
-          <div className="mt-2 text-[11px] space-y-1" style={{ border: '1px solid ' + T.border, borderRadius: 10, padding: 12, background: '#FAFBFC', color: T.muted }}>
-            <p><strong style={{ color: T.ink }}>3-Bureau Combined:</strong> 1 API call · typically ~1–2 min · roughly $0.10–0.25 depending on report size.</p>
-            <p><strong style={{ color: T.ink }}>3 Individual Reports:</strong> 4 API calls · typically ~2–4 min · roughly $0.30–0.60. Most accurate — each bureau parsed independently, then cross-checked.</p>
-            <p><strong style={{ color: T.ink }}>Single Bureau:</strong> 1 API call · typically ~1–2 min · roughly $0.10–0.20. No cross-bureau analysis.</p>
-            <p style={{ color: T.faint }}>Estimates vary with report size. The shared audit doctrine is cached between calls, so multi-call runs cost less than 4× a single call. Audits run server-side — once started, you can close this tab and the finished audit lands in the client&apos;s record.</p>
-          </div>
-        )}
-      </div>
+      <button type="button" onClick={() => setShowInfo((v) => !v)}
+        className="flex items-center gap-1.5 text-[11px] mb-4" style={{ color: T.muted }}>
+        <Info size={12} /> Cost &amp; timing notes {showInfo ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      </button>
+      {showInfo && (
+        <div className="mb-5 rounded-xl p-4 text-[12px] leading-relaxed" style={{ background: '#F8FAFC', border: '1px solid ' + T.border, color: T.muted }}>
+          <p style={{ color: T.faint }}>Estimates vary with report size. The shared audit doctrine is cached between calls, so multi-call runs cost less than 4× a single call. Audits run server-side — once started, you can close this tab and the finished audit lands in the client&apos;s record.</p>
+          <p className="mt-2" style={{ color: T.faint }}>For 100+ page bureau PDFs, use Single Bureau → Merge so each file fits the 15-minute server window, then merge without re-uploading.</p>
+        </div>
+      )}
 
       <div className="space-y-3 mb-6">
         {mode === 'combined' && (
@@ -179,6 +216,45 @@ export default function UploadZone({ onAuditStart }) {
               })}
             </div>
             <DropZone label={selectedBureau + ' Report'} file={files[selectedBureau]} onFile={(f) => setFile(selectedBureau, f)} onClear={() => clearFile(selectedBureau)} />
+
+            {clientSelection?.type === 'existing' && (
+              <div className="rounded-xl p-4" style={{ border: '1px solid ' + T.border, background: '#fff', boxShadow: T.cardShadow }}>
+                <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: T.faint }}>
+                  Staged parses for this client
+                </div>
+                {parseLoadError ? (
+                  <p className="text-[12px] text-amber-700">
+                    {parseLoadError.includes('audit_bureau_parses') || parseLoadError.includes('does not exist') || parseLoadError.includes('schema cache')
+                      ? 'Run the audit_bureau_parses SQL migration in Supabase, then refresh.'
+                      : parseLoadError}
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 mb-3">
+                    {BUREAU_PARSE_KEYS.map((key) => {
+                      const row = parseSummary?.byBureau?.[key];
+                      return (
+                        <div key={key} className="flex items-center justify-between text-[12px]">
+                          <span style={{ color: T.ink }}>{bureauDisplayName(key)}</span>
+                          <span style={{ color: row ? '#15803d' : T.faint }}>
+                            {row ? `saved${row.page_count ? ` · ${row.page_count}p` : ''}` : 'missing'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {parseSummary?.canMerge && (
+                  <button
+                    type="button"
+                    onClick={handleMerge}
+                    className="w-full py-2.5 text-[12px] uppercase tracking-wider rounded-lg font-medium"
+                    style={{ backgroundColor: T.navy, color: T.gold }}
+                  >
+                    Merge 3 bureau parses into unified audit
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -191,7 +267,7 @@ export default function UploadZone({ onAuditStart }) {
           : <>
               {mode === 'combined' && 'Run Forensic Audit'}
               {mode === 'individual' && (canSubmit() ? 'Run 3-Bureau Forensic Audit (~2–4 min)' : 'Upload all 3 bureau reports to continue')}
-              {mode === 'single' && 'Run Single Bureau Audit'}
+              {mode === 'single' && `Parse ${selectedBureau} (stage for merge)`}
             </>}
       </button>
     </div>
