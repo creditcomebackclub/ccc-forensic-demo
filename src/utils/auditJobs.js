@@ -112,7 +112,7 @@ export async function pollAuditJob(jobId, onProgress) {
       throw new Error('The audit job was never picked up by the server — check that the audit function is deployed, then try again.');
     }
     if (data.status === 'running' && age > RUN_STALL_MS) {
-      throw new Error('The audit stalled on the server (no progress for 10 minutes). Very large reports can exceed the 15-minute server limit — try Individual mode or a smaller export.');
+      throw new Error('The audit stalled on the server (no progress for 10 minutes). Very large reports can exceed the 15-minute server limit — PDFs over ~100 pages are auto-split, but a 200+ page three-bureau Individual run can still time out. Try again, or audit the largest bureau alone first.');
     }
 
     onProgress && onProgress({

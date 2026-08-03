@@ -20,6 +20,8 @@ import {
   buildReportContent, combinedAuditPrompt, singleBureauAuditPrompt,
   bureauParsePrompt, mergeAuditPrompt, accountEnrichmentPrompt, todayLong,
 } from '../../src/utils/auditPrompts.js';
+import { describePdfChunk, splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
+import { mergeAuditParseResults, mergeBureauParseResults } from '../../src/utils/mergePdfAuditChunks.js';
 
 // This is deliberately a pinned application choice, not an environment
 // fallback. A future model change must be reviewed in code and will be
@@ -115,7 +117,7 @@ function textFromVerifiedModelMessage(message, operation) {
   }
   if (message.stop_reason !== 'end_turn') {
     if (message.stop_reason === 'max_tokens') {
-      throw new Error('The analysis hit the output limit before finishing — the report may be too large for one pass. Try Individual mode with one file per bureau.');
+      throw new Error('The analysis hit the output limit before finishing — the report may be too large for one pass. Try Individual mode with one file per bureau (oversized PDFs are auto-split into page chunks).');
     }
     if (message.stop_reason === 'refusal') {
       throw new Error('The model declined this request. Check the report content and try again.');
@@ -462,10 +464,67 @@ export const handler = async (event) => {
     if (!isSupportedAuditMediaType(mediaType)) {
       throw new Error('Unsupported report format. Upload a PDF, HTML, or plain-text credit report.');
     }
-    const report = { base64: bytes.toString('base64'), mediaType };
+    const report = { bytes, base64: bytes.toString('base64'), mediaType };
     downloadedReportBytes += bytes.length;
     downloadedReports.set(file.path, report);
     return report;
+  }
+
+  async function pdfChunksForReport(report) {
+    if (!report?.mediaType || !report.mediaType.includes('pdf')) {
+      return null;
+    }
+    const pdfBytes = report.bytes || Buffer.from(report.base64, 'base64');
+    return splitPdfByPages(pdfBytes);
+  }
+
+  async function parseBureauReportChunked({ report, bureauName, stage, pct, today }) {
+    const chunks = await pdfChunksForReport(report);
+    if (!chunks || chunks.length <= 1) {
+      const raw = await claudeCall(
+        buildReportContent(report.base64, bureauParsePrompt(today, bureauName), report.mediaType),
+        { schema: BUREAU_SCHEMA, onTokens: progress(stage, pct) },
+      );
+      return assertBureauOutput(parseAuditJSON(raw), bureauName);
+    }
+
+    console.log(`[audit] ${bureauName} PDF is ${chunks[0].totalPages} pages — splitting into ${chunks.length} parts`);
+    const parts = [];
+    for (const chunk of chunks) {
+      const chunkStage = `${stage} (${describePdfChunk(chunk)})`;
+      await progress(chunkStage, pct)(0);
+      const prompt = bureauParsePrompt(today, bureauName, chunk);
+      const raw = await claudeCall(
+        buildReportContent(chunk.base64, prompt, 'application/pdf'),
+        { schema: BUREAU_SCHEMA, onTokens: progress(chunkStage, pct) },
+      );
+      parts.push(assertBureauOutput(parseAuditJSON(raw), bureauName));
+    }
+    return assertBureauOutput(mergeBureauParseResults(parts, bureauName), bureauName);
+  }
+
+  async function parseFullAuditChunked({ report, promptForChunk, stage }) {
+    const chunks = await pdfChunksForReport(report);
+    if (!chunks || chunks.length <= 1) {
+      const raw = await claudeCall(
+        buildReportContent(report.base64, promptForChunk(null), report.mediaType),
+        { schema: AUDIT_SCHEMA, onTokens: progress(stage, null) },
+      );
+      return assertAuditOutput(parseAuditJSON(raw));
+    }
+
+    console.log(`[audit] report PDF is ${chunks[0].totalPages} pages — splitting into ${chunks.length} parts`);
+    const parts = [];
+    for (const chunk of chunks) {
+      const chunkStage = `${stage} (${describePdfChunk(chunk)})`;
+      await progress(chunkStage, null)(0);
+      const raw = await claudeCall(
+        buildReportContent(chunk.base64, promptForChunk(chunk), 'application/pdf'),
+        { schema: AUDIT_SCHEMA, onTokens: progress(chunkStage, null) },
+      );
+      parts.push(assertAuditOutput(parseAuditJSON(raw), chunkStage));
+    }
+    return assertAuditOutput(mergeAuditParseResults(parts));
   }
 
   // Mirrors client-side saveAudit(): starting-score auto-populate, audits
@@ -772,11 +831,15 @@ export const handler = async (event) => {
       const stage = job.mode === 'single' ? 'Analyzing ' + (f.bureau || 'bureau') + ' report' : 'Analyzing 3-bureau report';
       await progress(stage, null)(0);
       const report = await downloadReport(f);
-      const prompt = job.mode === 'single' ? singleBureauAuditPrompt(t, f.bureau) : combinedAuditPrompt(t);
-      const raw = await claudeCall(buildReportContent(report.base64, prompt, report.mediaType), {
-        schema: AUDIT_SCHEMA, onTokens: progress(stage, null),
+      audit = await parseFullAuditChunked({
+        report,
+        stage,
+        promptForChunk: (chunk) => (
+          job.mode === 'single'
+            ? singleBureauAuditPrompt(t, f.bureau, chunk)
+            : combinedAuditPrompt(t, chunk)
+        ),
       });
-      audit = assertAuditOutput(parseAuditJSON(raw));
     } else if (job.mode === 'individual') {
       const byBureau = {};
       for (const f of files) byBureau[(f.bureau || '').toLowerCase()] = f;
@@ -792,10 +855,9 @@ export const handler = async (event) => {
         await progress(stage, pct)(0);
         const report = await downloadReport(f);
         const bureauName = key === 'equifax' ? 'Equifax' : key === 'experian' ? 'Experian' : 'TransUnion';
-        const raw = await claudeCall(buildReportContent(report.base64, bureauParsePrompt(t, bureauName), report.mediaType), {
-          schema: BUREAU_SCHEMA, onTokens: progress(stage, pct),
+        parsed[key] = await parseBureauReportChunked({
+          report, bureauName, stage, pct, today: t,
         });
-        parsed[key] = assertBureauOutput(parseAuditJSON(raw), bureauName);
       }
       await progress('Cross-bureau reconciliation & ranking', 80)(0);
       const mergeRaw = await claudeCall(
@@ -847,8 +909,22 @@ export const handler = async (event) => {
     await progress('Enriching account details', 90)(0);
     try {
       const enrichmentContent = [];
+      let attachedReportPages = 0;
       for (const f of files) {
         const report = await downloadReport(f);
+        const chunks = await pdfChunksForReport(report);
+        if (chunks && chunks.length > 1) {
+          // Re-attaching a 100+ page PDF (or all chunks) would re-hit the
+          // Anthropic page cap. Enrichment is best-effort — skip oversized
+          // originals and rely on the already-extracted account list.
+          console.warn(`[audit] skipping oversized ${f.bureau || 'report'} PDF in enrichment (${chunks[0].totalPages} pages)`);
+          continue;
+        }
+        if (chunks && chunks[0]) attachedReportPages += chunks[0].totalPages;
+        if (attachedReportPages > 95) {
+          console.warn('[audit] enrichment page budget reached — skipping remaining report attachments');
+          continue;
+        }
         enrichmentContent.push(buildReportContent(report.base64, '', report.mediaType)[0]);
       }
       enrichmentContent.push({ type: 'text', text: accountEnrichmentPrompt(t, audit.accounts) });
