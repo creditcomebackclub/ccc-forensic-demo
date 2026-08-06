@@ -25,69 +25,6 @@ function slug(s) {
     .replace(/(^-|-$)/g, '') || 'unknown';
 }
 
-function monthLabel(dateStr) {
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-}
-
-// First ~60 words of the narrative as an email teaser — the full update
-// lives in the portal's Progress tab, per Build 1d ("no attachments —
-// portal link only").
-function excerpt(text, wordCount = 60) {
-  const words = text.split(/\s+/);
-  if (words.length <= wordCount) return text;
-  return words.slice(0, wordCount).join(' ') + '…';
-}
-
-// Same branded shell as send-lpoa.cjs's send_campaign_update (header/eyebrow/
-// footer) — visual consistency with every other client-facing CCC email.
-// deletedFurnishers (optional): when present, a celebratory 🏆 callout is
-// inserted above the regular narrative teaser — a real deletion is the
-// single best outcome this service produces and shouldn't get buried in
-// the same even-keeled framing as a routine monthly check-in.
-function progressEmailHtml({ firstName, teaser, portalUrl, deletedFurnishers = [] }) {
-  const winBox = deletedFurnishers.length > 0
-    ? '<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:16px 20px;margin:0 0 20px;">'
-      + '<p style="margin:0 0 6px;font-size:14px;font-weight:800;color:#15803D;">&#127942; '
-      + (deletedFurnishers.length === 1 ? 'An account was deleted from your report!' : deletedFurnishers.length + ' accounts were deleted from your report!')
-      + '</p>'
-      + '<p style="margin:0;font-size:12px;color:#166534;">' + deletedFurnishers.join(', ') + '</p>'
-      + '</div>'
-    : '';
-  return '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-    + '<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F8F9FA;">'
-    + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:10px;">'
-    + '<div style="background:#C9A84C;border-radius:5px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;"><span style="color:#1B2A4A;font-weight:800;font-size:12px;">CC</span></div>'
-    + '<div style="color:#C9A84C;font-weight:700;font-size:14px;">Credit Comeback Club</div></div>'
-    + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:28px;border-radius:0 0 8px 8px;">'
-    + '<p style="color:#6B7280;font-size:12px;margin:0 0 4px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Progress Update</p>'
-    + '<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 16px;">Hi ' + firstName + ',</h1>'
-    + winBox
-    + '<p style="font-size:13px;color:#374151;margin:0 0 20px;">' + teaser + '</p>'
-    + '<div style="text-align:center;margin:0 0 20px;"><a href="' + portalUrl + '" style="background:#1B2A4A;color:#C9A84C;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;display:inline-block;">View your full update &#8594;</a></div>'
-    + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:20px 0;">'
-    + '<p style="font-size:11px;color:#9CA3AF;margin:0;">Credit Comeback Club | creditcomebackclub.com | 970-644-0063</p>'
-    + '</div></body></html>';
-}
-
-// CC'd on every progress update so Chris accumulates real client-facing
-// progress reports for marketing use, not just this one-off send.
-const ADMIN_CC_EMAIL = 'chris@cccpartners.co';
-
-async function sendProgressEmail(sgKey, to, html, subject) {
-  const payload = JSON.stringify({
-    personalizations: [{ to: [{ email: to }], cc: [{ email: ADMIN_CC_EMAIL }] }],
-    from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
-    subject,
-    content: [{ type: 'text/html', value: html }],
-  });
-  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${sgKey}`, 'Content-Type': 'application/json' },
-    body: payload,
-  });
-  if (!res.ok) throw new Error('SendGrid error ' + res.status + ': ' + (await res.text()));
-}
-
 // The admin dashboard's entire "Deletions" surface (win rate, funnel stage,
 // avg days to deletion) is keyed off letters.response_outcome === 'deleted'
 // — a flag nobody was setting when a deletion was only ever confirmed by
@@ -144,39 +81,6 @@ async function loadPhaseProgress(db, { userId, clientName, clientId, diff }) {
     escalations = data || [];
   }
   return buildPhaseProgress(diff, letters || [], escalations);
-}
-
-// 1d — gated on its own `emailed_at` stamp (not on whether the narrative was
-// just generated), so a retry after a narrative-generation success but
-// email-send failure still gets one attempt to send — and a retry after
-// both already succeeded sends nothing. Best-effort: a failure here must
-// never undo the narrative that's already saved and already visible in the
-// portal's Progress tab.
-async function maybeSendEmail(db, { id, clientName, clientId, narrative, toReportDate, origin, deletedFurnishers = [] }) {
-  try {
-    const { data: rows } = await db.from('progress_updates').select('emailed_at').eq('id', id).limit(1);
-    if (rows && rows[0] && rows[0].emailed_at) return; // already stamped — skip
-
-    const sgKey = process.env.SENDGRID_API_KEY;
-    if (!sgKey) return;
-
-    const cpQuery = clientId
-      ? db.from('client_profiles').select('email').eq('client_id', clientId).limit(1)
-      : db.from('client_profiles').select('email').eq('full_name', clientName).limit(1);
-    const { data: cpRows } = await cpQuery;
-    const clientEmail = cpRows && cpRows[0] && cpRows[0].email;
-    if (!clientEmail) return;
-
-    const firstName = clientName.split(' ')[0] || clientName;
-    const html = progressEmailHtml({ firstName, teaser: excerpt(narrative), portalUrl: origin, deletedFurnishers });
-    const subject = deletedFurnishers.length > 0
-      ? '\u{1F3C6} An account was deleted from your report!'
-      : 'Your ' + monthLabel(toReportDate) + ' credit report update';
-    await sendProgressEmail(sgKey, clientEmail, html, subject);
-    await db.from('progress_updates').update({ emailed_at: new Date().toISOString() }).eq('id', id);
-  } catch (e) {
-    console.error('progress-narrative: email send failed (non-fatal)', e.message);
-  }
 }
 
 export const handler = async (event) => {
@@ -249,8 +153,6 @@ export const handler = async (event) => {
     ? slug(clientName) + '__' + clientId + '__diff__' + older.report_date + '__' + newer.report_date
     : slug(clientName) + '__diff__' + older.report_date + '__' + newer.report_date;
 
-  const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://ccc-forensic-demo.netlify.app';
-
   const diff = diffAuditAccounts(older.audit, newer.audit);
   let phaseProgress;
   try {
@@ -262,15 +164,13 @@ export const handler = async (event) => {
 
   // Idempotent: a narrative already generated for this exact audit pair is
   // not regenerated by the automatic trigger (manual regen is a separate,
-  // deliberate admin action, not this function's job) — but still give the
-  // email its own chance to send if an earlier run generated the narrative
-  // and then failed before emailing.
+  // deliberate admin action, not this function's job). Email is staff-gated
+  // via Progress Update Studio / progress-update.mjs — never auto-sent here.
   const { data: existingRows } = await db.from('progress_updates').select('narrative,diff').eq('id', id).limit(1);
   if (existingRows && existingRows.length > 0 && existingRows[0].narrative) {
     await db.from('progress_updates').update({ phase_progress: phaseProgress }).eq('id', id);
     const existingDeleted = ((existingRows[0].diff && existingRows[0].diff.deleted) || []).map((a) => a.furnisher).filter(Boolean);
     await markDeletedLetters(db, { userId, clientName, clientId, deletedFurnishers: existingDeleted, confirmedDate: newer.report_date });
-    await maybeSendEmail(db, { id, clientName, clientId, narrative: existingRows[0].narrative, toReportDate: newer.report_date, origin, deletedFurnishers: existingDeleted });
     return { statusCode: 200, body: 'narrative already generated' };
   }
 
@@ -287,6 +187,7 @@ export const handler = async (event) => {
     to_report_date: newer.report_date,
     diff,
     phase_progress: phaseProgress,
+    status: 'draft',
   });
   if (upsertErr) {
     console.error('progress-narrative: diff upsert failed', upsertErr.message);
@@ -335,7 +236,6 @@ export const handler = async (event) => {
 
   const deletedFurnishers = (diff.deleted || []).map((a) => a.furnisher).filter(Boolean);
   await markDeletedLetters(db, { userId, clientName, clientId, deletedFurnishers, confirmedDate: newer.report_date });
-  await maybeSendEmail(db, { id, clientName, clientId, narrative, toReportDate: newer.report_date, origin, deletedFurnishers });
 
   return { statusCode: 200, body: JSON.stringify({ id }) };
 };

@@ -125,7 +125,9 @@ function ProgressCard({ update, expanded, onToggle }) {
 }
 
 export default function ProgressTab({ updates }) {
-  const sorted = [...(updates || [])].sort((a, b) => String(b.to_report_date).localeCompare(String(a.to_report_date)));
+  const sorted = [...(updates || [])]
+    .filter((u) => u.status === 'sent' || u.emailed_at)
+    .sort((a, b) => String(b.to_report_date).localeCompare(String(a.to_report_date)));
   const [expandedId, setExpandedId] = useState(sorted[0]?.id || null);
 
   if (sorted.length === 0) {

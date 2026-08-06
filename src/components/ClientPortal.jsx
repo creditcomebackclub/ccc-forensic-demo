@@ -85,9 +85,11 @@ export default function ClientPortal({ session, onSignOut }) {
         const auditsQuery = cp.client_id
           ? supabase.from('audits').select('audit,saved_at').eq('client_id', cp.client_id).order('saved_at', { ascending: false }).limit(5)
           : supabase.from('audits').select('audit,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5);
+        // Only staff-sent updates (Progress Update Studio). Drafts stay
+        // invisible until Send. emailed_at covers rows sent before status existed.
         const progressQuery = cp.client_id
-          ? supabase.from('progress_updates').select('*').eq('client_id', cp.client_id).order('to_report_date', { ascending: false })
-          : supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).order('to_report_date', { ascending: false });
+          ? supabase.from('progress_updates').select('*').eq('client_id', cp.client_id).or('status.eq.sent,emailed_at.not.is.null').order('to_report_date', { ascending: false })
+          : supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).or('status.eq.sent,emailed_at.not.is.null').order('to_report_date', { ascending: false });
 
         const [lettersRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
           lettersQuery,

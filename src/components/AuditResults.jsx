@@ -4,10 +4,11 @@ import { generateCombinedCleanupLetter } from '../utils/api';
 import { buildAuditPdfDoc, auditPdfFilename, blobToBase64 } from '../utils/auditPdf';
 import { upsertFurnisherAddress } from '../utils/storage';
 import RecoveryBlueprintStudio from './RecoveryBlueprintStudio';
+import ProgressUpdateStudio from './ProgressUpdateStudio';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
   FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale, MoreHorizontal, Pencil,
-  X, Send, AlertCircle, Zap,
+  X, Send, AlertCircle, Zap, TrendingUp,
 } from 'lucide-react';
 
 // Brand tokens — matches the dashboard / clients card system
@@ -277,6 +278,8 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   const [clientEmail, setClientEmail] = React.useState(null);
   const [emailModalOpen, setEmailModalOpen] = React.useState(false);
   const [blueprintOpen, setBlueprintOpen] = React.useState(false);
+  const [progressOpen, setProgressOpen] = React.useState(false);
+  const [auditCount, setAuditCount] = React.useState(1);
   const inqKey = (i) => i.furnisher + '|' + i.date;
 
   React.useEffect(() => {
@@ -288,7 +291,21 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
     let cancelled = false;
     lookupClientEmail(audit.client?.name, audit.client?.id).then((email) => { if (!cancelled) setClientEmail(email); });
     return () => { cancelled = true; };
-  }, [audit.client?.name]);
+  }, [audit.client?.name, audit.client?.id]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const clientId = audit.client?.id;
+    const clientName = audit.client?.name;
+    if (!clientId && !clientName) return undefined;
+    const query = clientId
+      ? supabase.from('audits').select('id', { count: 'exact', head: true }).eq('client_id', clientId)
+      : supabase.from('audits').select('id', { count: 'exact', head: true }).eq('client_name', clientName);
+    query.then(({ count }) => {
+      if (!cancelled) setAuditCount(Number(count) || 1);
+    });
+    return () => { cancelled = true; };
+  }, [audit.client?.id, audit.client?.name]);
 
   const BUREAUS = ['Equifax', 'Experian', 'TransUnion'];
 
@@ -397,6 +414,14 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
             style={{ backgroundColor: T.navy, color: T.gold }}>
             <Eye size={13} strokeWidth={1.75} /> Recovery Blueprint
           </button>
+          {auditCount >= 2 && (
+            <button
+              onClick={() => setProgressOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] uppercase tracking-wider rounded-lg border bg-white transition-colors hover:border-navy"
+              style={{ borderColor: T.border, color: T.ink }}>
+              <TrendingUp size={13} strokeWidth={1.75} /> Progress Update
+            </button>
+          )}
           <Menu items={[
             { label: 'Download forensic detail (internal)', onClick: () => generateAuditPDF(auditView) },
             { label: 'New audit', onClick: onReset },
@@ -415,6 +440,13 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           clientEmail={clientEmail}
           onCorrectionsSaved={() => setCorrectionsDirty(false)}
           onClose={() => setBlueprintOpen(false)}
+        />
+      )}
+      {progressOpen && (
+        <ProgressUpdateStudio
+          audit={auditView}
+          clientEmail={clientEmail}
+          onClose={() => setProgressOpen(false)}
         />
       )}
 
