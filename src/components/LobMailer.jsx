@@ -79,6 +79,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
   const [error, setError] = useState(null);
   const [verifying, setVerifying] = useState(false);
   const [verified, setVerified] = useState(false);
+  const [selectedOtherDocIds, setSelectedOtherDocIds] = useState(() => new Set());
 
   useEffect(() => {
     if (!letter.clientId) {
@@ -91,6 +92,20 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
   const idDoc = docs.find((d) => d.doc_type === 'id');
   const addressDoc = docs.find((d) => d.doc_type === 'address');
+  // "Other" documents (police reports, bank statements, anything uploaded
+  // via the Documents tab's free-text category) — staff opt in per-send,
+  // one letter's supporting evidence isn't necessarily relevant to another.
+  // Only offered for Phase 1 / initial Phase 3; bureau follow-up's exhibit
+  // set is a closed, server-validated contract (see followUpEnclosures.js)
+  // with no room for a 4th ad-hoc item.
+  const otherDocs = docs.filter((d) => d.doc_type && d.doc_type.startsWith('other-'));
+  const toggleOtherDoc = (id) => {
+    setSelectedOtherDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
   const isBureauFollowUp = isPhase3FollowUpLetter(letter);
   let followUpContractError = null;
   let followUpPlan = [];
@@ -257,6 +272,17 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         let pages = '';
         pages += await buildDocumentEnclosure(idDoc, 'Enclosure — Government-Issued Photo ID');
         pages += await buildDocumentEnclosure(addressDoc, 'Enclosure — Proof of Current Address');
+        return pages;
+      };
+
+      // Staff-selected supporting documents (police report, bank statement,
+      // etc.) — only whichever ones were checked in the Enclosures panel.
+      const buildSelectedOtherDocPages = async () => {
+        let pages = '';
+        for (const doc of otherDocs) {
+          if (!selectedOtherDocIds.has(doc.id)) continue;
+          pages += await buildDocumentEnclosure(doc, 'Enclosure — ' + (doc.label || doc.file_name));
+        }
         return pages;
       };
 
@@ -501,6 +527,8 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           enclosurePages += await buildIdAddressPages();
         }
 
+        enclosurePages += await buildSelectedOtherDocPages();
+
       } else {
         // Phase 1 enclosures: LPOA + ID + Address
         try {
@@ -523,6 +551,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         } catch(e) { console.warn('Could not fetch LPOA:', e); }
 
         enclosurePages += await buildIdAddressPages();
+        enclosurePages += await buildSelectedOtherDocPages();
       }
 
       // Merge letter HTML with enclosure pages, then upload once
@@ -740,6 +769,25 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
                         ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Proof of Address — {addressDoc.file_name}</span></>
                         : <><AlertCircle size={12} strokeWidth={2} className="text-amber-500" /><span className="text-ink-muted">No proof of address — upload in client Documents section</span></>}
                     </div>
+                    {otherDocs.length > 0 && (
+                      <div className="pt-2 mt-2 border-t border-border">
+                        <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Supporting Documents</div>
+                        <div className="space-y-1">
+                          {otherDocs.map((doc) => (
+                            <label key={doc.id} className="flex items-center gap-2 text-[12px] cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={selectedOtherDocIds.has(doc.id)}
+                                onChange={() => toggleOtherDoc(doc.id)}
+                                className="accent-navy"
+                              />
+                              <span className="text-ink">{doc.label || doc.file_name}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="text-[10px] text-ink-faint mt-1">Checked documents are attached as additional enclosures with this mailing.</div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
