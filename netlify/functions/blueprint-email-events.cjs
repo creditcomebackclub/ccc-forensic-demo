@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
 
 const EVENT_PRIORITY = {
   processed: 1,
@@ -48,7 +49,7 @@ exports.handler = async (event) => {
     const url = process.env.VITE_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !key) throw new Error('Supabase server environment is not configured.');
-    const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+    const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { transport: ws } });
 
     // SendGrid can batch several lifecycle events for the same message. Keep
     // the most meaningful event in this request so a later "processed" row

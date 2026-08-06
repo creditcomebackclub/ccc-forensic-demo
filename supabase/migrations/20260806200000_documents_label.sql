@@ -1,0 +1,19 @@
+-- Arbitrary document uploads (dropdown + "Other" free text). Purely
+-- additive — no existing behavior changes.
+--
+-- documents.doc_type is the identity that uploadDocument's upsert conflicts
+-- on (user_id, client_id, doc_type), which is exactly right for the two
+-- fixed slots ('id', 'address') where only one document should ever exist.
+-- Arbitrary uploads need the opposite property — many documents per client,
+-- never colliding — so they get a synthetic always-unique doc_type
+-- (generated client-side, see uploadArbitraryDocument in documents.js) and
+-- this new label column holds what's actually shown to staff/the client:
+-- the dropdown category, or their own typed text when they pick "Other".
+-- No constraint changes at all; 'id'/'address' behavior is untouched.
+--
+-- Written 2026-07-26 as docs/supabase-legacy-manual-sql/20260726_documents_label.sql
+-- (intended to be hand-applied via the SQL editor) but never actually run —
+-- confirmed 2026-08-06: column absent from the live schema, zero
+-- doc_type='other-*' rows exist anywhere. Moved into the real tracked
+-- migrations directory so it's applied here instead.
+alter table public.documents add column if not exists label text;
