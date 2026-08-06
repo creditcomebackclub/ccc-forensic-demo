@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, Mail, RefreshCw, Save, Sparkles, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Download, Loader2, Mail, RefreshCw, Save, Sparkles, X } from 'lucide-react';
 import { getProgressUpdateStatus, saveProgressUpdate, sendProgressUpdate } from '../utils/progressUpdateApi.js';
+import { downloadProgressUpdatePdf } from '../utils/progressUpdatePdf.js';
 
 function monthLabel(dateStr) {
   if (!dateStr) return '';
@@ -154,6 +155,17 @@ export default function ProgressUpdateStudio({ audit, clientEmail, onClose }) {
     setSent(true);
   });
 
+  const handleDownloadPdf = () => run('pdf', async () => {
+    if (!narrative.trim()) throw new Error('Add or wait for the narrative before downloading the PDF.');
+    downloadProgressUpdatePdf({
+      clientName: audit.client?.name || update?.clientName || 'Client',
+      fromReportDate: update?.fromReportDate,
+      toReportDate: update?.toReportDate || audit.client?.reportDate,
+      narrative,
+      diff: update?.diff,
+    });
+  });
+
   const alreadySent = update?.status === 'sent' || sent;
 
   return (
@@ -211,6 +223,13 @@ export default function ProgressUpdateStudio({ audit, clientEmail, onClose }) {
                     <RefreshCw size={12} /> Refresh
                   </button>
                 </div>
+                <button
+                  onClick={handleDownloadPdf}
+                  disabled={!!busy || generating || !narrative.trim()}
+                  className="mt-2 w-full flex items-center justify-center gap-2 bg-[#121F38] text-[#C9A84C] rounded-lg py-2.5 text-[10px] uppercase tracking-wider font-bold disabled:opacity-40"
+                >
+                  <Download size={13} /> Download PDF
+                </button>
               </div>
 
               <div className="border-t border-slate-100 pt-5">
