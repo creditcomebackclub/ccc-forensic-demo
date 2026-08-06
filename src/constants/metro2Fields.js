@@ -421,6 +421,118 @@ export function validateFieldCitations(html) {
   return problems;
 }
 
+// Deterministic companion to validateFieldCitations: rewrites a "Field N —
+// Label" citation in place when the label unambiguously belongs to a
+// different, valid field number (the exact same match validateFieldCitations
+// already uses to build its error message — reused here so "detected" and
+// "fixed" never disagree). Only touches the number, never the label, since
+// the label is what the writer actually meant to reference; the number is
+// what gets transposed (21/22, 23/27, 17A/21, etc.).
+//
+// Deliberately conservative on three axes, each closing a specific way this
+// was shown to corrupt or mask a citation error during review:
+// 1. Never touches text inside an HTML tag (attribute, tag name) — the
+//    label regex can't tell "Field 21" in prose from "Field 21" inside a
+//    title="..." attribute the way validateFieldCitations can (it strips
+//    tags first); this function instead checks, per match, whether the
+//    nearest unclosed angle bracket behind it is "<" and bails if so.
+// 2. Never lets the label capture swallow a SECOND "Field N" citation that
+//    follows shortly after in the same sentence (e.g. "Field 21 — Amount
+//    Past Due and Field 19 — Compliance Condition Code") — without this,
+//    the label group's greedy character class treats "and Field" as more
+//    label text, fusing the second citation into unparseable text
+//    ("Field19") that neither this function nor validateFieldCitations can
+//    see anymore, silently hiding a real citation error instead of fixing
+//    or flagging it.
+// 3. Never fixes a field number that's cited MORE than once anywhere in the
+//    document. A single occurrence is safe to correct outright. Multiple
+//    occurrences mean a bare back-reference elsewhere ("...as shown in
+//    Field 21 above") could easily exist alongside the labeled citation
+//    being fixed — rewriting only the labeled one would leave the letter
+//    internally contradictory (one place says Field 22, another still says
+//    Field 21) while validateFieldCitations reports it clean, since it has
+//    no way to resolve unlabeled back-references either. Multi-occurrence
+//    cases are left untouched so the full conversational retry/rebuild
+//    sees every mention at once and can fix them consistently.
+//
+// An unknown field number (no valid field to map to) or an unrecognized
+// label (e.g. "Date of Last Activity", which isn't a real Metro 2 field at
+// all) is also left untouched — those still surface via
+// validateFieldCitations for a human/model retry, never guessed at here.
+//
+// Only ever rewrites the field NUMBER, never the label text itself — the
+// label is reinserted verbatim (untrimmed, unmodified) from what was
+// actually captured, so no whitespace or wording is lost or altered.
+export function autoFixFieldCitations(html) {
+  if (!html) return { html, fixed: [] };
+  const fixed = [];
+  const raw = String(html);
+
+  const occurrences = {};
+  for (const m of raw.matchAll(/Field\s*(\d{1,2}[AB]?)\b/g)) {
+    const n = m[1].toUpperCase();
+    occurrences[n] = (occurrences[n] || 0) + 1;
+  }
+
+  const fixedHtml = raw.replace(
+    /Field\s*(\d{1,2}[AB]?)(\s*[—\-–:(]?\s*)((?:(?!Field\b)[A-Za-z '\/]){0,45})/g,
+    (full, num, sep, rawLabel, offset, string) => {
+      const lastOpen = string.lastIndexOf('<', offset);
+      const lastClose = string.lastIndexOf('>', offset);
+      if (lastOpen > lastClose) return full; // inside an unclosed HTML tag/attribute — never touch
+
+      const upperNum = num.toUpperCase();
+      const label = (rawLabel || '').trim().replace(/\s+/g, ' ');
+      const onlyOccurrence = occurrences[upperNum] === 1;
+
+      // CCC value cited under Field 19 belongs in Field 20.
+      if (upperNum === '19' && label && CCC_VALUE_RE.test(label)) {
+        if (!onlyOccurrence) return full;
+        fixed.push(`Field 19 → Field ${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.num} ("${label}" is a Compliance Condition Code value)`);
+        return `Field ${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.num}${sep}${rawLabel || ''}`;
+      }
+
+      if (!VALID_NUMS.has(upperNum) || !label) return full;
+
+      const normalizedLabel = normalizeFieldLabel(label);
+      if (normalizedLabel.startsWith('date of last activity')) return full;
+
+      const exactName = NAME_TOKENS.find((t) => normalizedLabel.startsWith(t.normalized));
+      const aliasName = FIELD_LABEL_ALIASES.find((t) => normalizedLabel.startsWith(t.normalized));
+      const claimedNum = exactName?.num || aliasName?.num;
+      if (claimedNum && claimedNum !== upperNum) {
+        if (!onlyOccurrence) return full;
+        const claimed = NAME_TOKENS.find((t) => t.num === claimedNum);
+        fixed.push(`Field ${upperNum} → Field ${claimedNum} ("${label}" is ${claimed?.name || `Field ${claimedNum}`})`);
+        return `Field ${claimedNum}${sep}${rawLabel || ''}`;
+      }
+      if (claimedNum === upperNum) return full;
+
+      const labelHead = normalizedLabel.split(' ')[0];
+      if (labelHead.length <= 4) return full;
+      const actual = NAME_TOKENS.find((t) => t.num === upperNum);
+      if (actual && labelHead === actual.head) return full;
+      // A truncated/abbreviated label (just the first word, e.g. "Account"
+      // instead of "Account Status" — whether the model wrote it that way
+      // or an inline tag split the phrase mid-label) can share its first
+      // word with MORE THAN ONE real field (Account Type vs. Account
+      // Status; Terms Duration vs. Terms Frequency; Payment Rating vs.
+      // Payment History Profile). Guessing which one via array order would
+      // silently mis-cite a different real field — only act when the head
+      // word identifies exactly one other field, never when it's ambiguous.
+      const headMatches = NAME_TOKENS.filter((t) => t.num !== upperNum && t.head === labelHead && t.head.length > 4);
+      if (actual && headMatches.length === 1) {
+        if (!onlyOccurrence) return full;
+        const claimsAnother = headMatches[0];
+        fixed.push(`Field ${upperNum} → Field ${claimsAnother.num} ("${label}" is ${claimsAnother.name})`);
+        return `Field ${claimsAnother.num}${sep}${rawLabel || ''}`;
+      }
+      return full;
+    }
+  );
+  return { html: fixedHtml, fixed };
+}
+
 function plainText(html) {
   return String(html || '')
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')

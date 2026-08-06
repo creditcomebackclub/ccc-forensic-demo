@@ -20,6 +20,7 @@ import { BUREAU_FOLLOW_UP_SCHEMA, BUREAU_RESPONSE_SCHEMA, PHASE2_SCHEMA } from '
 import { inferMediaType, isAnalyzable } from '../../src/utils/responseFiles.js';
 import {
   assertMapFullySourced,
+  autoFixFieldCitations,
   collectBureauFollowUpProblems,
   collectPhase3CitationProblems,
 } from '../../src/constants/metro2Fields.js';
@@ -363,6 +364,15 @@ export const handler = async (event) => {
     };
 
     let { parsed: analysis, usage: u } = await runModel(messages);
+    // Most Metro 2 field-citation mistakes are a transposed field NUMBER
+    // against a correctly-written label — mechanically correctable without
+    // spending another model call. Fix those before even checking whether a
+    // rebuild is needed, so a rebuild is only requested for what code
+    // couldn't confidently resolve on its own (invalid field numbers,
+    // substantive overclaims, enclosure-contract mistakes).
+    if (isBureauFollowUp && analysis?.letterHtml) {
+      analysis.letterHtml = autoFixFieldCitations(analysis.letterHtml).html;
+    }
     // One automatic rebuild if the follow-up fails production-safety lint.
     // Prompt hardening alone is not enough when Exhibit A / analysis JSON
     // still contain old citations, unsupported premises, or enclosure labels.
@@ -382,6 +392,7 @@ export const handler = async (event) => {
         ];
         const rebuilt = await runModel(rewriteMessages, 'Rewriting follow-up to fix citation lint');
         analysis = rebuilt.parsed;
+        if (analysis?.letterHtml) analysis.letterHtml = autoFixFieldCitations(analysis.letterHtml).html;
         u = {
           input_tokens: (u.input_tokens || 0) + (rebuilt.usage.input_tokens || 0),
           output_tokens: (u.output_tokens || 0) + (rebuilt.usage.output_tokens || 0),
@@ -422,6 +433,12 @@ export const handler = async (event) => {
     if (!isBureauResponse && !isBureauFollowUp && analysis && analysis.letters) {
       for (const bureau of ['equifax', 'experian', 'transunion']) {
         if (analysis.letters[bureau]) {
+          // Initial Phase 3 generation has no rebuild step (unlike bureau
+          // follow-up above) — a citation lint failure here just blocks the
+          // letter outright with enclosure_parse_blocked. Auto-fixing the
+          // mechanical field-number mistakes before that check runs is the
+          // only repair this path gets, so it matters more here, not less.
+          analysis.letters[bureau] = autoFixFieldCitations(analysis.letters[bureau]).html;
           analysis.letters[bureau] = injectLetterCss(analysis.letters[bureau], baseCss);
         }
       }

@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { getLetterSystemPrompt } from '../../src/prompts/letterPrompt.js';
-import { validateFieldCitations, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
+import { validateFieldCitations, autoFixFieldCitations, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
 import { requireStaff } from './_requireAuth.cjs';
 
 // Provenance guard (2026-07-24): fails fast at cold start if any Metro 2
@@ -139,12 +139,20 @@ export const handler = async (event) => {
 
         if (!candidateHtml || candidateHtml.trim().length < 100) throw new Error('Generated letter is empty or too short');
 
+        // Most citation mistakes are a transposed field NUMBER against a
+        // correctly-written label ("Field 21 — Amount Past Due") — that's
+        // mechanically correctable without asking the model again. Fix what
+        // can be fixed deterministically first; only what's left (an
+        // invalid field number, or a label autoFixFieldCitations couldn't
+        // confidently resolve) goes to the conversational retry below.
+        const { html: autoFixedHtml } = autoFixFieldCitations(candidateHtml);
+
         // No unsourced or misattributed Metro 2 field number may reach a
         // generated letter. Real letters shipped citing "Field 30 — Amount
         // Past Due", "Field 4 — Date Opened" and "Field 19 — Compliance
         // Condition Code"; this catches it before output instead.
-        const fieldProblems = validateFieldCitations(candidateHtml);
-        if (!fieldProblems.length) { html = candidateHtml; break; }
+        const fieldProblems = validateFieldCitations(autoFixedHtml);
+        if (!fieldProblems.length) { html = autoFixedHtml; break; }
 
         if (attempt === MAX_FIELD_CITATION_ATTEMPTS) {
           throw new Error('Metro 2 field citation check failed: ' + fieldProblems.join(' | '));
