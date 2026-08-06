@@ -20,7 +20,10 @@
   status = 200
 
 [build.environment]
-  NODE_VERSION = "20"
+  # Node 22+ has native WebSocket, which supabase-js RealtimeClient needs.
+  # Site was pinned to 20; that forced every createClient() call to supply a
+  # `ws` transport or crash (see recovery-blueprint send path).
+  NODE_VERSION = "22"
   VITE_AGENTS_API_URL = "https://ccc-agents-api.onrender.com"
 
 [functions]

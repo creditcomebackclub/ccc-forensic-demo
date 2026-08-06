@@ -1,9 +1,18 @@
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
 import { createClient } from '@supabase/supabase-js';
-import ws from 'ws';
 import { buildRecoveryBlueprintModel, RECOVERY_BLUEPRINT_TEMPLATE_VERSION, recoveryBlueprintFilename } from '../../src/utils/recoveryBlueprintModel.js';
 import { buildRecoveryBlueprintPdf } from '../../src/utils/recoveryBlueprintPdf.js';
 import authHelpers from './_requireAuth.cjs';
+
+// Netlify still runs this site on Node 20 (no native WebSocket). supabase-js
+// always constructs a RealtimeClient inside createClient(), even for pure
+// REST/storage work, and throws unless a transport is provided. Prefer
+// createRequire('ws') over `import ws from 'ws'` so esbuild/CJS interop can't
+// leave the default export undefined in the Lambda bundle.
+const require = createRequire(import.meta.url);
+const ws = require('ws');
+if (typeof globalThis.WebSocket === 'undefined') globalThis.WebSocket = ws;
 
 const { requireStaff } = authHelpers;
 const BUCKET = 'recovery-blueprints';
