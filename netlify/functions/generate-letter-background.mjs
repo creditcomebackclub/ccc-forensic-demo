@@ -117,18 +117,47 @@ export const handler = async (event) => {
 
   for (const job of payload.jobs) {
     try {
-      // 1. Generate Letter HTML
-      const msg = await client.messages.create({
-        model: MODEL,
-        max_tokens: 4096,
-        system: SYSTEM,
-        messages: [{ role: 'user', content: job.instructions }],
-      });
-      const rawText = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-      const htmlMatch = rawText.match(/<!DOCTYPE[\s\S]*<\/html>/i) || rawText.match(/<html[\s\S]*<\/html>/i);
-      let html = htmlMatch ? htmlMatch[0] : rawText;
+      // 1. Generate Letter HTML, self-correcting up to 2 times if the Metro
+      // 2 field-citation lint fails below. A blind user-triggered "Retry"
+      // regenerates from scratch and hits similar transposition mistakes at
+      // a similar rate (Field 21/22, 23/27 swaps were the most common
+      // repeat failure); feeding the exact citation errors back to the
+      // model in the same conversation lets it fix just those instead.
+      const MAX_FIELD_CITATION_ATTEMPTS = 3;
+      const conversation = [{ role: 'user', content: job.instructions }];
+      let html = null;
+      for (let attempt = 1; attempt <= MAX_FIELD_CITATION_ATTEMPTS; attempt++) {
+        const msg = await client.messages.create({
+          model: MODEL,
+          max_tokens: 4096,
+          system: SYSTEM,
+          messages: conversation,
+        });
+        const rawText = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+        const htmlMatch = rawText.match(/<!DOCTYPE[\s\S]*<\/html>/i) || rawText.match(/<html[\s\S]*<\/html>/i);
+        const candidateHtml = htmlMatch ? htmlMatch[0] : rawText;
 
-      if (!html || html.trim().length < 100) throw new Error('Generated letter is empty or too short');
+        if (!candidateHtml || candidateHtml.trim().length < 100) throw new Error('Generated letter is empty or too short');
+
+        // No unsourced or misattributed Metro 2 field number may reach a
+        // generated letter. Real letters shipped citing "Field 30 — Amount
+        // Past Due", "Field 4 — Date Opened" and "Field 19 — Compliance
+        // Condition Code"; this catches it before output instead.
+        const fieldProblems = validateFieldCitations(candidateHtml);
+        if (!fieldProblems.length) { html = candidateHtml; break; }
+
+        if (attempt === MAX_FIELD_CITATION_ATTEMPTS) {
+          throw new Error('Metro 2 field citation check failed: ' + fieldProblems.join(' | '));
+        }
+
+        conversation.push({ role: 'assistant', content: rawText });
+        conversation.push({
+          role: 'user',
+          content: 'The letter you just drafted cites the wrong Metro 2 field number for one or more items:\n\n'
+            + fieldProblems.join('\n')
+            + '\n\nRewrite the complete letter with the field numbers corrected. Do not change anything else. Output the full corrected HTML document.',
+        });
+      }
 
       // Enforce date-before-sender-address deterministically. The prompt
       // (letterPrompt.js's class allowlist + api.js's explicit "date leads"
@@ -158,15 +187,6 @@ export const handler = async (event) => {
             html = html.replace(SENDER_TOKEN, dateDiv).replace(DATE_TOKEN, senderDiv);
           }
         }
-      }
-
-      // No unsourced or misattributed Metro 2 field number may reach a
-      // generated letter. Real letters shipped citing "Field 30 — Amount
-      // Past Due", "Field 4 — Date Opened" and "Field 19 — Compliance
-      // Condition Code"; this throws before output instead.
-      const fieldProblems = validateFieldCitations(html);
-      if (fieldProblems.length) {
-        throw new Error('Metro 2 field citation check failed: ' + fieldProblems.join(' | '));
       }
 
       // Inject standard letter CSS server-side to save AI tokens and prevent truncation
