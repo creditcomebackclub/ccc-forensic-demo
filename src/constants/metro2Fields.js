@@ -35,33 +35,37 @@
 
 const B2003 = (pos) => `CRRG 2003 426 Base, pos. ${pos}`;
 
+// promptNote is optional, additive context for renderMetro2FieldTable() (the
+// text a letter-generation prompt shows alongside the field) — never
+// consulted by validateFieldCitations/autoFixFieldCitations, so getting a
+// note wrong can't create a false pass/fail, only a less helpful hint.
 export const METRO2_FIELDS = {
-  CONSUMER_ACCOUNT_NUMBER:   { num: '7',   name: 'Consumer Account Number',                        source: B2003('43-72'),   edition: '2003' }, // packed 37-66
-  PORTFOLIO_TYPE:            { num: '8',   name: 'Portfolio Type',                                 source: B2003('73'),      edition: '2003' }, // packed 67
-  ACCOUNT_TYPE:              { num: '9',   name: 'Account Type',                                   source: B2003('74-75'),   edition: '2003' }, // packed 68-69
-  DATE_OPENED:               { num: '10',  name: 'Date Opened',                                    source: B2003('76-83'),   edition: '2003' }, // packed 70-74
+  CONSUMER_ACCOUNT_NUMBER:   { num: '7',   name: 'Consumer Account Number',                        source: B2003('43-72'),   edition: '2003', promptNote: 'Cross-bureau conflicts' }, // packed 37-66
+  PORTFOLIO_TYPE:            { num: '8',   name: 'Portfolio Type',                                 source: B2003('73'),      edition: '2003', promptNote: 'C=Line of credit, I=Installment, M=Mortgage, O=Open, R=Revolving' }, // packed 67
+  ACCOUNT_TYPE:              { num: '9',   name: 'Account Type',                                   source: B2003('74-75'),   edition: '2003', promptNote: 'Two-digit code (e.g. 01 auto, 07 charge card, 48 collection)' }, // packed 68-69
+  DATE_OPENED:               { num: '10',  name: 'Date Opened',                                    source: B2003('76-83'),   edition: '2003', promptNote: 'Origination or placement date; not the start of a lifetime Field 18 demand' }, // packed 70-74
   CREDIT_LIMIT:              { num: '11',  name: 'Credit Limit',                                   source: B2003('84-92'),   edition: '2003' }, // packed 75-79
-  HIGHEST_CREDIT:            { num: '12',  name: 'Highest Credit or Original Loan Amount',         source: B2003('93-101'),  edition: '2003' }, // packed 80-84
-  TERMS_DURATION:            { num: '13',  name: 'Terms Duration',                                 source: B2003('102-104'), edition: '2003' }, // packed 85-87
+  HIGHEST_CREDIT:            { num: '12',  name: 'Highest Credit or Original Loan Amount',         source: B2003('93-101'),  edition: '2003', promptNote: 'Impossible values (e.g. below current balance)' }, // packed 80-84
+  TERMS_DURATION:            { num: '13',  name: 'Terms Duration',                                 source: B2003('102-104'), edition: '2003', promptNote: 'Must match agreement' }, // packed 85-87
 
   TERMS_FREQUENCY:           { num: '14',  name: 'Terms Frequency',                                source: B2003('105'),     edition: '2003' }, // packed 88
-  SCHEDULED_MONTHLY_PMT:     { num: '15',  name: 'Scheduled Monthly Payment Amount',               source: B2003('106-114'), edition: '2003' }, // packed 89-93
+  SCHEDULED_MONTHLY_PMT:     { num: '15',  name: 'Scheduled Monthly Payment Amount',               source: B2003('106-114'), edition: '2003', promptNote: 'Apply the portfolio-type rule; do not assume every charge-off must report $0' }, // packed 89-93
   ACTUAL_PAYMENT_AMOUNT:     { num: '16',  name: 'Actual Payment Amount',                          source: B2003('115-123'), edition: '2003' }, // packed 94-98
 
-  ACCOUNT_STATUS:            { num: '17A', name: 'Account Status',                                 source: B2003('124-125'), edition: '2003' }, // packed 99-100
-  PAYMENT_RATING:            { num: '17B', name: 'Payment Rating',                                 source: B2003('126'),     edition: '2003' }, // packed 101
-  PAYMENT_HISTORY_PROFILE:   { num: '18',  name: 'Payment History Profile',                        source: B2003('127-150'), edition: '2003' }, // packed 102-125
-  SPECIAL_COMMENT:           { num: '19',  name: 'Special Comment',                                source: B2003('151-152'), edition: '2003' }, // packed 126-127
-  COMPLIANCE_CONDITION_CODE: { num: '20',  name: 'Compliance Condition Code',                      source: 'CRRG Dec. 2024, Exhibit 8, p. 5-32',  edition: '2024' },
-  CURRENT_BALANCE:           { num: '21',  name: 'Current Balance',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024' },
-  AMOUNT_PAST_DUE:           { num: '22',  name: 'Amount Past Due',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024' },
-  ORIGINAL_CHARGE_OFF_AMT:   { num: '23',  name: 'Original Charge-off Amount',                     source: B2003('173-181'), edition: '2003' },
+  ACCOUNT_STATUS:            { num: '17A', name: 'Account Status',                                 source: B2003('124-125'), edition: '2003', promptNote: 'THE most-cited; see status code table' }, // packed 99-100
+  PAYMENT_RATING:            { num: '17B', name: 'Payment Rating',                                 source: B2003('126'),     edition: '2003', promptNote: 'Cross-check against 17A' }, // packed 101
+  PAYMENT_HISTORY_PROFILE:   { num: '18',  name: 'Payment History Profile',                        source: B2003('127-150'), edition: '2003', promptNote: 'Rolling 24-month history, not lifetime; suppression = gold' }, // packed 102-125
+  SPECIAL_COMMENT:           { num: '19',  name: 'Special Comment',                                source: B2003('151-152'), edition: '2003', promptNote: 'e.g. AU = paid in full for less than the full balance (settlement). Never Compliance Condition Code values (XA/XB/XC/etc.) — those are Field 20' }, // packed 126-127
+  COMPLIANCE_CONDITION_CODE: { num: '20',  name: 'Compliance Condition Code',                      source: 'CRRG Dec. 2024, Exhibit 8, p. 5-32',  edition: '2024', promptNote: 'XB = consumer disputes (Fair Credit Reporting Act)' },
+  CURRENT_BALANCE:           { num: '21',  name: 'Current Balance',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024', promptNote: '$0 on paid/settled' },
+  AMOUNT_PAST_DUE:           { num: '22',  name: 'Amount Past Due',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024', promptNote: '$0 on paid/settled; equals Current Balance is NORMAL on a collection account, not a violation by itself' },
+  ORIGINAL_CHARGE_OFF_AMT:   { num: '23',  name: 'Original Charge-off Amount',                     source: B2003('173-181'), edition: '2003', promptNote: 'No inflation; no continued reporting post-payment' },
   // Renamed "Date of Account Information" in later editions — keep the 2003
   // name while citing the 2003 edition.
-  BILLING_DATE:              { num: '24',  name: 'Billing Date',                                   source: B2003('182-189'), edition: '2003' },
-  DATE_FIRST_DELINQUENCY:    { num: '25',  name: 'FCRA Compliance/Date of First Delinquency',      source: B2003('190-197'), edition: '2003' },
+  BILLING_DATE:              { num: '24',  name: 'Billing Date',                                   source: B2003('182-189'), edition: '2003', promptNote: 'Cross-bureau conflicts' },
+  DATE_FIRST_DELINQUENCY:    { num: '25',  name: 'FCRA Compliance/Date of First Delinquency',      source: B2003('190-197'), edition: '2003', promptNote: '§623(a)(5); 7-yr clock — never assert a later date than reported' },
   DATE_CLOSED:               { num: '26',  name: 'Date Closed',                                    source: B2003('198-205'), edition: '2003' },
-  DATE_OF_LAST_PAYMENT:      { num: '27',  name: 'Date of Last Payment',                           source: 'CRRG Dec. 2024, Debt Buyer item 12',  edition: '2024' },
+  DATE_OF_LAST_PAYMENT:      { num: '27',  name: 'Date of Last Payment',                           source: 'CRRG Dec. 2024, Debt Buyer item 12',  edition: '2024', promptNote: 'Cross-bureau conflicts' },
 };
 
 // ─── Compliance Condition Codes (Field 20) ───────────────────────────────
@@ -636,4 +640,24 @@ export function collectBureauFollowUpProblems(html) {
 export function formatMetro2Field(key) {
   const f = assertSourced(key);
   return `Field ${f.num} (${f.name})`;
+}
+
+// Single source of truth for the field-reference block every letter-
+// generation prompt needs. masterPrompt.js and phase3CitationRules.js used
+// to hand-type this table separately — meaning they could drift from each
+// other, AND from what validateFieldCitations/autoFixFieldCitations
+// actually enforce, since neither hardcoded copy was ever generated from
+// this file. A prompt that embeds this output can never cite a field
+// number/name pair the lint would then reject.
+export function renderMetro2FieldTable() {
+  const rows = Object.values(METRO2_FIELDS)
+    .map((f) => `| ${f.num} | ${f.name} | ${f.promptNote || '—'} |`)
+    .join('\n');
+  return `| Field | Name | Notes |\n|------|------|------|\n${rows}`;
+}
+
+export function renderMetro2StatusCodeTable() {
+  return Object.entries(METRO2_STATUS_CODES)
+    .map(([code, v]) => `${code}=${v.meaning}`)
+    .join(', ');
 }

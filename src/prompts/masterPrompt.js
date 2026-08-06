@@ -1,6 +1,8 @@
 // CCC Forensic Master System Prompt — JS module
 // The brain of the entire demo. Drop into the `system` field of every Claude API call.
 
+import { renderMetro2FieldTable, renderMetro2StatusCodeTable } from '../constants/metro2Fields.js';
+
 export const MASTER_SYSTEM_PROMPT = `# CCC FORENSIC AUDITOR — MASTER SYSTEM PROMPT
 
 ## 1. IDENTITY & MISSION
@@ -121,35 +123,12 @@ These are FORMAT-level requirements, so a violation is FACIAL — it does not de
 
 ## 5. METRO 2 FIELD REFERENCE
 
-Verified against the CDIA base-segment field order (2026-07-24 full correction — the reference corpus this table came from had Fields 19/20 and 21/22 swapped AND most of the low-numbered fields misnumbered, and every letter generated against it inherited those errors). This is the authoritative mapping; the field numbers/names below are canonical — see also src/constants/metro2Fields.js for the same map in code. Never cite a field number not on this list.
+Generated directly from src/constants/metro2Fields.js — the same file the server-side citation lint (validateFieldCitations / autoFixFieldCitations) checks every generated letter against. This is the authoritative mapping; it cannot drift out of sync with what gets enforced, because it IS what gets enforced. Never cite a field number not on this list.
 
-| Field | Name | Notes |
-|------|------|-------|
-| 7 | Consumer Account Number | Cross-bureau conflicts |
-| 8 | Portfolio Type | C=Line of credit, I=Installment, M=Mortgage, O=Open, R=Revolving |
-| 9 | Account Type | Two-digit code (e.g. 01 auto, 07 charge card, 48 collection) |
-| 10 | Date Opened | Origination or placement date; not the start of a lifetime Field 18 demand |
-| 11 | Credit Limit | — |
-| 12 | Highest Credit or Original Loan Amount | Impossible values (e.g. below current balance) |
-| 13 | Terms Duration | Must match agreement |
-| 14 | Terms Frequency | — |
-| 15 | Scheduled Monthly Payment Amount | Apply the portfolio-type rule in §3; do not assume every charge-off must report $0 |
-| 16 | Actual Payment Amount | — |
-| 17A | Account Status | THE most-cited; see codes below |
-| 17B | Payment Rating | Cross-check against 17A |
-| 18 | Payment History Profile | 24-month history; suppression = gold |
-| 19 | Special Comment | e.g. AU = paid in full for less than the full balance (settlement). Do not confuse with Field 20 |
-| 20 | Compliance Condition Code | XB = consumer disputes (Fair Credit Reporting Act) |
-| 21 | Current Balance | $0 on paid/settled |
-| 22 | Amount Past Due | $0 on paid/settled; equals Current Balance is NORMAL on a collection account, not a violation — see Balance/Payment paradoxes above |
-| 23 | Original Charge-off Amount | No inflation; no continued reporting post-payment |
-| 24 | Date of Account Information | Cross-bureau conflicts |
-| 25 | FCRA Compliance Date (DOFD) | §623(a)(5); 7-yr clock — see directional rule above, never assert a later date than reported |
-| 26 | Date Closed | — |
-| 27 | Date of Last Payment | Cross-bureau conflicts |
+${renderMetro2FieldTable()}
 
-**Status Codes (Field 17A) — corrected 2026-07-24; the prior list mislabeled the delinquency ladder:**
-05=Account transferred, 11=Current (0–29 days past due), 13=Paid or closed/zero balance, 61=Paid in full, was a voluntary surrender, 62=Paid in full, was a collection, 63=Paid in full, was a repossession, 64=Paid in full, was a charge-off, 65=Paid in full, foreclosure was started, 71=30–59 days past due, 78=60–89 days past due, 80=90–119 days past due, 82=120–149 days past due, 83=150–179 days past due, 84=180+ days past due, 88=Claim filed with government, 89=Deed in lieu of foreclosure, 93=Assigned to internal/external collections, 94=Foreclosure completed, 95=Voluntary surrender, 96=Merchandise repossessed, 97=Unpaid balance reported as a loss (charge-off), DA=Delete account (non-fraud), DF=Delete account (fraud).
+**Status Codes (Field 17A):**
+${renderMetro2StatusCodeTable()}
 
 CRITICAL: 71/78/80/82/83/84 are TIME-BASED DELINQUENCY STAGES, not derogatory-outcome statuses. A balance (or past-due amount) on a status 71–84 account is completely normal and is NEVER a violation by itself. "Settled for less than the full balance" is NOT a status code — it is Special Comment AU (Field 19) paired with a paid status (13/61–65).
 

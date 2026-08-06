@@ -2,6 +2,13 @@
 // (initial Phase 3 generation AND bureau follow-up). Keep this in sync with
 // validateFieldCitations / METRO2_FIELDS — prompts that omit these rules
 // will copy wrong Field N phrasing from Exhibit A / analysis JSON.
+//
+// The bullets below are curated behavioral gotchas (the fields that
+// actually get confused in practice), not a full field list — the
+// generated table appended at the end IS the full list, pulled directly
+// from src/constants/metro2Fields.js so it can never drift from what
+// validateFieldCitations/autoFixFieldCitations actually enforce.
+import { renderMetro2FieldTable } from '../constants/metro2Fields.js';
 
 export const PHASE3_METRO2_FIELD_RULES = `METRO 2 FIELD CITATION RULES (NON-NEGOTIABLE — server lint will block the letter):
 - Field 19 = Special Comment (e.g. AU = settled). NEVER put XA/XB/XC/XH/XR here.
@@ -13,7 +20,10 @@ export const PHASE3_METRO2_FIELD_RULES = `METRO 2 FIELD CITATION RULES (NON-NEGO
 - Prefer the phrasing "Compliance Condition Code XB (Metro 2 Field 20)" the first time XB is raised.
 - NEVER write "Field 19 — Compliance Condition Code", "Field 19 — XB", or "Field 19 — XB/XC".
 - If Exhibit A, Exhibit B, or the prior analysis JSON uses a wrong Field number/name, CORRECT it in this letter — do not copy the error.
-- Only cite Base Segment field numbers that exist in the verified map (7–16, 17A, 17B, 18–27). Never invent Field 4, Field 30, etc.`;
+- Only cite Base Segment field numbers that exist in the verified map (7–16, 17A, 17B, 18–27). Never invent Field 4, Field 30, etc.
+
+FULL FIELD REFERENCE (authoritative — generated from src/constants/metro2Fields.js):
+${renderMetro2FieldTable()}`;
 
 export const PHASE3_STATUTE_CITATION_RULES = `STATUTE CITATION RULES (NON-NEGOTIABLE — server lint will block the letter):
 - This letter is addressed to a CRA. It must NEVER contain the string "1681s-2(a)" in any subsection.

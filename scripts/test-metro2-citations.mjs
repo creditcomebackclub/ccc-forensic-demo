@@ -4,6 +4,7 @@ import {
   autoFixFieldCitations,
   collectBureauFollowUpProblems,
   collectPhase3CitationProblems,
+  renderMetro2FieldTable,
   validateFieldCitations,
 } from '../src/constants/metro2Fields.js';
 
@@ -188,6 +189,23 @@ assert(validateFieldCitations(fixedTo('Field 21 — Amount Past Due')).length ==
   const input = '<span title="Field 21 — Amount Past Due">note</span>';
   const out = fixedTo(input);
   assert(out === input, 'autofix: text inside an HTML tag attribute is never touched');
+}
+
+// Self-consistency: every row renderMetro2FieldTable() puts in front of the
+// model (masterPrompt.js, phase3CitationRules.js) must, phrased as its own
+// citation, pass validateFieldCitations cleanly — otherwise the prompt and
+// the lint that grades its output would disagree about the ground truth.
+{
+  const rows = [...renderMetro2FieldTable().matchAll(/\| (\d{1,2}[AB]?) \| ([^|]+) \|/g)];
+  assert(rows.length >= 20, 'field table has the expected number of rows');
+  for (const m of rows) {
+    const num = m[1].trim();
+    const name = m[2].trim();
+    assert(
+      validateFieldCitations(`Field ${num} — ${name}`).length === 0,
+      `field table self-consistent: Field ${num} — ${name}`
+    );
+  }
 }
 
 if (failed) {
