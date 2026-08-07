@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import authHelpers from './_requireAuth.cjs';
+import { buildProgressUpdatePdf, progressUpdateFilename, monthLabel as pdfMonthLabel } from '../../src/utils/progressUpdatePdf.js';
 
 const { requireStaff } = authHelpers;
 
@@ -18,9 +19,7 @@ function slug(s) {
 }
 
 function monthLabel(dateStr) {
-  if (!dateStr) return '';
-  return new Date(String(dateStr) + (String(dateStr).includes('T') ? '' : 'T00:00:00'))
-    .toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return pdfMonthLabel(dateStr);
 }
 
 function excerpt(text, wordCount = 60) {
@@ -29,31 +28,63 @@ function excerpt(text, wordCount = 60) {
   return words.slice(0, wordCount).join(' ') + '…';
 }
 
-function progressEmailHtml({ firstName, teaser, portalUrl, deletedFurnishers = [] }) {
+function money(value) {
+  return '$' + Math.round(Number(value) || 0).toLocaleString('en-US');
+}
+
+function progressEmailHtml({
+  firstName,
+  teaser,
+  portalUrl,
+  deletedFurnishers = [],
+  deletedCount = 0,
+  debtRemoved = 0,
+  scoreLines = [],
+  periodLabel = '',
+}) {
   const escape = (value) => String(value || '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
   const winBox = deletedFurnishers.length > 0
-    ? '<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:16px 20px;margin:0 0 20px;">'
-      + '<p style="margin:0 0 6px;font-size:14px;font-weight:800;color:#15803D;">&#127942; '
-      + (deletedFurnishers.length === 1 ? 'An account was deleted from your report!' : deletedFurnishers.length + ' accounts were deleted from your report!')
-      + '</p>'
-      + '<p style="margin:0;font-size:12px;color:#166534;">' + deletedFurnishers.map(escape).join(', ') + '</p>'
+    ? '<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px;padding:16px 20px;margin:0 0 20px;">'
+      + '<p style="margin:0 0 6px;font-size:13px;font-weight:800;color:#15803D;letter-spacing:.04em;text-transform:uppercase;">Accounts removed</p>'
+      + '<p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#166534;">' + deletedCount + '</p>'
+      + '<p style="margin:0;font-size:12px;color:#166534;line-height:1.5;">' + deletedFurnishers.map(escape).join(' · ') + '</p>'
+      + (debtRemoved > 0 ? '<p style="margin:10px 0 0;font-size:12px;color:#166534;">Reported balance cleared: <strong>' + money(debtRemoved) + '</strong></p>' : '')
       + '</div>'
     : '';
-  const teaserHtml = escape(teaser).split(/\n+/).map((p) => `<p style="font-size:13px;color:#374151;margin:0 0 14px;">${p}</p>`).join('');
+
+  const scoreHtml = scoreLines.length
+    ? '<div style="display:flex;gap:8px;margin:0 0 22px;flex-wrap:wrap;">'
+      + scoreLines.map((line) => (
+        '<div style="flex:1;min-width:120px;background:#121F38;border-radius:10px;padding:14px 16px;">'
+        + '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#C9A84C;font-weight:700;">' + escape(line.bureau) + '</div>'
+        + '<div style="font-size:22px;font-weight:800;color:#fff;margin-top:6px;">' + escape(line.score) + '</div>'
+        + '<div style="font-size:11px;color:#9CA3AF;margin-top:4px;">' + escape(line.deltaLabel) + '</div>'
+        + '</div>'
+      )).join('')
+      + '</div>'
+    : '';
+
+  const teaserHtml = escape(teaser).split(/\n+/).map((p) => `<p style="font-size:14px;color:#374151;margin:0 0 14px;line-height:1.65;">${p}</p>`).join('');
+
   return '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-    + '<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F8F9FA;">'
-    + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:10px;">'
-    + '<div style="background:#C9A84C;border-radius:5px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;"><span style="color:#1B2A4A;font-weight:800;font-size:12px;">CC</span></div>'
-    + '<div style="color:#C9A84C;font-weight:700;font-size:14px;">Credit Comeback Club</div></div>'
-    + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:28px;border-radius:0 0 8px 8px;">'
-    + '<p style="color:#6B7280;font-size:12px;margin:0 0 4px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Progress Update</p>'
-    + '<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 16px;">Hi ' + escape(firstName) + ',</h1>'
+    + '<body style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F3F0E8;">'
+    + '<div style="background:#121F38;padding:28px 32px;border-radius:14px 14px 0 0;">'
+    + '<div style="width:36px;height:3px;background:#C9A84C;margin-bottom:16px;"></div>'
+    + '<div style="color:#C9A84C;font-size:10px;letter-spacing:.2em;text-transform:uppercase;font-weight:700;">Credit Comeback Club</div>'
+    + '<h1 style="color:#fff;font-size:26px;margin:10px 0 6px;font-weight:800;">Your Progress Update</h1>'
+    + (periodLabel ? '<p style="margin:0;color:#C9A84C;font-size:13px;">' + escape(periodLabel) + '</p>' : '')
+    + '</div>'
+    + '<div style="background:#fff;border:1px solid #E8E4DA;border-top:none;padding:28px 32px;border-radius:0 0 14px 14px;">'
+    + '<p style="color:#6B7280;font-size:12px;margin:0 0 4px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Hi ' + escape(firstName) + '</p>'
     + winBox
+    + scoreHtml
     + teaserHtml
-    + '<div style="text-align:center;margin:0 0 20px;"><a href="' + escape(portalUrl) + '" style="background:#1B2A4A;color:#C9A84C;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;display:inline-block;">View your full update &#8594;</a></div>'
-    + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:20px 0;">'
-    + '<p style="font-size:11px;color:#9CA3AF;margin:0;">Credit Comeback Club | creditcomebackclub.com | 970-644-0063</p>'
+    + '<p style="font-size:13px;color:#6B7280;margin:0 0 22px;line-height:1.55;">Your full Progress Update PDF is attached. You can also review it anytime in your portal.</p>'
+    + '<div style="text-align:center;margin:0 0 8px;"><a href="' + escape(portalUrl) + '" style="background:#121F38;color:#C9A84C;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;font-size:13px;display:inline-block;letter-spacing:.04em;">Open your portal</a></div>'
+    + '<hr style="border:none;border-top:1px solid #E8E4DA;margin:28px 0 16px;">'
+    + '<p style="font-size:11px;color:#9CA3AF;margin:0;">Credit Comeback Club · Grand Junction, CO · 970-644-0063 · creditcomebackclub.com</p>'
     + '</div></body></html>';
 }
 
@@ -101,12 +132,24 @@ function safeUpdate(row) {
 }
 
 function defaultSubject(toReportDate, deletedCount) {
-  if (deletedCount > 0) return '\u{1F3C6} An account was deleted from your report!';
-  return 'Your ' + monthLabel(toReportDate) + ' credit report update';
+  if (deletedCount > 0) return 'An account was removed from your credit report';
+  return 'Your ' + monthLabel(toReportDate) + ' Progress Update is ready';
 }
 
 function defaultEmailBody(narrative) {
-  return excerpt(narrative, 60);
+  return excerpt(narrative, 80);
+}
+
+function buildScoreLines(scoreDeltas = {}) {
+  return ['equifax', 'experian', 'transunion'].map((bureau) => {
+    const s = scoreDeltas[bureau];
+    if (!s || s.new == null) return null;
+    const delta = s.delta;
+    const deltaLabel = delta == null ? (s.old != null ? 'Was ' + s.old : 'Current score')
+      : delta === 0 ? 'No change'
+        : (delta > 0 ? '+' : '') + delta + (s.old != null ? ' from ' + s.old : '');
+    return { bureau: bureau.charAt(0).toUpperCase() + bureau.slice(1), score: String(s.new), deltaLabel };
+  }).filter(Boolean);
 }
 
 async function loadLatestPair(db, { userId, clientId, clientName, caller }) {
@@ -137,9 +180,6 @@ async function loadOrCreateRow(db, pair, userId) {
   if (error) throw error;
   if (existing) return existing;
 
-  // Studio opened before the background narrative job finished — seed the
-  // row so staff can poll for narrative. Diff is filled by the background
-  // job; we only create a stub keyed to the same id format.
   const { data: created, error: insertError } = await db.from('progress_updates').upsert({
     id,
     user_id: userId,
@@ -156,18 +196,20 @@ async function loadOrCreateRow(db, pair, userId) {
   return created;
 }
 
-async function sendGridProgressEmail({ to, subject, html }) {
+async function sendGridProgressEmail({ to, subject, html, attachments = [] }) {
   const key = process.env.SENDGRID_API_KEY;
   if (!key) throw new Error('SENDGRID_API_KEY is not configured.');
+  const payload = {
+    personalizations: [{ to: [{ email: to }], cc: [{ email: ADMIN_CC_EMAIL }] }],
+    from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
+    subject,
+    content: [{ type: 'text/html', value: html }],
+  };
+  if (attachments.length) payload.attachments = attachments;
   const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      personalizations: [{ to: [{ email: to }], cc: [{ email: ADMIN_CC_EMAIL }] }],
-      from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
-      subject,
-      content: [{ type: 'text/html', value: html }],
-    }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`SendGrid error ${res.status}: ${await res.text()}`);
 }
@@ -201,7 +243,6 @@ export const handler = async (event) => {
       if (!update.emailBody && update.narrative) {
         update.emailBody = defaultEmailBody(update.narrative);
       }
-      // Kick generation if the draft has no narrative yet (idempotent bg job).
       if (!row.narrative) {
         const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://ccc-forensic-demo.netlify.app';
         fetch(`${origin}/.netlify/functions/progress-narrative-background`, {
@@ -254,22 +295,54 @@ export const handler = async (event) => {
         throw Object.assign(new Error('A valid recipient email is required.'), { statusCode: 400 });
       }
 
-      const deletedFurnishers = ((row.diff && row.diff.deleted) || []).map((a) => a.furnisher).filter(Boolean);
+      const diff = row.diff || {};
+      const deleted = Array.isArray(diff.deleted) ? diff.deleted : [];
+      const deletedFurnishers = deleted.map((a) => a.furnisher).filter(Boolean);
       const subject = String(payload.emailSubject || row.email_subject || defaultSubject(row.to_report_date, deletedFurnishers.length)).trim();
       const bodyText = String(payload.emailBody || row.email_body || defaultEmailBody(narrative)).trim();
       if (!subject || !bodyText) {
         throw Object.assign(new Error('Email subject and body are required.'), { statusCode: 400 });
       }
 
+      const pdfInput = {
+        clientName: pair.clientName || row.client_name || 'Client',
+        fromReportDate: row.from_report_date,
+        toReportDate: row.to_report_date,
+        narrative,
+        diff,
+        phaseProgress: row.phase_progress || [],
+      };
+      const pdfDoc = buildProgressUpdatePdf(pdfInput);
+      const pdfBuffer = Buffer.from(pdfDoc.output('arraybuffer'));
+      const fileName = progressUpdateFilename({
+        clientName: pdfInput.clientName,
+        toReportDate: row.to_report_date,
+      });
+
       const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://ccc-forensic-demo.netlify.app';
       const firstName = String(pair.clientName || 'there').split(' ')[0];
+      const periodLabel = [monthLabel(row.from_report_date), monthLabel(row.to_report_date)].filter(Boolean).join(' → ');
       const html = progressEmailHtml({
         firstName,
         teaser: bodyText,
         portalUrl: origin.replace(/\/$/, '') + '/login',
         deletedFurnishers,
+        deletedCount: deleted.length,
+        debtRemoved: Number(diff.totalDebtRemoved) || 0,
+        scoreLines: buildScoreLines(diff.scoreDeltas),
+        periodLabel,
       });
-      await sendGridProgressEmail({ to, subject, html });
+      await sendGridProgressEmail({
+        to,
+        subject,
+        html,
+        attachments: [{
+          content: pdfBuffer.toString('base64'),
+          filename: fileName,
+          type: 'application/pdf',
+          disposition: 'attachment',
+        }],
+      });
 
       const now = new Date().toISOString();
       const { data: updated, error } = await db.from('progress_updates').update({
