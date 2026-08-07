@@ -585,6 +585,24 @@ export default function ClientBillingPanel({ client, onChanged }) {
             ${totalPaid.toFixed(2)}
           </div>
         </Row>
+
+        {hasCustomServiceAgreement(client) && (
+          <>
+            <Row label="Active Package">
+              <div className="text-[12px] font-medium text-right" style={{ color: T.ink }}>
+                {client.serviceAgreementLabel || 'Custom package'}
+              </div>
+            </Row>
+            <Row label="Package Amount">
+              <div className="text-[14px] font-semibold" style={{ color: T.navy }}>
+                {client.serviceAgreementAmount != null
+                  ? `$${Number(client.serviceAgreementAmount).toFixed(2)}`
+                  : '—'}
+              </div>
+            </Row>
+          </>
+        )}
+
         <Row label="Billing Status">
           <LifecycleStatusField
             status={client.billingStatus}
@@ -601,15 +619,24 @@ export default function ClientBillingPanel({ client, onChanged }) {
             onSave={(v) => save({ billing_start_date: v })} 
           />
         </Row>
-        <Row label="Service Tier">
-          <Field 
-            label="service tier" 
-            value={client.billingTier} 
-            options={['Standard', 'VIP', 'Paid In Full']}
-            placeholder="Select tier..."
-            onSave={(v) => save({ billing_tier: v })} 
-          />
-        </Row>
+        {!hasCustomServiceAgreement(client) && (
+          <Row label="Service Tier">
+            <Field 
+              label="service tier" 
+              value={client.billingTier} 
+              options={['Standard', 'VIP', 'Paid In Full']}
+              placeholder="Select tier..."
+              onSave={(v) => save({ billing_tier: v })} 
+            />
+          </Row>
+        )}
+        {hasCustomServiceAgreement(client) && (
+          <Row label="Service Tier">
+            <span className="text-[12px] italic" style={{ color: T.faint }}>
+              Custom package (LPOA uses Service Agreement above)
+            </span>
+          </Row>
+        )}
         <Row label="Billing Type">
           <Field 
             label="billing type" 
@@ -623,7 +650,18 @@ export default function ClientBillingPanel({ client, onChanged }) {
           <div className="mt-2 bg-green-50 text-green-800 text-[11px] px-3 py-2 rounded-md border border-green-200 flex items-start gap-2">
             <Check size={14} className="mt-0.5 flex-shrink-0" />
             <div>
-              <strong>Billing is active.</strong> Client will be included in the automated billing cycle (once gateway is integrated).
+              {hasCustomServiceAgreement(client) || client.billingType === 'Paid in Full' ? (
+                <>
+                  <strong>One-time / paid-in-full billing.</strong>
+                  {hasCustomServiceAgreement(client)
+                    ? ' Custom package drives the LPOA — no automated monthly invoices.'
+                    : ' Not enrolled in the automated monthly billing cycle.'}
+                </>
+              ) : (
+                <>
+                  <strong>Billing is active.</strong> Client will be included in the automated billing cycle (once gateway is integrated).
+                </>
+              )}
             </div>
           </div>
         )}
