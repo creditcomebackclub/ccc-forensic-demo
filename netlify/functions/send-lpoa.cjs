@@ -1,24 +1,7 @@
-const https = require('https');
+const { sendEmail, isConfigured } = require('./_email.cjs');
 
-async function sendViaSendGrid(sgKey, to, subject, htmlBody, attachments) {
-  const payload = {
-    personalizations: [{ to: [{ email: to }] }],
-    from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
-    subject,
-    content: [{ type: 'text/html', value: htmlBody }],
-  };
-  if (attachments && attachments.length) payload.attachments = attachments;
-  const body = JSON.stringify(payload);
-  const res = await new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'api.sendgrid.com', path: '/v3/mail/send', method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + sgKey, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    }, (res) => {
-      let raw = ''; res.on('data', c => raw += c); res.on('end', () => resolve({ status: res.statusCode, body: raw }));
-    });
-    req.on('error', reject); req.write(body); req.end();
-  });
-  if (res.status >= 400) throw new Error('SendGrid error ' + res.status + ': ' + res.body);
+async function sendMail(to, subject, htmlBody, attachments) {
+  return sendEmail({ to, subject, html: htmlBody, attachments });
 }
 
 // An affiliate may request an internal "new referral" alert, but the email
@@ -52,7 +35,7 @@ async function loadVerifiedAffiliateReferral(userId, clientEmail) {
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
 
-  const sgKey = process.env.SENDGRID_API_KEY;
+  const emailConfigured = isConfigured();
 
   let payload;
   try { payload = JSON.parse(event.body); }
@@ -92,7 +75,7 @@ exports.handler = async (event) => {
   if (action === 'send') {
     const { clientName, clientEmail, tier } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured — add to Netlify env vars' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured — add to Netlify env vars' }) };
     const enrollment = tier && tier !== 'Consultation';
     const subject = enrollment ? 'Next Step: Choose Your Credit Comeback Club Consultation Time' : 'Your Free Consultation Request — Choose a Time';
     const intro = enrollment
@@ -101,7 +84,7 @@ exports.handler = async (event) => {
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:#1B2A4A;padding:20px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Consultation Request Received</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 4px 4px;"><p>Hi ${clientName},</p><p>${intro}</p><div style="text-align:center;margin:32px 0;"><a href="https://calendly.com/creditcomebackclub/30min" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Choose Your Time &#8594;</a></div><p style="font-size:12px;color:#666;">No portal account, authorization, or payment is created from this request. We\'ll send secure onboarding steps only if you choose to move forward after the consultation.</p><p style="font-size:12px;color:#666;">Questions? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, subject, html);
+      await sendMail(clientEmail, subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       console.error('Email error:', e.message);
@@ -112,7 +95,7 @@ exports.handler = async (event) => {
   if (action === 'send_consultation_booked') {
     const { clientName, clientEmail, tier, portalInvited } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
     const firstName = String(clientName || 'there').split(' ')[0];
     const enrollment = tier && tier !== 'Consultation';
     const subject = enrollment
@@ -127,7 +110,7 @@ exports.handler = async (event) => {
          <p>During the consultation, we&rsquo;ll walk through the file at a forensic level: potential FCRA compliance issues, Metro 2 reporting errors, which items may warrant documented disputes, and how Credit Comeback Club may be able to help. Bring any questions and recent correspondence you&rsquo;ve received from creditors, collectors, or the bureaus.</p>`;
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#111827;"><div style="background:#1B2A4A;padding:24px 32px;border-radius:6px 6px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Your Consultation Is Booked</p></div><div style="border:1px solid #E5E7EB;border-top:none;padding:24px 32px;border-radius:0 0 6px 6px;font-size:14px;line-height:1.65;"><p>Hi ${firstName},</p><p>Your consultation is on the calendar, and we&rsquo;re eager to take a close look at your file.</p>${preparation}<p>Calendly&rsquo;s calendar invitation contains the confirmed date, time, and meeting details. If you need to reschedule, use the link in that invitation.</p><p>Questions before the call? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;"><p style="font-size:11px;color:#9CA3AF;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
     try {
-      await sendViaSendGrid(sgKey, clientEmail, subject, html);
+      await sendMail(clientEmail, subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -137,13 +120,13 @@ exports.handler = async (event) => {
   if (action === 'send_onboarding_welcome') {
     const { clientName, clientEmail, magicLink } = payload;
     if (!clientEmail || !magicLink) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail and magicLink required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#111827;">
       <div style="background:#1B2A4A;padding:20px 24px;border-radius:6px 6px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Welcome to your client portal</p></div>
       <div style="border:1px solid #E5E7EB;border-top:none;padding:24px;border-radius:0 0 6px 6px;"><p>Hi ${clientName},</p><p>Your client portal is ready. Use the secure sign-in link below to complete onboarding, review your audit, and follow your campaign.</p><p style="text-align:center;margin:28px 0;"><a href="${magicLink}" style="background:#1B2A4A;color:#fff;padding:12px 22px;border-radius:4px;text-decoration:none;font-weight:700;">Open Your Portal</a></p><p style="font-size:12px;color:#6B7280;">For your security, access is protected by a sign-in link sent to this email address.</p><hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;"><p style="font-size:11px;color:#9CA3AF;">Credit Comeback Club | creditcomebackclub.com</p></div>
     </body></html>`;
     try {
-      await sendViaSendGrid(sgKey, clientEmail, 'Welcome to Your Credit Comeback Club Portal', html);
+      await sendMail(clientEmail, 'Welcome to Your Credit Comeback Club Portal', html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -156,7 +139,7 @@ exports.handler = async (event) => {
     const { clientEmail, subject, bodyText, attachmentBase64, attachmentFilename } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
     if (!subject || !bodyText) return { statusCode: 400, body: JSON.stringify({ error: 'subject and bodyText required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     // Auditor-edited plain text, wrapped in the same branded shell as every
     // other CCC email — paragraphs split on blank lines, single line breaks
@@ -185,7 +168,7 @@ exports.handler = async (event) => {
     }] : undefined;
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, subject, html, attachments);
+      await sendMail(clientEmail, subject, html, attachments);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -196,7 +179,7 @@ exports.handler = async (event) => {
   if (action === 'send_phase_notification') {
     const { clientName, clientEmail, phase, furnisher, trackingNumber, details } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const subjects = {
       phase1_mailed: 'Your Dispute Letter Has Been Mailed — ' + furnisher,
@@ -233,7 +216,7 @@ exports.handler = async (event) => {
     </body></html>`;
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, subjects[phase] || 'Credit Comeback Club Update', html);
+      await sendMail(clientEmail, subjects[phase] || 'Credit Comeback Club Update', html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -244,7 +227,7 @@ exports.handler = async (event) => {
   if (action === 'send_onboarding_reminder') {
     const { clientName, clientEmail, day } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = clientName.split(' ')[0] || clientName;
     const configs = {
@@ -286,7 +269,7 @@ exports.handler = async (event) => {
     </body></html>`;
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, config.subject, html);
+      await sendMail(clientEmail, config.subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -300,7 +283,7 @@ exports.handler = async (event) => {
   if (action === 'send_lead_nurture') {
     const { clientName, clientEmail, day, auditSummary } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = (clientName || '').split(' ')[0] || clientName;
     const hasAudit = !!(auditSummary && auditSummary.totalViolations != null);
@@ -395,7 +378,7 @@ exports.handler = async (event) => {
     </body></html>`;
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, config.subject, html);
+      await sendMail(clientEmail, config.subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -406,7 +389,7 @@ exports.handler = async (event) => {
   if (action === 'send_report_refresh') {
     const { clientName, clientEmail } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = clientName.split(' ')[0] || clientName;
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
@@ -429,7 +412,7 @@ exports.handler = async (event) => {
     </body></html>`;
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, 'Action Required: Upload your new credit report', html);
+      await sendMail(clientEmail, 'Action Required: Upload your new credit report', html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -439,7 +422,7 @@ exports.handler = async (event) => {
   // Admin Notification: New Lead
   if (action === 'admin_new_lead') {
     const { leadName, leadEmail, leadPhone, tier } = payload;
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
     
     const adminEmail = 'chris@cccpartners.co';
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
@@ -463,7 +446,7 @@ exports.handler = async (event) => {
     </body></html>`;
 
     try {
-      await sendViaSendGrid(sgKey, adminEmail, `🚨 New Lead: ${leadName}`, html);
+      await sendMail(adminEmail, `🚨 New Lead: ${leadName}`, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -474,7 +457,7 @@ exports.handler = async (event) => {
   if (action === 'send_campaign_update') {
     const { clientName, clientEmail, updateType, furnisher, details, daysElapsed } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = clientName.split(' ')[0] || clientName;
     const configs = {
@@ -526,7 +509,7 @@ exports.handler = async (event) => {
       + '</div></body></html>';
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, cfg.subject, html);
+      await sendMail(clientEmail, cfg.subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -537,7 +520,7 @@ exports.handler = async (event) => {
   if (action === 'send_lead_drip') {
     const { leadName, leadEmail, emailNumber } = payload;
     if (!leadEmail) return { statusCode: 400, body: JSON.stringify({ error: 'leadEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = leadName.split(' ')[0] || leadName;
 
@@ -601,7 +584,7 @@ exports.handler = async (event) => {
       + '</div></body></html>';
 
     try {
-      await sendViaSendGrid(sgKey, leadEmail, drip.subject, html);
+      await sendMail(leadEmail, drip.subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -611,7 +594,7 @@ exports.handler = async (event) => {
   if (action === 'send_educational') {
     const { clientName, clientEmail, emailNumber } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = clientName.split(' ')[0] || clientName;
 
@@ -687,7 +670,7 @@ exports.handler = async (event) => {
       + '</div></body></html>';
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, email.subject, html);
+      await sendMail(clientEmail, email.subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -696,12 +679,11 @@ exports.handler = async (event) => {
 
   if (action === 'affiliate_welcome') {
     const { affiliateName, affiliateEmail, companyName, commissionRate } = payload;
-    const sgKey = process.env.SENDGRID_API_KEY;
-    if (!sgKey || !affiliateEmail) return { statusCode: 400, body: JSON.stringify({ error: 'Missing fields' }) };
+    if (!emailConfigured || !affiliateEmail) return { statusCode: 400, body: JSON.stringify({ error: 'Missing fields' }) };
     const subject = 'Welcome to the Credit Comeback Club Partner Program';
     const commPct = Math.round((commissionRate || 0.20) * 100);
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;"><div style="background:#0C0C0C;padding:24px 32px;border-radius:4px 4px 0 0;"><h1 style="color:#22C55E;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:rgba(255,255,255,0.5);margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Partner Program</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;"><p>Hi ${affiliateName},</p><p>Welcome to the Credit Comeback Club partner program${companyName ? ' on behalf of ' + companyName : ''}. We&rsquo;re excited to work with you.</p><h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">How it works:</h3><ol style="padding-left:18px;line-height:1.8;font-size:13px;color:#444;"><li>Log in to your partner portal to submit client referrals</li><li>We handle the full credit repair process &mdash; forensic audit, certified dispute letters, follow-up, and monitoring</li><li>You earn ${commPct}% of the First Work Fee AND every ongoing monthly payment for as long as your referred client remains active &mdash; not a one-time bonus</li><li>Track your referrals and commission status in real time from your portal</li></ol><h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">Client Plans:</h3><table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px;"><tr style="background:#f8f9fa;"><td style="padding:8px 12px;font-weight:600;">Standard</td><td style="padding:8px 12px;">$79/mo &mdash; Up to 3 letters/mo. $75 one-time First Work Fee.</td></tr><tr><td style="padding:8px 12px;font-weight:600;">VIP</td><td style="padding:8px 12px;">$149/mo &mdash; Up to 5 letters/mo, priority service &amp; strategy call. $99 First Work Fee.</td></tr><tr style="background:#f8f9fa;"><td style="padding:8px 12px;font-weight:600;">Paid in Full</td><td style="padding:8px 12px;">$499 flat for 6 months of Standard service (First Work Fee waived).</td></tr></table><p style="font-size:13px;color:#444;">Your commission is paid on the First Work Fee at enrollment, and again every month your referred client's recurring service payment clears. You will receive a commission statement whenever a payment is credited.</p><p style="font-size:13px;color:#444;">Your portal access link was sent separately via magic link. Use it to log in &mdash; no password needed.</p><p style="font-size:13px;color:#444;">Questions? Reply to this email or reach Chris at <a href="mailto:info@creditcomebackclub.com" style="color:#1B2A4A;">info@creditcomebackclub.com</a> or 480-913-9172.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com | 480-913-9172</p></div></body></html>`;
-    await sendViaSendGrid(sgKey, affiliateEmail, subject, html);
+    await sendMail(affiliateEmail, subject, html);
     return { statusCode: 200, body: JSON.stringify({ sent: true }) };
   }
 
@@ -713,10 +695,10 @@ exports.handler = async (event) => {
     const clientEmail = referral.client.email || '';
     const clientPhone = referral.client.phone || null;
     const clientNotes = referral.client.notes || null;
-    if (!sgKey) return { statusCode: 400, body: JSON.stringify({ error: 'Missing SendGrid key' }) };
+    if (!emailConfigured) return { statusCode: 400, body: JSON.stringify({ error: 'Missing RESEND_API_KEY' }) };
     const subject = 'New Referral from ' + (companyName || affiliateName) + ' — ' + clientName;
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;"><div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">New Partner Referral</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">${companyName || affiliateName} → Credit Comeback Club</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;"><p><strong>${affiliateName}${companyName ? ' (' + companyName + ')' : ''}</strong> just submitted a new client referral:</p><table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;"><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;width:140px;">Name</td><td style="padding:10px 14px;">${clientName}</td></tr><tr><td style="padding:10px 14px;font-weight:600;">Email</td><td style="padding:10px 14px;">${clientEmail}</td></tr><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Phone</td><td style="padding:10px 14px;">${clientPhone || '—'}</td></tr><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Notes</td><td style="padding:10px 14px;">${clientNotes || '—'}</td></tr></table><p style="font-size:13px;color:#444;">Log in to your admin dashboard to run their audit and kick off onboarding.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
-    await sendViaSendGrid(sgKey, 'creditcomebackclub@gmail.com', subject, html);
+    await sendMail('creditcomebackclub@gmail.com', subject, html);
     return { statusCode: 200, body: JSON.stringify({ sent: true }) };
   }
 

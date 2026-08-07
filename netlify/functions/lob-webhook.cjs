@@ -60,40 +60,14 @@ function supabaseRequest(path, method, body, url, key) {
   });
 }
 
-function sendgridEmail(to, subject, html, apiKey) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      personalizations: [{ to: [{ email: to }] }],
-      from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
-      subject,
-      content: [{ type: 'text/html', value: html }],
+function sendMailQuiet(to, subject, html) {
+  const { sendEmail } = require('./_email.cjs');
+  return sendEmail({ to, subject, html })
+    .then(() => ({ status: 200 }))
+    .catch((e) => {
+      console.error('Resend Error:', e.message || e);
+      return { status: 500 };
     });
-    const options = {
-      hostname: 'api.sendgrid.com', port: 443,
-      path: '/v3/mail/send', method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + apiKey,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data),
-      },
-    };
-    const req = https.request(options, (res) => {
-      let raw = '';
-      res.on('data', c => raw += c);
-      res.on('end', () => {
-        if (res.statusCode >= 400) {
-          console.error(`SendGrid Error (${res.statusCode}): ${raw}`);
-        }
-        resolve({ status: res.statusCode });
-      });
-    });
-    req.on('error', (e) => {
-      console.error('SendGrid Request Error:', e);
-      reject(e);
-    });
-    req.write(data);
-    req.end();
-  });
 }
 
 // Certified letters fire `letter.certified.*` event ids; plain letters fire
@@ -139,7 +113,8 @@ exports.handler = async (event) => {
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const sendgridKey = process.env.SENDGRID_API_KEY;
+  const { isConfigured } = require('./_email.cjs');
+  const mailReady = isConfigured();
   // Lob issues a distinct signing secret PER WEBHOOK, and Test/Live are
   // fully separate webhooks in their dashboard — so a Test-mode event is
   // signed with a different secret than a Live one. LOB_WEBHOOK_SECRET can
@@ -403,7 +378,7 @@ exports.handler = async (event) => {
   console.log('Updated tracking for lob_id:', lobId, '->', trackingStatus);
 
   // Fire delivery email only on actual delivery
-  if (isDelivered && sendgridKey) {
+  if (isDelivered && mailReady) {
     try {
       const letter = updatedRows[0];
       if (letter && letter.client_name) {
@@ -440,7 +415,7 @@ exports.handler = async (event) => {
             </div>
           </body></html>`;
 
-          const emailRes = await sendgridEmail(clientEmail, subject, html, sendgridKey);
+          const emailRes = await sendMailQuiet(clientEmail, subject, html);
           console.log('Delivery email sent to', clientEmail, '- status:', emailRes.status);
         } else {
           console.log('No client email found for', letter.client_name);

@@ -258,40 +258,14 @@ async function loadLatestAuditSummariesByClientIds(ids, url, key) {
   return latestByClientId;
 }
 
-function sendgridEmail(to, subject, html, apiKey) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      personalizations: [{ to: [{ email: to }] }],
-      from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
-      subject,
-      content: [{ type: 'text/html', value: html }],
+function sendMailQuiet(to, subject, html) {
+  const { sendEmail } = require('./_email.cjs');
+  return sendEmail({ to, subject, html })
+    .then(() => ({ status: 200 }))
+    .catch((e) => {
+      console.error('Resend Error:', e.message || e);
+      return { status: 500 };
     });
-    const options = {
-      hostname: 'api.sendgrid.com', port: 443,
-      path: '/v3/mail/send', method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + apiKey,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data),
-      },
-    };
-    const req = https.request(options, (res) => {
-      let raw = '';
-      res.on('data', c => raw += c);
-      res.on('end', () => {
-        if (res.statusCode >= 400) {
-          console.error(`SendGrid Error (${res.statusCode}): ${raw}`);
-        }
-        resolve({ status: res.statusCode });
-      });
-    });
-    req.on('error', (e) => {
-      console.error('SendGrid Request Error:', e);
-      reject(e);
-    });
-    req.write(data);
-    req.end();
-  });
 }
 
 function daysBetween(aIso, bIso) {
@@ -307,7 +281,8 @@ function todayISO() {
 exports.handler = async () => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const sgKey = process.env.SENDGRID_API_KEY;
+  const { isConfigured } = require('./_email.cjs');
+  const mailReady = isConfigured();
   const ADMIN_EMAIL = 'chris@cccpartners.co'; // Updated to send directly to Chris
 
   if (!supabaseUrl || !supabaseKey) {
@@ -369,7 +344,7 @@ exports.handler = async () => {
     supabaseKey
   );
   let profilesByClientId = new Map();
-  if (sgKey) {
+  if (mailReady) {
     try {
       const profiles = await loadClientProfiles({ clientIds: letters.map((letter) => letter.client_id) }, supabaseUrl, supabaseKey);
       profilesByClientId = profiles.byClientId;
@@ -396,7 +371,7 @@ exports.handler = async () => {
     let touched = false;
 
     let clientEmail = null;
-    if (sgKey) {
+    if (mailReady) {
       const profile = letter.client_id ? profilesByClientId.get(letter.client_id) : null;
       // Legacy rows without client_id deliberately do not use full_name as a
       // fallback. `client_profiles` is not firm-scoped by name, and choosing
@@ -404,7 +379,7 @@ exports.handler = async () => {
       clientEmail = profile && profile.email || null;
     }
 
-    if (sgKey && clientEmail && daysElapsed >= 7 && daysElapsed < 8 && !sent.includes('day7')) {
+    if (mailReady && clientEmail && daysElapsed >= 7 && daysElapsed < 8 && !sent.includes('day7')) {
       try {
         await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day7_checkin', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day7'); touched = true;
@@ -412,7 +387,7 @@ exports.handler = async () => {
       } catch(e) { console.error('day7 email failed:', e); }
     }
 
-    if (!isPhase3 && sgKey && clientEmail && daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
+    if (!isPhase3 && mailReady && clientEmail && daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
       try {
         await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day30_approaching', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day30'); touched = true;
@@ -430,12 +405,9 @@ exports.handler = async () => {
       });
       newSent.push(adminNotificationKey); touched = true;
 
-      if (sgKey && emailEscalationsEnabled) {
+      if (mailReady && emailEscalationsEnabled) {
         try {
-          await sendgridEmail(
-            ADMIN_EMAIL,
-            (isPhase3 ? 'Bureau Response Review: ' : 'Escalation Ready: ') + letter.client_name + ' / ' + letter.furnisher,
-            `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
+          await sendMailQuiet(ADMIN_EMAIL, (isPhase3 ? 'Bureau Response Review: ' : 'Escalation Ready: ') + letter.client_name + ' / ' + letter.furnisher, `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
               <div style="background:#1B2A4A;padding:20px 28px;border-radius:4px 4px 0 0;">
                 <h2 style="color:#C9A84C;margin:0;font-size:18px;">Escalation Ready for Review</h2>
               </div>
@@ -443,9 +415,7 @@ exports.handler = async () => {
                 <p><strong>${letter.client_name}</strong> — ${letter.furnisher} (${letter.phase || 'Phase 1'})</p>
                 <p>${daysElapsed} days since confirmed delivery with no logged response. This has crossed the ${windowDays}-day operational review window and is ready for staff review.</p>
               </div>
-            </div>`,
-            sgKey
-          );
+            </div>`);
         } catch (e) { console.error('Escalation alert email failed:', e.message); }
       }
     }
@@ -460,7 +430,7 @@ exports.handler = async () => {
 
   // --- 1.5 Process 35-Day Report Reminders ---
   let reportRefreshDripsCount = 0;
-  if (sgKey) {
+  if (mailReady) {
     try {
       const audits = await listAllRows(
         '/rest/v1/audits?select=id,client_id,client_name,user_id,saved_at,report_date&order=saved_at.desc,id.asc',
@@ -550,7 +520,7 @@ exports.handler = async () => {
   // stages, so a long gap doesn't dump a backlog on someone at once.
   let onboardingDripsCount = 0;
   let nurtureDripsCount = 0;
-  if (sgKey) {
+  if (mailReady) {
     const leads = await listAllRows(
       '/rest/v1/clients?select=id,user_id,name,email,lead_created_at,lead_drips_sent,tags&status=eq.lead&order=lead_created_at.asc,id.asc',
       supabaseUrl,
@@ -677,7 +647,7 @@ exports.handler = async () => {
   // which works from CommonJS) and Build 3's status_changed_at (the pause
   // clock the 21/45-day thresholds are measured from).
   let winbackSentCount = 0;
-  if (sgKey) {
+  if (mailReady) {
     try {
       const { inFlightLettersForClient } = await import('../../src/utils/inFlightLetters.js');
 
@@ -768,7 +738,7 @@ exports.handler = async () => {
           + '</div></body></html>';
 
         try {
-          await sendgridEmail(clientEmail, 'Status on your file — ' + inFlight.length + ' letter' + (inFlight.length === 1 ? '' : 's') + ' still active', html, sgKey);
+          await sendMailQuiet(clientEmail, 'Status on your file — ' + inFlight.length + ' letter' + (inFlight.length === 1 ? '' : 's') + ' still active', html);
           await supabaseRequest(
             '/rest/v1/clients?id=eq.' + c.id,
             'PATCH', { winback_notifications_sent: [...sentMarkers, 'step' + step + '@' + pausedDate] }, supabaseUrl, supabaseKey
@@ -829,10 +799,10 @@ exports.handler = async () => {
         const daysUntilDue = hasPriorBilling ? (30 - daysSinceLastBilling) : (0 - daysSinceLastBilling);
 
         if (c.billing_tier !== 'Paid In Full' || !hasPriorBilling) {
-          if (daysUntilDue === 5 && c.email && sgKey) {
-            await sendgridEmail(c.email, 'Upcoming Invoice in 5 Days', '<p>Hi ' + c.name + ',</p><p>This is a quick reminder that your service fee will be due in 5 days.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
-          } else if (daysUntilDue === 3 && c.email && sgKey) {
-            await sendgridEmail(c.email, 'Upcoming Invoice in 3 Days', '<p>Hi ' + c.name + ',</p><p>Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+          if (daysUntilDue === 5 && c.email && mailReady) {
+            await sendMailQuiet(c.email, 'Upcoming Invoice in 5 Days', '<p>Hi ' + c.name + ',</p><p>This is a quick reminder that your service fee will be due in 5 days.</p><p>Thank you,<br/>Credit Comeback Club</p>');
+          } else if (daysUntilDue === 3 && c.email && mailReady) {
+            await sendMailQuiet(c.email, 'Upcoming Invoice in 3 Days', '<p>Hi ' + c.name + ',</p><p>Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.</p><p>Thank you,<br/>Credit Comeback Club</p>');
           }
         }
 
@@ -873,8 +843,8 @@ exports.handler = async () => {
               'PATCH', { ledger }, supabaseUrl, supabaseKey
             );
 
-            if (c.email && sgKey) {
-              await sendgridEmail(c.email, 'Invoice Due Today', '<p>Hi ' + c.name + ',</p><p>Your service fee of $' + amount.toFixed(2) + ' is due today. Please log in to your client portal to remit payment.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+            if (c.email && mailReady) {
+              await sendMailQuiet(c.email, 'Invoice Due Today', '<p>Hi ' + c.name + ',</p><p>Your service fee of $' + amount.toFixed(2) + ' is due today. Please log in to your client portal to remit payment.</p><p>Thank you,<br/>Credit Comeback Club</p>');
             }
           }
         }
@@ -886,13 +856,13 @@ exports.handler = async () => {
       
       for (const inv of unpaidInvoices) {
         const daysPastDue = Math.floor((new Date(today) - new Date(inv.date)) / (1000 * 60 * 60 * 24));
-        if (daysPastDue === 1 && c.email && sgKey) {
-          await sendgridEmail(c.email, 'Invoice 1 Day Past Due', '<p>Hi ' + c.name + ',</p><p>Your invoice is 1 day past due. Please submit your payment to avoid service interruption.</p>', sgKey);
-        } else if (daysPastDue === 3 && c.email && sgKey) {
-          await sendgridEmail(c.email, 'Invoice 3 Days Past Due - Urgent', '<p>Hi ' + c.name + ',</p><p>Your invoice is 3 days past due. Your service will be paused in 2 days if payment is not received.</p>', sgKey);
+        if (daysPastDue === 1 && c.email && mailReady) {
+          await sendMailQuiet(c.email, 'Invoice 1 Day Past Due', '<p>Hi ' + c.name + ',</p><p>Your invoice is 1 day past due. Please submit your payment to avoid service interruption.</p>');
+        } else if (daysPastDue === 3 && c.email && mailReady) {
+          await sendMailQuiet(c.email, 'Invoice 3 Days Past Due - Urgent', '<p>Hi ' + c.name + ',</p><p>Your invoice is 3 days past due. Your service will be paused in 2 days if payment is not received.</p>');
         } else if (daysPastDue === 5 && !isPausedNow) {
-          if (c.email && sgKey) {
-            await sendgridEmail(c.email, 'Final Notice: Service Paused', '<p>Hi ' + c.name + ',</p><p>Your service has been paused due to non-payment. Please remit payment immediately to resume services.</p>', sgKey);
+          if (c.email && mailReady) {
+            await sendMailQuiet(c.email, 'Final Notice: Service Paused', '<p>Hi ' + c.name + ',</p><p>Your service has been paused due to non-payment. Please remit payment immediately to resume services.</p>');
           }
           await supabaseRequest(
             '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),
@@ -937,7 +907,7 @@ exports.handler = async () => {
   }
 
   // --- 4. Send the Master Executive Briefing ---
-  if (sgKey) {
+  if (mailReady) {
     const escalationRows = adminDigestItems.length > 0 
       ? adminDigestItems.map(it => `<tr><td style="padding:6px 0;font-size:12px;border-bottom:1px solid #FEE2E2;"><strong>${it.client}</strong> - ${it.furnisher} (${it.phase}) - ${it.daysElapsed} days</td></tr>`).join('')
       : '<tr><td style="padding:6px 0;font-size:12px;color:#6B7280;">No new escalations today.</td></tr>';
@@ -999,7 +969,7 @@ exports.handler = async () => {
       </div>
     </body></html>`;
 
-    await sendgridEmail(ADMIN_EMAIL, `CCC Executive Briefing: ${todayISO()}`, html, sgKey);
+    await sendMailQuiet(ADMIN_EMAIL, `CCC Executive Briefing: ${todayISO()}`, html);
   }
 
   return {

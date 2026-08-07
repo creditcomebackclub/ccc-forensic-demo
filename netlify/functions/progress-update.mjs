@@ -1,9 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import authHelpers from './_requireAuth.cjs';
+import emailHelpers from './_email.cjs';
 import { buildProgressUpdatePdf, progressUpdateFilename, monthLabel as pdfMonthLabel } from '../../src/utils/progressUpdatePdf.js';
 
 const { requireStaff } = authHelpers;
+const { sendEmail } = emailHelpers;
 
 const ADMIN_CC_EMAIL = 'chris@cccpartners.co';
 
@@ -196,22 +198,14 @@ async function loadOrCreateRow(db, pair, userId) {
   return created;
 }
 
-async function sendGridProgressEmail({ to, subject, html, attachments = [] }) {
-  const key = process.env.SENDGRID_API_KEY;
-  if (!key) throw new Error('SENDGRID_API_KEY is not configured.');
-  const payload = {
-    personalizations: [{ to: [{ email: to }], cc: [{ email: ADMIN_CC_EMAIL }] }],
-    from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
+async function sendProgressEmail({ to, subject, html, attachments = [] }) {
+  return sendEmail({
+    to,
+    cc: ADMIN_CC_EMAIL,
     subject,
-    content: [{ type: 'text/html', value: html }],
-  };
-  if (attachments.length) payload.attachments = attachments;
-  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    html,
+    attachments,
   });
-  if (!res.ok) throw new Error(`SendGrid error ${res.status}: ${await res.text()}`);
 }
 
 export const handler = async (event) => {
@@ -332,7 +326,7 @@ export const handler = async (event) => {
         scoreLines: buildScoreLines(diff.scoreDeltas),
         periodLabel,
       });
-      await sendGridProgressEmail({
+      await sendProgressEmail({
         to,
         subject,
         html,
@@ -340,7 +334,6 @@ export const handler = async (event) => {
           content: pdfBuffer.toString('base64'),
           filename: fileName,
           type: 'application/pdf',
-          disposition: 'attachment',
         }],
       });
 

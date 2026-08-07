@@ -19,38 +19,19 @@ function escapeHtml(value) {
   }[char]));
 }
 
-async function sendInvitation({ apiKey, email, name, actionLink, kind }) {
-  if (!apiKey) throw new Error('SENDGRID_API_KEY is not configured');
+async function sendInvitation({ email, name, actionLink, kind }) {
   if (!actionLink) throw new Error('No invitation link was generated');
-  const https = require('https');
+  const { sendEmail } = require('./_email.cjs');
   const isAffiliate = kind === 'affiliate';
   const buttonText = isAffiliate ? 'Access Partner Portal →' : 'Access Client Portal →';
   const intro = isAffiliate
     ? 'You have been invited to your secure partner portal. Use it to access your referral link, view referral progress, and track commissions.'
     : 'You have been invited to your secure client portal. Use it to complete enrollment, securely upload documents, and follow your campaign.';
   const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#111827"><div style="background:#1B2A4A;padding:20px;border-radius:6px 6px 0 0"><h1 style="color:#C9A84C;margin:0;font-size:20px">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.1em">${isAffiliate ? 'Partner Portal Invitation' : 'Client Portal Invitation'}</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 6px 6px"><p>Hi ${escapeHtml(name || 'there')},</p><p>${intro}</p><div style="text-align:center;margin:32px 0"><a href="${actionLink}" style="background:#1B2A4A;color:#C9A84C;padding:14px 28px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block">${buttonText}</a></div><p style="font-size:12px;color:#666">This secure link expires in 24 hours. If it expires, ask us to resend it.</p><p style="font-size:12px;color:#666">Questions? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:11px;color:#999">Credit Comeback Club | creditcomebackclub.com</p></div></body></html>`;
-  const body = JSON.stringify({
-    personalizations: [{ to: [{ email }] }],
-    from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
+  await sendEmail({
+    to: email,
     subject: isAffiliate ? 'Your Credit Comeback Club Partner Portal Invite' : 'Access Your Credit Comeback Club Portal',
-    content: [{ type: 'text/html', value: html }],
-  });
-
-  await new Promise((resolve, reject) => {
-    const request = https.request({
-      hostname: 'api.sendgrid.com', path: '/v3/mail/send', method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    }, (response) => {
-      let raw = '';
-      response.on('data', (chunk) => { raw += chunk; });
-      response.on('end', () => {
-        if (response.statusCode >= 200 && response.statusCode < 300) resolve();
-        else reject(new Error(`Invitation email failed (${response.statusCode}): ${raw || 'unknown error'}`));
-      });
-    });
-    request.on('error', reject);
-    request.write(body);
-    request.end();
+    html,
   });
 }
 
@@ -151,8 +132,9 @@ exports.handler = async (event) => {
       if (!profileWrite.ok) throw new Error('Could not link client portal profile');
     }
 
-    await sendInvitation({ apiKey: process.env.SENDGRID_API_KEY, email: normEmail, name: fullName || client?.name, actionLink: linkData.properties.action_link, kind: portalKind });
-    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, invitationSent: Boolean(process.env.SENDGRID_API_KEY) }) };
+    const { isConfigured } = require('./_email.cjs');
+    await sendInvitation({ email: normEmail, name: fullName || client?.name, actionLink: linkData.properties.action_link, kind: portalKind });
+    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, invitationSent: isConfigured() }) };
   } catch (error) {
     console.error('Portal provisioning failed:', error.message);
     return { statusCode: 500, body: JSON.stringify({ error: error.message || 'Provisioning failed' }) };
