@@ -11,6 +11,7 @@ import {
   FIRM_ATTORNEY_SIG_PATH,
   buildLpoaSignatureRecord,
 } from '../utils/storagePaths';
+import { notifyStaff } from '../utils/notifyStaff';
 
 async function loadAttorneySignatureDataUrl() {
   try {
@@ -465,6 +466,9 @@ function ClientOnboardingModal({ session, onComplete }) {
       } catch (auditErr) {
         console.warn('LPOA audit log entry failed (non-fatal):', auditErr);
       }
+
+      // Staff alert — fire-and-forget; never blocks enrollment success UI
+      notifyStaff('onboarding_complete');
 
       toast.success('Agreements signed securely!', { id: toastId });
       setStep(5);

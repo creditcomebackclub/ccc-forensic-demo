@@ -21,6 +21,7 @@ import {
   isBureauCampaign,
   isFileUpdateCampaign,
 } from '../utils/clientCampaignCopy';
+import { notifyStaff } from '../utils/notifyStaff';
 
 export default function ClientPortal({ session, onSignOut }) {
   const [profile, setProfile] = useState(null);
@@ -147,6 +148,7 @@ export default function ClientPortal({ session, onSignOut }) {
       const { uploadDocument } = await import('../utils/documents.js');
       const internalDocType = docType === 'government_id' ? 'id' : 'address';
       await uploadDocument(clientId, profile.full_name, internalDocType, file, adminUserId);
+      notifyStaff('document_upload', { docLabel: docType === 'government_id' ? 'Government ID' : 'Proof of Address' });
       await loadData();
       toast.success('Document uploaded successfully!', { id: toastId });
     } catch(e) {
@@ -165,6 +167,7 @@ export default function ClientPortal({ session, onSignOut }) {
       if (!adminUserId || !clientId) throw new Error('Could not identify client record.');
       const { uploadArbitraryDocument } = await import('../utils/documents.js');
       await uploadArbitraryDocument(clientId, profile.full_name, label, file, adminUserId);
+      notifyStaff('document_upload', { docLabel: label || 'Other document' });
       await loadData();
       toast.success('Document uploaded successfully!', { id: toastId });
     } catch (e) {
@@ -225,6 +228,9 @@ export default function ClientPortal({ session, onSignOut }) {
       // portal never receives a public file URL or general letter update
       // permission.
       const evidence = await uploadResponseEvidence(letter.id, files);
+      notifyStaff('document_upload', {
+        docLabel: 'Dispute response' + (letter.furnisher ? ' — ' + letter.furnisher : ''),
+      });
 
       setStagedFiles(prev => ({ ...prev, [letter.id]: [] }));
       setUploadSuccess(letter.id);

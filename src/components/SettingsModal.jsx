@@ -214,7 +214,8 @@ export default function SettingsModal({ onClose, displayName, email }) {
                 </p>
                 {[
                   { key: 'emailNewLeads', label: 'New Affiliate Leads', desc: 'When an affiliate refers a new client via their portal.' },
-                  { key: 'emailClientUploads', label: 'Client Document Uploads', desc: 'When a client uploads a new document or ID.' },
+                  { key: 'emailOnboardingComplete', label: 'Portal Onboarding Complete', desc: 'When a client finishes enrollment (ID, address, LPOA).' },
+                  { key: 'emailClientUploads', label: 'Client Document Uploads', desc: 'When a client uploads a new document, ID, or dispute response.' },
                   { key: 'emailEscalations', label: 'Action Required Escalations', desc: 'When the system flags a response that needs manual review.' }
                 ].map(opt => (
                   <label key={opt.key} className="flex items-start gap-3 cursor-pointer p-3 border border-border rounded-sm hover:bg-gray-50 transition-colors">

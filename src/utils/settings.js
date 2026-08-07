@@ -12,7 +12,8 @@ const DEFAULT_SETTINGS = {
   notifications: {
     emailNewLeads: true,
     emailClientUploads: true,
-    emailEscalations: true
+    emailEscalations: true,
+    emailOnboardingComplete: true,
   },
   affiliates: {
     defaultCommissionRate: 20
