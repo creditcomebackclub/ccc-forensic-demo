@@ -2,16 +2,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 /**
- * Renders a PDF into canvases on the page origin so preview works even when
- * CSP blocks blob:/cross-origin PDFs inside iframes.
+ * Renders a PDF into canvases on the page origin.
+ * Prefer `data` (Uint8Array) so we never fetch blob: URLs — CSP connect-src
+ * often blocks those and surfaces as "Failed to fetch".
  */
-export default function PdfCanvasPreview({ src, className = '' }) {
+export default function PdfCanvasPreview({ data, src, className = '' }) {
   const hostRef = useRef(null);
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!src) return undefined;
+    if (!data && !src) return undefined;
     let cancelled = false;
     const host = hostRef.current;
 
@@ -26,16 +27,14 @@ export default function PdfCanvasPreview({ src, className = '' }) {
           import.meta.url,
         ).toString();
 
-        let data;
-        if (src.startsWith('blob:') || src.startsWith('http://') || src.startsWith('https://')) {
+        let bytes = data;
+        if (!bytes) {
           const res = await fetch(src);
           if (!res.ok) throw new Error(`Could not load PDF (${res.status}).`);
-          data = new Uint8Array(await res.arrayBuffer());
-        } else {
-          throw new Error('Unsupported PDF preview source.');
+          bytes = new Uint8Array(await res.arrayBuffer());
         }
 
-        const pdf = await pdfjsLib.getDocument({ data }).promise;
+        const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
         if (cancelled || !hostRef.current) return;
 
         for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -64,7 +63,7 @@ export default function PdfCanvasPreview({ src, className = '' }) {
       cancelled = true;
       if (host) host.innerHTML = '';
     };
-  }, [src]);
+  }, [data, src]);
 
   return (
     <div className={`relative overflow-auto bg-slate-200/40 rounded-lg ${className}`}>

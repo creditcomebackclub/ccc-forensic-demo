@@ -3,7 +3,7 @@ import { AlertCircle, CheckCircle2, Download, Eye, FileCheck2, Loader2, Mail, Sa
 import PdfCanvasPreview from './PdfCanvasPreview.jsx';
 import {
   approveBlueprint,
-  base64PdfUrl,
+  base64ToPdfBytes,
   getBlueprintStatus,
   persistReviewedAccounts,
   previewBlueprint,
@@ -38,6 +38,7 @@ function StatusPill({ artifact }) {
 export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDirty, clientEmail, onCorrectionsSaved, onClose }) {
   const [artifact, setArtifact] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [previewBytes, setPreviewBytes] = useState(null);
   const [busy, setBusy] = useState('loading');
   const [error, setError] = useState(null);
   const [sent, setSent] = useState(false);
@@ -88,13 +89,18 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
     if (!(await saveIfNeeded())) return;
     const data = await previewBlueprint(audit);
     if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(base64PdfUrl(data.pdfBase64));
+    const bytes = base64ToPdfBytes(data.pdfBase64);
+    setPreviewBytes(bytes);
+    setPreviewUrl(URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })));
   });
 
   const handleApprove = () => run('approve', async () => {
     if (!(await saveIfNeeded())) return;
     const data = await approveBlueprint(audit);
     setArtifact(data.artifact);
+    if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
+    // Keep in-memory bytes from Preview when available so canvas never has to
+    // fetch(blob:) under CSP. Fall back to the archived signed URL.
     setPreviewUrl(data.artifact.signedUrl);
   });
 
@@ -139,7 +145,7 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
                     <Download size={12} /> Open PDF in new tab
                   </a>
                 </div>
-                <PdfCanvasPreview src={previewUrl} className="flex-1 min-h-0" />
+                <PdfCanvasPreview data={previewBytes} src={previewBytes ? null : previewUrl} className="flex-1 min-h-0" />
               </>
             ) : (
               <div className="flex-1 flex items-center justify-center">

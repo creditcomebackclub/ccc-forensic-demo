@@ -46,8 +46,11 @@ export function sendBlueprint(audit, details) {
   return blueprintRequest('send', audit, details);
 }
 
+export function base64ToPdfBytes(base64) {
+  return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+}
+
 export function base64PdfUrl(base64) {
-  const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-  return URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+  return URL.createObjectURL(new Blob([base64ToPdfBytes(base64)], { type: 'application/pdf' }));
 }
 
