@@ -329,7 +329,7 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
       <Section title="Credit Monitoring">
         <Row label="Service">
           <Field label="service" value={client.monitoringService} placeholder="Privacy Guard"
-            options={['PrivacyGuard', 'MyScoreIQ', 'Smart Credit', 'IdentityIQ', 'My Free Score Now', 'Experian']}
+            options={['PrivacyGuard', 'MyScoreIQ', 'Smart Credit', 'IdentityIQ', 'My Free Score Now', 'Experian', 'MyFICO']}
             onSave={(v) => save({ monitoring_service: v })} />
         </Row>
         <Row label="Login email">
