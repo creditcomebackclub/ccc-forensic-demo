@@ -318,6 +318,7 @@ export default function App() {
   const [clientOnboarded, setClientOnboarded] = useState(false);
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
   const [actionItemCount, setActionItemCount] = useState(0);
+  const [ackedActionItems, setAckedActionItems] = useState(0);
   const [newLeadsCount, setNewLeadsCount] = useState(0);
   const [unanalyzedClientNames, setUnanalyzedClientNames] = useState(new Set());
   const [unanalyzedClientIds, setUnanalyzedClientIds] = useState(new Set());
@@ -593,7 +594,25 @@ export default function App() {
   const displayName = (profile && profile.full_name) || (user.user_metadata && user.user_metadata.full_name) || user.email || 'Auditor';
   const initials = displayName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
-  const handleNavigate = (viewName, context = null) => {
+  const handleNavigate = async (viewName, context = null) => {
+    // Sidebar red badges: treat click as "I've seen these."
+    // Leads → persist viewed so the count actually drops.
+    // Clients action items → acknowledge current count for this session; badge
+    // returns only if new unanalyzed responses arrive (or after refresh + work left
+    // if they never ack — analyzing still lowers the raw count).
+    if (viewName === 'leads' && newLeadsCount > 0) {
+      try {
+        const { markAllLeadsViewed } = await import('./utils/storage');
+        await markAllLeadsViewed();
+        setNewLeadsCount(0);
+      } catch (e) {
+        console.warn('Could not mark leads viewed:', e.message || e);
+      }
+    }
+    if (viewName === 'clients' && actionItemCount > 0) {
+      setAckedActionItems(actionItemCount);
+    }
+
     setClientsContext(context);
     // auditClientName is a one-time "jump to the client whose audit I just
     // opened" signal (set in handleOpenSavedAudit) — it must be cleared on
@@ -677,7 +696,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-bg flex">
       <Toaster position="bottom-right" />
-      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={actionItemCount} newLeadsCount={newLeadsCount} hasUnanalyzed={unanalyzedClientIds.size > 0 || unanalyzedClientNames.size > 0} />
+      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={Math.max(0, actionItemCount - ackedActionItems)} newLeadsCount={newLeadsCount} hasUnanalyzed={unanalyzedClientIds.size > 0 || unanalyzedClientNames.size > 0} />
       <main className="flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
@@ -690,7 +709,7 @@ export default function App() {
               <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} displayName={displayName} />
             )}
             {view === VIEW.CLIENTS && (
-              <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" unanalyzedNames={unanalyzedClientNames} unanalyzedClientIds={unanalyzedClientIds} />
+              <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" unanalyzedNames={unanalyzedClientNames} unanalyzedClientIds={unanalyzedClientIds} onLeadsChanged={refreshActionItems} />
             )}
             {view === VIEW.LEADS && (
               <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={null} filter={clientsContext?.filter || null} forceTab="leads" onLeadsChanged={refreshActionItems} />
@@ -756,8 +775,8 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
           <NavItem icon={Activity} label="Operations" active={view === 'operations'} onClick={() => onNavigate('operations')} />
         )}
         <NavItem icon={LayoutDashboard} label="New Audit" active={view === 'audit'} onClick={() => onNavigate('audit')} />
-        <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients', hasUnanalyzed ? { filter: 'unanalyzed' } : null)} badge={actionItemCount} badgeTitle="unanalyzed client response(s) — click to view" />
-        <NavItem icon={UserPlus} label="Leads" active={view === 'leads'} onClick={() => onNavigate('leads', newLeadsCount > 0 ? { filter: 'unviewed' } : null)} badge={newLeadsCount} badgeTitle="unviewed lead(s) — click to view" />
+        <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients', hasUnanalyzed ? { filter: 'unanalyzed' } : null)} badge={actionItemCount} badgeTitle="unanalyzed client response(s) — click to open & clear badge" />
+        <NavItem icon={UserPlus} label="Leads" active={view === 'leads'} onClick={() => onNavigate('leads', newLeadsCount > 0 ? { filter: 'unviewed' } : null)} badge={newLeadsCount} badgeTitle="unviewed lead(s) — click to open & clear badge" />
         <NavItem icon={BookOpen} label="Methodology" active={view === 'methodology'} onClick={() => onNavigate('methodology')} />
         {isAdmin && (
           <NavItem icon={DollarSign} label="Billing" active={view === 'billing'} onClick={() => onNavigate('billing')} />

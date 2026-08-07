@@ -1174,7 +1174,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           <ResponseAnalyzer
             letter={analyzingLetter}
             onClose={() => setAnalyzingLetter(null)}
-            onSaved={() => { setAnalyzingLetter(null); refreshSelectedClient(); }}
+            onSaved={() => { setAnalyzingLetter(null); refreshSelectedClient(); if (onLeadsChanged) onLeadsChanged(); }}
           />
         )}
         {analyzingBureauLetter && (
@@ -1592,7 +1592,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         <ResponseAnalyzer
           letter={analyzingLetter}
           onClose={() => setAnalyzingLetter(null)}
-          onSaved={() => { setAnalyzingLetter(null); load(); }}
+          onSaved={() => { setAnalyzingLetter(null); load(); if (onLeadsChanged) onLeadsChanged(); }}
         />
       )}
       {createModal}
@@ -1851,9 +1851,12 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
 
   return (
     <div className="bg-white" style={{ borderRadius: 14, border: '1px solid ' + T.border, boxShadow: T.cardShadow }}>
-      <div className="flex items-center gap-3 px-4 py-3.5">
+      <div
+        className="flex items-center gap-3 px-4 py-3.5 cursor-pointer"
+        onClick={() => { if (onViewed) onViewed(); }}
+      >
         {hasAudits && (
-          <button onClick={() => { if (!isOpen && onViewed) onViewed(); setIsOpen(!isOpen); }} className="shrink-0" title={isOpen ? 'Collapse' : 'View audits'}>
+          <button onClick={(e) => { e.stopPropagation(); if (!isOpen && onViewed) onViewed(); setIsOpen(!isOpen); }} className="shrink-0" title={isOpen ? 'Collapse' : 'View audits'}>
             <ChevronRight size={15} strokeWidth={2} className="transition-transform" style={{ color: T.faint, transform: isOpen ? 'rotate(90deg)' : 'none' }} />
           </button>
         )}
@@ -1861,7 +1864,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="ccc-display text-[14px] text-ink font-medium">{c.name}</div>
-            {isLeadRecent(c) && (
+            {isLeadRecent(c) && !c.leadViewedAt && (
               <span className="px-1.5 py-0.5 rounded-[3px] text-[9px] uppercase tracking-wider font-bold bg-red-100 text-red-700">
                 NEW
               </span>
@@ -1869,6 +1872,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
             <select
               value={stage}
               disabled={savingStage || !isAdmin}
+              onClick={(e) => e.stopPropagation()}
               onChange={(e) => handleStageChange(e.target.value)}
               title="Pipeline stage"
               className="text-[10px] uppercase tracking-wider rounded-full px-2 py-0.5 font-medium cursor-pointer focus:outline-none disabled:opacity-60"

@@ -78,6 +78,18 @@ export async function markLeadViewed(clientName, clientId) {
   if (error) throw error;
 }
 
+/** Mark every unviewed lead as viewed — used when staff open the Leads nav badge. */
+export async function markAllLeadsViewed() {
+  const now = new Date().toISOString();
+  // No user_id filter: matches getNewLeadsCount() (RLS decides which rows you see).
+  const { error } = await supabase
+    .from('clients')
+    .update({ lead_viewed_at: now })
+    .eq('status', 'lead')
+    .is('lead_viewed_at', null);
+  if (error) throw error;
+}
+
 export async function toggleVip(clientName, isVip, clientId) {
   const userId = await getUserId();
   const { error } = clientId
