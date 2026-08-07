@@ -1,0 +1,44 @@
+import React from 'react';
+import { LETTER_STAGES, letterStageIndex } from './clientDetailUtils';
+
+const T = {
+  navy: '#1B2A4A',
+  gold: '#C9A84C',
+  faint: '#9CA3AF',
+  line: '#E5E9F0',
+};
+
+/** Labeled mail lifecycle rail — never mystery dots alone. */
+export default function MailStageRail({ letter }) {
+  const idx = letterStageIndex(letter);
+  const current = LETTER_STAGES[idx];
+
+  return (
+    <div className="flex flex-col gap-1 shrink-0" title={'Mail stage: ' + current}>
+      <div className="flex items-center">
+        {LETTER_STAGES.map((s, i) => (
+          <React.Fragment key={s}>
+            {i > 0 && (
+              <div style={{ width: 10, height: 2, background: i <= idx ? T.navy : T.line }} />
+            )}
+            <div
+              title={s}
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: i <= idx ? T.navy : '#fff',
+                border: i <= idx ? 'none' : '1.5px solid #D6DCE6',
+                boxSizing: 'border-box',
+                boxShadow: i === idx ? `0 0 0 3px rgba(27,42,74,0.12)` : 'none',
+              }}
+            />
+          </React.Fragment>
+        ))}
+      </div>
+      <div className="text-[9px] uppercase tracking-wider font-semibold" style={{ color: idx >= 2 ? T.navy : T.faint }}>
+        {current}
+      </div>
+    </div>
+  );
+}
