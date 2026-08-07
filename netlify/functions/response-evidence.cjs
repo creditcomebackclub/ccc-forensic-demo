@@ -10,6 +10,9 @@ const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 const crypto = require('crypto');
 const { requireAuth } = require('./_requireAuth.cjs');
+const { responseEvidencePrefix, responseEvidencePrefixes } = require('./_storagePaths.cjs');
+
+// Canonical path: responses/{firmUid}/{clientId}/response-evidence/{evidenceId}/…
 
 const MAX_FILES = 12;
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
@@ -113,15 +116,19 @@ async function prepareUpload(db, userId, body) {
     return { error: response(409, { error: 'A response can be uploaded only after this dispute has been mailed.' }) };
   }
 
+  if (!letter.client_id) {
+    return { error: response(409, { error: 'This letter is missing a client_id; link it to a client before uploading a response.' }) };
+  }
+
   const evidenceId = crypto.randomUUID();
-  const prefix = `${letter.user_id}/response-evidence/${evidenceId}`;
+  const prefix = responseEvidencePrefix(letter.user_id, letter.client_id, evidenceId);
   const paths = files.map((file) => `${prefix}/response_${String(file.index + 1).padStart(2, '0')}_${file.name}`);
   const responseKind = isBureauLetter(letter) ? 'bureau' : 'furnisher';
 
   const { error: insertError } = await db.from('response_evidence').insert({
     id: evidenceId,
     firm_user_id: letter.user_id,
-    client_id: letter.client_id || null,
+    client_id: letter.client_id,
     client_account_id: letter.client_account_id || null,
     client_name: letter.client_name,
     letter_id: letter.id,
@@ -189,8 +196,11 @@ async function completeUpload(db, userId, body) {
   }
 
   const paths = Array.isArray(evidence.storage_paths) ? evidence.storage_paths : [];
-  const prefix = `${evidence.firm_user_id}/response-evidence/${evidence.id}/`;
-  if (!paths.length || paths.some((path) => typeof path !== 'string' || !path.startsWith(prefix))) {
+  const prefixes = responseEvidencePrefixes(evidence.firm_user_id, evidence.client_id, evidence.id);
+  const matchedPrefix = prefixes.find((prefix) =>
+    paths.length && paths.every((path) => typeof path === 'string' && path.startsWith(prefix))
+  );
+  if (!matchedPrefix) {
     return response(400, { error: 'Response upload paths are invalid.' });
   }
 
@@ -199,7 +209,7 @@ async function completeUpload(db, userId, body) {
   // letter until each expected object exists.
   const { data: storedFiles, error: listError } = await db.storage
     .from(evidence.storage_bucket || 'responses')
-    .list(prefix.slice(0, -1), { limit: MAX_FILES + 2 });
+    .list(matchedPrefix.slice(0, -1), { limit: MAX_FILES + 2 });
   if (listError) throw listError;
   const expectedNames = new Set(paths.map((path) => path.split('/').pop()));
   const presentNames = new Set((storedFiles || []).map((file) => file.name));

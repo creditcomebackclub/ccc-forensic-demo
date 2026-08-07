@@ -5,6 +5,11 @@
 // that is negotiable, it's what makes the letter legally correct. What
 // actually changes between tones is the closing posture and how hard the
 // consequences-of-non-compliance section leans on legal escalation.
+//
+// Metro 2 field numbers/names come from PHASE3_METRO2_FIELD_RULES (generated
+// from metro2Fields.js) — the same map validateFieldCitations grades against.
+import { PHASE3_METRO2_FIELD_RULES } from './phase3CitationRules.js';
+
 function buildLetterSystemPrompt(tone) {
   const isAggressive = tone === 'Aggressive';
 
@@ -85,6 +90,12 @@ ${failureToComply}
 
 **Hard rules:**
 ${hardRules}
+
+## 1b. METRO 2 FIELD CITATIONS (NON-NEGOTIABLE)
+
+Server-side lint (validateFieldCitations / autoFixFieldCitations) grades every Field N citation against this map. Wrong number/name pairs fail the job. Use only these field numbers and names:
+
+${PHASE3_METRO2_FIELD_RULES}
 
 ## 2. OUTPUT HTML REQUIREMENTS (CRITICAL CONCISENESS RULE)
 - Be a complete \`<!DOCTYPE html>\` document.

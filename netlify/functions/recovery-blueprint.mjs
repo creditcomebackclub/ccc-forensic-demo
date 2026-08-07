@@ -4,6 +4,7 @@ import ws from 'ws';
 import { buildRecoveryBlueprintModel, RECOVERY_BLUEPRINT_TEMPLATE_VERSION, recoveryBlueprintFilename } from '../../src/utils/recoveryBlueprintModel.js';
 import { buildRecoveryBlueprintPdf } from '../../src/utils/recoveryBlueprintPdf.js';
 import authHelpers from './_requireAuth.cjs';
+import storagePaths from './_storagePaths.cjs';
 
 // Netlify's Node runtime (and any pin below 22) has no reliable global
 // WebSocket. supabase-js always constructs a RealtimeClient in createClient()
@@ -12,7 +13,7 @@ import authHelpers from './_requireAuth.cjs';
 // import.meta.url is undefined and the function 502s on cold start.
 
 const { requireStaff } = authHelpers;
-const BUCKET = 'recovery-blueprints';
+const { BLUEPRINTS_BUCKET: BUCKET, recoveryBlueprintPath } = storagePaths;
 
 function response(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: JSON.stringify(body) };
@@ -165,7 +166,10 @@ export const handler = async (event) => {
       const { model, buffer } = pdfBuffer(auditRow.audit, auditRow.client_id, auditRow.report_date);
       const sha = crypto.createHash('sha256').update(buffer).digest('hex');
       const fileName = recoveryBlueprintFilename(model);
-      const path = `${auditRow.user_id}/${auditRow.id}/v${version}-${sha.slice(0, 12)}.pdf`;
+      if (!auditRow.client_id) {
+        throw Object.assign(new Error('This audit is missing a client_id; link it before approving a Blueprint.'), { statusCode: 409 });
+      }
+      const path = recoveryBlueprintPath(auditRow.user_id, auditRow.client_id, auditRow.id, version, sha.slice(0, 12));
       const { error: uploadError } = await db.storage.from(BUCKET).upload(path, buffer, { contentType: 'application/pdf', upsert: false });
       if (uploadError) throw uploadError;
       const { data: artifact, error: insertError } = await db.from('recovery_blueprints').insert({

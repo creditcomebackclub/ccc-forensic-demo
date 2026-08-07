@@ -5,6 +5,7 @@ import { createEscalation, updateEscalation, getAgDirectoryForState, listEscalat
 import { runPhase4Job } from '../utils/phase4Jobs';
 import { updateLetter } from '../utils/storage';
 import { getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
+import { resolveLpoaViewUrl } from '../utils/storagePaths';
 
 // Best-effort extraction from a free-text "123 Main St, City, ST 12345"
 // address — clients has no structured state column. Good enough to
@@ -145,10 +146,14 @@ export default function EscalationPanel({ letter, client, onClose, onSaved }) {
     window.open(URL.createObjectURL(blob), '_blank');
   };
 
-  const openLpoa = () => {
-    const url = client?.lpoaSignatureData?.lpoaUrl;
-    if (url) window.open(url, '_blank');
-    else setError('No signed LPOA on file for this client yet.');
+  const openLpoa = async () => {
+    try {
+      const url = await resolveLpoaViewUrl(supabase, client?.lpoaSignatureData);
+      if (url) window.open(url, '_blank');
+      else setError('No signed LPOA on file for this client yet.');
+    } catch (e) {
+      setError(e.message || 'Could not open the signed LPOA.');
+    }
   };
 
   const openArtifact = async (artifact) => {

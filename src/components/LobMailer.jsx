@@ -12,6 +12,11 @@ import {
 import { listMailArtifacts } from '../utils/mailArtifacts';
 import { inferMediaType } from '../utils/responseFiles';
 import { supabase } from '../utils/supabase';
+import {
+  fetchLpoaHtml,
+  tempLetterAssetsPrefix,
+  tempLetterPath,
+} from '../utils/storagePaths';
 
 const LOB_FUNCTION_URL = '/.netlify/functions/lob';
 
@@ -164,16 +169,18 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
     }
     setSending(true);
     setError(null);
+    const tempPathsToClean = [];
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
+      const batchId = String(Date.now());
 
       // Lob fetches the hosted HTML itself.  Keeping full-page base64 images
       // inside that HTML made larger Phase 3 packets exceed Lob's renderer
       // buffer (and fail after an initial accepted response).  Store small,
       // temporary raster pages privately instead and give Lob expiring URLs;
       // the source HTML stays compact without omitting any evidence.
-      const assetPrefix = user.id + '/temp-letter-assets/' + Date.now();
+      const assetPrefix = tempLetterAssetsPrefix(user.id, batchId);
       let assetNumber = 0;
       const uploadMailImage = async (blob) => {
         const contentType = ['image/jpeg', 'image/png', 'image/webp'].includes(blob.type) ? blob.type : 'image/jpeg';
@@ -184,6 +191,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           contentType,
         });
         if (assetError) throw new Error('Could not prepare a print enclosure: ' + assetError.message);
+        tempPathsToClean.push(storagePath);
         const { data, error: urlError } = await supabase.storage.from('documents').createSignedUrl(storagePath, 3600);
         if (urlError || !data?.signedUrl) throw urlError || new Error('Could not prepare a print enclosure URL');
         return data.signedUrl;
@@ -337,15 +345,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           .limit(1);
         const { data: clientMeta, error: clientMetaError } = await clientMetaQuery;
         if (clientMetaError) throw clientMetaError;
-        const lpoaUrl = clientMeta?.[0]?.lpoa_signature_data?.lpoaUrl;
-        if (!lpoaUrl) {
+        const lpoaHtml = await fetchLpoaHtml(supabase, clientMeta?.[0]?.lpoa_signature_data);
+        if (!lpoaHtml) {
           throw new Error('FOLLOW-UP EXHIBIT C MISSING — this client has no signed Limited Power of Attorney. Nothing was sent.');
         }
-        const lpoaRes = await fetch(lpoaUrl);
-        if (!lpoaRes.ok) {
-          throw new Error('FOLLOW-UP EXHIBIT C UNAVAILABLE — the Limited Power of Attorney could not be loaded. Nothing was sent.');
-        }
-        const lpoaHtml = await lpoaRes.text();
         const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
         const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
         const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
@@ -460,38 +463,9 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           }
         }
 
-        // Legacy response-folder fallback. It intentionally supports PDFs as
-        // well as images so historic original responses are not reduced to a
-        // converted JPEG-only attachment. Missing legacy files stay a
-        // warning (they predate durable evidence), while durable records
-        // above remain a hard stop if any expected file cannot be attached.
-        try {
-          const cpQuery = letter.clientId
-            ? supabase.from('client_profiles').select('user_id').eq('client_id', letter.clientId).limit(1)
-            : supabase.from('client_profiles').select('user_id').eq('full_name', letter.clientName).limit(1);
-          const { data: cp } = await cpQuery;
-          const clientUserId = cp && cp.length > 0 ? cp[0].user_id : null;
-          if (clientUserId) {
-            for (const p1 of phase1Letters) {
-              const { data: responseFiles, error: legacyListError } = await supabase.storage.from('responses')
-                .list(clientUserId + '/' + p1.id, { limit: 20, sortBy: { column: 'name', order: 'asc' } });
-              if (legacyListError) throw legacyListError;
-              for (const responseFile of responseFiles || []) {
-                if (!/\.(pdf|jpg|jpeg|png|webp)$/i.test(responseFile.name)) continue;
-                const responsePath = clientUserId + '/' + p1.id + '/' + responseFile.name;
-                try {
-                  enclosurePages += await renderResponseFile(
-                    responsePath,
-                    responseFile.name,
-                    'EXHIBIT B — Legacy Furnisher Response (' + (p1.furnisher || letter.furnisher) + ')'
-                  );
-                } catch (e) {
-                  console.warn('Could not render legacy furnisher response:', responsePath, e);
-                }
-              }
-            }
-          }
-        } catch(e) { console.warn('Could not fetch legacy furnisher response(s):', e); }
+        // Durable response_evidence rows are required for Phase 3 Exhibit B.
+        // Legacy {clientAuthUid}/{letterId}/ folder crawls were removed after
+        // the storage reorg migration moves those objects into evidence rows.
 
         // LPOA still included for Phase 3
         try {
@@ -499,9 +473,8 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
             : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
           const { data: clientMeta } = await clientMetaQuery;
-          if (clientMeta && clientMeta.length > 0 && clientMeta[0].lpoa_signature_data?.lpoaUrl) {
-            const lpoaRes = await fetch(clientMeta[0].lpoa_signature_data.lpoaUrl);
-            const lpoaHtml = await lpoaRes.text();
+          const lpoaHtml = await fetchLpoaHtml(supabase, clientMeta?.[0]?.lpoa_signature_data);
+          if (lpoaHtml) {
             const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
             const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
             const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
@@ -536,9 +509,8 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
             : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
           const { data: clientMeta } = await clientMetaQuery;
-          if (clientMeta && clientMeta.length > 0 && clientMeta[0].lpoa_signature_data && clientMeta[0].lpoa_signature_data.lpoaUrl) {
-            const lpoaRes = await fetch(clientMeta[0].lpoa_signature_data.lpoaUrl);
-            const lpoaHtml = await lpoaRes.text();
+          const lpoaHtml = await fetchLpoaHtml(supabase, clientMeta?.[0]?.lpoa_signature_data);
+          if (lpoaHtml) {
             const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
             const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
             const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
@@ -576,10 +548,12 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // makes an exact collision unlikely, but this is a temp path for a
       // physical-mail send, not worth leaving on name alone when the id is
       // sitting right there.
-      const tempPath = user.id + '/temp-letters/' + slug(letter.clientName) + (letter.clientId ? '-' + letter.clientId : '') + '-' + slug(letter.furnisher) + '-' + Date.now() + '.html';
+      const tempFileName = slug(letter.clientName) + (letter.clientId ? '-' + letter.clientId : '') + '-' + slug(letter.furnisher) + '.html';
+      const tempPath = tempLetterPath(user.id, batchId, tempFileName);
       const htmlBlob = new Blob([finalHtml], { type: 'text/html;charset=utf-8' });
       const { error: uploadErr } = await supabase.storage.from('documents').upload(tempPath, htmlBlob, { upsert: true, contentType: 'text/html;charset=utf-8' });
       if (uploadErr) throw new Error('Could not upload letter for mailing: ' + uploadErr.message);
+      tempPathsToClean.push(tempPath);
       const { data: urlData, error: urlErr } = await supabase.storage.from('documents').createSignedUrl(tempPath, 3600);
       if (urlErr || !urlData) throw new Error('Could not get letter URL' + (urlErr ? ': ' + urlErr.message : ''));
 
@@ -674,6 +648,13 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       }
     } catch (e) {
       setError(e.message || 'Send failed');
+      // Only delete on failure — Lob may still fetch enclosure image URLs
+      // asynchronously after an accepted send. Successful temps age out via daily-cron.
+      if (tempPathsToClean.length) {
+        supabase.storage.from('documents').remove(tempPathsToClean).catch((err) => {
+          console.warn('Could not clean temp mail assets:', err?.message || err);
+        });
+      }
     } finally {
       setSending(false);
     }

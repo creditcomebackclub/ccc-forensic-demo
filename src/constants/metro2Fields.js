@@ -62,7 +62,7 @@ export const METRO2_FIELDS = {
   ORIGINAL_CHARGE_OFF_AMT:   { num: '23',  name: 'Original Charge-off Amount',                     source: B2003('173-181'), edition: '2003', promptNote: 'No inflation; no continued reporting post-payment' },
   // Renamed "Date of Account Information" in later editions — keep the 2003
   // name while citing the 2003 edition.
-  BILLING_DATE:              { num: '24',  name: 'Billing Date',                                   source: B2003('182-189'), edition: '2003', promptNote: 'Cross-bureau conflicts' },
+  BILLING_DATE:              { num: '24',  name: 'Billing Date',                                   source: B2003('182-189'), edition: '2003', promptNote: 'Cross-bureau conflicts; later editions rename this "Date of Account Information" — both labels mean Field 24' },
   DATE_FIRST_DELINQUENCY:    { num: '25',  name: 'FCRA Compliance/Date of First Delinquency',      source: B2003('190-197'), edition: '2003', promptNote: '§623(a)(5); 7-yr clock — never assert a later date than reported' },
   DATE_CLOSED:               { num: '26',  name: 'Date Closed',                                    source: B2003('198-205'), edition: '2003' },
   DATE_OF_LAST_PAYMENT:      { num: '27',  name: 'Date of Last Payment',                           source: 'CRRG Dec. 2024, Debt Buyer item 12',  edition: '2024', promptNote: 'Cross-bureau conflicts' },
@@ -333,6 +333,7 @@ const NAME_TOKENS = Object.values(METRO2_FIELDS).map((f) => ({
 
 const FIELD_LABEL_ALIASES = [
   { num: '23', normalized: 'chargeoff amount' },
+  { num: '24', normalized: 'date of account information' },
   { num: '25', normalized: 'date of first delinquency' },
   { num: '25', normalized: 'dofd' },
   { num: '27', normalized: 'last payment date' },
@@ -635,6 +636,26 @@ export function collectBureauFollowUpProblems(html) {
     problems.push('Follow-up enclosures must not list Phase 1, a furnisher response, identity/address documents, or credit-report excerpts.');
   }
   return problems;
+}
+
+/**
+ * Deterministic presentation fixes for follow-up letters — catches the two
+ * most common non-Metro-2 lint fails ("Dear Sir or Madam", "Sincerely")
+ * without spending a model call. Does not invent enclosure lines.
+ */
+export function normalizeFollowUpPresentation(html) {
+  if (!html) return html;
+  let out = String(html);
+  // Strip courtesy closing words that block production lint.
+  out = out.replace(/\bSincerely,?\b/gi, '');
+  // Generic salutation → neutral CRA address lead-in (model rewrite still
+  // preferred for bureau-specific naming; this just clears the hard fail).
+  out = out.replace(
+    /<p[^>]*>\s*Dear Sir or Madam,?\s*<\/p>/gi,
+    '<p>To the Consumer Dispute Department:</p>'
+  );
+  out = out.replace(/\bDear Sir or Madam,?\b/gi, 'To the Consumer Dispute Department:');
+  return out;
 }
 
 export function formatMetro2Field(key) {

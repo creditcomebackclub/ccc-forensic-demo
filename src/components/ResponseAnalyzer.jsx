@@ -6,6 +6,7 @@ import { runPhase2Job } from '../utils/phase2Jobs';
 import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED_TYPE_MESSAGE, validateBatch } from '../utils/responseFiles';
 import { normalizeFurnisher, lastFour } from '../utils/diffEngine';
 import { uploadResponseEvidence } from '../utils/responseEvidence';
+import { resolveSignatureViewUrl } from '../utils/storagePaths';
 
 async function savePhase3Letters(analysis, clientName, furnisher, accountId, clientAccountId, clientId) {
   const { data: { user } } = await supabase.auth.getUser();
@@ -103,8 +104,8 @@ async function savePhase3Letters(analysis, clientName, furnisher, accountId, cli
         ? supabase.from('clients').select('lpoa_signature_data').eq('id', clientId).limit(1)
         : supabase.from('clients').select('lpoa_signature_data').eq('name', clientName).limit(1);
       const { data: cm } = await clientsQuery;
-      if (cm && cm.length > 0 && cm[0].lpoa_signature_data?.signatureUrl) {
-        signatureData = cm[0].lpoa_signature_data.signatureUrl;
+      if (cm && cm.length > 0 && cm[0].lpoa_signature_data) {
+        signatureData = await resolveSignatureViewUrl(supabase, cm[0].lpoa_signature_data);
       }
     }
   } catch(e) { console.warn('Could not look up signature:', e); }

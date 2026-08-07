@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { Upload, FileText, Trash2, Eye, CheckCircle, Zap } from 'lucide-react';
 import { uploadDocument, uploadArbitraryDocument, getDocuments, getDocumentUrl, deleteDocument } from '../utils/documents';
 import { supabase } from '../utils/supabase';
-import { CONVERTED_PREFIX, groupResponseFiles } from '../utils/responseFiles';
 import { listResponseEvidence } from '../utils/responseEvidence';
 
 // Brand tokens — matches the dashboard / clients card system
@@ -305,59 +304,9 @@ function ResponsesSection({ clientId, clientName, letters, setAnalyzingLetter })
         console.warn('Response evidence table unavailable:', e.message || e);
       }
 
-      // Legacy folder scan (pre-response_evidence). Firm root =
-      // clients.user_id; also the client's auth uid when linked. Never add
-      // every letter.userId — that walks other clients' folders under a
-      // shared staff root. Restrict to this client's own letter ids.
-      const evidenceLetterIds = new Set(allResponses.map((r) => r.letterId).filter(Boolean));
-      const thisClientLetterIds = new Set((letters || []).map((l) => l.id).filter(Boolean));
-      const rootIds = new Set();
-      if (clientId) {
-        const { data: clientRow } = await supabase
-          .from('clients')
-          .select('user_id')
-          .eq('id', clientId)
-          .limit(1);
-        if (clientRow?.[0]?.user_id) rootIds.add(clientRow[0].user_id);
-      }
-      const profileQuery = clientId
-        ? supabase.from('client_profiles').select('user_id').eq('client_id', clientId).limit(1)
-        : supabase.from('client_profiles').select('user_id').eq('full_name', clientName).limit(1);
-      const { data: cp } = await profileQuery;
-      if (cp?.[0]?.user_id) rootIds.add(cp[0].user_id);
-
-      for (const rootId of rootIds) {
-        const { data: files } = await supabase.storage
-          .from('responses')
-          .list(rootId, { limit: 50, sortBy: { column: 'created_at', order: 'desc' } });
-        if (!files || files.length === 0) continue;
-
-        for (const folder of files.filter((folder) => folder.name !== 'response-evidence')) {
-          if (!thisClientLetterIds.has(folder.name)) continue;
-          if (evidenceLetterIds.has(folder.name)) continue;
-          const { data: folderFiles } = await supabase.storage
-            .from('responses')
-            .list(rootId + '/' + folder.name, { limit: 50 });
-          if (!folderFiles || folderFiles.length === 0) continue;
-          const matchedLetter = letters.find((l) => l.id === folder.name);
-          const hasPhase3 = matchedLetter
-            ? letters.some((pl) => pl.furnisher === matchedLetter.furnisher && pl.phase?.startsWith('Phase 3'))
-            : false;
-          const visible = folderFiles.filter((f) => !f.name.startsWith(CONVERTED_PREFIX));
-          groupResponseFiles(visible).forEach((batch) => {
-            allResponses.push({
-              files: batch.files.map((f) => ({ path: rootId + '/' + folder.name + '/' + f.name, fileName: f.name })),
-              letterId: folder.name,
-              furnisher: matchedLetter ? matchedLetter.furnisher : folder.name,
-              phase: matchedLetter ? matchedLetter.phase : 'Phase 1',
-              createdAt: batch.createdAt,
-              letter: matchedLetter,
-              hasPhase3,
-              responseKind: matchedLetter?.phase?.startsWith('Phase 3') ? 'bureau' : 'furnisher',
-            });
-          });
-        }
-      }
+      // Durable response_evidence rows are the only source after the storage
+      // reorg. Legacy {clientAuthUid}/{letterId}/ folder crawls were removed;
+      // scripts/reorg-client-storage.mjs migrates those objects into evidence.
       setResponses(allResponses.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))));
     } catch(e) { console.error('Could not load responses:', e); }
     finally { setLoading(false); }

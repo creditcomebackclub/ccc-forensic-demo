@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Loader2, Printer, Download, Mail } from 'lucide-react';
 import { generateLetter } from '../utils/api';
 import { supabase } from '../utils/supabase';
+import { resolveSignatureViewUrl } from '../utils/storagePaths';
 
 export default function LetterViewer({ account, client, onClose }) {
   const [loading, setLoading] = useState(true);
@@ -36,8 +37,8 @@ export default function LetterViewer({ account, client, onClose }) {
           : supabase.from('clients').select('lpoa_signature_data,name,address').eq('name', client.name).limit(1);
         const { data: c } = await clientsQuery;
         if (c && c.length > 0) {
-          if (!enrichedClient.signatureData && c[0].lpoa_signature_data && c[0].lpoa_signature_data.signatureUrl) {
-            enrichedClient.signatureData = c[0].lpoa_signature_data.signatureUrl;
+          if (!enrichedClient.signatureData && c[0].lpoa_signature_data) {
+            enrichedClient.signatureData = await resolveSignatureViewUrl(supabase, c[0].lpoa_signature_data);
           }
           // Profile-tab address is the permanent address of record — always
           // wins over any address extracted from the credit report.

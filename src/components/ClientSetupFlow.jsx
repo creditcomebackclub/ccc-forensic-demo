@@ -6,6 +6,29 @@ import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-
 import { getSettings } from '../utils/settings';
 import { getTierPricing, describeTierFee } from '../utils/pricing';
 import { uploadDocument } from '../utils/documents';
+import {
+  DOCUMENTS_BUCKET,
+  FIRM_ASSETS_BUCKET,
+  FIRM_ATTORNEY_SIG_PATH,
+  lpoaSignaturePath,
+  lpoaDocumentPath,
+  buildLpoaSignatureRecord,
+} from '../utils/storagePaths';
+
+async function loadAttorneySignatureDataUrl() {
+  try {
+    const { data, error } = await supabase.storage.from(FIRM_ASSETS_BUCKET).download(FIRM_ATTORNEY_SIG_PATH);
+    if (error || !data) return null;
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(data);
+    });
+  } catch {
+    return null;
+  }
+}
 
 export default function ClientSetupFlow({ session, onComplete, initialStep = 'password' }) {
   const [step, setStep] = useState(initialStep); // password | onboarding
@@ -185,14 +208,16 @@ function ClientOnboardingModal({ session, onComplete }) {
     setSignature(null);
   };
 
-  const uploadFile = async (file, path) => {
-    const { error } = await supabase.storage.from('client-docs').upload(path, file, { upsert: true });
+  const uploadPrivateFile = async (file, path, contentType) => {
+    const { error } = await supabase.storage.from(DOCUMENTS_BUCKET).upload(path, file, {
+      upsert: true,
+      contentType: contentType || file.type || 'application/octet-stream',
+    });
     if (error) throw error;
-    const { data } = supabase.storage.from('client-docs').getPublicUrl(path);
-    return data.publicUrl;
+    return path;
   };
 
-  const uploadSignature = async (dataUrl, path) => {
+  const uploadSignaturePng = async (dataUrl, path) => {
     const arr = dataUrl.split(',');
     const mime = arr[0].match(/:(.*?);/)[1];
     const bstr = atob(arr[1]);
@@ -203,7 +228,7 @@ function ClientOnboardingModal({ session, onComplete }) {
     }
     const blob = new Blob([u8arr], { type: mime });
     const file = new File([blob], 'signature.png', { type: 'image/png' });
-    return uploadFile(file, path);
+    return uploadPrivateFile(file, path, 'image/png');
   };
 
   const handleComplete = async () => {
@@ -224,14 +249,8 @@ function ClientOnboardingModal({ session, onComplete }) {
     };
 
     try {
-      let sigUrl = null;
-      if (signature) {
-        sigUrl = await labeled('Upload signature', () => uploadSignature(signature, `${userId}/signature.png`));
-      }
-      // Resolve the client record so id/address docs land in the `documents`
-      // table too (not just storage) — otherwise they're invisible in the
-      // admin CRM's DocumentManager, which reads that table keyed on
-      // client_id + the owning staff user_id, not just a storage path.
+      // Resolve the client record so id/address/LPOA docs land under the firm's
+      // documents tree (not the client's auth uid).
       let docsClientId = null, docsOwnerUserId = null, docsClientName = userEmail;
       let docsResolveFailed = false;
       try {
@@ -256,16 +275,20 @@ function ClientOnboardingModal({ session, onComplete }) {
         console.warn('Could not resolve client record for document upload:', e);
       }
 
-      // Never fall back to client-docs for ID/address — those uploads leave no
-      // documents row and are invisible in the admin CRM. Fail closed so the
-      // client can retry once their profile is linked to a clients row.
-      if ((idFile || addressFile) && (!docsClientId || !docsOwnerUserId)) {
+      if (!docsClientId || !docsOwnerUserId) {
         throw new Error(
           docsResolveFailed
             ? 'Could not look up your client record (temporary network or server error). Please try finishing enrollment again in a moment.'
-            : 'Could not resolve your client record for identity documents. Contact Credit Comeback Club before finishing enrollment so your ID and address files are saved correctly.'
+            : 'Could not resolve your client record for enrollment documents. Contact Credit Comeback Club before finishing enrollment so your files are saved correctly.'
         );
       }
+
+      const signaturePath = lpoaSignaturePath(docsOwnerUserId, docsClientId);
+      await labeled('Upload signature', () => uploadSignaturePng(signature, signaturePath));
+
+      // Never fall back to client-docs for ID/address — those uploads leave no
+      // documents row and are invisible in the admin CRM. Fail closed so the
+      // client can retry once their profile is linked to a clients row.
       if (idFile) {
         await labeled('Upload ID', () =>
           uploadDocument(docsClientId, docsClientName, 'id', idFile, docsOwnerUserId)
@@ -280,7 +303,7 @@ function ClientOnboardingModal({ session, onComplete }) {
       // Always mark onboarding complete in DB — do this even if subsequent steps fail
       await labeled('Save enrollment record', () =>
         supabase.from('client_profiles').update({
-          signature_data: sigUrl,
+          signature_data: null,
           signature_signed_at: new Date().toISOString(),
           agreement_signed_at: new Date().toISOString(),
           onboarding_complete: true,
@@ -291,7 +314,13 @@ function ClientOnboardingModal({ session, onComplete }) {
       const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('email', userEmail).single();
       const signedAt = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
       const clientFullName = (cp && cp.full_name) || session.user.email;
+      const attorneySigDataUrl = await loadAttorneySignatureDataUrl();
+      const attorneySigImg = attorneySigDataUrl
+        ? '<img src="' + attorneySigDataUrl + '" style="max-height:56px;max-width:220px;" />'
+        : '<span style="font-size:14px;font-weight:bold;">Christopher Holland</span>';
 
+      // Embed the canvas signature data URL so the stored HTML is self-contained
+      // (signed URLs expire; public client-docs URLs are being retired).
       const lpoaHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
         + 'body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;margin:0;padding:40px;color:#000;}'
         + '.header{background:#0f172a;color:#fbbf24;padding:20px 32px;margin:-40px -40px 32px;}'
@@ -330,8 +359,8 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '<p>This document was executed electronically. The drawn signature below constitutes a legally binding electronic signature under the ESIGN Act (15 U.S.C. §7001). Execution timestamp, IP address, and user agent are recorded.</p>'
         + '<div class="sig-block">'
         + '<div class="sig-row">'
-        + '<div class="sig-col"><div class="sig-line">' + (sigUrl ? '<img src="' + sigUrl + '" style="max-height:56px;max-width:220px;" />' : '') + '</div><div class="sig-label">Principal Signature — ' + clientFullName + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
-        + '<div class="sig-col"><div class="sig-line"><img src="https://mlsbdmewxocgweotcdud.supabase.co/storage/v1/object/public/client-docs/standalone/Christopher%20Holland/chris_signature.png" style="max-height:56px;max-width:220px;" /></div><div class="sig-label">Christopher Holland — Attorney-in-Fact, Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
+        + '<div class="sig-col"><div class="sig-line"><img src="' + signature + '" style="max-height:56px;max-width:220px;" /></div><div class="sig-label">Principal Signature — ' + clientFullName + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
+        + '<div class="sig-col"><div class="sig-line">' + attorneySigImg + '</div><div class="sig-label">Christopher Holland — Attorney-in-Fact, Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
         + '</div></div>'
         + '<div class="footer">Credit Comeback Club | Grand Junction, CO | 970-644-0063 | creditcomebackclub.com | Executed under ESIGN Act 15 U.S.C. §7001</div>'
         + '</body></html>';
@@ -343,29 +372,38 @@ function ClientOnboardingModal({ session, onComplete }) {
 
       const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });
       const lpoaFile = new File([lpoaBlob], 'lpoa-signed.html', { type: 'text/html' });
-      // LPOA upload — non-fatal if storage fails (enrollment is already marked complete above)
-      let lpoaUrl = null;
+      const documentPath = lpoaDocumentPath(docsOwnerUserId, docsClientId);
+      let lpoaUploaded = false;
       try {
-        const { error: lpoaErr } = await supabase.storage.from('client-docs').upload(userId + '/lpoa-signed.html', lpoaFile, { upsert: true });
-        if (!lpoaErr) {
-          const { data: lpoaData } = supabase.storage.from('client-docs').getPublicUrl(userId + '/lpoa-signed.html');
-          lpoaUrl = lpoaData.publicUrl;
-        }
+        await labeled('Upload LPOA', () => uploadPrivateFile(lpoaFile, documentPath, 'text/html'));
+        lpoaUploaded = true;
       } catch (lpoaUploadErr) {
         console.warn('LPOA upload failed (non-fatal):', lpoaUploadErr);
       }
 
-      if (lpoaUrl) {
-        await supabase.from('client_profiles').update({ lpoa_url: lpoaUrl }).eq('email', userEmail);
+      const signatureRecord = buildLpoaSignatureRecord({
+        firmUserId: docsOwnerUserId,
+        clientId: docsClientId,
+        signedAt: new Date().toISOString(),
+        method: 'Canvas drawn signature + ESIGN Act',
+        documentHash,
+      });
+
+      if (lpoaUploaded) {
+        await supabase.from('client_profiles').update({
+          lpoa_url: null,
+          lpoa_storage_bucket: DOCUMENTS_BUCKET,
+          lpoa_storage_path: documentPath,
+        }).eq('email', userEmail);
       }
 
       if (cp) {
         await supabase.from('clients').update({
           lpoa_signed: true,
           lpoa_signed_at: new Date().toISOString(),
-          lpoa_signature_data: { signatureUrl: sigUrl, lpoaUrl, signedAt: new Date().toISOString(), method: 'Canvas drawn signature + ESIGN Act', documentHash },
+          lpoa_signature_data: signatureRecord,
           lpoa_document_hash: documentHash,
-        }).eq('name', cp.full_name);
+        }).eq('id', docsClientId);
       }
 
       // Append-only audit trail entry (lpoa_audit_log) — captures a
@@ -381,7 +419,14 @@ function ClientOnboardingModal({ session, onComplete }) {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${session.access_token}`,
           },
-          body: JSON.stringify({ documentHash, documentUrl: lpoaUrl, signerName: clientFullName, lpoaType: 'standard' }),
+          body: JSON.stringify({
+            documentHash,
+            documentUrl: null,
+            storageBucket: DOCUMENTS_BUCKET,
+            storagePath: documentPath,
+            signerName: clientFullName,
+            lpoaType: 'standard',
+          }),
         });
       } catch (auditErr) {
         console.warn('LPOA audit log entry failed (non-fatal):', auditErr);

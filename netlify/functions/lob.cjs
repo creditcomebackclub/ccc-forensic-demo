@@ -1,6 +1,7 @@
 const https = require('https');
 const crypto = require('crypto');
 const { archiveLobArtifact } = require('./_lobArtifacts.cjs');
+const { responseEvidencePrefixes } = require('./_storagePaths.cjs');
 
 function lobRequest(path, method, body, apiKey, extraHeaders) {
   return new Promise((resolve, reject) => {
@@ -157,7 +158,10 @@ async function validateBureauFollowUpPreflight(letter, manifest, supabaseUrl, se
 
   const paths = Array.isArray(evidence?.storage_paths) ? evidence.storage_paths : [];
   const names = Array.isArray(evidence?.file_names) ? evidence.file_names : [];
-  const expectedPrefix = `${letter.user_id}/response-evidence/${sourceEvidenceId}/`;
+  const prefixes = responseEvidencePrefixes(letter.user_id, letter.client_id, sourceEvidenceId);
+  const pathsMatch = paths.length > 0 && prefixes.some((expectedPrefix) =>
+    paths.every((path) => typeof path === 'string' && path.startsWith(expectedPrefix))
+  );
   if (!evidence
     || evidence.id !== sourceEvidenceId
     || evidence.firm_user_id !== letter.user_id
@@ -167,14 +171,15 @@ async function validateBureauFollowUpPreflight(letter, manifest, supabaseUrl, se
     || evidence.storage_bucket !== 'responses'
     || evidence.upload_status !== 'received'
     || paths.length === 0
-    || paths.some((path) => typeof path !== 'string' || !path.startsWith(expectedPrefix))
+    || !pathsMatch
     || names.length !== paths.length) {
     issues.push('Exhibit B is not a complete bureau response to Exhibit A for this same client and firm.');
   }
+  const hasLpoa = !!(client?.lpoa_signature_data?.lpoaPath || client?.lpoa_signature_data?.lpoaUrl);
   if (!client
     || client.id !== letter.client_id
     || client.user_id !== letter.user_id
-    || !client.lpoa_signature_data?.lpoaUrl) {
+    || !hasLpoa) {
     issues.push('Exhibit C is missing the client’s signed Limited Power of Attorney.');
   }
 
@@ -337,18 +342,43 @@ exports.handler = async (event) => {
       if (!letter) return { statusCode: 404, body: JSON.stringify({ error: 'Letter not found' }) };
       if (String(letter.phase || '').startsWith('Phase 3')) {
         const {
+          autoFixFieldCitations,
           collectBureauFollowUpProblems,
           collectPhase3CitationProblems,
+          normalizeFollowUpPresentation,
         } = await import('../../src/constants/metro2Fields.js');
+        let html = letter.html || '';
+        html = autoFixFieldCitations(html).html;
+        if (isBureauFollowUp(letter)) html = normalizeFollowUpPresentation(html);
         const currentProblems = isBureauFollowUp(letter)
-          ? collectBureauFollowUpProblems(letter.html)
-          : collectPhase3CitationProblems(letter.html);
+          ? collectBureauFollowUpProblems(html)
+          : collectPhase3CitationProblems(html);
         if (currentProblems.length > 0) {
           return {
             statusCode: 422,
             body: JSON.stringify({
               error: 'PHASE 3 CONTENT FAILED CURRENT PRODUCTION-SAFETY RULES — nothing was sent.',
               issues: currentProblems,
+              blocked: true,
+            }),
+          };
+        }
+        // If mechanical autofix changed the stored letter, persist and ask the
+        // staffer to reopen the mailer so Lob's remoteUrl is rebuilt from the
+        // corrected HTML. Allowing this send would print the unfixed upload.
+        if (html !== (letter.html || '')) {
+          await supabaseRequest(
+            '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId),
+            'PATCH',
+            { html },
+            supabaseUrl,
+            serviceKey
+          );
+          return {
+            statusCode: 409,
+            body: JSON.stringify({
+              error: 'Letter HTML was auto-corrected for Metro 2 citations. Re-open the mailer and send again so the printed packet uses the fixed text.',
+              corrected: true,
               blocked: true,
             }),
           };

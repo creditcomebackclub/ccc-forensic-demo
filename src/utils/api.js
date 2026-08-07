@@ -1,6 +1,7 @@
 import { saveLetter } from "./storage.js";
 import { supabase } from "./supabase";
 import { runAuditJob } from "./auditJobs.js";
+import { resolveSignatureViewUrl } from "./storagePaths.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -161,8 +162,8 @@ export async function generateCombinedCleanupLetter(client, inquiries) {
       : supabase.from('clients').select('lpoa_signature_data,address').eq('name', client.name).limit(1);
     const { data: cm } = await clientIdFilter;
     if (cm && cm.length > 0) {
-      if (!signatureData && cm[0].lpoa_signature_data?.signatureUrl) {
-        signatureData = cm[0].lpoa_signature_data.signatureUrl;
+      if (!signatureData && cm[0].lpoa_signature_data) {
+        signatureData = await resolveSignatureViewUrl(supabase, cm[0].lpoa_signature_data);
       }
       // Profile-tab address wins over any address extracted from the credit
       // report — this is the permanent address of record for the letter header.

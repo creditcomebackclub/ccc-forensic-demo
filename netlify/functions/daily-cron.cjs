@@ -81,6 +81,104 @@ function chunks(values, size = 100) {
   return out;
 }
 
+const TEMP_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
+function storageList(bucket, prefix, url, key) {
+  return new Promise((resolve, reject) => {
+    const path = '/storage/v1/object/list/' + bucket;
+    const body = JSON.stringify({ prefix: prefix || '', limit: 100, offset: 0 });
+    const u = new URL(url + path);
+    const req = https.request({
+      hostname: u.hostname,
+      port: 443,
+      path: u.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: key,
+        Authorization: 'Bearer ' + key,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', (c) => { raw += c; });
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: raw ? JSON.parse(raw) : [] }); }
+        catch (e) { resolve({ status: res.statusCode, body: raw }); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function storageRemove(bucket, paths, url, key) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ prefixes: paths });
+    const u = new URL(url + '/storage/v1/object/' + bucket);
+    const req = https.request({
+      hostname: u.hostname,
+      port: 443,
+      path: u.pathname,
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: key,
+        Authorization: 'Bearer ' + key,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', (c) => { raw += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: raw }));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function listStorageRecursive(bucket, prefix, url, key) {
+  const out = [];
+  const queue = [prefix || ''];
+  while (queue.length) {
+    const current = queue.shift();
+    const res = await storageList(bucket, current, url, key);
+    if (res.status < 200 || res.status >= 300 || !Array.isArray(res.body)) continue;
+    for (const item of res.body) {
+      const full = current ? current + '/' + item.name : item.name;
+      if (item.id == null && !item.metadata) queue.push(full);
+      else out.push({ path: full, updatedAt: item.updated_at || item.created_at });
+    }
+  }
+  return out;
+}
+
+/** Delete documents/{firm}/temp/** and legacy temp-letters piles older than 48h. */
+async function purgeExpiredMailTemps(supabaseUrl, supabaseKey) {
+  const cutoff = Date.now() - TEMP_MAX_AGE_MS;
+  // List top-level firm folders, then their temp trees.
+  const top = await storageList('documents', '', supabaseUrl, supabaseKey);
+  if (!Array.isArray(top.body)) return 0;
+  const toDelete = [];
+  for (const firm of top.body) {
+    if (!firm.name || firm.id) continue; // only folders
+    const firmId = firm.name;
+    for (const sub of ['temp', 'temp-letters', 'temp-letter-assets']) {
+      const objects = await listStorageRecursive('documents', firmId + '/' + sub, supabaseUrl, supabaseKey);
+      for (const obj of objects) {
+        const updated = obj.updatedAt ? Date.parse(obj.updatedAt) : 0;
+        if (!updated || updated <= cutoff) toDelete.push(obj.path);
+      }
+    }
+  }
+  for (const batch of chunks(toDelete, 50)) {
+    await storageRemove('documents', batch, supabaseUrl, supabaseKey);
+  }
+  return toDelete.length;
+}
+
 // PostgREST's `in.(...)` syntax needs quotes for names/emails. Encode the
 // complete parenthesized value so a comma, ampersand, or quote in an email
 // cannot change the surrounding REST query.
@@ -228,7 +326,8 @@ exports.handler = async () => {
   let emailEscalationsEnabled = true;
   try {
     const settingsRes = await new Promise((resolve, reject) => {
-      const u = new URL(supabaseUrl + '/storage/v1/object/client-docs/admin/settings.json');
+      // Authenticated object path — client-docs is private after storage reorg.
+      const u = new URL(supabaseUrl + '/storage/v1/object/authenticated/client-docs/admin/settings.json');
       https.get(u, { headers: { apikey: supabaseKey, Authorization: 'Bearer ' + supabaseKey } }, (res) => {
         let raw = ''; res.on('data', (c) => raw += c); res.on('end', () => resolve({ status: res.statusCode, body: raw }));
       }).on('error', reject);
@@ -238,6 +337,14 @@ exports.handler = async () => {
       if (parsed?.notifications?.emailEscalations === false) emailEscalationsEnabled = false;
     }
   } catch (e) { /* default to enabled if settings can't be read */ }
+
+  // Purge Lob mail temp objects older than 48h (canonical temp/ + legacy piles).
+  let tempsPurged = 0;
+  try {
+    tempsPurged = await purgeExpiredMailTemps(supabaseUrl, supabaseKey);
+  } catch (e) {
+    console.warn('temp mail purge failed (non-fatal):', e.message || e);
+  }
 
   async function fetch_send(action, payload) {
     const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
@@ -897,7 +1004,14 @@ exports.handler = async () => {
 
   return {
     statusCode: 200,
-    body: JSON.stringify({ success: true, onboardingRemindersSent: onboardingDripsCount, leadNurtureSent: nurtureDripsCount, updatesSent: clientUpdatesCount, winbackSent: winbackSentCount }),
+    body: JSON.stringify({
+      success: true,
+      onboardingRemindersSent: onboardingDripsCount,
+      leadNurtureSent: nurtureDripsCount,
+      updatesSent: clientUpdatesCount,
+      winbackSent: winbackSentCount,
+      tempsPurged,
+    }),
   };
 };
 

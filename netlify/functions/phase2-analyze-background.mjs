@@ -23,10 +23,14 @@ import {
   autoFixFieldCitations,
   collectBureauFollowUpProblems,
   collectPhase3CitationProblems,
+  normalizeFollowUpPresentation,
 } from '../../src/constants/metro2Fields.js';
 import { requireStaff } from './_requireAuth.cjs';
+import storagePaths from './_storagePaths.cjs';
 
 assertMapFullySourced();
+
+const { responseEvidencePrefixes } = storagePaths;
 
 const MODEL = 'claude-sonnet-5';
 const FURNISHER_SYSTEM = [{ type: 'text', text: PHASE2_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
@@ -74,8 +78,8 @@ function isResponsePathForLetter(path, letterId) {
 
 function isResponsePathForEvidence(path, evidence) {
   if (typeof path !== 'string' || !path || path.includes('..') || path.startsWith('/')) return false;
-  const prefix = `${evidence.firm_user_id}/response-evidence/${evidence.id}/`;
-  return path.startsWith(prefix) && path.length > prefix.length;
+  return responseEvidencePrefixes(evidence.firm_user_id, evidence.client_id, evidence.id)
+    .some((prefix) => path.startsWith(prefix) && path.length > prefix.length);
 }
 
 export const handler = async (event) => {
@@ -364,6 +368,17 @@ export const handler = async (event) => {
     };
 
     let { parsed: analysis, usage: u } = await runModel(messages);
+    const MAX_LINT_ATTEMPTS = 3;
+
+    const mergeUsage = (next) => {
+      u = {
+        input_tokens: (u.input_tokens || 0) + (next.input_tokens || 0),
+        output_tokens: (u.output_tokens || 0) + (next.output_tokens || 0),
+        cache_read_input_tokens: (u.cache_read_input_tokens || 0) + (next.cache_read_input_tokens || 0),
+        cache_creation_input_tokens: (u.cache_creation_input_tokens || 0) + (next.cache_creation_input_tokens || 0),
+      };
+    };
+
     // Most Metro 2 field-citation mistakes are a transposed field NUMBER
     // against a correctly-written label — mechanically correctable without
     // spending another model call. Fix those before even checking whether a
@@ -371,34 +386,79 @@ export const handler = async (event) => {
     // couldn't confidently resolve on its own (invalid field numbers,
     // substantive overclaims, enclosure-contract mistakes).
     if (isBureauFollowUp && analysis?.letterHtml) {
-      analysis.letterHtml = autoFixFieldCitations(analysis.letterHtml).html;
-    }
-    // One automatic rebuild if the follow-up fails production-safety lint.
-    // Prompt hardening alone is not enough when Exhibit A / analysis JSON
-    // still contain old citations, unsupported premises, or enclosure labels.
-    if (isBureauFollowUp && analysis?.letterHtml) {
-      const citationProblems = collectBureauFollowUpProblems(analysis.letterHtml);
-      if (citationProblems.length) {
-        console.warn('[phase2] bureau_follow_up production lint failed; requesting one rewrite', citationProblems);
+      analysis.letterHtml = normalizeFollowUpPresentation(
+        autoFixFieldCitations(analysis.letterHtml).html
+      );
+      // Up to 2 conversational rewrites (3 total attempts) — matches Phase 1.
+      for (let attempt = 1; attempt < MAX_LINT_ATTEMPTS; attempt++) {
+        const citationProblems = collectBureauFollowUpProblems(analysis.letterHtml);
+        if (!citationProblems.length) break;
+        console.warn(`[phase2] bureau_follow_up production lint failed (attempt ${attempt}); requesting rewrite`, citationProblems);
         const rewriteMessages = [
           ...messages,
           {
             role: 'user',
             content: [{
               type: 'text',
-              text: `CRITICAL CORRECTION: The draft letterHtml failed production-safety lint. Return a complete corrected JSON object for this follow-up. Fix EVERY issue below — do not leave any of them in letterHtml. Keep only supported focus issues. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)"; use CRA duties under §1681i and describe the furnisher's separate §1681s-2(b) duty accurately.\n- Field 19 = Special Comment; Field 20 = Compliance Condition Code; Field 23 = Original Charge-off Amount; Field 27 = Date of Last Payment.\n- Status 97 may carry a balance/past due; equality of those figures is not a violation by itself.\n- Field 18 is rolling 24 months. Do not challenge C/O after closure solely because it follows closure.\n- A returned payment date alone is not DOFD.\n- Request the §1681i(a)(6)(B)(iii)/(a)(7) procedure description; do not claim a right to UDF/source documents or transaction-level-record review confirmation.\n- Enclosures: Exhibit A prior Phase 3; Exhibit B bureau response; Exhibit C LPOA. No Phase 1/furnisher response/ID/address.\n\nBAD DRAFT letterHtml:\n${analysis.letterHtml}`,
+              text: `CRITICAL CORRECTION: The draft letterHtml failed production-safety lint. Return a complete corrected JSON object for this follow-up. Fix EVERY issue below — do not leave any of them in letterHtml. Keep only supported focus issues. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)"; use CRA duties under §1681i and describe the furnisher's separate §1681s-2(b) duty accurately.\n- Field 19 = Special Comment; Field 20 = Compliance Condition Code; Field 23 = Original Charge-off Amount; Field 27 = Date of Last Payment.\n- Status 97 may carry a balance/past due; equality of those figures is not a violation by itself.\n- Field 18 is rolling 24 months. Do not challenge C/O after closure solely because it follows closure.\n- A returned payment date alone is not DOFD.\n- Request the §1681i(a)(6)(B)(iii)/(a)(7) procedure description; do not claim a right to UDF/source documents or transaction-level-record review confirmation.\n- Enclosures: Exhibit A prior Phase 3; Exhibit B bureau response; Exhibit C LPOA. No Phase 1/furnisher response/ID/address.\n- Do not use "Dear Sir or Madam" or "Sincerely".\n\nBAD DRAFT letterHtml:\n${analysis.letterHtml}`,
             }],
           },
         ];
-        const rebuilt = await runModel(rewriteMessages, 'Rewriting follow-up to fix citation lint');
+        const rebuilt = await runModel(rewriteMessages, `Rewriting follow-up to fix production lint (attempt ${attempt + 1})`);
         analysis = rebuilt.parsed;
-        if (analysis?.letterHtml) analysis.letterHtml = autoFixFieldCitations(analysis.letterHtml).html;
-        u = {
-          input_tokens: (u.input_tokens || 0) + (rebuilt.usage.input_tokens || 0),
-          output_tokens: (u.output_tokens || 0) + (rebuilt.usage.output_tokens || 0),
-          cache_read_input_tokens: (u.cache_read_input_tokens || 0) + (rebuilt.usage.cache_read_input_tokens || 0),
-          cache_creation_input_tokens: (u.cache_creation_input_tokens || 0) + (rebuilt.usage.cache_creation_input_tokens || 0),
-        };
+        if (analysis?.letterHtml) {
+          analysis.letterHtml = normalizeFollowUpPresentation(
+            autoFixFieldCitations(analysis.letterHtml).html
+          );
+        }
+        mergeUsage(rebuilt.usage);
+      }
+    }
+
+    // Initial Phase 3 (furnisher Phase 2 → three CRA letters): same autofix +
+    // rewrite loop as Phase 1 / follow-up. Autofix alone left too many
+    // first-try failures on multi-occurrence swaps and substantive slips.
+    if (!isBureauResponse && !isBureauFollowUp && analysis?.letters) {
+      const collectPhase3AllProblems = () => {
+        const all = [];
+        for (const bureau of ['equifax', 'experian', 'transunion']) {
+          const html = analysis.letters?.[bureau];
+          if (!html) continue;
+          for (const p of collectPhase3CitationProblems(html)) {
+            all.push(`${bureau}: ${p}`);
+          }
+        }
+        return all;
+      };
+
+      for (const bureau of ['equifax', 'experian', 'transunion']) {
+        if (analysis.letters[bureau]) {
+          analysis.letters[bureau] = autoFixFieldCitations(analysis.letters[bureau]).html;
+        }
+      }
+
+      for (let attempt = 1; attempt < MAX_LINT_ATTEMPTS; attempt++) {
+        const citationProblems = collectPhase3AllProblems();
+        if (!citationProblems.length) break;
+        console.warn(`[phase2] Phase 3 production lint failed (attempt ${attempt}); requesting rewrite`, citationProblems);
+        const rewriteMessages = [
+          ...messages,
+          {
+            role: 'user',
+            content: [{
+              type: 'text',
+              text: `CRITICAL CORRECTION: One or more Phase 3 CRA letters failed production-safety lint. Return a complete corrected JSON object. Fix EVERY issue below in the corresponding letters.{bureau} HTML. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)"; CRA duties are under §1681i; furnisher §1681s-2(b) attaches after CRA notice.\n- Field 19 = Special Comment; Field 20 = Compliance Condition Code; Field 21 = Current Balance; Field 22 = Amount Past Due; Field 23 = Original Charge-off Amount; Field 27 = Date of Last Payment.\n- Status 97 may carry balance/past due; equality is not a violation by itself.\n- Field 18 is rolling 24 months. Do not challenge C/O after closure solely because it follows closure.\n- A returned payment date alone is not DOFD.\n- Request §1681i(a)(6)(B)(iii)/(a)(7) procedure description; do not claim a right to UDF/source documents.\n\nBAD DRAFT letters JSON:\n${JSON.stringify(analysis.letters, null, 2)}`,
+            }],
+          },
+        ];
+        const rebuilt = await runModel(rewriteMessages, `Rewriting Phase 3 letters to fix production lint (attempt ${attempt + 1})`);
+        analysis = rebuilt.parsed;
+        for (const bureau of ['equifax', 'experian', 'transunion']) {
+          if (analysis?.letters?.[bureau]) {
+            analysis.letters[bureau] = autoFixFieldCitations(analysis.letters[bureau]).html;
+          }
+        }
+        mergeUsage(rebuilt.usage);
       }
     }
 
@@ -433,12 +493,6 @@ export const handler = async (event) => {
     if (!isBureauResponse && !isBureauFollowUp && analysis && analysis.letters) {
       for (const bureau of ['equifax', 'experian', 'transunion']) {
         if (analysis.letters[bureau]) {
-          // Initial Phase 3 generation has no rebuild step (unlike bureau
-          // follow-up above) — a citation lint failure here just blocks the
-          // letter outright with enclosure_parse_blocked. Auto-fixing the
-          // mechanical field-number mistakes before that check runs is the
-          // only repair this path gets, so it matters more here, not less.
-          analysis.letters[bureau] = autoFixFieldCitations(analysis.letters[bureau]).html;
           analysis.letters[bureau] = injectLetterCss(analysis.letters[bureau], baseCss);
         }
       }

@@ -74,7 +74,8 @@ export function buildProgressUpdatePdf(input) {
   const deleted = Array.isArray(diff.deleted) ? diff.deleted : [];
   const added = Array.isArray(diff.new) ? diff.new : [];
   const deltas = Object.entries(diff.scoreDeltas || {}).filter(([, s]) => s && s.delta != null);
-  const period = [monthLabel(input.fromReportDate), monthLabel(input.toReportDate)].filter(Boolean).join(' → ')
+  // ASCII hyphen only — Helvetica/WinAnsi can't encode →, which rendered as "!'".
+  const period = [monthLabel(input.fromReportDate), monthLabel(input.toReportDate)].filter(Boolean).join(' - ')
     || monthLabel(input.toReportDate)
     || 'Progress Update';
 
@@ -153,7 +154,7 @@ export function buildProgressUpdatePdf(input) {
       startY: y,
       margin: { left: M, right: M },
       head: [['Furnisher', 'Balance']],
-      body: deleted.map((a) => [a.furnisher || '—', a.balance != null ? money(a.balance) : '—']),
+      body: deleted.map((a) => [a.furnisher || '-', a.balance != null ? money(a.balance) : '-']),
       theme: 'plain',
       headStyles: { fillColor: C.green, textColor: C.white, fontSize: 9 },
       bodyStyles: { textColor: C.ink, fontSize: 10 },
@@ -173,7 +174,7 @@ export function buildProgressUpdatePdf(input) {
       startY: y,
       margin: { left: M, right: M },
       head: [['Furnisher', 'Balance']],
-      body: added.map((a) => [a.furnisher || '—', a.balance != null ? money(a.balance) : '—']),
+      body: added.map((a) => [a.furnisher || '-', a.balance != null ? money(a.balance) : '-']),
       theme: 'plain',
       headStyles: { fillColor: [180, 120, 40], textColor: C.white, fontSize: 9 },
       bodyStyles: { textColor: C.ink, fontSize: 10 },

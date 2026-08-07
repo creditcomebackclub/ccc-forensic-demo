@@ -6,11 +6,12 @@ import { listClientSummaries, getClientDetails, findClientIdByLegacyReference, d
 import { getReturnReceiptUrl } from '../utils/api';
 import { getSettings } from '../utils/settings';
 import { getTierPricing, describeTierFee } from '../utils/pricing';
-import { collectBureauFollowUpProblems, collectPhase3CitationProblems } from '../constants/metro2Fields';
+import { autoFixFieldCitations, collectBureauFollowUpProblems, collectPhase3CitationProblems, normalizeFollowUpPresentation } from '../constants/metro2Fields';
 import { isPhase3FollowUpLetter } from '../utils/followUpEnclosures';
 import { hasInjectedSignature, injectSignatureImage } from '../utils/signatureInjection';
 import { supabase } from '../utils/supabase';
 import { archiveHistoricalMailpiece, getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
+import { resolveLpoaViewUrl } from '../utils/storagePaths';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
 import BureauResponseAnalyzer from './BureauResponseAnalyzer';
@@ -823,7 +824,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const viewSignedLpoa = async (c) => {
     try {
       const detail = c.lpoaSignatureData ? c : await getClientDetails(c.id);
-      const url = detail.lpoaSignatureData?.lpoaUrl;
+      const url = await resolveLpoaViewUrl(supabase, detail.lpoaSignatureData);
       if (!url) { toast.error('No signed LPOA is available for this client.'); return; }
       window.open(url, '_blank');
     } catch (e) {
@@ -889,14 +890,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       ...c.letters.map((l) => l.auditorName),
     ].filter(Boolean))] : [];
     const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
-    const lpoaUrl = c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl;
+    const hasLpoa = !!(c.lpoaSignatureData && (c.lpoaSignatureData.lpoaPath || c.lpoaSignatureData.lpoaUrl));
     
     const clientMenu = [
       { label: 'Edit email', onClick: () => { setEditingEmail(c.id); setEmailVal(c.email || ''); } },
       'divider',
       { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
       { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
-      c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => viewSignedLpoa(c) },
+      c.lpoaSigned && hasLpoa && { label: 'View signed LPOA', onClick: () => viewSignedLpoa(c) },
       'divider',
       {
         label: 'Revert to lead…', onClick: async () => {
@@ -2312,6 +2313,8 @@ function LetterEditModal({ letter, onClose, onSaved }) {
     try {
       let html = editorRef.current?.innerHTML || '';
       if (String(letter.phase || '').startsWith('Phase 3')) {
+        html = autoFixFieldCitations(html).html;
+        if (isPhase3FollowUpLetter(letter)) html = normalizeFollowUpPresentation(html);
         const problems = isPhase3FollowUpLetter(letter)
           ? collectBureauFollowUpProblems(html)
           : collectPhase3CitationProblems(html);

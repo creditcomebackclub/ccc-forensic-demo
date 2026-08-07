@@ -4,6 +4,7 @@ import {
   autoFixFieldCitations,
   collectBureauFollowUpProblems,
   collectPhase3CitationProblems,
+  normalizeFollowUpPresentation,
   renderMetro2FieldTable,
   validateFieldCitations,
 } from '../src/constants/metro2Fields.js';
@@ -46,7 +47,18 @@ assert(validateFieldCitations('Field 20 — Compliance Condition Code').length =
 assert(validateFieldCitations('Field 21 — Current Balance').length === 0, 'correct Field 21');
 assert(validateFieldCitations('Field 22 — Amount Past Due').length === 0, 'correct Field 22');
 assert(validateFieldCitations('Field 23 — Original Charge-off Amount').length === 0, 'correct Field 23');
-assert(validateFieldCitations('Field 27 — Date of Last Payment').length === 0, 'correct Field 27');
+assert(validateFieldCitations('Field 24 — Billing Date').length === 0, 'correct Field 24 Billing Date');
+assert(validateFieldCitations('Field 24 — Date of Account Information').length === 0, 'Field 24 modern-name alias passes');
+assert(has(validateFieldCitations('Field 21 — Date of Account Information'), 'Field 24'), 'wrong number with Field 24 modern name');
+assert(autoFixFieldCitations('Field 21 — Date of Account Information').html.includes('Field 24'), 'autofix modern name to Field 24');
+
+assert(!/Sincerely/i.test(normalizeFollowUpPresentation('<p>Sincerely,</p><p>Consumer</p>')), 'normalize strips Sincerely');
+assert(!/Dear Sir or Madam/i.test(normalizeFollowUpPresentation('<p>Dear Sir or Madam,</p>')), 'normalize rewrites generic salutation');
+assert(collectBureauFollowUpProblems(normalizeFollowUpPresentation(
+  '<p>Dear Sir or Madam,</p><p>Body</p><p>Sincerely,</p>'
+  + '<p class="enclosures">Enclosures: Exhibit A: Prior Phase 3 CRA Dispute Letter (dated Jan 1); '
+  + 'Exhibit B: Equifax Investigation Results (dated Jan 2); Exhibit C: Limited Power of Attorney.</p>'
+)).filter((p) => /Sincerely|Dear Sir/i.test(p)).length === 0, 'normalize clears presentation lint');
 
 // Statute lint
 assert(has(collectPhase3CitationProblems('<p>under 15 U.S.C. §1681s-2(a)(3)</p>'), '1681s-2(a)'), 'statute (a) blocked');

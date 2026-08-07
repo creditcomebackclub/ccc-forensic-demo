@@ -1,5 +1,11 @@
 const https = require('https');
 const crypto = require('crypto');
+const {
+  DOCUMENTS_BUCKET,
+  lpoaSignaturePath,
+  lpoaDocumentPath,
+  buildLpoaSignatureRecord,
+} = require('./_storagePaths.cjs');
 
 function supabaseRequest(path, method, body, url, key) {
   return new Promise((resolve, reject) => {
@@ -99,7 +105,7 @@ exports.handler = async (event) => {
     // 20260725), so this now requires possession of the exact link Chris
     // generated for this specific client, not just knowledge of their name.
     const tokenCheck = await supabaseRequest(
-      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,sign_token,billing_tier',
+      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,user_id,sign_token,billing_tier',
       'GET', null, supabaseUrl, supabaseKey
     );
     const matchedRow = Array.isArray(tokenCheck.body) && tokenCheck.body[0];
@@ -107,6 +113,10 @@ exports.handler = async (event) => {
       return { statusCode: 403, body: JSON.stringify({ error: 'Invalid or expired signing link.' }) };
     }
     const clientId = matchedRow.id;
+    const firmUserId = matchedRow.user_id;
+    if (!firmUserId) {
+      return { statusCode: 409, body: JSON.stringify({ error: 'Client is not linked to a firm account; cannot store LPOA.' }) };
+    }
     
     // Fetch settings to get any admin-overridden tier pricing
     const settingsReq = await supabaseRequest('/rest/v1/settings?id=eq.1&select=pricing', 'GET', null, supabaseUrl, supabaseKey);
@@ -148,15 +158,13 @@ exports.handler = async (event) => {
       }
     }
 
-    // Upload signature PNG to Supabase Storage via base64
+    // Upload signature PNG to private documents bucket under the firm/client tree.
     const base64Data = signatureData.replace(/^data:image\/png;base64,/, '');
     const sigBuffer = Buffer.from(base64Data, 'base64');
+    const signaturePath = lpoaSignaturePath(firmUserId, clientId);
 
-    // Upload via Supabase Storage API. Keyed by clientId, not clientName —
-    // clients.name has no unique constraint, so two same-named clients
-    // would otherwise silently overwrite each other's signature/LPOA.
     const storageRes = await new Promise((resolve, reject) => {
-      const path = '/storage/v1/object/client-docs/standalone/' + clientId + '/signature.png';
+      const path = '/storage/v1/object/' + DOCUMENTS_BUCKET + '/' + signaturePath;
       const u = new URL(supabaseUrl + path);
       const options = {
         hostname: u.hostname, port: 443, path: u.pathname, method: 'POST',
@@ -182,9 +190,6 @@ exports.handler = async (event) => {
       throw new Error('Signature upload failed: ' + storageRes.status + ' ' + storageRes.body);
     }
 
-    // Get public URL
-    const sigUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + clientId + '/signature.png';
-
     // Generate signed LPOA HTML with the verified backend fee text
     const lpoaHtml = buildLpoaHtml(clientName, signerName || clientName, signatureData, signedAtTime, backendFeeText);
     const lpoaBuffer = Buffer.from(lpoaHtml, 'utf8');
@@ -192,10 +197,11 @@ exports.handler = async (event) => {
     // anyone later confirm the stored lpoa-signed.html hasn't been altered
     // since the moment of signing.
     const documentHash = crypto.createHash('sha256').update(lpoaBuffer).digest('hex');
+    const documentPath = lpoaDocumentPath(firmUserId, clientId);
 
-    // Upload LPOA HTML
+    // Upload LPOA HTML to private documents bucket
     const lpoaUploadRes = await new Promise((resolve, reject) => {
-      const path = '/storage/v1/object/client-docs/standalone/' + clientId + '/lpoa-signed.html';
+      const path = '/storage/v1/object/' + DOCUMENTS_BUCKET + '/' + documentPath;
       const u = new URL(supabaseUrl + path);
       const options = {
         hostname: u.hostname, port: 443, path: u.pathname, method: 'POST',
@@ -219,18 +225,29 @@ exports.handler = async (event) => {
       throw new Error('LPOA upload failed: ' + lpoaUploadRes.status + ' ' + lpoaUploadRes.body);
     }
 
-    const lpoaUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + clientId + '/lpoa-signed.html';
+    // Create a short-lived signed URL for the response payload / audit log only.
+    // Durable identity is storage paths on clients.lpoa_signature_data.
+    const signedLpoa = await supabaseRequest(
+      '/storage/v1/object/sign/' + DOCUMENTS_BUCKET + '/' + documentPath,
+      'POST',
+      { expiresIn: 60 * 60 * 24 * 7 },
+      supabaseUrl,
+      supabaseKey
+    );
+    const lpoaUrl = signedLpoa.body && signedLpoa.body.signedURL
+      ? (supabaseUrl + '/storage/v1' + signedLpoa.body.signedURL)
+      : null;
 
-    // Update clients table
-    const signatureRecord = {
-      signatureUrl: sigUrl,
-      lpoaUrl,
+    const signatureRecord = buildLpoaSignatureRecord({
+      firmUserId,
+      clientId,
       signedAt: signedAtTime,
       ip,
       method: 'Canvas drawn signature — standalone LPOA signing page',
       lpoaType: resolvedLpoaType,
       documentHash,
-    };
+      lpoaUrl,
+    });
 
     const patchRes = await supabaseRequest(
       '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&sign_token=eq.' + encodeURIComponent(token),
@@ -272,7 +289,29 @@ exports.handler = async (event) => {
       console.warn('lpoa_audit_log insert failed (non-fatal):', e.message);
     }
 
-    return { statusCode: 200, body: JSON.stringify({ signed: true, sigUrl, lpoaUrl }) };
+    // Also record storage paths on client_profiles when linked
+    try {
+      await supabaseRequest(
+        '/rest/v1/client_profiles?client_id=eq.' + encodeURIComponent(clientId),
+        'PATCH',
+        {
+          lpoa_storage_bucket: DOCUMENTS_BUCKET,
+          lpoa_storage_path: documentPath,
+          lpoa_url: lpoaUrl,
+        },
+        supabaseUrl,
+        supabaseKey
+      );
+    } catch (e) {
+      console.warn('client_profiles LPOA path update failed (non-fatal):', e.message);
+    }
+
+    return { statusCode: 200, body: JSON.stringify({
+      signed: true,
+      signaturePath,
+      lpoaPath: documentPath,
+      lpoaUrl,
+    }) };
   } catch (e) {
     console.error('sign-lpoa error:', e);
     return { statusCode: 500, body: JSON.stringify({ error: e.message || 'Signing failed' }) };
