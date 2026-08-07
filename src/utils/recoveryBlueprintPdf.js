@@ -262,7 +262,7 @@ function addStrikeList(doc, model) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   setColor(doc, C.muted);
-  doc.text("These are the opening targets selected in the reviewed forensic audit, shown in Claude's original priority order.", M, 137);
+  doc.text("These are the opening targets selected in the reviewed forensic audit, shown in original priority order.", M, 137);
 
   if (!model.batch1Accounts.length) {
     doc.setFontSize(13);
