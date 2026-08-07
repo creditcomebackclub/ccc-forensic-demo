@@ -275,6 +275,11 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   const [existingLetters, setExistingLetters] = React.useState(new Set());
   const [cleanupStatus, setCleanupStatus] = React.useState(null); // null | 'running' | 'done' | error string
   const [selectedInquiryKeys, setSelectedInquiryKeys] = React.useState(new Set());
+  // Which name / employer should REMAIN on the bureau file — everything else
+  // in those lists is disputed for removal. Null employer = dispute all.
+  const [keptName, setKeptName] = React.useState('');
+  const [keptEmployer, setKeptEmployer] = React.useState('');
+  const [employerIsCustom, setEmployerIsCustom] = React.useState(false);
   const [clientEmail, setClientEmail] = React.useState(null);
   const [emailModalOpen, setEmailModalOpen] = React.useState(false);
   const [blueprintOpen, setBlueprintOpen] = React.useState(false);
@@ -286,6 +291,17 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
     const eligible = (audit.inquiries || []).filter((i) => i.category !== 'linked_to_open_account');
     setSelectedInquiryKeys(new Set(eligible.map(inqKey)));
   }, [audit.inquiries]);
+
+  React.useEffect(() => {
+    const pi = audit.personalInfo || {};
+    const variants = pi.nameVariants || pi.names || [];
+    const clientName = (audit.client?.name || '').trim();
+    const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const match = variants.find((v) => norm(v) === norm(clientName));
+    setKeptName(match || variants[0] || clientName || '');
+    setKeptEmployer('');
+    setEmployerIsCustom(false);
+  }, [audit.personalInfo, audit.client?.name]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -312,7 +328,27 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   const runCombinedCleanup = async () => {
     setCleanupStatus('running');
     try {
-      const personalInfo = audit.personalInfo || {};
+      const rawPi = audit.personalInfo || {};
+      const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const keepName = (keptName || '').trim();
+      const keepEmployer = (keptEmployer || '').trim();
+      const allNames = rawPi.nameVariants || rawPi.names || [];
+      const allEmployers = rawPi.formerEmployers || rawPi.employers || [];
+      const allAddresses = rawPi.formerAddresses || rawPi.addresses || [];
+
+      // Only dispute variants / employers that are NOT the ones staff chose
+      // to keep on the bureau file. Addresses in formerAddresses are already
+      // former — current address comes from the profile tab (client.address).
+      const personalInfo = {
+        ...rawPi,
+        formerAddresses: allAddresses,
+        nameVariants: allNames.filter((n) => norm(n) !== norm(keepName)),
+        formerEmployers: allEmployers.filter((e) => !keepEmployer || norm(e) !== norm(keepEmployer)),
+        keepOnFile: {
+          name: keepName || audit.client?.name || null,
+          employer: keepEmployer || null,
+        },
+      };
       const hasPersonalInfo = (personalInfo.formerAddresses || []).length > 0
         || (personalInfo.nameVariants || []).length > 0
         || (personalInfo.formerEmployers || []).length > 0;
@@ -536,6 +572,145 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           )}
           <p className="text-[12px] text-ink-muted mb-4">Clean up name variants, stale addresses, and unauthorized inquiries before disputing individual accounts below — a mixed-identity file gives furnishers an easy out. A "no linked account" tag means no matching tradeline was found — it does NOT by itself mean the inquiry was unauthorized. Confirm with the client before disputing.</p>
 
+          {(() => {
+            const pi = audit.personalInfo || {};
+            const nameVariants = [...(pi.nameVariants || pi.names || [])];
+            const employers = [...(pi.formerEmployers || pi.employers || [])];
+            const formerAddresses = pi.formerAddresses || pi.addresses || [];
+            const clientName = (audit.client?.name || '').trim();
+            const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            if (clientName && nameVariants.length > 0 && !nameVariants.some((v) => norm(v) === norm(clientName))) {
+              nameVariants.unshift(clientName);
+            }
+            if (!nameVariants.length && !employers.length && !formerAddresses.length) return null;
+            return (
+              <div className="mb-5 rounded-xl p-4" style={{ background: '#F5F7FB', border: '1px solid ' + T.border }}>
+                <div className="text-[11px] uppercase tracking-wider font-bold mb-1" style={{ color: T.navy }}>
+                  Keep on file — choose before generating
+                </div>
+                <p className="text-[11px] mb-3" style={{ color: T.muted }}>
+                  Pick the name and employer that should <strong>remain</strong> on the bureau profile. Everything else listed here is disputed for removal. Current address always comes from the client Profile tab.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {formerAddresses.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider font-medium mb-1.5" style={{ color: T.faint }}>Former Addresses (all disputed)</div>
+                      <ul className="text-[12px] space-y-1" style={{ color: T.muted }}>
+                        {formerAddresses.map((a, i) => <li key={i}>{a}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {nameVariants.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider font-medium mb-1.5" style={{ color: T.faint }}>Name to keep</div>
+                      <div className="space-y-1.5">
+                        {nameVariants.map((n, i) => (
+                          <label key={i} className="flex items-start gap-2 text-[12px] cursor-pointer rounded-lg px-2 py-1.5"
+                            style={{
+                              color: T.ink,
+                              background: norm(keptName) === norm(n) ? '#fff' : 'transparent',
+                              border: '1px solid ' + (norm(keptName) === norm(n) ? T.navy : 'transparent'),
+                            }}>
+                            <input
+                              type="radio"
+                              name="kept-name"
+                              className="mt-0.5 shrink-0"
+                              checked={norm(keptName) === norm(n)}
+                              onChange={() => setKeptName(n)}
+                              disabled={cleanupStatus === 'running' || cleanupStatus === 'done'}
+                            />
+                            <span>
+                              {n}
+                              {norm(n) === norm(clientName) && (
+                                <span className="ml-1.5 text-[9px] uppercase tracking-wider font-semibold" style={{ color: T.navy }}>Profile name</span>
+                              )}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Employer to keep — always shown so staff can type a current
+                      employer that isn't on the report; that value is affirmed
+                      on the letter via keepOnFile.employer. */}
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider font-medium mb-1.5" style={{ color: T.faint }}>Employer to keep</div>
+                    <div className="space-y-1.5">
+                      <label className="flex items-start gap-2 text-[12px] cursor-pointer rounded-lg px-2 py-1.5"
+                        style={{
+                          color: T.ink,
+                          background: !employerIsCustom && !keptEmployer ? '#fff' : 'transparent',
+                          border: '1px solid ' + (!employerIsCustom && !keptEmployer ? T.navy : 'transparent'),
+                        }}>
+                        <input
+                          type="radio"
+                          name="kept-employer"
+                          className="mt-0.5 shrink-0"
+                          checked={!employerIsCustom && !keptEmployer}
+                          onChange={() => { setEmployerIsCustom(false); setKeptEmployer(''); }}
+                          disabled={cleanupStatus === 'running' || cleanupStatus === 'done'}
+                        />
+                        <span className="italic" style={{ color: T.muted }}>
+                          {employers.length > 0 ? 'Dispute all listed employers' : 'No employer to affirm'}
+                        </span>
+                      </label>
+                      {employers.map((e, i) => (
+                        <label key={i} className="flex items-start gap-2 text-[12px] cursor-pointer rounded-lg px-2 py-1.5"
+                          style={{
+                            color: T.ink,
+                            background: !employerIsCustom && norm(keptEmployer) === norm(e) ? '#fff' : 'transparent',
+                            border: '1px solid ' + (!employerIsCustom && norm(keptEmployer) === norm(e) ? T.navy : 'transparent'),
+                          }}>
+                          <input
+                            type="radio"
+                            name="kept-employer"
+                            className="mt-0.5 shrink-0"
+                            checked={!employerIsCustom && norm(keptEmployer) === norm(e)}
+                            onChange={() => { setEmployerIsCustom(false); setKeptEmployer(e); }}
+                            disabled={cleanupStatus === 'running' || cleanupStatus === 'done'}
+                          />
+                          <span>{e}</span>
+                        </label>
+                      ))}
+                      <div
+                        className="rounded-lg px-2 py-1.5"
+                        style={{
+                          background: employerIsCustom ? '#fff' : 'transparent',
+                          border: '1px solid ' + (employerIsCustom ? T.navy : 'transparent'),
+                        }}
+                      >
+                        <label className="flex items-start gap-2 text-[12px] cursor-pointer" style={{ color: T.ink }}>
+                          <input
+                            type="radio"
+                            name="kept-employer"
+                            className="mt-0.5 shrink-0"
+                            checked={employerIsCustom}
+                            onChange={() => setEmployerIsCustom(true)}
+                            disabled={cleanupStatus === 'running' || cleanupStatus === 'done'}
+                          />
+                          <span>Current employer (type below)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={employerIsCustom ? keptEmployer : ''}
+                          onChange={(e) => { setEmployerIsCustom(true); setKeptEmployer(e.target.value); }}
+                          onFocus={() => setEmployerIsCustom(true)}
+                          placeholder="e.g. Acme Manufacturing LLC"
+                          disabled={cleanupStatus === 'running' || cleanupStatus === 'done'}
+                          className="mt-1.5 w-full rounded-md px-2 py-1.5 text-[12px] focus:outline-none"
+                          style={{ border: '1px solid ' + T.border, color: T.ink, background: '#fff' }}
+                        />
+                        <p className="text-[10px] mt-1" style={{ color: T.faint }}>
+                          Yes — this text is written into the letter as the employer that should remain. All listed report employers are still disputed for removal.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {(audit.inquiries || []).length > 0 && (
             <div className="mb-5">
               <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Hard Inquiries ({audit.inquiries.length})</div>
@@ -581,35 +756,6 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
                   );
                 })}
               </div>
-            </div>
-          )}
-
-          {audit.personalInfo && (
-            <div className="grid grid-cols-3 gap-4">
-              {(audit.personalInfo.formerAddresses || []).length > 0 && (
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Former Addresses</div>
-                  <ul className="text-[12px] text-ink-muted space-y-1">
-                    {audit.personalInfo.formerAddresses.map((a, i) => <li key={i}>{a}</li>)}
-                  </ul>
-                </div>
-              )}
-              {(audit.personalInfo.nameVariants || []).length > 0 && (
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Name Variants</div>
-                  <ul className="text-[12px] text-ink-muted space-y-1">
-                    {audit.personalInfo.nameVariants.map((n, i) => <li key={i}>{n}</li>)}
-                  </ul>
-                </div>
-              )}
-              {(audit.personalInfo.formerEmployers || []).length > 0 && (
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Former Employers</div>
-                  <ul className="text-[12px] text-ink-muted space-y-1">
-                    {audit.personalInfo.formerEmployers.map((e, i) => <li key={i}>{e}</li>)}
-                  </ul>
-                </div>
-              )}
             </div>
           )}
         </div>

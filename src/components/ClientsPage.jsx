@@ -26,6 +26,7 @@ import ClientStatusRail from './client-detail/ClientStatusRail';
 import ClientOverviewTab from './client-detail/ClientOverviewTab';
 import LetterWorkboard from './client-detail/LetterWorkboard';
 import MailStageRail from './client-detail/MailStageRail';
+import LeadsKanban from './LeadsKanban';
 import {
   deriveNextAction,
   summarizeCampaignPhases,
@@ -1260,7 +1261,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   const baseFiltered = activeFilter
     ? sortedClients.filter((c) => viewTab === 'leads'
-        ? (activeFilter === 'unviewed' ? !c.leadViewedAt : activeFilter === 'recent' ? isLeadRecent(c) : activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6) : true)
+        ? (activeFilter === 'unviewed' ? !c.leadViewedAt
+          : activeFilter === 'recent' ? isLeadRecent(c)
+          : activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6)
+          : true)
         : clientMatchesFilter(c, activeFilter, unanalyzedNames, unanalyzedClientIds))
     : sortedClients;
   const q = debouncedSearch.trim().toLowerCase();
@@ -1292,11 +1296,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         { key: null, label: 'All', count: leadClients.length },
         { key: 'unviewed', label: 'Unviewed', count: leadClients.filter((c) => !c.leadViewedAt).length },
         { key: 'recent', label: 'New (48h)', count: leadClients.filter(isLeadRecent).length },
-        ...LEAD_STAGES.map((s) => ({ key: 'stage:' + s.key, label: s.label, count: leadClients.filter((c) => leadStage(c) === s.key).length })),
       ];
 
   return (
-    <div className="max-w-5xl mx-auto" style={{ padding: '20px 32px 32px' }}>
+    <div className={viewTab === 'leads' ? 'mx-auto' : 'max-w-5xl mx-auto'} style={{ padding: '20px 32px 32px', maxWidth: viewTab === 'leads' ? 1400 : undefined }}>
       {/* Branded page header */}
       <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
         <div className="flex items-center gap-3">
@@ -1402,51 +1405,51 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         </div>
       )}
 
-      <div className="space-y-3">
-        {filteredClients.map((c) => {
-          if (c.status === 'lead') {
-            return (
-              <LeadCard
-                key={c.id}
-                c={c}
-                isAdmin={isAdmin}
-                onOpenAudit={onOpenAudit}
-                onOpenSummaryAudit={openAuditFromSummary}
-                onViewed={async () => {
-                  if (c.leadViewedAt) return;
-                  try {
-                    await markLeadViewed(c.name, c.id);
-                    c.leadViewedAt = new Date().toISOString(); // avoid re-firing before the next full reload
-                    if (onLeadsChanged) onLeadsChanged();
-                  } catch (e) {
-                    console.error('Could not mark lead viewed:', e.message);
-                  }
-                }}
-                onConvert={async () => {
-                  setConvertingLead(c.id);
-                  try {
-                    await convertLeadToClient(c.name, c.id);
-                    await load();
-                  } catch (e) {
-                    toast.error('Could not convert lead: ' + e.message);
-                  } finally {
-                    setConvertingLead(null);
-                  }
-                }}
-                converting={convertingLead === c.id}
-                onDelete={async () => {
-                  if (!window.confirm('Delete lead ' + c.name + '? This cannot be undone.')) return;
-                  try {
-                    await deleteLead(c.name, c.id);
-                    await load();
-                  } catch (e) {
-                    toast.error('Could not delete lead: ' + e.message);
-                  }
-                }}
-              />
-            );
-          }
+      {viewTab === 'leads' && filteredClients.length > 0 && (
+        <LeadsKanban
+          leads={filteredClients}
+          stages={LEAD_STAGES}
+          leadStage={leadStage}
+          isLeadRecent={isLeadRecent}
+          isAdmin={isAdmin}
+          convertingId={convertingLead}
+          onOpenSummaryAudit={openAuditFromSummary}
+          onChanged={load}
+          onViewed={async (c) => {
+            if (c.leadViewedAt) return;
+            try {
+              await markLeadViewed(c.name, c.id);
+              c.leadViewedAt = new Date().toISOString();
+              if (onLeadsChanged) onLeadsChanged();
+            } catch (e) {
+              console.error('Could not mark lead viewed:', e.message);
+            }
+          }}
+          onConvert={async (c) => {
+            setConvertingLead(c.id);
+            try {
+              await convertLeadToClient(c.name, c.id);
+              await load();
+            } catch (e) {
+              toast.error('Could not convert lead: ' + e.message);
+            } finally {
+              setConvertingLead(null);
+            }
+          }}
+          onDelete={async (c) => {
+            if (!window.confirm('Delete lead ' + c.name + '? This cannot be undone.')) return;
+            try {
+              await deleteLead(c.name, c.id);
+              await load();
+            } catch (e) {
+              toast.error('Could not delete lead: ' + e.message);
+            }
+          }}
+        />
+      )}
 
+      <div className="space-y-3">
+        {viewTab === 'clients' && filteredClients.map((c) => {
           const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
           const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
           const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;

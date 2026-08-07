@@ -98,10 +98,14 @@ function pdfBuffer(audit, clientId, reportDate) {
 }
 
 async function sendBlueprintEmail({ to, subject, bodyText, fileName, buffer, artifactId }) {
-  const escape = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const { wrapClientEmail, escapeHtml } = emailHelpers;
   const paragraphs = String(bodyText).split(/\n{2,}/).map((paragraph) =>
-    `<p style="margin:0 0 14px;">${paragraph.split('\n').map(escape).join('<br>')}</p>`).join('');
-  const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#111827"><div style="background:#1B2A4A;padding:24px 32px"><h1 style="color:#C9A84C;margin:0;font-size:20px">Credit Comeback Club</h1><p style="color:#fff;margin:5px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.08em">Your Recovery Blueprint</p></div><div style="border:1px solid #ddd;border-top:0;padding:26px 32px;font-size:14px;line-height:1.6">${paragraphs}<hr style="border:0;border-top:1px solid #eee;margin:24px 0"><p style="font-size:11px;color:#999">Credit Comeback Club | Grand Junction, CO | 970-644-0063</p></div></body></html>`;
+    `<p style="margin:0 0 14px;">${paragraph.split('\n').map(escapeHtml).join('<br>')}</p>`).join('');
+  const html = wrapClientEmail({
+    eyebrow: 'Your Recovery Blueprint',
+    bodyHtml: paragraphs,
+    cta: null,
+  });
   return sendEmail({
     to,
     subject,

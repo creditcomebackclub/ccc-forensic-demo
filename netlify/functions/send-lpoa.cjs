@@ -1,7 +1,18 @@
-const { sendEmail, isConfigured } = require('./_email.cjs');
+const { sendEmail, isConfigured, wrapClientEmail, escapeHtml, BRAND } = require('./_email.cjs');
 
 async function sendMail(to, subject, htmlBody, attachments) {
   return sendEmail({ to, subject, html: htmlBody, attachments });
+}
+
+/** Branded shell for client-facing send-lpoa templates. */
+function branded(eyebrow, bodyHtml, cta) {
+  return wrapClientEmail({
+    eyebrow,
+    bodyHtml,
+    cta: cta === undefined
+      ? { href: BRAND.portalUrl, label: 'Open your portal →' }
+      : cta,
+  });
 }
 
 // An affiliate may request an internal "new referral" alert, but the email
@@ -81,7 +92,12 @@ exports.handler = async (event) => {
     const intro = enrollment
       ? `Thanks for your interest in <strong>${tier}</strong>. Your request is in, and the next step is a free consultation so we can review your file, answer questions, and confirm the best path before enrollment.`
       : 'Thanks for requesting a free consultation. Choose a time below and we\'ll review your goals and the information on your credit report with you.';
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:#1B2A4A;padding:20px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Consultation Request Received</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 4px 4px;"><p>Hi ${clientName},</p><p>${intro}</p><div style="text-align:center;margin:32px 0;"><a href="https://calendly.com/creditcomebackclub/30min" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Choose Your Time &#8594;</a></div><p style="font-size:12px;color:#666;">No portal account, authorization, or payment is created from this request. We\'ll send secure onboarding steps only if you choose to move forward after the consultation.</p><p style="font-size:12px;color:#666;">Questions? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
+    const html = branded('Consultation Request Received',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(clientName)},</p>`
+      + `<p style="margin:0 0 14px;">${intro}</p>`
+      + `<p style="margin:0;font-size:12px;color:#6B7280;">No portal account, authorization, or payment is created from this request. We'll send secure onboarding steps only if you choose to move forward after the consultation.</p>`
+      + `<p style="margin:14px 0 0;font-size:12px;color:#6B7280;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
+      { href: 'https://calendly.com/creditcomebackclub/30min', label: 'Choose Your Time →' });
 
     try {
       await sendMail(clientEmail, subject, html);
@@ -108,7 +124,13 @@ exports.handler = async (event) => {
          <p>These steps are optional before the call, but completing them early lets us spend more of the consultation on findings and strategy.</p>` : `<p>Please have your newest three-bureau credit report ready. We&rsquo;ll send secure portal-onboarding instructions separately.</p>`}`
       : `<p>We&rsquo;re looking forward to reviewing your file. Please have a copy of your newest credit report available&mdash;ideally a current three-bureau report showing Equifax, Experian, and TransUnion.</p>
          <p>During the consultation, we&rsquo;ll walk through the file at a forensic level: potential FCRA compliance issues, Metro 2 reporting errors, which items may warrant documented disputes, and how Credit Comeback Club may be able to help. Bring any questions and recent correspondence you&rsquo;ve received from creditors, collectors, or the bureaus.</p>`;
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#111827;"><div style="background:#1B2A4A;padding:24px 32px;border-radius:6px 6px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Your Consultation Is Booked</p></div><div style="border:1px solid #E5E7EB;border-top:none;padding:24px 32px;border-radius:0 0 6px 6px;font-size:14px;line-height:1.65;"><p>Hi ${firstName},</p><p>Your consultation is on the calendar, and we&rsquo;re eager to take a close look at your file.</p>${preparation}<p>Calendly&rsquo;s calendar invitation contains the confirmed date, time, and meeting details. If you need to reschedule, use the link in that invitation.</p><p>Questions before the call? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;"><p style="font-size:11px;color:#9CA3AF;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
+    const html = branded('Your Consultation Is Booked',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
+      + `<p style="margin:0 0 14px;">Your consultation is on the calendar, and we&rsquo;re eager to take a close look at your file.</p>`
+      + preparation
+      + `<p style="margin:14px 0;">Calendly&rsquo;s calendar invitation contains the confirmed date, time, and meeting details. If you need to reschedule, use the link in that invitation.</p>`
+      + `<p style="margin:0;">Questions before the call? Reply to this email or call ${BRAND.phone}.</p>`,
+      null);
     try {
       await sendMail(clientEmail, subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
@@ -121,10 +143,11 @@ exports.handler = async (event) => {
     const { clientName, clientEmail, magicLink } = payload;
     if (!clientEmail || !magicLink) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail and magicLink required' }) };
     if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#111827;">
-      <div style="background:#1B2A4A;padding:20px 24px;border-radius:6px 6px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Welcome to your client portal</p></div>
-      <div style="border:1px solid #E5E7EB;border-top:none;padding:24px;border-radius:0 0 6px 6px;"><p>Hi ${clientName},</p><p>Your client portal is ready. Use the secure sign-in link below to complete onboarding, review your audit, and follow your campaign.</p><p style="text-align:center;margin:28px 0;"><a href="${magicLink}" style="background:#1B2A4A;color:#fff;padding:12px 22px;border-radius:4px;text-decoration:none;font-weight:700;">Open Your Portal</a></p><p style="font-size:12px;color:#6B7280;">For your security, access is protected by a sign-in link sent to this email address.</p><hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;"><p style="font-size:11px;color:#9CA3AF;">Credit Comeback Club | creditcomebackclub.com</p></div>
-    </body></html>`;
+    const html = branded('Welcome to your client portal',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(clientName)},</p>`
+      + `<p style="margin:0 0 14px;">Your client portal is ready. Use the secure sign-in link below to complete onboarding, review your audit, and follow your campaign.</p>`
+      + `<p style="margin:0;font-size:12px;color:#6B7280;">For your security, access is protected by a sign-in link sent to this email address.</p>`,
+      { href: magicLink, label: 'Open Your Portal →' });
     try {
       await sendMail(clientEmail, 'Welcome to Your Credit Comeback Club Portal', html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
@@ -148,17 +171,7 @@ exports.handler = async (event) => {
       `<p style="margin:0 0 14px;">${p.split('\n').map((l) => l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')).join('<br>')}</p>`
     ).join('');
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Your Forensic Audit is Ready</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;font-size:14px;line-height:1.6;">
-        ${paragraphs}
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = branded('Your Forensic Audit is Ready', paragraphs, null);
 
     const attachments = attachmentBase64 ? [{
       content: attachmentBase64,
@@ -200,20 +213,10 @@ exports.handler = async (event) => {
         <p>The bureaus now have 45 days to investigate and respond. We will track the outcome and document the next campaign step.</p>`,
     };
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Campaign Update</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p>Hi ${clientName},</p>
-        ${bodies[phase] || '<p>' + (details || 'Your dispute campaign has been updated.') + '</p>'}
-        <p>Log in to your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a> to see full details and tracking.</p>
-        <p>Questions? Reply to this email or call 970-644-0063.</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = branded('Campaign Update',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(clientName)},</p>`
+      + (bodies[phase] || '<p style="margin:0 0 14px;">' + (details || 'Your dispute campaign has been updated.') + '</p>')
+      + `<p style="margin:0 0 14px;">Questions? Reply to this email or call ${BRAND.phone}.</p>`);
 
     try {
       await sendMail(clientEmail, subjects[phase] || 'Credit Comeback Club Update', html);
@@ -251,22 +254,11 @@ exports.handler = async (event) => {
 
     const config = configs[day] || configs[1];
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Onboarding Action Required</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p>Hi ${firstName},</p>
-        ${config.body}
-        <div style="text-align:center;margin:32px 0;">
-          <a href="https://ccc-forensic-demo.netlify.app/login" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Access Client Portal &#8594;</a>
-        </div>
-        <p>Questions? Reply to this email or call 970-644-0063.</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = branded('Onboarding Action Required',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
+      + config.body
+      + `<p style="margin:0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
+      { href: BRAND.portalUrl + '/login', label: 'Access Client Portal →' });
 
     try {
       await sendMail(clientEmail, config.subject, html);
@@ -361,21 +353,13 @@ exports.handler = async (event) => {
 
     const config = configs[day] || configs[1];
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Strategic Credit Repair</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p>Hi ${firstName},</p>
-        ${config.body}
-        ${bookBtn(config.cta || 'Book Your Free Consultation')}
-        <p>Questions? Just reply to this email or call 970-644-0063.</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        ${complianceFooter}
-        <p style="font-size:11px;color:#999;margin-top:12px;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = branded('Strategic Credit Repair',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
+      + config.body
+      + bookBtn(config.cta || 'Book Your Free Consultation')
+      + `<p style="margin:14px 0 0;">Questions? Just reply to this email or call ${BRAND.phone}.</p>`
+      + complianceFooter,
+      null);
 
     try {
       await sendMail(clientEmail, config.subject, html);
@@ -392,24 +376,13 @@ exports.handler = async (event) => {
     if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = clientName.split(' ')[0] || clientName;
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Action Required: New Credit Report Due</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p>Hi ${firstName},</p>
-        <p>It's been 35 days since your last credit report audit! To keep your dispute campaign moving forward and check for any deleted negative items, we need you to upload your newest credit report.</p>
-        <p>Please log into your SmartCredit or IdentityIQ account, download your new 3-bureau report, and upload it directly into your client portal.</p>
-        <div style="text-align:center;margin:32px 0;">
-          <a href="https://ccc-forensic-demo.netlify.app/login" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Open Client Portal to Upload &#8594;</a>
-        </div>
-        <p>If you're having trouble downloading your report, you can also update your credentials in the portal and we will pull it for you.</p>
-        <p>Questions? Reply to this email or call 970-644-0063.</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = branded('Action Required: New Credit Report Due',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
+      + `<p style="margin:0 0 14px;">It's been 35 days since your last credit report audit! To keep your dispute campaign moving forward and check for any deleted negative items, we need you to upload your newest credit report.</p>`
+      + `<p style="margin:0 0 14px;">Please log into your SmartCredit or IdentityIQ account, download your new 3-bureau report, and upload it directly into your client portal.</p>`
+      + `<p style="margin:0 0 14px;">If you're having trouble downloading your report, you can also update your credentials in the portal and we will pull it for you.</p>`
+      + `<p style="margin:0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
+      { href: BRAND.portalUrl + '/login', label: 'Open Client Portal to Upload →' });
 
     try {
       await sendMail(clientEmail, 'Action Required: Upload your new credit report', html);
@@ -425,25 +398,18 @@ exports.handler = async (event) => {
     if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
     
     const adminEmail = 'chris@cccpartners.co';
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">New Lead Alert</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p><strong>You have a new lead from the website!</strong></p>
-        <ul style="line-height:1.8;">
-          <li><strong>Name:</strong> ${leadName}</li>
-          <li><strong>Email:</strong> ${leadEmail}</li>
-          <li><strong>Phone:</strong> ${leadPhone || 'Not provided'}</li>
-          <li><strong>Tier:</strong> ${tier || 'Not provided'}</li>
-        </ul>
-        <p>They have been added to your CRM. Their preparation email will send after Calendly confirms the booking.</p>
-        <div style="text-align:center;margin:32px 0;">
-          <a href="https://ccc-forensic-demo.netlify.app" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Open CRM Dashboard &#8594;</a>
-        </div>
-      </div>
-    </body></html>`;
+    const { wrapStaffEmail } = require('./_email.cjs');
+    const html = wrapStaffEmail({
+      eyebrow: 'New Lead Alert',
+      title: 'You have a new lead from the website!',
+      rows: [
+        ['Name', leadName],
+        ['Email', leadEmail],
+        ['Phone', leadPhone || 'Not provided'],
+        ['Tier', tier || 'Not provided'],
+      ],
+      footer: '<p style="font-size:13px;color:#4B5563;margin:0;">They have been added to your CRM. Their preparation email will send after Calendly confirms the booking.</p>',
+    });
 
     try {
       await sendMail(adminEmail, `🚨 New Lead: ${leadName}`, html);
@@ -490,23 +456,13 @@ exports.handler = async (event) => {
     const cfg = configs[updateType];
     if (!cfg) return { statusCode: 400, body: JSON.stringify({ error: 'Unknown updateType: ' + updateType }) };
 
-    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-      + '<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F8F9FA;">'
-      + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:10px;">'
-      + '<div style="background:#C9A84C;border-radius:5px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;"><span style="color:#1B2A4A;font-weight:800;font-size:12px;">CC</span></div>'
-      + '<div style="color:#C9A84C;font-weight:700;font-size:14px;">Credit Comeback Club</div></div>'
-      + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:28px;border-radius:0 0 8px 8px;">'
-      + '<p style="color:#6B7280;font-size:12px;margin:0 0 4px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Campaign Update</p>'
-      + '<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 16px;">' + cfg.headline + '</h1>'
-      + '<p style="font-size:13px;color:#374151;margin:0 0 16px;">' + cfg.body + '</p>'
-      + '<div style="background:' + cfg.tone + ';border:1px solid ' + cfg.borderColor + ';border-radius:6px;padding:14px 16px;margin:0 0 20px;">'
-      + '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#374151;font-weight:600;margin-bottom:4px;">Your Action</div>'
-      + '<p style="font-size:12px;color:#374151;margin:0;">' + cfg.action + '</p></div>'
-      + '<p style="font-size:12px;color:#6B7280;">Track your full campaign in your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;font-weight:600;">client portal</a>.</p>'
-      + '<p style="font-size:12px;color:#6B7280;">Questions? Reply to this email or call 970-644-0063.</p>'
-      + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:20px 0;">'
-      + '<p style="font-size:11px;color:#9CA3AF;margin:0;">Credit Comeback Club | creditcomebackclub.com | 970-644-0063</p>'
-      + '</div></body></html>';
+    const html = branded('Campaign Update',
+      `<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 16px;">${escapeHtml(cfg.headline)}</h1>`
+      + `<p style="font-size:13px;color:#374151;margin:0 0 16px;">${cfg.body}</p>`
+      + `<div style="background:${cfg.tone};border:1px solid ${cfg.borderColor};border-radius:6px;padding:14px 16px;margin:0 0 8px;">`
+      + `<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#374151;font-weight:600;margin-bottom:4px;">Your Action</div>`
+      + `<p style="font-size:12px;color:#374151;margin:0;">${cfg.action}</p></div>`
+      + `<p style="font-size:12px;color:#6B7280;margin:16px 0 0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`);
 
     try {
       await sendMail(clientEmail, cfg.subject, html);
@@ -570,18 +526,10 @@ exports.handler = async (event) => {
     const drip = drips[emailNumber];
     if (!drip) return { statusCode: 400, body: JSON.stringify({ error: 'Unknown emailNumber: ' + emailNumber }) };
 
-    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-      + '<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F8F9FA;">'
-      + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:10px;">'
-      + '<div style="background:#C9A84C;border-radius:5px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;"><span style="color:#1B2A4A;font-weight:800;font-size:12px;">CC</span></div>'
-      + '<div><div style="color:#C9A84C;font-weight:700;font-size:14px;">Credit Comeback Club</div>'
-      + '<div style="color:rgba(255,255,255,0.5);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;">Forensic Credit Dispute Services</div></div></div>'
-      + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:28px;border-radius:0 0 8px 8px;">'
-      + '<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 20px;line-height:1.3;">' + drip.headline + '</h1>'
-      + '<div style="font-size:13px;color:#374151;line-height:1.7;">' + drip.content + '</div>'
-      + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;">'
-      + '<p style="font-size:11px;color:#9CA3AF;margin:8px 0 0;">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063 | creditcomebackclub.com | Veteran-Owned</p>'
-      + '</div></body></html>';
+    const html = branded('Forensic Credit Dispute Services',
+      `<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 20px;line-height:1.3;">${drip.headline}</h1>`
+      + `<div style="font-size:13px;color:#374151;line-height:1.7;">${drip.content}</div>`,
+      null);
 
     try {
       await sendMail(leadEmail, drip.subject, html);
@@ -654,20 +602,11 @@ exports.handler = async (event) => {
     const email = emails[emailNumber];
     if (!email) return { statusCode: 400, body: JSON.stringify({ error: 'Unknown emailNumber: ' + emailNumber }) };
 
-    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-      + '<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F8F9FA;">'
-      + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:10px;">'
-      + '<div style="background:#C9A84C;border-radius:5px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;"><span style="color:#1B2A4A;font-weight:800;font-size:12px;">CC</span></div>'
-      + '<div><div style="color:#C9A84C;font-weight:700;font-size:14px;">Credit Comeback Club</div>'
-      + '<div style="color:rgba(255,255,255,0.5);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;">Credit Education Series</div></div></div>'
-      + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:28px;border-radius:0 0 8px 8px;">'
-      + '<p style="color:#9CA3AF;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin:0 0 4px;">Hi ' + firstName + ',</p>'
-      + '<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 20px;line-height:1.3;">' + email.headline + '</h1>'
-      + '<div style="font-size:13px;color:#374151;line-height:1.7;">' + email.content + '</div>'
-      + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;">'
-      + '<p style="font-size:12px;color:#6B7280;">Track your campaign progress in your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;font-weight:600;">client portal</a>. Questions? Reply here or call 970-644-0063.</p>'
-      + '<p style="font-size:11px;color:#9CA3AF;margin:8px 0 0;">Credit Comeback Club | creditcomebackclub.com | Veteran-Owned</p>'
-      + '</div></body></html>';
+    const html = branded('Credit Education Series',
+      `<p style="color:#9CA3AF;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin:0 0 4px;">Hi ${escapeHtml(firstName)},</p>`
+      + `<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 20px;line-height:1.3;">${email.headline}</h1>`
+      + `<div style="font-size:13px;color:#374151;line-height:1.7;">${email.content}</div>`
+      + `<p style="font-size:12px;color:#6B7280;margin:16px 0 0;">Questions? Reply here or call ${BRAND.phone}.</p>`);
 
     try {
       await sendMail(clientEmail, email.subject, html);
@@ -682,7 +621,17 @@ exports.handler = async (event) => {
     if (!emailConfigured || !affiliateEmail) return { statusCode: 400, body: JSON.stringify({ error: 'Missing fields' }) };
     const subject = 'Welcome to the Credit Comeback Club Partner Program';
     const commPct = Math.round((commissionRate || 0.20) * 100);
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;"><div style="background:#0C0C0C;padding:24px 32px;border-radius:4px 4px 0 0;"><h1 style="color:#22C55E;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:rgba(255,255,255,0.5);margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Partner Program</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;"><p>Hi ${affiliateName},</p><p>Welcome to the Credit Comeback Club partner program${companyName ? ' on behalf of ' + companyName : ''}. We&rsquo;re excited to work with you.</p><h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">How it works:</h3><ol style="padding-left:18px;line-height:1.8;font-size:13px;color:#444;"><li>Log in to your partner portal to submit client referrals</li><li>We handle the full credit repair process &mdash; forensic audit, certified dispute letters, follow-up, and monitoring</li><li>You earn ${commPct}% of the First Work Fee AND every ongoing monthly payment for as long as your referred client remains active &mdash; not a one-time bonus</li><li>Track your referrals and commission status in real time from your portal</li></ol><h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">Client Plans:</h3><table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px;"><tr style="background:#f8f9fa;"><td style="padding:8px 12px;font-weight:600;">Standard</td><td style="padding:8px 12px;">$79/mo &mdash; Up to 3 letters/mo. $75 one-time First Work Fee.</td></tr><tr><td style="padding:8px 12px;font-weight:600;">VIP</td><td style="padding:8px 12px;">$149/mo &mdash; Up to 5 letters/mo, priority service &amp; strategy call. $99 First Work Fee.</td></tr><tr style="background:#f8f9fa;"><td style="padding:8px 12px;font-weight:600;">Paid in Full</td><td style="padding:8px 12px;">$499 flat for 6 months of Standard service (First Work Fee waived).</td></tr></table><p style="font-size:13px;color:#444;">Your commission is paid on the First Work Fee at enrollment, and again every month your referred client's recurring service payment clears. You will receive a commission statement whenever a payment is credited.</p><p style="font-size:13px;color:#444;">Your portal access link was sent separately via magic link. Use it to log in &mdash; no password needed.</p><p style="font-size:13px;color:#444;">Questions? Reply to this email or reach Chris at <a href="mailto:info@creditcomebackclub.com" style="color:#1B2A4A;">info@creditcomebackclub.com</a> or 480-913-9172.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com | 480-913-9172</p></div></body></html>`;
+    const html = branded('Partner Program',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(affiliateName)},</p>`
+      + `<p style="margin:0 0 14px;">Welcome to the Credit Comeback Club partner program${companyName ? ' on behalf of ' + escapeHtml(companyName) : ''}. We&rsquo;re excited to work with you.</p>`
+      + `<h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">How it works:</h3>`
+      + `<ol style="padding-left:18px;line-height:1.8;font-size:13px;color:#444;"><li>Log in to your partner portal to submit client referrals</li><li>We handle the full credit repair process &mdash; forensic audit, certified dispute letters, follow-up, and monitoring</li><li>You earn ${commPct}% of the First Work Fee AND every ongoing monthly payment for as long as your referred client remains active &mdash; not a one-time bonus</li><li>Track your referrals and commission status in real time from your portal</li></ol>`
+      + `<h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">Client Plans:</h3>`
+      + `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px;"><tr style="background:#f8f9fa;"><td style="padding:8px 12px;font-weight:600;">Standard</td><td style="padding:8px 12px;">$79/mo &mdash; Up to 3 letters/mo. $75 one-time First Work Fee.</td></tr><tr><td style="padding:8px 12px;font-weight:600;">VIP</td><td style="padding:8px 12px;">$149/mo &mdash; Up to 5 letters/mo, priority service &amp; strategy call. $99 First Work Fee.</td></tr><tr style="background:#f8f9fa;"><td style="padding:8px 12px;font-weight:600;">Paid in Full</td><td style="padding:8px 12px;">$499 flat for 6 months of Standard service (First Work Fee waived).</td></tr></table>`
+      + `<p style="font-size:13px;color:#444;margin:0 0 14px;">Your commission is paid on the First Work Fee at enrollment, and again every month your referred client's recurring service payment clears.</p>`
+      + `<p style="font-size:13px;color:#444;margin:0 0 14px;">Your portal access link was sent separately via magic link.</p>`
+      + `<p style="font-size:13px;color:#444;margin:0;">Questions? Reply to this email or reach Chris at <a href="mailto:info@creditcomebackclub.com" style="color:#1B2A4A;">info@creditcomebackclub.com</a> or 480-913-9172.</p>`,
+      null);
     await sendMail(affiliateEmail, subject, html);
     return { statusCode: 200, body: JSON.stringify({ sent: true }) };
   }
@@ -697,7 +646,19 @@ exports.handler = async (event) => {
     const clientNotes = referral.client.notes || null;
     if (!emailConfigured) return { statusCode: 400, body: JSON.stringify({ error: 'Missing RESEND_API_KEY' }) };
     const subject = 'New Referral from ' + (companyName || affiliateName) + ' — ' + clientName;
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;"><div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">New Partner Referral</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">${companyName || affiliateName} → Credit Comeback Club</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;"><p><strong>${affiliateName}${companyName ? ' (' + companyName + ')' : ''}</strong> just submitted a new client referral:</p><table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;"><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;width:140px;">Name</td><td style="padding:10px 14px;">${clientName}</td></tr><tr><td style="padding:10px 14px;font-weight:600;">Email</td><td style="padding:10px 14px;">${clientEmail}</td></tr><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Phone</td><td style="padding:10px 14px;">${clientPhone || '—'}</td></tr><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Notes</td><td style="padding:10px 14px;">${clientNotes || '—'}</td></tr></table><p style="font-size:13px;color:#444;">Log in to your admin dashboard to run their audit and kick off onboarding.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
+    const { wrapStaffEmail } = require('./_email.cjs');
+    const html = wrapStaffEmail({
+      eyebrow: (companyName || affiliateName) + ' → Credit Comeback Club',
+      title: 'New Partner Referral',
+      rows: [
+        ['From', affiliateName + (companyName ? ' (' + companyName + ')' : '')],
+        ['Name', clientName],
+        ['Email', clientEmail],
+        ['Phone', clientPhone || '—'],
+        ['Notes', clientNotes || '—'],
+      ],
+      footer: '<p style="font-size:13px;color:#444;margin:0;">Log in to your admin dashboard to run their audit and kick off onboarding.</p>',
+    });
     await sendMail('creditcomebackclub@gmail.com', subject, html);
     return { statusCode: 200, body: JSON.stringify({ sent: true }) };
   }

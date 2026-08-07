@@ -268,6 +268,21 @@ function sendMailQuiet(to, subject, html) {
     });
 }
 
+function billingNoticeHtml({ name, eyebrow, paragraphs, tone, ctaLabel }) {
+  const { wrapClientEmail, escapeHtml, BRAND } = require('./_email.cjs');
+  const safeName = escapeHtml(name || 'there');
+  const bodyHtml = `<p style="margin:0 0 14px;">Hi ${safeName},</p>`
+    + (paragraphs || []).map((p) => `<p style="margin:0 0 14px;">${p}</p>`).join('')
+    + `<p style="margin:0;">Thank you,<br/>Credit Comeback Club</p>`;
+  return wrapClientEmail({
+    eyebrow,
+    tone: tone || 'default',
+    bodyHtml,
+    cta: { href: BRAND.portalUrl, label: ctaLabel || 'Open your portal →' },
+    preheader: paragraphs && paragraphs[0] ? String(paragraphs[0]).replace(/<[^>]+>/g, '') : undefined,
+  });
+}
+
 function daysBetween(aIso, bIso) {
   const a = new Date(aIso + 'T00:00:00');
   const b = new Date(bIso + 'T00:00:00');
@@ -407,15 +422,19 @@ exports.handler = async () => {
 
       if (mailReady && emailEscalationsEnabled) {
         try {
-          await sendMailQuiet(ADMIN_EMAIL, (isPhase3 ? 'Bureau Response Review: ' : 'Escalation Ready: ') + letter.client_name + ' / ' + letter.furnisher, `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
-              <div style="background:#1B2A4A;padding:20px 28px;border-radius:4px 4px 0 0;">
-                <h2 style="color:#C9A84C;margin:0;font-size:18px;">Escalation Ready for Review</h2>
-              </div>
-              <div style="border:1px solid #ddd;border-top:none;padding:20px 28px;border-radius:0 0 4px 4px;">
-                <p><strong>${letter.client_name}</strong> — ${letter.furnisher} (${letter.phase || 'Phase 1'})</p>
-                <p>${daysElapsed} days since confirmed delivery with no logged response. This has crossed the ${windowDays}-day operational review window and is ready for staff review.</p>
-              </div>
-            </div>`);
+          await sendMailQuiet(ADMIN_EMAIL, (isPhase3 ? 'Bureau Response Review: ' : 'Escalation Ready: ') + letter.client_name + ' / ' + letter.furnisher, (() => {
+            const { wrapStaffEmail } = require('./_email.cjs');
+            return wrapStaffEmail({
+              eyebrow: isPhase3 ? 'Bureau Response Review' : 'Escalation Ready',
+              title: letter.client_name + ' — ' + letter.furnisher,
+              rows: [
+                ['Phase', letter.phase || 'Phase 1'],
+                ['Days elapsed', String(daysElapsed)],
+                ['Clock start', String(clockStart || '—')],
+              ],
+              footer: `<p style="font-size:13px;color:#4B5563;margin:0;">${daysElapsed} days since confirmed delivery with no logged response. This has crossed the ${windowDays}-day operational review window and is ready for staff review.</p>`,
+            });
+          })());
         } catch (e) { console.error('Escalation alert email failed:', e.message); }
       }
     }
@@ -800,9 +819,19 @@ exports.handler = async () => {
 
         if (c.billing_tier !== 'Paid In Full' || !hasPriorBilling) {
           if (daysUntilDue === 5 && c.email && mailReady) {
-            await sendMailQuiet(c.email, 'Upcoming Invoice in 5 Days', '<p>Hi ' + c.name + ',</p><p>This is a quick reminder that your service fee will be due in 5 days.</p><p>Thank you,<br/>Credit Comeback Club</p>');
+            await sendMailQuiet(c.email, 'Upcoming Invoice in 5 Days', billingNoticeHtml({
+              name: c.name,
+              eyebrow: 'Billing Reminder',
+              paragraphs: ['This is a quick reminder that your service fee will be due in 5 days.'],
+              ctaLabel: 'View billing in your portal →',
+            }));
           } else if (daysUntilDue === 3 && c.email && mailReady) {
-            await sendMailQuiet(c.email, 'Upcoming Invoice in 3 Days', '<p>Hi ' + c.name + ',</p><p>Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.</p><p>Thank you,<br/>Credit Comeback Club</p>');
+            await sendMailQuiet(c.email, 'Upcoming Invoice in 3 Days', billingNoticeHtml({
+              name: c.name,
+              eyebrow: 'Billing Reminder',
+              paragraphs: ['Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.'],
+              ctaLabel: 'Update payment in your portal →',
+            }));
           }
         }
 
@@ -844,7 +873,15 @@ exports.handler = async () => {
             );
 
             if (c.email && mailReady) {
-              await sendMailQuiet(c.email, 'Invoice Due Today', '<p>Hi ' + c.name + ',</p><p>Your service fee of $' + amount.toFixed(2) + ' is due today. Please log in to your client portal to remit payment.</p><p>Thank you,<br/>Credit Comeback Club</p>');
+              await sendMailQuiet(c.email, 'Invoice Due Today', billingNoticeHtml({
+                name: c.name,
+                eyebrow: 'Invoice Due',
+                paragraphs: [
+                  'Your service fee of <strong>$' + amount.toFixed(2) + '</strong> is due today.',
+                  'Please log in to your client portal to remit payment.',
+                ],
+                ctaLabel: 'Pay invoice →',
+              }));
             }
           }
         }
@@ -857,12 +894,39 @@ exports.handler = async () => {
       for (const inv of unpaidInvoices) {
         const daysPastDue = Math.floor((new Date(today) - new Date(inv.date)) / (1000 * 60 * 60 * 24));
         if (daysPastDue === 1 && c.email && mailReady) {
-          await sendMailQuiet(c.email, 'Invoice 1 Day Past Due', '<p>Hi ' + c.name + ',</p><p>Your invoice is 1 day past due. Please submit your payment to avoid service interruption.</p>');
+          await sendMailQuiet(c.email, 'Invoice 1 Day Past Due', billingNoticeHtml({
+            name: c.name,
+            eyebrow: 'Past Due Notice',
+            tone: 'warning',
+            paragraphs: [
+              'Your invoice is <strong>1 day past due</strong>.',
+              'Please submit your payment to avoid service interruption.',
+            ],
+            ctaLabel: 'Pay now →',
+          }));
         } else if (daysPastDue === 3 && c.email && mailReady) {
-          await sendMailQuiet(c.email, 'Invoice 3 Days Past Due - Urgent', '<p>Hi ' + c.name + ',</p><p>Your invoice is 3 days past due. Your service will be paused in 2 days if payment is not received.</p>');
+          await sendMailQuiet(c.email, 'Invoice 3 Days Past Due - Urgent', billingNoticeHtml({
+            name: c.name,
+            eyebrow: 'Urgent — Past Due',
+            tone: 'urgent',
+            paragraphs: [
+              'Your invoice is <strong>3 days past due</strong>.',
+              'Your service will be paused in 2 days if payment is not received.',
+            ],
+            ctaLabel: 'Pay now to avoid pause →',
+          }));
         } else if (daysPastDue === 5 && !isPausedNow) {
           if (c.email && mailReady) {
-            await sendMailQuiet(c.email, 'Final Notice: Service Paused', '<p>Hi ' + c.name + ',</p><p>Your service has been paused due to non-payment. Please remit payment immediately to resume services.</p>');
+            await sendMailQuiet(c.email, 'Final Notice: Service Paused', billingNoticeHtml({
+              name: c.name,
+              eyebrow: 'Service Paused',
+              tone: 'urgent',
+              paragraphs: [
+                'Your service has been paused due to non-payment.',
+                'Please remit payment immediately to resume services.',
+              ],
+              ctaLabel: 'Pay to resume →',
+            }));
           }
           await supabaseRequest(
             '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),

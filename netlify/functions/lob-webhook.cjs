@@ -398,22 +398,18 @@ exports.handler = async (event) => {
           const reviewDays = isBureauDispute ? 45 : 30;
 
           const subject = 'Dispute Letter Delivered — ' + furnisher + ' Has ' + reviewDays + ' Days to Respond';
-          const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-            <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-              <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-              <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Campaign Update</p>
-            </div>
-            <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-              <p>Hi ${clientName},</p>
-              <p>Your dispute letter to <strong>${furnisher}</strong> has been delivered. Its ${reviewDays}-day review window has begun.</p>
-              ${tn ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${tn}" style="color:#1B2A4A;">USPS Tracking ${tn.slice(-8)}</a></p>` : ''}
-              <p>We will monitor for their response and prepare Phase 3 escalation letters in advance.</p>
-              <p>Log in to your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a> to see full details and tracking.</p>
-              <p>Questions? Reply to this email or call 970-644-0063.</p>
-              <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-              <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-            </div>
-          </body></html>`;
+          const { wrapClientEmail, escapeHtml, BRAND } = require('./_email.cjs');
+          const html = wrapClientEmail({
+            eyebrow: 'Campaign Update',
+            bodyHtml: `<p style="margin:0 0 14px;">Hi ${escapeHtml(clientName)},</p>`
+              + `<p style="margin:0 0 14px;">Your dispute letter to <strong>${escapeHtml(furnisher)}</strong> has been delivered. Its ${reviewDays}-day review window has begun.</p>`
+              + (tn
+                ? `<p style="margin:0 0 14px;">Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${escapeHtml(tn)}" style="color:#1B2A4A;">USPS Tracking ${escapeHtml(String(tn).slice(-8))}</a></p>`
+                : '')
+              + `<p style="margin:0 0 14px;">We will monitor for their response and prepare Phase 3 escalation letters in advance.</p>`
+              + `<p style="margin:0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
+            cta: { href: BRAND.portalUrl, label: 'View in your portal →' },
+          });
 
           const emailRes = await sendMailQuiet(clientEmail, subject, html);
           console.log('Delivery email sent to', clientEmail, '- status:', emailRes.status);

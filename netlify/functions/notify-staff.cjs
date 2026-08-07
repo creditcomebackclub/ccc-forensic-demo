@@ -3,7 +3,7 @@
 // never from client-supplied name/email fields (avoids spoofed staff alerts).
 const https = require('https');
 const { requireAuth } = require('./_requireAuth.cjs');
-const { sendEmail, isConfigured } = require('./_email.cjs');
+const { sendEmail, isConfigured, wrapStaffEmail } = require('./_email.cjs');
 
 const ADMIN_EMAIL = 'chris@cccpartners.co';
 const ONBOARDING_MARKER = 'staff_onboarding_complete_notify';
@@ -63,28 +63,6 @@ async function loadNotificationSettings(supabaseUrl, serviceKey) {
     console.warn('notify-staff: could not load settings, using defaults', e.message);
     return defaults;
   }
-}
-
-function wrapHtml({ eyebrow, title, rows, footer }) {
-  const rowHtml = (rows || []).map(([k, v]) => (
-    `<tr><td style="padding:10px 14px;font-weight:600;width:140px;border-bottom:1px solid #F3F4F6;">${k}</td>`
-    + `<td style="padding:10px 14px;border-bottom:1px solid #F3F4F6;">${v || '—'}</td></tr>`
-  )).join('');
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
-<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#111;">
-  <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-    <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-    <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">${eyebrow}</p>
-  </div>
-  <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-    <p><strong>${title}</strong></p>
-    <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">${rowHtml}</table>
-    ${footer || ''}
-    <div style="text-align:center;margin:28px 0 8px;">
-      <a href="https://ccc-forensic-demo.netlify.app" style="background:#1B2A4A;color:#C9A84C;padding:12px 28px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:13px;display:inline-block;">Open CRM &#8594;</a>
-    </div>
-  </div>
-</body></html>`;
 }
 
 async function resolveClient(userId, supabaseUrl, serviceKey) {
@@ -172,7 +150,7 @@ exports.handler = async (event) => {
         return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: 'already_notified' }) };
       }
 
-      const html = wrapHtml({
+      const html = wrapStaffEmail({
         eyebrow: 'Enrollment Complete',
         title: `${clientName} finished portal onboarding.`,
         rows: [
@@ -216,7 +194,7 @@ exports.handler = async (event) => {
     const rawLabel = String(payload.docLabel || payload.docType || 'Document').slice(0, 80);
     const safeLabel = rawLabel.replace(/[<>&"']/g, '') || 'Document';
 
-    const html = wrapHtml({
+    const html = wrapStaffEmail({
       eyebrow: 'Client Document Upload',
       title: `${clientName} uploaded a document.`,
       rows: [

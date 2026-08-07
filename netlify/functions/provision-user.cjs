@@ -13,21 +13,22 @@ const ws = require('ws');
 // client-sensitive-data.mjs, and phase2-analyze-background.mjs: pass a real
 // WebSocket implementation via the realtime.transport option directly.
 
-function escapeHtml(value) {
-  return String(value || '').replace(/[&<>'"]/g, (char) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;',
-  }[char]));
-}
-
 async function sendInvitation({ email, name, actionLink, kind }) {
   if (!actionLink) throw new Error('No invitation link was generated');
-  const { sendEmail } = require('./_email.cjs');
+  const { sendEmail, wrapClientEmail, escapeHtml } = require('./_email.cjs');
   const isAffiliate = kind === 'affiliate';
   const buttonText = isAffiliate ? 'Access Partner Portal →' : 'Access Client Portal →';
   const intro = isAffiliate
     ? 'You have been invited to your secure partner portal. Use it to access your referral link, view referral progress, and track commissions.'
     : 'You have been invited to your secure client portal. Use it to complete enrollment, securely upload documents, and follow your campaign.';
-  const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#111827"><div style="background:#1B2A4A;padding:20px;border-radius:6px 6px 0 0"><h1 style="color:#C9A84C;margin:0;font-size:20px">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.1em">${isAffiliate ? 'Partner Portal Invitation' : 'Client Portal Invitation'}</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 6px 6px"><p>Hi ${escapeHtml(name || 'there')},</p><p>${intro}</p><div style="text-align:center;margin:32px 0"><a href="${actionLink}" style="background:#1B2A4A;color:#C9A84C;padding:14px 28px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block">${buttonText}</a></div><p style="font-size:12px;color:#666">This secure link expires in 24 hours. If it expires, ask us to resend it.</p><p style="font-size:12px;color:#666">Questions? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0"><p style="font-size:11px;color:#999">Credit Comeback Club | creditcomebackclub.com</p></div></body></html>`;
+  const html = wrapClientEmail({
+    eyebrow: isAffiliate ? 'Partner Portal Invitation' : 'Client Portal Invitation',
+    bodyHtml: `<p style="margin:0 0 14px;">Hi ${escapeHtml(name || 'there')},</p>`
+      + `<p style="margin:0 0 14px;">${intro}</p>`
+      + `<p style="margin:0;font-size:12px;color:#6B7280;">This secure link expires in 24 hours. If it expires, ask us to resend it.</p>`
+      + `<p style="margin:14px 0 0;font-size:12px;color:#6B7280;">Questions? Reply to this email or call 970-644-0063.</p>`,
+    cta: { href: actionLink, label: buttonText },
+  });
   await sendEmail({
     to: email,
     subject: isAffiliate ? 'Your Credit Comeback Club Partner Portal Invite' : 'Access Your Credit Comeback Club Portal',
