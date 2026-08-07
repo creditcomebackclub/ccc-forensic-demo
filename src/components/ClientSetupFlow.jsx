@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, toast } from 'react-hot-toast';
 import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-react';
 import { getSettings } from '../utils/settings';
-import { getTierPricing, describeTierFee } from '../utils/pricing';
+import { getTierPricing, describeTierFee, resolveClientFeeText } from '../utils/pricing';
 import {
   DOCUMENTS_BUCKET,
   FIRM_ASSETS_BUCKET,
@@ -146,6 +146,7 @@ function ClientOnboardingModal({ session, onComplete }) {
   const [settings, setSettings] = useState(null);
   const [billingTier, setBillingTier] = useState(null);
   const [monitoringService, setMonitoringService] = useState('Privacy Guard');
+  const [serviceAgreement, setServiceAgreement] = useState({ mode: 'tier', feeText: null });
   const canvasRef = React.useRef(null);
   const isDrawing = React.useRef(false);
 
@@ -168,14 +169,26 @@ function ClientOnboardingModal({ session, onComplete }) {
           const { data: auditRows, error: auditError } = await auditQuery;
           if (!auditError && auditRows?.length) setHasAudit(true);
 
-          const clientQuery = clientProfile.client_id
-            ? supabase.from('clients').select('billing_tier,monitoring_service').eq('id', clientProfile.client_id).limit(1)
-            : supabase.from('clients').select('billing_tier,monitoring_service').eq('name', clientProfile.full_name).limit(1);
-          const { data: clientRows } = await clientQuery;
-          const clientRow = clientRows && clientRows[0];
+          let clientRow = null;
+          const agreementSelect = 'billing_tier,monitoring_service,service_agreement_mode,service_agreement_fee_text';
+          const basicSelect = 'billing_tier,monitoring_service';
+          const byId = !!clientProfile.client_id;
+          let clientRes = byId
+            ? await supabase.from('clients').select(agreementSelect).eq('id', clientProfile.client_id).limit(1)
+            : await supabase.from('clients').select(agreementSelect).eq('name', clientProfile.full_name).limit(1);
+          if (clientRes.error) {
+            clientRes = byId
+              ? await supabase.from('clients').select(basicSelect).eq('id', clientProfile.client_id).limit(1)
+              : await supabase.from('clients').select(basicSelect).eq('name', clientProfile.full_name).limit(1);
+          }
+          clientRow = clientRes.data && clientRes.data[0];
           if (clientRow) {
             setBillingTier(clientRow.billing_tier || null);
             setMonitoringService(clientRow.monitoring_service || 'Privacy Guard');
+            setServiceAgreement({
+              mode: clientRow.service_agreement_mode || 'tier',
+              feeText: clientRow.service_agreement_fee_text || null,
+            });
           }
         }
       } catch (e) {
@@ -185,16 +198,30 @@ function ClientOnboardingModal({ session, onComplete }) {
     loadData();
   }, [session]);
 
-  // Real fee-schedule text for whichever tier this client was actually
-  // assigned. If staff hasn't set a tier yet, show all three rather than
-  // guessing a number that might not match — never state a single fee as
-  // fact unless it's actually the client's real assigned tier.
+  // Real fee-schedule text: custom service agreement wins; otherwise the
+  // assigned tier (or all three if staff hasn't set a tier yet).
   const tierPricing = settings ? getTierPricing(settings) : null;
-  const feeScheduleLine = tierPricing
-    ? (billingTier && tierPricing[billingTier]
-        ? `${billingTier} Plan: ${describeTierFee(billingTier, tierPricing)}`
-        : Object.keys(tierPricing).map((t) => `${t}: ${describeTierFee(t, tierPricing)}`).join(' '))
-    : '';
+  const feeScheduleLine = (() => {
+    const custom = resolveClientFeeText(
+      {
+        serviceAgreementMode: serviceAgreement.mode,
+        serviceAgreementFeeText: serviceAgreement.feeText,
+        billingTier,
+      },
+      settings,
+      { lpoaType: 'standard' }
+    );
+    if (serviceAgreement.mode === 'custom' && serviceAgreement.feeText) {
+      return custom;
+    }
+    if (tierPricing && billingTier && tierPricing[billingTier]) {
+      return `${billingTier} Plan: ${describeTierFee(billingTier, tierPricing)}`;
+    }
+    if (tierPricing) {
+      return Object.keys(tierPricing).map((t) => `${t}: ${describeTierFee(t, tierPricing)}`).join(' ');
+    }
+    return '';
+  })();
   const monitoringFeeAmount = settings?.pricing?.monitoringFee ?? 16;
 
   const startDraw = (e) => {

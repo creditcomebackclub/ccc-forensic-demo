@@ -1,8 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
 import { supabase } from '../utils/supabase';
-import { Check, X, DollarSign, Edit2, Link } from 'lucide-react';
+import { Check, X, DollarSign, Edit2, Link, Copy } from 'lucide-react';
 import { computeClientCommission } from '../utils/affiliateCommission';
+import {
+  INQUIRY_ONLY_FEE_TEXT,
+  buildLatePaymentPackage,
+  hasCustomServiceAgreement,
+  resolveClientFeeText,
+} from '../utils/pricing';
+import { getSettings } from '../utils/settings';
+import { toast } from 'react-hot-toast';
 
 const T = {
   navy: '#1B2A4A',
@@ -165,6 +173,277 @@ function LifecycleStatusField({ status, exitReason, onSave }) {
   );
 }
 
+function ServiceAgreementSection({ client, ledger, save, onChanged }) {
+  const isCustom = (client.serviceAgreementMode || 'tier') === 'custom';
+  const [mode, setMode] = useState(isCustom ? 'custom' : 'tier');
+  const [label, setLabel] = useState(client.serviceAgreementLabel || '');
+  const [amount, setAmount] = useState(
+    client.serviceAgreementAmount != null ? String(client.serviceAgreementAmount) : ''
+  );
+  const [feeText, setFeeText] = useState(client.serviceAgreementFeeText || '');
+  const [perBureau, setPerBureau] = useState('75');
+  const [bureauCount, setBureauCount] = useState('2');
+  const [includeInquiryPi, setIncludeInquiryPi] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [copying, setCopying] = useState(false);
+
+  useEffect(() => {
+    setMode((client.serviceAgreementMode || 'tier') === 'custom' ? 'custom' : 'tier');
+    setLabel(client.serviceAgreementLabel || '');
+    setAmount(client.serviceAgreementAmount != null ? String(client.serviceAgreementAmount) : '');
+    setFeeText(client.serviceAgreementFeeText || '');
+  }, [
+    client.id,
+    client.serviceAgreementMode,
+    client.serviceAgreementLabel,
+    client.serviceAgreementAmount,
+    client.serviceAgreementFeeText,
+  ]);
+
+  const applyLatePaymentPreset = () => {
+    const built = buildLatePaymentPackage({
+      perBureau,
+      bureauCount,
+      includeInquiryPi,
+    });
+    setMode('custom');
+    setLabel(built.label);
+    setAmount(String(built.amount));
+    setFeeText(built.feeText);
+  };
+
+  const applyInquiryPreset = () => {
+    setMode('custom');
+    setLabel('Inquiry / PI removal');
+    setAmount('');
+    setFeeText(INQUIRY_ONLY_FEE_TEXT);
+  };
+
+  const applyBlankCustom = () => {
+    setMode('custom');
+    setLabel('');
+    setAmount('');
+    setFeeText('');
+  };
+
+  const saveAgreement = async () => {
+    if (mode === 'custom' && !String(feeText || '').trim()) {
+      toast.error('Custom agreement needs fee text for the LPOA.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const fields = mode === 'custom'
+        ? {
+            service_agreement_mode: 'custom',
+            service_agreement_label: label.trim() || null,
+            service_agreement_amount: amount !== '' && !Number.isNaN(Number(amount)) ? Number(amount) : null,
+            service_agreement_fee_text: feeText.trim(),
+            // One-shot custom packages must not enter automated monthly invoicing.
+            billing_type: 'Paid in Full',
+          }
+        : {
+            service_agreement_mode: 'tier',
+            service_agreement_label: null,
+            service_agreement_amount: null,
+            service_agreement_fee_text: null,
+          };
+      await save(fields);
+      toast.success(mode === 'custom' ? 'Custom service agreement saved' : 'Using standard tier fees for LPOA');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addMatchingInvoice = async () => {
+    if (mode !== 'custom' || amount === '' || Number.isNaN(Number(amount))) {
+      toast.error('Save a custom agreement with an amount first.');
+      return;
+    }
+    const desc = label.trim() || 'Custom service package';
+    const amt = Number(amount);
+    const today = new Date().toISOString().slice(0, 10);
+    const updatedLedger = [...(Array.isArray(ledger) ? ledger : []), {
+      id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+      date: today,
+      type: 'Invoice',
+      amount: amt,
+      description: desc,
+      status: 'Due',
+      created_at: new Date().toISOString(),
+    }];
+    await save({
+      ledger: updatedLedger,
+      service_agreement_mode: 'custom',
+      service_agreement_label: desc,
+      service_agreement_amount: amt,
+      service_agreement_fee_text: feeText.trim() || null,
+      billing_type: 'Paid in Full',
+    });
+    toast.success('Ledger invoice added — mark paid when payment lands');
+    if (onChanged) onChanged();
+  };
+
+  const copySignatureLink = async () => {
+    if (!client.signToken) {
+      toast.error('No signing token on this client yet — refresh and try again.');
+      return;
+    }
+    if (mode === 'custom' && !String(feeText || '').trim()) {
+      toast.error('Save custom fee text before copying the signature link.');
+      return;
+    }
+    setCopying(true);
+    try {
+      // Prefer saved DB values when already custom; otherwise use the form draft.
+      const draftClient = {
+        ...client,
+        serviceAgreementMode: mode,
+        serviceAgreementFeeText: feeText,
+        billingTier: client.billingTier,
+      };
+      const settings = await getSettings();
+      const resolved = mode === 'custom'
+        ? feeText.trim()
+        : resolveClientFeeText(draftClient, settings, { lpoaType: 'standard' });
+      const url = window.location.origin
+        + '/sign-lpoa.html?client=' + encodeURIComponent(client.name)
+        + '&token=' + client.signToken
+        + '&feeText=' + encodeURIComponent(resolved);
+      await navigator.clipboard.writeText(url);
+      toast.success('Signature link copied (fee text matches this agreement)');
+    } catch (e) {
+      toast.error('Could not copy link: ' + (e.message || e));
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  return (
+    <Section title="Service Agreement" span2>
+      <p className="text-[12px]" style={{ color: T.muted }}>
+        This text is what the client signs in the LPOA (Section 4). Set it before sending a signature link or portal invite.
+      </p>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setMode('tier')}
+          className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-md border transition-colors"
+          style={{
+            borderColor: mode === 'tier' ? T.navy : T.border,
+            background: mode === 'tier' ? T.navy : '#fff',
+            color: mode === 'tier' ? T.gold : T.ink,
+          }}
+        >
+          Tier plan
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('custom')}
+          className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-md border transition-colors"
+          style={{
+            borderColor: mode === 'custom' ? T.navy : T.border,
+            background: mode === 'custom' ? T.navy : '#fff',
+            color: mode === 'custom' ? T.gold : T.ink,
+          }}
+        >
+          Custom package
+        </button>
+      </div>
+
+      {mode === 'tier' ? (
+        <div className="text-[12px] px-3 py-2 rounded-md border" style={{ borderColor: T.border, color: T.muted }}>
+          LPOA fees follow the Service Tier below
+          {client.billingTier ? ` (${client.billingTier})` : ' (set a tier first)'}.
+          {hasCustomServiceAgreement(client) && (
+            <span className="block mt-1 text-amber-700">A custom agreement is saved — click Save to clear it and return to tier fees.</span>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2 items-end">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>$ / bureau</label>
+              <input type="number" value={perBureau} onChange={(e) => setPerBureau(e.target.value)}
+                className="border rounded-md px-2 py-1 text-[12px] w-20" style={{ borderColor: T.border }} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>Bureaus</label>
+              <input type="number" min="1" max="3" value={bureauCount} onChange={(e) => setBureauCount(e.target.value)}
+                className="border rounded-md px-2 py-1 text-[12px] w-16" style={{ borderColor: T.border }} />
+            </div>
+            <label className="flex items-center gap-1.5 text-[12px] mb-1" style={{ color: T.ink }}>
+              <input type="checkbox" checked={includeInquiryPi} onChange={(e) => setIncludeInquiryPi(e.target.checked)} />
+              Include inquiry/PI letters
+            </label>
+            <button type="button" onClick={applyLatePaymentPreset}
+              className="text-[11px] uppercase tracking-wider px-2.5 py-1.5 rounded-md border hover:bg-gray-50" style={{ borderColor: T.border, color: T.navy }}>
+              Late payment preset
+            </button>
+            <button type="button" onClick={applyInquiryPreset}
+              className="text-[11px] uppercase tracking-wider px-2.5 py-1.5 rounded-md border hover:bg-gray-50" style={{ borderColor: T.border, color: T.navy }}>
+              Inquiry/PI only
+            </button>
+            <button type="button" onClick={applyBlankCustom}
+              className="text-[11px] uppercase tracking-wider px-2.5 py-1.5 rounded-md border hover:bg-gray-50" style={{ borderColor: T.border, color: T.muted }}>
+              Blank custom
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>Package label</label>
+              <input value={label} onChange={(e) => setLabel(e.target.value)}
+                placeholder="e.g. Late payment + inquiry/PI (2 bureaus)"
+                className="border rounded-md px-2 py-1.5 text-[12px]" style={{ borderColor: T.border }} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>Amount ($)</label>
+              <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+                placeholder="150"
+                className="border rounded-md px-2 py-1.5 text-[12px]" style={{ borderColor: T.border }} />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>LPOA fee text (Section 4)</label>
+            <textarea value={feeText} onChange={(e) => setFeeText(e.target.value)} rows={4}
+              placeholder="Exact prose the client will sign…"
+              className="border rounded-md px-2 py-1.5 text-[12px] w-full" style={{ borderColor: T.border }} />
+          </div>
+
+          <div className="text-[11px] px-3 py-2 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+            Saving a custom package sets Billing Type to <strong>Paid in Full</strong> so automated monthly invoices are not created.
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2 pt-1">
+        <button type="button" onClick={saveAgreement} disabled={saving}
+          className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md disabled:opacity-50"
+          style={{ background: T.navy, color: T.gold }}>
+          {saving ? 'Saving…' : 'Save agreement'}
+        </button>
+        {mode === 'custom' && (
+          <>
+            <button type="button" onClick={addMatchingInvoice}
+              className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border hover:bg-gray-50"
+              style={{ borderColor: T.border, color: T.ink }}>
+              Add matching ledger invoice
+            </button>
+            <button type="button" onClick={copySignatureLink} disabled={copying}
+              className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
+              style={{ borderColor: T.border, color: T.navy }}>
+              <Copy size={12} /> {copying ? 'Copying…' : 'Copy signature link'}
+            </button>
+          </>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 export default function ClientBillingPanel({ client, onChanged }) {
   const today = new Date().toISOString().slice(0, 10);
   const [showAddTx, setShowAddTx] = useState(false);
@@ -293,6 +572,8 @@ export default function ClientBillingPanel({ client, onChanged }) {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start mt-2">
+      <ServiceAgreementSection client={client} ledger={ledger} save={save} onChanged={onChanged} />
+
       <Section title="Billing Setup">
         <Row label="Amount Due">
           <div className="text-[18px] font-bold" style={{ color: balanceDue > 0 ? '#DC2626' : T.ink }}>

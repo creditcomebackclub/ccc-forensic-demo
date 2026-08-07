@@ -105,7 +105,7 @@ exports.handler = async (event) => {
     // 20260725), so this now requires possession of the exact link Chris
     // generated for this specific client, not just knowledge of their name.
     const tokenCheck = await supabaseRequest(
-      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,user_id,sign_token,billing_tier',
+      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,user_id,sign_token,billing_tier,service_agreement_mode,service_agreement_fee_text',
       'GET', null, supabaseUrl, supabaseKey
     );
     const matchedRow = Array.isArray(tokenCheck.body) && tokenCheck.body[0];
@@ -122,9 +122,14 @@ exports.handler = async (event) => {
     const settingsReq = await supabaseRequest('/rest/v1/settings?id=eq.1&select=pricing', 'GET', null, supabaseUrl, supabaseKey);
     const settings = Array.isArray(settingsReq.body) && settingsReq.body[0] ? settingsReq.body[0] : {};
     
-    // Dynamically compute the exact fee string based on the client's tier
+    // Custom service agreement (Billing tab) is the source of truth when set.
+    // Inquiry hardcoded text applies only when still on tier mode + inquiry type.
+    const customFee = String(matchedRow.service_agreement_fee_text || '').trim();
+    const useCustom = matchedRow.service_agreement_mode === 'custom' && !!customFee;
     let backendFeeText = '';
-    if (resolvedLpoaType === 'inquiry') {
+    if (useCustom) {
+      backendFeeText = customFee;
+    } else if (resolvedLpoaType === 'inquiry') {
       backendFeeText = 'Personal Information / Inquiry Removal Fee: $50 per bureau, one-time. No monthly service fee. No deletion = no charge.';
     } else {
       const DEFAULT_TIER_PRICING = {

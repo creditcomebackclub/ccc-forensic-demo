@@ -5,7 +5,7 @@ import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X,
 import { listClientSummaries, getClientDetails, findClientIdByLegacyReference, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, revertClientToLead, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage, markLeadViewed } from '../utils/storage';
 import { getReturnReceiptUrl } from '../utils/api';
 import { getSettings } from '../utils/settings';
-import { getTierPricing, describeTierFee } from '../utils/pricing';
+import { getTierPricing, describeTierFee, resolveClientFeeText, hasCustomServiceAgreement } from '../utils/pricing';
 import { autoFixFieldCitations, collectBureauFollowUpProblems, collectPhase3CitationProblems, normalizeFollowUpPresentation } from '../constants/metro2Fields';
 import { isPhase3FollowUpLetter } from '../utils/followUpEnclosures';
 import { hasInjectedSignature, injectSignatureImage } from '../utils/signatureInjection';
@@ -771,18 +771,26 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       // record on demand keeps the board payload free of reusable tokens.
       const detail = c.signToken ? c : await getClientDetails(c.id);
       if (!detail.signToken) { toast.error('No signing token on this client yet — refresh and try again.'); return; }
-      
+
+      const settings = await getSettings();
+      // Custom service agreement always wins — including over the legacy
+      // inquiry menu item — so the signed LPOA matches Billing.
       let feeParam = '';
-      if (lpoaType !== 'inquiry') {
-        const settings = await getSettings();
+      let typeParam = '';
+      if (hasCustomServiceAgreement(detail)) {
+        const feeText = resolveClientFeeText(detail, settings, { lpoaType: 'standard' });
+        feeParam = '&feeText=' + encodeURIComponent(feeText);
+      } else if (lpoaType === 'inquiry') {
+        typeParam = '&type=inquiry';
+      } else {
         const tierPricing = getTierPricing(settings);
         const feeText = describeTierFee(detail.billingTier || 'Standard', tierPricing);
         feeParam = '&feeText=' + encodeURIComponent(feeText);
       }
-      
+
       const url = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(detail.name) + '&token=' + detail.signToken
-        + (lpoaType === 'inquiry' ? '&type=inquiry' : feeParam);
-        
+        + typeParam + feeParam;
+
       await navigator.clipboard.writeText(url);
       toast.success('Signature link copied');
     } catch (e) {

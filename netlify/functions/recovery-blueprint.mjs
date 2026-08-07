@@ -222,6 +222,35 @@ export const handler = async (event) => {
       return response(200, { sent: true, artifact: safeArtifact(updated, await signedUrl(db, artifact.storage_path), auditHash(auditRow.audit)) });
     }
 
+    if (action === 'delete') {
+      const artifactId = payload.artifactId;
+      if (!artifactId) throw Object.assign(new Error('artifactId is required to delete a Blueprint version.'), { statusCode: 400 });
+      const { data: artifact, error: loadError } = await db.from('recovery_blueprints')
+        .select('*').eq('id', artifactId).eq('audit_id', auditRow.id).maybeSingle();
+      if (loadError) throw loadError;
+      if (!artifact) throw Object.assign(new Error('Blueprint version not found for this audit.'), { statusCode: 404 });
+
+      const storagePath = artifact.storage_path;
+      const { error: deleteError } = await db.from('recovery_blueprints')
+        .delete().eq('id', artifact.id).eq('audit_id', auditRow.id);
+      if (deleteError) throw deleteError;
+
+      if (storagePath) {
+        const { error: removeError } = await db.storage.from(BUCKET).remove([storagePath]);
+        if (removeError) {
+          // DB row is already gone — log and continue so staff aren't stuck.
+          console.warn('[recovery-blueprint] storage remove failed after DB delete', removeError.message || removeError);
+        }
+      }
+
+      const next = await latestArtifact(db, auditRow.id);
+      return response(200, {
+        deleted: true,
+        deletedId: artifactId,
+        artifact: safeArtifact(next, next ? await signedUrl(db, next.storage_path) : null, auditHash(auditRow.audit)),
+      });
+    }
+
     return response(400, { error: 'Unknown action' });
   } catch (error) {
     console.error('[recovery-blueprint]', error);

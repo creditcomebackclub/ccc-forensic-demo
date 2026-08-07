@@ -36,3 +36,50 @@ export function describeTierFee(tier, pricing) {
   }
   return `$${p.monthlyFee}/month, plus a $${p.firstWorkFee} First Work Fee due after audit delivery.`;
 }
+
+export const INQUIRY_ONLY_FEE_TEXT =
+  'Personal Information / Inquiry Removal Fee: $50 per bureau, one-time. No monthly service fee. No deletion = no charge.';
+
+/** True when this client has a custom LPOA fee override saved. */
+export function hasCustomServiceAgreement(client) {
+  if (!client) return false;
+  const mode = client.serviceAgreementMode || client.service_agreement_mode;
+  const feeText = client.serviceAgreementFeeText || client.service_agreement_fee_text;
+  return mode === 'custom' && !!(feeText && String(feeText).trim());
+}
+
+/**
+ * Resolve LPOA Section 4 fee prose for a client.
+ * Custom agreement wins; otherwise tier text (or inquiry default when requested).
+ * `client` may use camelCase (app) or snake_case (DB/API) keys.
+ */
+export function resolveClientFeeText(client, settings, { lpoaType = 'standard' } = {}) {
+  if (hasCustomServiceAgreement(client)) {
+    return String(client.serviceAgreementFeeText || client.service_agreement_fee_text).trim();
+  }
+  if (lpoaType === 'inquiry') return INQUIRY_ONLY_FEE_TEXT;
+  const pricing = getTierPricing(settings);
+  const tier = client?.billingTier || client?.billing_tier || 'Standard';
+  return describeTierFee(tier, pricing) || describeTierFee('Standard', pricing);
+}
+
+/** Build Dilian-style late-payment package fee text from staff inputs. */
+export function buildLatePaymentPackage({
+  perBureau = 75,
+  bureauCount = 2,
+  includeInquiryPi = true,
+} = {}) {
+  const per = Number(perBureau) || 0;
+  const count = Math.max(1, parseInt(bureauCount, 10) || 1);
+  const total = per * count;
+  const included = includeInquiryPi
+    ? ', including personal information and inquiry cleanup letters'
+    : '';
+  const label = includeInquiryPi
+    ? `Late payment + inquiry/PI (${count} bureau${count === 1 ? '' : 's'})`
+    : `Late payment remediation (${count} bureau${count === 1 ? '' : 's'})`;
+  const feeText =
+    `One-time fee of $${total} ($${per} per bureau × ${count} bureau${count === 1 ? '' : 's'}) ` +
+    `for late-payment remediation on the credit-card account${included}. No monthly service fee.`;
+  return { label, amount: total, feeText };
+}

@@ -46,6 +46,10 @@ export function sendBlueprint(audit, details) {
   return blueprintRequest('send', audit, details);
 }
 
+export function deleteBlueprint(audit, artifactId) {
+  return blueprintRequest('delete', audit, { artifactId });
+}
+
 export function base64ToPdfBytes(base64) {
   return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 }

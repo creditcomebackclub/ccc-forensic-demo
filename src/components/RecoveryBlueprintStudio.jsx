@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Download, Eye, FileCheck2, Loader2, Mail, Save, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Download, Eye, FileCheck2, Loader2, Mail, Save, Trash2, X } from 'lucide-react';
 import PdfCanvasPreview from './PdfCanvasPreview.jsx';
 import {
   approveBlueprint,
   base64ToPdfBytes,
+  deleteBlueprint,
   getBlueprintStatus,
   persistReviewedAccounts,
   previewBlueprint,
@@ -122,6 +123,20 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
     setSent(true);
   });
 
+  const handleDelete = () => run('delete', async () => {
+    if (!artifact) throw new Error('No Blueprint version to delete.');
+    const sentWarn = artifact.status === 'sent'
+      ? ' This version was already emailed — clients may lose this PDF in history.'
+      : '';
+    if (!window.confirm(`Delete Recovery Blueprint v${artifact.version}?${sentWarn}`)) return;
+    const data = await deleteBlueprint(audit, artifact.id);
+    setArtifact(data.artifact || null);
+    setSent(false);
+    if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setPreviewBytes(null);
+  });
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm p-3 sm:p-6 flex items-center justify-center" onClick={onClose}>
       <div className="bg-[#F7F4ED] w-full max-w-6xl h-[92vh] rounded-2xl overflow-hidden shadow-2xl flex flex-col" onClick={(event) => event.stopPropagation()}>
@@ -186,6 +201,11 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
                   <a href={artifact.signedUrl} target="_blank" rel="noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 border border-[#121F38] text-[#121F38] rounded-lg py-2.5 text-[10px] uppercase tracking-wider font-bold">
                     <Download size={13} /> Download Approved PDF
                   </a>
+                )}
+                {artifact && (
+                  <button onClick={handleDelete} disabled={!!busy} className="mt-2 w-full flex items-center justify-center gap-2 border border-red-200 text-red-700 rounded-lg py-2.5 text-[10px] uppercase tracking-wider font-bold disabled:opacity-50 hover:bg-red-50">
+                    <Trash2 size={13} /> Delete Version v{artifact.version}
+                  </button>
                 )}
               </div>
 

@@ -350,7 +350,7 @@ function normalizeClientSummary(row) {
   };
 }
 
-const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at';
+const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at,service_agreement_mode,service_agreement_label,service_agreement_amount,service_agreement_fee_text';
 
 function hydrateClientRecord(row, audits, letters, portal = null) {
   const latestActivity = [
@@ -405,6 +405,10 @@ function hydrateClientRecord(row, audits, letters, portal = null) {
     referralFee: row.referral_fee || null,
     commissionPaid: !!row.commission_paid,
     ledger: row.ledger || [],
+    serviceAgreementMode: row.service_agreement_mode || 'tier',
+    serviceAgreementLabel: row.service_agreement_label || null,
+    serviceAgreementAmount: row.service_agreement_amount != null ? Number(row.service_agreement_amount) : null,
+    serviceAgreementFeeText: row.service_agreement_fee_text || null,
     portalOnboarded: !!portal?.onboarding_complete,
     signatureData: portal?.signature_data || null,
     agreementSigned: !!portal?.agreement_signed_at,
@@ -495,11 +499,21 @@ export async function listInFlightLetterRows({ limit = 200, cursor = null } = {}
 export async function getClientDetails(clientId) {
   if (!clientId) throw new Error('A client id is required');
 
-  const { data: client, error: clientError } = await supabase
+  let clientRes = await supabase
     .from('clients')
     .select(CLIENT_DETAIL_COLUMNS)
     .eq('id', clientId)
     .single();
+  // Migration 20260807020000 may not be applied yet — fall back without
+  // service_agreement_* so the CRM still opens.
+  if (clientRes.error && /service_agreement/i.test(clientRes.error.message || '')) {
+    const legacyCols = CLIENT_DETAIL_COLUMNS
+      .split(',')
+      .filter((c) => !c.startsWith('service_agreement_'))
+      .join(',');
+    clientRes = await supabase.from('clients').select(legacyCols).eq('id', clientId).single();
+  }
+  const { data: client, error: clientError } = clientRes;
   if (clientError) throw clientError;
 
   const { count: sameNameCount, error: sameNameError } = await supabase
