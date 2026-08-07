@@ -576,7 +576,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [editingEmail, setEditingEmail] = useState(null);
   const [activeTab, setActiveTab] = useState({});
   const [emailVal, setEmailVal] = useState('');
-  const [sendingLpoa, setSendingLpoa] = useState(null);
   const [showCreateClient, setShowCreateClient] = useState(false);
   const [viewTab, setViewTab] = useState(forceTab || 'clients'); // 'clients' | 'leads'
   // Retention Build 3 — lifecycle status filter. Defaults to the "working
@@ -759,36 +758,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     }
   };
 
-  const handleSendInvite = async (c) => {
-    if (!c.email) { toast.error('Add client email first'); return; }
-    setSendingLpoa(c.id || c.name);
-    try {
-      const { supabase } = await import('../utils/supabase.js');
-      const { data: { session: _cpSess } } = await supabase.auth.getSession();
-      const _cpTok = _cpSess?.access_token;
-      
-      // Provision the auth user
-      const provRes = await fetch('/.netlify/functions/provision-user', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(_cpTok ? { Authorization: `Bearer ${_cpTok}` } : {}),
-        },
-        body: JSON.stringify({ email: c.email.trim().toLowerCase(), fullName: c.name.trim(), kind: 'client', clientId: c.id }),
-      });
-      if (!provRes.ok) {
-        const out = await provRes.json().catch(() => ({}));
-        throw new Error(out.error || 'Could not provision client account');
-      }
-
-      toast.success('Portal invite link sent to ' + c.email);
-    } catch (e) {
-      toast.error('Could not send invite: ' + e.message);
-    } finally {
-      setSendingLpoa(null);
-    }
-  };
-
   // For clients with no email/portal account — e.g. Swiftedly referrals,
   // where staff don't run the normal LPOA + portal signup flow — this is
   // the only path to a signature. Every client row has a sign_token
@@ -961,11 +930,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                  <button onClick={() => handleVipToggle(c.name, c.isVip, c.id)} disabled={togglingVip === c.id} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md border transition-colors hover:bg-gray-50 disabled:opacity-50" style={{ borderColor: T.border, color: T.ink }}>
                    {togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP' : 'Set as VIP')}
                  </button>
-                 {!c.portalOnboarded && (
-                   <button onClick={() => handleSendInvite(c)} disabled={!c.email || sendingLpoa === c.id} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-50" style={{ backgroundColor: T.navy, color: T.gold }}>
-                     {sendingLpoa === c.id ? 'Sending…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Invite & LPOA')}
-                   </button>
-                 )}
                  <Menu items={clientMenu} />
                </div>
             </div>
@@ -1430,7 +1394,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             { label: togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip, c.id), disabled: togglingVip === c.id },
             { label: 'Edit email', onClick: () => { setEditingEmail(c.id); setEmailVal(c.email || ''); } },
             'divider',
-            !c.portalOnboarded && { label: sendingLpoa === c.id ? 'Sending Invite…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Portal Invite & LPOA'), onClick: () => handleSendInvite(c), disabled: !c.email || sendingLpoa === c.id, title: !c.email ? 'Add email first' : undefined },
             { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
       { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
             c.lpoaSigned && { label: 'View signed LPOA', onClick: () => viewSignedLpoa(c) },

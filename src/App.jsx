@@ -486,13 +486,12 @@ export default function App() {
         }
 
         setClientOnboarded(effectivelyOnboarded);
-        // Only require password setup if they haven't completed onboarding
-        // and haven't set a password yet — avoids loop for existing clients
+        // Always require a password on first portal login (or recovery), even if
+        // LPOA was signed out-of-band. Skipping this left clients who never set
+        // a password stuck on "forgot password" later.
         const passwordSet = session.user.user_metadata?.password_set;
         const fromRecovery = _event === 'PASSWORD_RECOVERY';
-        // Require password setup only if: explicitly recovering password, OR first-ever login (no password set and not effectively onboarded)
-        const needsSetup = fromRecovery || (!passwordSet && !effectivelyOnboarded);
-        setNeedsPasswordSetup(needsSetup);
+        setNeedsPasswordSetup(fromRecovery || !passwordSet);
         if (!cp.user_id) {
           const wireRes = await fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email), {
             method: 'PATCH',
@@ -570,12 +569,18 @@ export default function App() {
   // Client portal routing
   if (isClient) {
     if (needsPasswordSetup) {
-      return <ClientSetupFlow session={session} onComplete={async () => {
-        setNeedsPasswordSetup(false);
-        setClientOnboarded(true);
-        try { await supabase.auth.updateUser({ data: { password_set: true } }); }
-        catch (e) { console.warn('Could not persist password_set flag:', e); }
-      }} />;
+      return (
+        <ClientSetupFlow
+          session={session}
+          requireOnboarding={!clientOnboarded}
+          onComplete={async () => {
+            setNeedsPasswordSetup(false);
+            setClientOnboarded(true);
+            try { await supabase.auth.updateUser({ data: { password_set: true } }); }
+            catch (e) { console.warn('Could not persist password_set flag:', e); }
+          }}
+        />
+      );
     }
     if (!clientOnboarded) {
       return <ClientSetupFlow session={session} initialStep="onboarding" onComplete={() => setClientOnboarded(true)} />;

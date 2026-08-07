@@ -470,7 +470,7 @@ function OnboardingButton({ client, onChanged }) {
           <span className="text-[11px] px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">✓ Portal Active</span>
           <button onClick={handleSend} disabled={sending}
             className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-navy">
-            Resend Link
+            Resend Invite
           </button>
         </div>
       ) : (
@@ -478,11 +478,11 @@ function OnboardingButton({ client, onChanged }) {
           <button onClick={handleSend} disabled={sending || !client.email}
             className="flex items-center gap-2 px-4 py-2 text-[12px] uppercase tracking-wider rounded-lg transition-colors"
             style={{ background: sending || !client.email ? '#B5BBC9' : T.navy, color: T.gold, cursor: !client.email ? 'not-allowed' : 'pointer' }}>
-            {sending ? 'Sending…' : sent ? '✓ Magic Link Sent!' : 'Start Onboarding'}
+            {sending ? 'Sending…' : sent ? '✓ Invite Sent!' : 'Send Portal Invite'}
           </button>
           {!client.email && <div className="text-[11px] text-amber-600 mt-1">Add client email first.</div>}
           {err && <div className="text-[11px] text-red-600 mt-1">{err}</div>}
-          {sent && <div className="text-[11px] text-green-600 mt-1">Magic link sent to {client.email}</div>}
+          {sent && <div className="text-[11px] text-green-600 mt-1">Portal invite sent to {client.email}. They set a password and complete enrollment (ID, address, LPOA) in the portal.</div>}
         </div>
       )}
     </div>

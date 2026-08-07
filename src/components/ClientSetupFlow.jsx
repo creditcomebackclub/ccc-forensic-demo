@@ -5,13 +5,10 @@ import { Toaster, toast } from 'react-hot-toast';
 import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-react';
 import { getSettings } from '../utils/settings';
 import { getTierPricing, describeTierFee } from '../utils/pricing';
-import { uploadDocument } from '../utils/documents';
 import {
   DOCUMENTS_BUCKET,
   FIRM_ASSETS_BUCKET,
   FIRM_ATTORNEY_SIG_PATH,
-  lpoaSignaturePath,
-  lpoaDocumentPath,
   buildLpoaSignatureRecord,
 } from '../utils/storagePaths';
 
@@ -30,7 +27,34 @@ async function loadAttorneySignatureDataUrl() {
   }
 }
 
-export default function ClientSetupFlow({ session, onComplete, initialStep = 'password' }) {
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Server-side enrollment upload — bypasses brittle documents-bucket RLS. */
+async function portalEnrollUpload(accessToken, { kind, dataBase64, contentType, fileName }) {
+  const res = await fetch('/.netlify/functions/portal-enroll-upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ kind, dataBase64, contentType, fileName }),
+  });
+  let body = null;
+  try { body = await res.json(); } catch { /* ignore */ }
+  if (!res.ok) {
+    throw new Error((body && body.error) || `Upload failed (${res.status})`);
+  }
+  return body;
+}
+
+export default function ClientSetupFlow({ session, onComplete, initialStep = 'password', requireOnboarding = true }) {
   const [step, setStep] = useState(initialStep); // password | onboarding
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -46,7 +70,11 @@ export default function ClientSetupFlow({ session, onComplete, initialStep = 'pa
       const { error } = await supabase.auth.updateUser({ password, data: { password_set: true } });
       if (error) throw error;
       toast.success('Password created securely!', { id: toastId });
-      setStep('onboarding');
+      if (requireOnboarding) {
+        setStep('onboarding');
+      } else {
+        onComplete();
+      }
     } catch (e) {
       toast.error(e.message || 'Could not set password', { id: toastId });
     } finally {
@@ -208,29 +236,6 @@ function ClientOnboardingModal({ session, onComplete }) {
     setSignature(null);
   };
 
-  const uploadPrivateFile = async (file, path, contentType) => {
-    const { error } = await supabase.storage.from(DOCUMENTS_BUCKET).upload(path, file, {
-      upsert: true,
-      contentType: contentType || file.type || 'application/octet-stream',
-    });
-    if (error) throw error;
-    return path;
-  };
-
-  const uploadSignaturePng = async (dataUrl, path) => {
-    const arr = dataUrl.split(',');
-    const mime = arr[0].match(/:(.*?);/)[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
-    }
-    const blob = new Blob([u8arr], { type: mime });
-    const file = new File([blob], 'signature.png', { type: 'image/png' });
-    return uploadPrivateFile(file, path, 'image/png');
-  };
-
   const handleComplete = async () => {
     if (!signature) {
       toast.error('Please draw your signature in Step 3 before completing enrollment.');
@@ -240,7 +245,7 @@ function ClientOnboardingModal({ session, onComplete }) {
     setLoading(true);
     const toastId = toast.loading('Finalizing your enrollment...');
     const userId = session.user.id;
-    const userEmail = session.user.email;
+    const accessToken = session.access_token;
 
     // Helper to label errors with the step that failed
     const labeled = async (label, fn) => {
@@ -249,54 +254,47 @@ function ClientOnboardingModal({ session, onComplete }) {
     };
 
     try {
-      // Resolve the client record so id/address/LPOA docs land under the firm's
-      // documents tree (not the client's auth uid).
-      let docsClientId = null, docsOwnerUserId = null, docsClientName = userEmail;
-      let docsResolveFailed = false;
-      try {
-        const { data: cpForDocs, error: cpErr } = await supabase
-          .from('client_profiles')
-          .select('full_name,client_id')
-          .eq('email', userEmail)
-          .maybeSingle();
-        if (cpErr) throw cpErr;
-        if (cpForDocs) {
-          docsClientName = cpForDocs.full_name || userEmail;
-          const clientRowQuery = cpForDocs.client_id
-            ? supabase.from('clients').select('id,user_id').eq('id', cpForDocs.client_id).limit(1)
-            : supabase.from('clients').select('id,user_id').eq('name', cpForDocs.full_name).limit(1);
-          const { data: clientRows, error: clientErr } = await clientRowQuery;
-          if (clientErr) throw clientErr;
-          const clientRow = clientRows && clientRows[0];
-          if (clientRow) { docsClientId = clientRow.id; docsOwnerUserId = clientRow.user_id; }
-        }
-      } catch (e) {
-        docsResolveFailed = true;
-        console.warn('Could not resolve client record for document upload:', e);
+      // Signature / ID / address / LPOA go through portal-enroll-upload so we
+      // don't depend on documents-bucket storage RLS from the browser session.
+      // The function returns firm/client ids used for the rest of enrollment.
+      const sigUpload = await labeled('Upload signature', () =>
+        portalEnrollUpload(accessToken, {
+          kind: 'signature',
+          dataBase64: signature,
+          contentType: 'image/png',
+          fileName: 'signature.png',
+        })
+      );
+
+      let docsClientId = sigUpload.clientId;
+      let docsOwnerUserId = sigUpload.firmUserId;
+
+      if (idFile) {
+        const idData = await fileToBase64(idFile);
+        await labeled('Upload ID', () =>
+          portalEnrollUpload(accessToken, {
+            kind: 'id',
+            dataBase64: idData,
+            contentType: idFile.type || 'image/jpeg',
+            fileName: idFile.name,
+          })
+        );
+      }
+      if (addressFile) {
+        const addrData = await fileToBase64(addressFile);
+        await labeled('Upload address doc', () =>
+          portalEnrollUpload(accessToken, {
+            kind: 'address',
+            dataBase64: addrData,
+            contentType: addressFile.type || 'image/jpeg',
+            fileName: addressFile.name,
+          })
+        );
       }
 
       if (!docsClientId || !docsOwnerUserId) {
         throw new Error(
-          docsResolveFailed
-            ? 'Could not look up your client record (temporary network or server error). Please try finishing enrollment again in a moment.'
-            : 'Could not resolve your client record for enrollment documents. Contact Credit Comeback Club before finishing enrollment so your files are saved correctly.'
-        );
-      }
-
-      const signaturePath = lpoaSignaturePath(docsOwnerUserId, docsClientId);
-      await labeled('Upload signature', () => uploadSignaturePng(signature, signaturePath));
-
-      // Never fall back to client-docs for ID/address — those uploads leave no
-      // documents row and are invisible in the admin CRM. Fail closed so the
-      // client can retry once their profile is linked to a clients row.
-      if (idFile) {
-        await labeled('Upload ID', () =>
-          uploadDocument(docsClientId, docsClientName, 'id', idFile, docsOwnerUserId)
-        );
-      }
-      if (addressFile) {
-        await labeled('Upload address doc', () =>
-          uploadDocument(docsClientId, docsClientName, 'address', addressFile, docsOwnerUserId)
+          'Could not resolve your client record for enrollment documents. Contact Credit Comeback Club before finishing enrollment so your files are saved correctly.'
         );
       }
 
@@ -308,10 +306,11 @@ function ClientOnboardingModal({ session, onComplete }) {
           agreement_signed_at: new Date().toISOString(),
           onboarding_complete: true,
           user_id: userId,
-        }).eq('email', userEmail)
+          client_id: docsClientId,
+        }).eq('user_id', userId)
       );
 
-      const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('email', userEmail).single();
+      const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('user_id', userId).single();
       const signedAt = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
       const clientFullName = (cp && cp.full_name) || session.user.email;
       const attorneySigDataUrl = await loadAttorneySignatureDataUrl();
@@ -370,12 +369,20 @@ function ClientOnboardingModal({ session, onComplete }) {
       const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(lpoaHtml));
       const documentHash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 
-      const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });
-      const lpoaFile = new File([lpoaBlob], 'lpoa-signed.html', { type: 'text/html' });
-      const documentPath = lpoaDocumentPath(docsOwnerUserId, docsClientId);
+      const documentPath = `${docsOwnerUserId}/${docsClientId}/lpoa/lpoa-signed.html`;
       let lpoaUploaded = false;
       try {
-        await labeled('Upload LPOA', () => uploadPrivateFile(lpoaFile, documentPath, 'text/html'));
+        const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });
+        const lpoaFile = new File([lpoaBlob], 'lpoa-signed.html', { type: 'text/html' });
+        const lpoaData = await fileToBase64(lpoaFile);
+        await labeled('Upload LPOA', () =>
+          portalEnrollUpload(accessToken, {
+            kind: 'lpoa',
+            dataBase64: lpoaData,
+            contentType: 'text/html',
+            fileName: 'lpoa-signed.html',
+          })
+        );
         lpoaUploaded = true;
       } catch (lpoaUploadErr) {
         console.warn('LPOA upload failed (non-fatal):', lpoaUploadErr);
@@ -394,7 +401,7 @@ function ClientOnboardingModal({ session, onComplete }) {
           lpoa_url: null,
           lpoa_storage_bucket: DOCUMENTS_BUCKET,
           lpoa_storage_path: documentPath,
-        }).eq('email', userEmail);
+        }).eq('user_id', userId);
       }
 
       if (cp) {
