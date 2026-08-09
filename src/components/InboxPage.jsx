@@ -11,13 +11,12 @@ import {
 } from '@dnd-kit/core';
 import {
   Star, ChevronRight, Send, Clock, Inbox as InboxIcon, FileSignature, FileSearch,
-  MapPinned, Mail as MailIcon, Zap, GripVertical, UserPlus,
+  Mail as MailIcon, Zap, GripVertical, UserPlus,
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { convertLeadToClient, getLetterForMail, updateLetter } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { getUnanalyzedResponseStats } from '../utils/actionItems';
-import { normalizeFurnisher } from '../utils/diffEngine';
 import LobMailer from './LobMailer';
 
 const T = {
@@ -38,7 +37,6 @@ const COL = {
   newLeads: 'newLeads',
   needsLpoa: 'needsLpoa',
   auditComplete: 'auditComplete',
-  addressConfirm: 'addressConfirm',
   readyToMail: 'readyToMail',
   phase2Inbox: 'phase2Inbox',
   mailAction: 'mailAction',
@@ -48,7 +46,6 @@ const COLUMN_HINTS = {
   [COL.newLeads]: 'Not yet converted — drag to Needs LPOA to convert',
   [COL.needsLpoa]: "Can't dispute until signed — driven by LPOA signature",
   [COL.auditComplete]: 'No letters generated yet — generate letters on the client',
-  [COL.addressConfirm]: 'Blocking letter generation — confirm addresses on the client',
   [COL.readyToMail]: 'Generated, not yet sent — drag to Mail or hit Send',
   [COL.phase2Inbox]: 'Response uploaded, not analyzed — open Documents to triage',
 };
@@ -75,7 +72,7 @@ function fmtTime(iso) {
   } catch (e) { return iso; }
 }
 
-function computeInboxColumns({ leads, lpoaClients, auditOnlyClients, pendingAddresses, unmaledLetters, unanalyzedNames, unanalyzedClientIds }) {
+function computeInboxColumns({ leads, lpoaClients, auditOnlyClients, unmaledLetters, unanalyzedNames, unanalyzedClientIds }) {
   const newLeads = leads.map((r) => ({
     clientId: r.id, name: r.name, isVip: !!r.is_vip,
     createdAt: r.lead_created_at, source: r.lead_source,
@@ -90,11 +87,6 @@ function computeInboxColumns({ leads, lpoaClients, auditOnlyClients, pendingAddr
     clientId: r.id, name: r.name, isVip: !!r.is_vip,
     accountsTargeted: r.accounts_targeted || 0, savedAt: r.latest_audit_at,
   })).sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0) || (b.savedAt || '').localeCompare(a.savedAt || ''));
-
-  const addressConfirm = pendingAddresses.map((r) => ({
-    clientId: r.client_id, client: r.client_name, isVip: !!r.is_vip,
-    furnisher: r.furnisher, accountId: r.account_id, status: r.address_status,
-  })).sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0));
 
   const readyToMail = unmaledLetters.map((r) => ({
     clientId: r.client_id, client: r.client_name, isVip: !!r.is_vip,
@@ -118,20 +110,7 @@ function computeInboxColumns({ leads, lpoaClients, auditOnlyClients, pendingAddr
     }
   }
 
-  return { newLeads, needsLpoa, auditComplete, addressConfirm, readyToMail, phase2Inbox };
-}
-
-function groupAddressConfirmByFurnisher(items) {
-  const groups = new Map();
-  for (const item of items) {
-    const key = normalizeFurnisher(item.furnisher) || item.furnisher || 'unknown';
-    if (!groups.has(key)) groups.set(key, { key, furnisher: item.furnisher, items: [] });
-    groups.get(key).items.push(item);
-  }
-  return [...groups.values()].sort((a, b) =>
-    b.items.length - a.items.length
-    || (b.items.some((i) => i.isVip) ? 1 : 0) - (a.items.some((i) => i.isVip) ? 1 : 0)
-  );
+  return { newLeads, needsLpoa, auditComplete, readyToMail, phase2Inbox };
 }
 
 function AgeBadge({ days }) {
@@ -321,29 +300,6 @@ export default function InboxPage({ isAdmin, onNavigate }) {
           : !String(letter.phase || '').startsWith('Phase 3')),
       };
 
-      const { data: allRecentAudits } = await supabase
-        .from('audits')
-        .select('client_id,client_name,audit')
-        .order('saved_at', { ascending: false })
-        .limit(500);
-
-      const pendingAddresses = [];
-      for (const row of (allRecentAudits || [])) {
-        const accounts = row.audit?.accounts || [];
-        for (const acct of accounts) {
-          if (acct.addressStatus === 'PENDING' || acct.addressStatus === 'CONFIRM') {
-            pendingAddresses.push({
-              client_id: row.client_id,
-              client_name: row.client_name,
-              is_vip: false,
-              furnisher: acct.furnisher,
-              account_id: acct.id,
-              address_status: acct.addressStatus,
-            });
-          }
-        }
-      }
-
       const clientsWithLetters = new Set((unmaledLettersRes.data || []).map((l) => l.client_id).filter(Boolean));
       const { data: auditRows } = await supabase
         .from('audits')
@@ -367,7 +323,6 @@ export default function InboxPage({ isAdmin, onNavigate }) {
         leads: leadsRes.data || [],
         lpoaClients: (lpoaRes.data || []).map((r) => ({ ...r, audit_count: r.audit_count?.[0]?.count || 0 })),
         auditOnlyClients: Array.from(auditOnlyMap.values()),
-        pendingAddresses,
         unmaledLetters: unmaledLettersRes.data || [],
         unanalyzedNames: unanalyzed.clientNames,
         unanalyzedClientIds: unanalyzed.clientIds,
@@ -376,7 +331,7 @@ export default function InboxPage({ isAdmin, onNavigate }) {
     } catch (error) {
       console.error('Could not load inbox work items:', error);
       setColumns(computeInboxColumns({
-        leads: [], lpoaClients: [], auditOnlyClients: [], pendingAddresses: [],
+        leads: [], lpoaClients: [], auditOnlyClients: [],
         unmaledLetters: [], unanalyzedNames: new Set(), unanalyzedClientIds: new Set(),
       }));
     } finally {
@@ -439,10 +394,6 @@ export default function InboxPage({ isAdmin, onNavigate }) {
       }
       if (target === COL.auditComplete) {
         rejectDrop('Audit Complete is driven by running an audit, not drag.');
-        return;
-      }
-      if (target === COL.addressConfirm) {
-        rejectDrop('Address Confirm is driven by pending account addresses.');
         return;
       }
       if (target === COL.readyToMail) {
@@ -591,37 +542,6 @@ export default function InboxPage({ isAdmin, onNavigate }) {
                 subtitle={c.accountsTargeted + ' account' + (c.accountsTargeted === 1 ? '' : 's') + ' targeted'}
                 ageDays={c.savedAt ? daysBetween(c.savedAt, todayISO()) : null}
               />
-            ))}
-          </DropColumn>
-
-          <DropColumn
-            id={COL.addressConfirm}
-            icon={MapPinned}
-            title="Address Confirm"
-            hint={COLUMN_HINTS[COL.addressConfirm]}
-            count={columns.addressConfirm.length}
-            empty="No addresses pending"
-          >
-            {groupAddressConfirmByFurnisher(columns.addressConfirm).map((g) => (
-              <div key={g.key}>
-                <div className="text-[10px] uppercase tracking-wider font-semibold px-1 mb-1 flex items-center justify-between gap-2">
-                  <span className="truncate" style={{ color: T.muted }}>{g.furnisher}</span>
-                  <span className="shrink-0" style={{ color: T.faint }}>
-                    {g.items.length} {g.items.length === 1 ? 'client' : 'clients'}
-                  </span>
-                </div>
-                <div className="space-y-1.5 mb-2">
-                  {g.items.map((a, i) => (
-                    <ItemCard
-                      key={(a.clientId || a.client) + ':' + (a.accountId || i)}
-                      onClick={() => goto(a.clientId, a.client)}
-                      isVip={a.isVip}
-                      title={a.client}
-                      subtitle={a.status === 'CONFIRM' ? 'Suggested address — 1 click to approve' : 'No address on file yet'}
-                    />
-                  ))}
-                </div>
-              </div>
             ))}
           </DropColumn>
 
