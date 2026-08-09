@@ -388,7 +388,7 @@ function normalizeClientSummary(row) {
   };
 }
 
-const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at,service_agreement_mode,service_agreement_label,service_agreement_amount,service_agreement_fee_text';
+const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at,engagement_status,engagement_status_changed_at,service_agreement_mode,service_agreement_label,service_agreement_amount,service_agreement_fee_text';
 
 function hydrateClientRecord(row, audits, letters, portal = null) {
   const latestActivity = [
@@ -434,6 +434,8 @@ function hydrateClientRecord(row, audits, letters, portal = null) {
     leadCreatedAt: row.lead_created_at || null,
     leadViewedAt: row.lead_viewed_at || null,
     billingStatus: row.billing_status || null,
+    engagementStatus: row.engagement_status || 'pending_onboarding',
+    engagementStatusChangedAt: row.engagement_status_changed_at || null,
     billingType: row.billing_type || null,
     billingStartDate: row.billing_start_date || null,
     billingTier: row.billing_tier || null,
@@ -589,12 +591,12 @@ export async function getClientDetails(clientId) {
     .select(CLIENT_DETAIL_COLUMNS)
     .eq('id', clientId)
     .single();
-  // Migration 20260807020000 may not be applied yet — fall back without
-  // service_agreement_* so the CRM still opens.
-  if (clientRes.error && /service_agreement/i.test(clientRes.error.message || '')) {
+  // Newer agreement fields are optional during staged deployment — keep the
+  // CRM readable while the database migration is being applied.
+  if (clientRes.error && /(service_agreement|engagement_status)/i.test(clientRes.error.message || '')) {
     const legacyCols = CLIENT_DETAIL_COLUMNS
       .split(',')
-      .filter((c) => !c.startsWith('service_agreement_'))
+      .filter((c) => !c.startsWith('service_agreement_') && !c.startsWith('engagement_status'))
       .join(',');
     clientRes = await supabase.from('clients').select(legacyCols).eq('id', clientId).single();
   }
@@ -790,7 +792,7 @@ export async function runProgressDiff(clientName, clientId) {
 // the client_id migration plan; clients.name has no unique constraint.
 export async function convertLeadToClient(clientName, clientId) {
   const userId = await getUserId();
-  const patch = { status: 'active', enrollment_date: new Date().toISOString().slice(0, 10) };
+  const patch = { status: 'active', engagement_status: 'pending_onboarding', engagement_status_changed_at: new Date().toISOString(), enrollment_date: new Date().toISOString().slice(0, 10) };
   const { error } = clientId
     ? await supabase.from('clients').update(patch).eq('user_id', userId).eq('id', clientId)
     : await supabase.from('clients').update(patch).eq('user_id', userId).eq('name', clientName);

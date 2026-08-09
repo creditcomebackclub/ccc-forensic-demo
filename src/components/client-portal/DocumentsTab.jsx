@@ -262,12 +262,13 @@ export default function DocumentsTab({
                   const portalUrl = Object.entries(serviceUrls).find(([k]) => svcKey.includes(k))?.[1] || 'https://www.privacyguard.com';
                   try {
                     if (!clientMeta?.id) throw new Error('Could not identify client record.');
-                    await supabase.from('clients').update({
-                      monitoring_service: monitoringForm.service,
-                      monitoring_email: monitoringForm.email,
-                      monitoring_enrolled: true,
-                      monitoring_portal_url: portalUrl,
-                    }).eq('id', clientMeta.id);
+                    const { error: monitoringSaveError } = await supabase.rpc('update_own_client_monitoring', {
+                      p_client_id: clientMeta.id,
+                      p_monitoring_service: monitoringForm.service,
+                      p_monitoring_email: monitoringForm.email,
+                      p_monitoring_portal_url: portalUrl,
+                    });
+                    if (monitoringSaveError) throw monitoringSaveError;
                     const sensitive = {};
                     if (monitoringForm.password) sensitive.monitoringPassword = monitoringForm.password;
                     if (monitoringForm.ssnLast4) sensitive.ssnLast4 = monitoringForm.ssnLast4;

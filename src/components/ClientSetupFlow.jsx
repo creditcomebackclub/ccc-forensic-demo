@@ -7,26 +7,8 @@ import { getSettings } from '../utils/settings';
 import { getTierPricing, describeTierFee, resolveClientFeeText } from '../utils/pricing';
 import {
   DOCUMENTS_BUCKET,
-  FIRM_ASSETS_BUCKET,
-  FIRM_ATTORNEY_SIG_PATH,
-  buildLpoaSignatureRecord,
 } from '../utils/storagePaths';
 import { notifyStaff } from '../utils/notifyStaff';
-
-async function loadAttorneySignatureDataUrl() {
-  try {
-    const { data, error } = await supabase.storage.from(FIRM_ASSETS_BUCKET).download(FIRM_ATTORNEY_SIG_PATH);
-    if (error || !data) return null;
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(data);
-    });
-  } catch {
-    return null;
-  }
-}
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -326,17 +308,8 @@ function ClientOnboardingModal({ session, onComplete }) {
         );
       }
 
-      // Always mark onboarding complete in DB — do this even if subsequent steps fail
-      await labeled('Save enrollment record', () =>
-        supabase.from('client_profiles').update({
-          signature_data: null,
-          signature_signed_at: new Date().toISOString(),
-          agreement_signed_at: new Date().toISOString(),
-          onboarding_complete: true,
-          user_id: userId,
-          client_id: docsClientId,
-        }).eq('user_id', userId)
-      );
+      // The portal no longer has broad direct UPDATE access to profile/client
+      // rows. Completion is recorded by a server-side, client-bound endpoint.
 
       const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('user_id', userId).single();
       const signedAt = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -416,29 +389,14 @@ function ClientOnboardingModal({ session, onComplete }) {
         console.warn('LPOA upload failed (non-fatal):', lpoaUploadErr);
       }
 
-      const signatureRecord = buildLpoaSignatureRecord({
-        firmUserId: docsOwnerUserId,
-        clientId: docsClientId,
-        signedAt: new Date().toISOString(),
-        method: 'Canvas drawn signature + ESIGN Act',
-        documentHash,
-      });
-
       if (lpoaUploaded) {
-        await supabase.from('client_profiles').update({
-          lpoa_url: null,
-          lpoa_storage_bucket: DOCUMENTS_BUCKET,
-          lpoa_storage_path: documentPath,
-        }).eq('user_id', userId);
-      }
-
-      if (cp) {
-        await supabase.from('clients').update({
-          lpoa_signed: true,
-          lpoa_signed_at: new Date().toISOString(),
-          lpoa_signature_data: signatureRecord,
-          lpoa_document_hash: documentHash,
-        }).eq('id', docsClientId);
+        await labeled('Save enrollment record', async () => {
+          const res = await fetch('/.netlify/functions/portal-enrollment-complete', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` }, body: '{}',
+          });
+          const out = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(out.error || 'Could not save portal enrollment.');
+        });
       }
 
       // Append-only audit trail entry (lpoa_audit_log) — captures a

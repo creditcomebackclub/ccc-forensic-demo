@@ -19,6 +19,11 @@ function lpoaDocumentPath(firmUserId, clientId) {
   return `${firmUserId}/${clientId}/lpoa/lpoa-signed.html`;
 }
 
+function serviceAgreementDocumentPath(firmUserId, clientId, agreementId, extension = 'pdf') {
+  if (!agreementId) throw new Error('serviceAgreementDocumentPath requires agreementId');
+  return `${firmUserId}/${clientId}/agreements/${agreementId}/signed-packet.${extension}`;
+}
+
 function responseEvidencePrefix(firmUserId, clientId, evidenceId) {
   if (!clientId) throw new Error('responseEvidencePrefix requires clientId');
   return `${firmUserId}/${clientId}/response-evidence/${evidenceId}`;
@@ -69,6 +74,7 @@ module.exports = {
   identityDocPath,
   lpoaSignaturePath,
   lpoaDocumentPath,
+  serviceAgreementDocumentPath,
   responseEvidencePrefix,
   responseEvidencePrefixes,
   recoveryBlueprintPath,

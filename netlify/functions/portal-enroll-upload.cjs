@@ -7,13 +7,20 @@
 // caller's firm/client path server-side, and uploads with the service role.
 
 const https = require('https');
+const crypto = require('crypto');
 const { requireAuth } = require('./_requireAuth.cjs');
 const {
   DOCUMENTS_BUCKET,
   identityDocPath,
   lpoaSignaturePath,
   lpoaDocumentPath,
+  buildLpoaSignatureRecord,
 } = require('./_storagePaths.cjs');
+const {
+  loadAttorneySignatureDataUrl,
+  injectAttorneySignatureHtml,
+  htmlNeedsAttorneySignature,
+} = require('./_attorneySig.cjs');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -248,7 +255,7 @@ exports.handler = async (event) => {
     }
 
     const contentType = payload.contentType || 'application/octet-stream';
-    const buffer = decodePayloadBytes(payload.dataBase64);
+    let buffer = decodePayloadBytes(payload.dataBase64);
     if (!buffer.length) {
       return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Empty file payload' }) };
     }
@@ -259,6 +266,23 @@ exports.handler = async (event) => {
         headers: corsHeaders,
         body: JSON.stringify({ error: 'File is too large to upload during enrollment. Use a smaller photo (under ~5MB) and retry.' }),
       };
+    }
+
+    let documentHash = null;
+    // Portal clients cannot read client-docs/firm/* — inject attorney sig here
+    // so stored LPOA HTML always has the real signature for Lob enclosures.
+    if (kind === 'lpoa') {
+      let html = buffer.toString('utf8');
+      if (htmlNeedsAttorneySignature(html)) {
+        try {
+          const dataUrl = await loadAttorneySignatureDataUrl(supabaseUrl, serviceKey);
+          html = injectAttorneySignatureHtml(html, dataUrl);
+          buffer = Buffer.from(html, 'utf8');
+        } catch (e) {
+          console.warn('portal-enroll-upload: attorney signature inject failed', e.message);
+        }
+      }
+      documentHash = crypto.createHash('sha256').update(buffer).digest('hex');
     }
 
     let objectPath;
@@ -279,6 +303,30 @@ exports.handler = async (event) => {
         headers: corsHeaders,
         body: JSON.stringify({ error: 'Storage upload failed', detail: uploadRes.body }),
       };
+    }
+
+    // Legacy portal enrollment remains supported, but this security-sensitive
+    // state change happens server-side after the authenticated client actually
+    // stored an LPOA. Clients no longer receive broad UPDATE permission on
+    // their CRM row.
+    if (kind === 'lpoa') {
+      const signedAt = new Date().toISOString();
+      const signatureRecord = buildLpoaSignatureRecord({
+        firmUserId,
+        clientId,
+        signedAt,
+        method: 'Canvas signature — legacy portal enrollment',
+        documentHash,
+        ip: event.headers['x-forwarded-for'] || null,
+      });
+      const patch = await supabaseRequest(
+        '/rest/v1/clients?id=eq.' + encodeURIComponent(clientId),
+        'PATCH',
+        { lpoa_signed: true, lpoa_signed_at: signedAt, lpoa_signature_data: signatureRecord },
+        supabaseUrl,
+        serviceKey
+      );
+      if (patch.status < 200 || patch.status >= 300) throw new Error('Could not record the signed authorization.');
     }
 
     if (kind === 'id' || kind === 'address') {
@@ -337,6 +385,7 @@ exports.handler = async (event) => {
         clientId,
         firmUserId,
         clientName,
+        ...(documentHash ? { documentHash } : {}),
       }),
     };
   } catch (e) {

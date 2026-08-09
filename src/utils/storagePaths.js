@@ -15,6 +15,38 @@ export const BLUEPRINTS_BUCKET = 'recovery-blueprints';
 export const FIRM_ASSETS_BUCKET = 'client-docs';
 export const FIRM_ATTORNEY_SIG_PATH = 'firm/attorney-signature.png';
 
+const ATTORNEY_BOLD_FALLBACK_RE = /<span style="font-size:14px;font-weight:bold;">Christopher Holland<\/span>/g;
+
+export function attorneySignatureImgTag(dataUrl) {
+  return `<img src="${dataUrl}" style="max-height:56px;max-width:220px;" alt="Christopher Holland signature" />`;
+}
+
+export function lpoaHtmlNeedsAttorneySignature(html) {
+  return typeof html === 'string' && ATTORNEY_BOLD_FALLBACK_RE.test(html);
+}
+
+/** Swap the bold-text attorney fallback for the real signature image. */
+export function injectAttorneySignatureHtml(html, dataUrl) {
+  if (!html || !dataUrl) return html;
+  if (!ATTORNEY_BOLD_FALLBACK_RE.test(html)) return html;
+  ATTORNEY_BOLD_FALLBACK_RE.lastIndex = 0;
+  return html.replace(ATTORNEY_BOLD_FALLBACK_RE, attorneySignatureImgTag(dataUrl));
+}
+
+/**
+ * Staff-only: load firm attorney signature for LPOA packing / CRM preview.
+ * Portal clients cannot read client-docs/firm/* after the storage reorg.
+ */
+export async function loadAttorneySignatureDataUrl(supabase) {
+  const { data, error } = await supabase.storage.from(FIRM_ASSETS_BUCKET).download(FIRM_ATTORNEY_SIG_PATH);
+  if (error || !data) throw error || new Error('Attorney signature not found');
+  const buf = await data.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return `data:image/png;base64,${btoa(binary)}`;
+}
+
 export function identityDocPath(firmUserId, clientId, docType, ext) {
   return `${firmUserId}/${clientId}/identity/${docType}.${ext}`;
 }
@@ -25,6 +57,11 @@ export function lpoaSignaturePath(firmUserId, clientId) {
 
 export function lpoaDocumentPath(firmUserId, clientId) {
   return `${firmUserId}/${clientId}/lpoa/lpoa-signed.html`;
+}
+
+export function serviceAgreementDocumentPath(firmUserId, clientId, agreementId, extension = 'pdf') {
+  if (!agreementId) throw new Error('serviceAgreementDocumentPath requires agreementId');
+  return `${firmUserId}/${clientId}/agreements/${agreementId}/signed-packet.${extension}`;
 }
 
 export function responseEvidencePrefix(firmUserId, clientId, evidenceId) {
@@ -97,6 +134,23 @@ export async function fetchLpoaHtml(supabase, lpoaData) {
     if (res.ok) return await res.text();
   }
   return null;
+}
+
+/**
+ * Load LPOA HTML for Lob/print and ensure the attorney signature image is
+ * present. Older portal enrollments fell back to bold text when clients
+ * couldn't read firm assets after the storage reorg.
+ */
+export async function fetchLpoaHtmlForPrint(supabase, lpoaData) {
+  const html = await fetchLpoaHtml(supabase, lpoaData);
+  if (!html || !lpoaHtmlNeedsAttorneySignature(html)) return html;
+  try {
+    const dataUrl = await loadAttorneySignatureDataUrl(supabase);
+    return injectAttorneySignatureHtml(html, dataUrl);
+  } catch (e) {
+    console.warn('Could not inject attorney signature into LPOA:', e?.message || e);
+    return html;
+  }
 }
 
 /**

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, CheckCircle, ExternalLink, Link as LinkIcon, DollarSign, TrendingUp, Users, Check, Copy } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 import { computeClientCommission, recognizedTotal } from '../utils/affiliateCommission';
+import { notifyAffiliate } from '../utils/notifyAffiliate';
 
 const T = {
   navy: '#1B2A4A',
@@ -69,6 +70,13 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
       });
       if (error) throw error;
       setPayingClientId(null);
+      notifyAffiliate('commission_paid', {
+        clientId: client.id,
+        affiliateId: affiliate.id,
+        amount,
+        paidAt: new Date(payDate + 'T12:00:00').toISOString(),
+        clientName: client.name,
+      });
       onUpdate && onUpdate();
     } catch (e) {
       console.error('Failed to record commission payout:', e);
@@ -277,7 +285,11 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
                           <div className="text-[10px]" style={{ color: T.faint }}>of ${totalPaid.toFixed(2)} paid in</div>
                         </td>
                         <td className="py-3 px-4 text-right">
-                          {owed <= 0.01 ? (
+                          {totalPaid <= 0.01 ? (
+                            <div className="inline-flex items-center gap-1 px-2 py-1 rounded bg-gray-50 text-gray-600 text-[10px] font-bold uppercase tracking-wide border border-gray-200">
+                              {c.status === 'lead' ? 'Lead' : 'No revenue'}
+                            </div>
+                          ) : owed <= 0.01 ? (
                             <div className="inline-flex items-center gap-1 px-2 py-1 rounded bg-green-50 text-green-700 text-[10px] font-bold uppercase tracking-wide border border-green-100">
                               <CheckCircle size={10} /> Paid Up
                             </div>

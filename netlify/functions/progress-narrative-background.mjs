@@ -62,8 +62,8 @@ async function markDeletedLetters(db, { userId, clientName, clientId, deletedFur
 // enter progress_updates.
 async function loadPhaseProgress(db, { userId, clientName, clientId, diff }) {
   const lettersQuery = clientId
-    ? db.from('letters').select('id,client_id,client_account_id,furnisher,account_id,phase,saved_at,date,mailed_date,delivered_at,response_outcome,response_date,phase2_analyzed_at,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,bureau_reviewed_at').eq('user_id', userId).eq('client_id', clientId)
-    : db.from('letters').select('id,client_id,client_account_id,furnisher,account_id,phase,saved_at,date,mailed_date,delivered_at,response_outcome,response_date,phase2_analyzed_at,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,bureau_reviewed_at').eq('user_id', userId).eq('client_name', clientName);
+    ? db.from('letters').select('id,client_id,client_account_id,furnisher,account_id,phase,round_number,target_type,saved_at,date,mailed_date,delivered_at,response_outcome,response_date,phase2_analyzed_at,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,bureau_reviewed_at').eq('user_id', userId).eq('client_id', clientId)
+    : db.from('letters').select('id,client_id,client_account_id,furnisher,account_id,phase,round_number,target_type,saved_at,date,mailed_date,delivered_at,response_outcome,response_date,phase2_analyzed_at,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,bureau_reviewed_at').eq('user_id', userId).eq('client_name', clientName);
   const { data: letters, error: lettersError } = await lettersQuery;
   if (lettersError) throw lettersError;
 

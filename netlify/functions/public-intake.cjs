@@ -175,6 +175,27 @@ exports.handler = async (event) => {
       console.error('Admin notification trigger failed:', await adminRes.text());
     }
 
+    // Partner confirmation when the public /join?ref= link attributed this lead.
+    if (affiliate?.id && lead?.id) {
+      try {
+        const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${serviceKey}`,
+          },
+          body: JSON.stringify({
+            event: 'referral_received',
+            clientId: lead.id,
+            affiliateId: affiliate.id,
+          }),
+        });
+        if (!partnerRes.ok) console.error('Affiliate referral confirm failed:', await partnerRes.text());
+      } catch (e) {
+        console.error('Affiliate referral confirm error:', e.message);
+      }
+    }
+
     return {
       statusCode: 200,
       headers: {

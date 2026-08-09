@@ -400,9 +400,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           response_storage_paths: relationship.paths,
         };
         enclosurePages += await buildSelectedOtherDocPages();
-      } else if (isPhase3 && letter.roundId) {
-        // Adaptive rounds use the exact staff-selected source pairs. Never
-        // crawl the client's whole Phase 1 history to assemble a CRA packet.
+      } else if (letter.roundId && Number(letter.roundNumber || 1) > 1) {
+        // Every later adaptive round—bureau *or* furnisher—uses the exact
+        // staff-selected source pairs. Never fall back to the generic Phase 1
+        // enclosure path, which would silently omit the evidence chain.
         const { data: links, error: linkError } = await supabase.from('letter_source_links')
           .select('source_letter_id,response_evidence_id,source_order')
           .eq('letter_id', letter.id)
@@ -436,7 +437,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         const { data: clientMeta, error: clientMetaError } = await supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1);
         if (clientMetaError) throw clientMetaError;
         const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data);
-        if (!lpoaHtml) throw new Error('A signed Limited Power of Attorney is required for this bureau round. Nothing was sent.');
+        if (!lpoaHtml) throw new Error('A signed Limited Power of Attorney is required for this dispute round. Nothing was sent.');
         const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
         const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
         const lpoaBody = stripLpoaHeader(bodyMatch ? bodyMatch[1] : lpoaHtml);

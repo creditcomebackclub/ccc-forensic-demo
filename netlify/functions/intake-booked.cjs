@@ -37,23 +37,7 @@ exports.handler = async (event) => {
 
   const tierMatch = String(lead.lead_notes || '').match(/^Selected Tier:\s*(.+)$/i);
   const tier = tierMatch ? tierMatch[1].trim() : 'Consultation';
-  const enrollment = tier !== 'Consultation';
   const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
-
-  let portalInvited = false;
-  if (enrollment) {
-    try {
-      const provisionRes = await fetch(base + '/.netlify/functions/provision-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
-        body: JSON.stringify({ email: lead.email, fullName: lead.name, kind: 'client', clientId: lead.id }),
-      });
-      portalInvited = provisionRes.ok;
-      if (!provisionRes.ok) console.error('Pre-call portal provisioning failed:', await provisionRes.text());
-    } catch (e) {
-      console.error('Pre-call portal provisioning failed:', e.message);
-    }
-  }
 
   const emailRes = await fetch(base + '/.netlify/functions/send-lpoa', {
     method: 'POST',
@@ -63,7 +47,6 @@ exports.handler = async (event) => {
       clientName: lead.name,
       clientEmail: lead.email,
       tier,
-      portalInvited,
     }),
   });
   if (!emailRes.ok) {
@@ -77,5 +60,5 @@ exports.handler = async (event) => {
     body: JSON.stringify({ lead_drips_sent: [...sent, marker] }),
   });
 
-  return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, portalInvited }) };
+  return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
 };

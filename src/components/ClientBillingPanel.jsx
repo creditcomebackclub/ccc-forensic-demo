@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
 import { supabase } from '../utils/supabase';
-import { Check, X, DollarSign, Edit2, Link, Copy } from 'lucide-react';
-import { computeClientCommission } from '../utils/affiliateCommission';
+import { Check, X, DollarSign, Edit2, Link, FileSignature } from 'lucide-react';
+import { computeClientCommission, commissionRate } from '../utils/affiliateCommission';
+import { notifyAffiliate } from '../utils/notifyAffiliate';
 import {
   INQUIRY_ONLY_FEE_TEXT,
   buildLatePaymentPackage,
   hasCustomServiceAgreement,
-  resolveClientFeeText,
 } from '../utils/pricing';
-import { getSettings } from '../utils/settings';
 import { toast } from 'react-hot-toast';
 
 const T = {
@@ -173,6 +172,18 @@ function LifecycleStatusField({ status, exitReason, onSave }) {
   );
 }
 
+const ENGAGEMENT_LABELS = {
+  pending_onboarding: 'Pending Onboarding', active: 'Active', paused: 'Paused', inactive: 'Inactive', graduated: 'Graduated',
+};
+
+function EngagementStatusField({ status, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(status || 'pending_onboarding');
+  useEffect(() => setValue(status || 'pending_onboarding'), [status]);
+  if (editing) return <div className="flex items-center gap-1.5 justify-end"><select value={value} onChange={(e) => setValue(e.target.value)} className="border rounded-md px-2 py-1 text-[12px] bg-white" style={{ borderColor: T.border }}><option value="pending_onboarding">Pending Onboarding</option><option value="active">Active</option><option value="paused">Paused</option><option value="inactive">Inactive</option><option value="graduated">Graduated</option></select><button onClick={async () => { await onSave(value); setEditing(false); }} className="text-green-600"><Check size={13} /></button><button onClick={() => setEditing(false)} className="text-ink-faint"><X size={13} /></button></div>;
+  return <div className="flex items-center gap-1.5 group justify-end"><span className="text-[12px]" style={{ color: status === 'active' ? '#15803D' : T.ink }}>{ENGAGEMENT_LABELS[status] || 'Pending Onboarding'}</span><button onClick={() => setEditing(true)} className="opacity-30 group-hover:opacity-100 text-ink-faint hover:text-navy"><Edit2 size={11} /></button></div>;
+}
+
 function ServiceAgreementSection({ client, ledger, save, onChanged }) {
   const isCustom = (client.serviceAgreementMode || 'tier') === 'custom';
   const [mode, setMode] = useState(isCustom ? 'custom' : 'tier');
@@ -185,7 +196,8 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
   const [bureauCount, setBureauCount] = useState('2');
   const [includeInquiryPi, setIncludeInquiryPi] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [copying, setCopying] = useState(false);
+  const [startingOnboarding, setStartingOnboarding] = useState(false);
+  const [onboardingMessage, setOnboardingMessage] = useState('');
 
   useEffect(() => {
     setMode((client.serviceAgreementMode || 'tier') === 'custom' ? 'custom' : 'tier');
@@ -284,45 +296,40 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
     if (onChanged) onChanged();
   };
 
-  const copySignatureLink = async () => {
-    if (!client.signToken) {
-      toast.error('No signing token on this client yet — refresh and try again.');
-      return;
-    }
+  const startOnboarding = async () => {
     if (mode === 'custom' && !String(feeText || '').trim()) {
-      toast.error('Save custom fee text before copying the signature link.');
+      toast.error('Save the custom plan terms before preparing onboarding.');
       return;
     }
-    setCopying(true);
+    if (!client.email) {
+      toast.error('Add the client email before starting onboarding.');
+      return;
+    }
+    setStartingOnboarding(true);
+    setOnboardingMessage('');
     try {
-      // Prefer saved DB values when already custom; otherwise use the form draft.
-      const draftClient = {
-        ...client,
-        serviceAgreementMode: mode,
-        serviceAgreementFeeText: feeText,
-        billingTier: client.billingTier,
-      };
-      const settings = await getSettings();
-      const resolved = mode === 'custom'
-        ? feeText.trim()
-        : resolveClientFeeText(draftClient, settings, { lpoaType: 'standard' });
-      const url = window.location.origin
-        + '/sign-lpoa.html?client=' + encodeURIComponent(client.name)
-        + '&token=' + client.signToken
-        + '&feeText=' + encodeURIComponent(resolved);
-      await navigator.clipboard.writeText(url);
-      toast.success('Signature link copied (fee text matches this agreement)');
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/.netlify/functions/agreement-onboarding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+        body: JSON.stringify({ clientId: client.id, action: 'start' }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out.error || 'Could not start onboarding.');
+      setOnboardingMessage(out.message || (out.status === 'sent' ? 'Secure agreement link sent.' : 'Packet prepared.'));
+      toast.success(out.sendBlocked ? 'Agreement packet prepared for counsel review' : 'Onboarding started');
+      if (onChanged) onChanged();
     } catch (e) {
-      toast.error('Could not copy link: ' + (e.message || e));
+      toast.error(e.message || 'Could not start onboarding.');
     } finally {
-      setCopying(false);
+      setStartingOnboarding(false);
     }
   };
 
   return (
     <Section title="Service Agreement" span2>
       <p className="text-[12px]" style={{ color: T.muted }}>
-        This text is what the client signs in the LPOA (Section 4). Set it before sending a signature link or portal invite.
+        Choose and save the exact plan first. Start Onboarding snapshots these terms into one agreement packet with the LPOA embedded; it never creates a payment.
       </p>
 
       <div className="flex flex-wrap gap-2">
@@ -432,14 +439,15 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
               style={{ borderColor: T.border, color: T.ink }}>
               Add matching ledger invoice
             </button>
-            <button type="button" onClick={copySignatureLink} disabled={copying}
-              className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
-              style={{ borderColor: T.border, color: T.navy }}>
-              <Copy size={12} /> {copying ? 'Copying…' : 'Copy signature link'}
-            </button>
           </>
         )}
+        <button type="button" onClick={startOnboarding} disabled={startingOnboarding || saving}
+          className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
+          style={{ borderColor: T.navy, color: T.navy }}>
+          <FileSignature size={12} /> {startingOnboarding ? 'Preparing…' : 'Start onboarding'}
+        </button>
       </div>
+      {onboardingMessage && <div className="text-[11px] px-3 py-2 rounded-md bg-amber-50 text-amber-800 border border-amber-200">{onboardingMessage}</div>}
     </Section>
   );
 }
@@ -496,6 +504,30 @@ export default function ClientBillingPanel({ client, onChanged }) {
     }
   };
 
+  const notifyCommissionEarnedIfNeeded = (prevLedger, nextLedger) => {
+    if (!client.referredBy) return;
+    const affiliate = affiliates[client.referredBy] || null;
+    const before = computeClientCommission(
+      { referral_fee: client.referralFee, ledger: prevLedger },
+      affiliate,
+      commissionPayouts
+    ).earned;
+    const after = computeClientCommission(
+      { referral_fee: client.referralFee, ledger: nextLedger },
+      affiliate,
+      commissionPayouts
+    ).earned;
+    const delta = after - before;
+    if (delta <= 0.004) return;
+    const rate = commissionRate({ referral_fee: client.referralFee }, affiliate);
+    const revenueAmount = rate > 0 ? delta / rate : null;
+    notifyAffiliate('commission_earned', {
+      clientId: client.id,
+      amount: delta,
+      revenueAmount,
+    });
+  };
+
   const [editingTxId, setEditingTxId] = useState(null);
 
   const addTransaction = async () => {
@@ -536,6 +568,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
     }
 
     await save({ ledger: updatedLedger });
+    notifyCommissionEarnedIfNeeded(ledger, updatedLedger);
     setShowAddTx(false);
     setEditingTxId(null);
     setNewTx({ date: new Date().toISOString().slice(0, 10), type: 'Invoice', amount: '', description: '', status: 'Due', paidDate: today });
@@ -567,6 +600,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
     const stamp = paidOnDate ? new Date(paidOnDate + 'T12:00:00').toISOString() : new Date().toISOString();
     const updated = ledger.map(t => t.id === id ? { ...t, status: 'Paid', paid_at: t.paid_at || stamp } : t);
     await save({ ledger: updated });
+    notifyCommissionEarnedIfNeeded(ledger, updated);
     setMarkingPaidId(null);
   };
 
@@ -603,11 +637,33 @@ export default function ClientBillingPanel({ client, onChanged }) {
           </>
         )}
 
+        <Row label="Service Eligibility">
+          <EngagementStatusField
+            status={client.engagementStatus}
+            onSave={(value) => save({ engagement_status: value, engagement_status_changed_at: new Date().toISOString() })}
+          />
+          <div className="text-[10px] mt-1 text-right" style={{ color: T.faint }}>Controls starting new rounds only; it does not stop work already in flight.</div>
+        </Row>
+
         <Row label="Billing Status">
           <LifecycleStatusField
             status={client.billingStatus}
             exitReason={client.exitReason}
-            onSave={(fields) => save(fields)}
+            onSave={async (fields) => {
+              const prev = client.billingStatus || 'Active';
+              await save(fields);
+              if (
+                client.referredBy
+                && ['Paused', 'Graduated', 'Inactive'].includes(fields.billing_status)
+                && fields.billing_status !== prev
+              ) {
+                notifyAffiliate('exited', {
+                  clientId: client.id,
+                  billingStatus: fields.billing_status,
+                  exitReason: fields.exit_reason,
+                });
+              }
+            }}
           />
         </Row>
         <Row label="Billing Start Date">
@@ -747,6 +803,12 @@ export default function ClientBillingPanel({ client, onChanged }) {
               });
               if (error) throw error;
               setPayingCommission(false);
+              notifyAffiliate('commission_paid', {
+                clientId: client.id,
+                affiliateId: client.referredBy,
+                amount,
+                paidAt: new Date(commissionPayDate + 'T12:00:00').toISOString(),
+              });
               if (onChanged) onChanged();
             } catch (e) {
               console.error('Failed to record commission payout:', e);

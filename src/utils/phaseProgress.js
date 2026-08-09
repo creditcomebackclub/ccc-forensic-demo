@@ -11,6 +11,8 @@ function value(row, camel, snake) {
 
 function phaseNumber(letter) {
   const phase = String(value(letter, 'phase', 'phase') || '');
+  const roundMatch = phase.match(/^round\s*(\d+)\b/i);
+  if (roundMatch) return Number(roundMatch[1]);
   if (/^phase\s*4\b/i.test(phase)) return 4;
   if (/^phase\s*3\b/i.test(phase)) return 3;
   return 1;
@@ -102,6 +104,20 @@ function lifecycleForPhaseThree(letter, escalation) {
   return { phase: 3, status: 'bureau_draft', label: 'Bureau dispute draft prepared' };
 }
 
+function lifecycleForLaterRound(letter, escalation) {
+  if (!letter) return null;
+  const target = value(letter, 'targetType', 'target_type');
+  if (target === 'bureau' || phaseNumber(letter) === 3) return lifecycleForPhaseThree(letter, escalation);
+  const round = value(letter, 'roundNumber', 'round_number') || phaseNumber(letter);
+  const outcome = value(letter, 'responseOutcome', 'response_outcome');
+  if (outcome === 'deleted') return { phase: round, status: 'reported_deleted', label: 'Reported deleted on newest report' };
+  if (outcome === 'received') return { phase: round, status: 'response_received', label: `Round ${round} response received and awaiting review` };
+  if (outcome === 'no_response') return { phase: round, status: 'response_window_closed', label: `Round ${round} response window closed; review is pending` };
+  if (value(letter, 'deliveredAt', 'delivered_at')) return { phase: round, status: 'delivered', label: `Round ${round} dispute delivered; response window is running` };
+  if (value(letter, 'mailedDate', 'mailed_date')) return { phase: round, status: 'mailed', label: `Round ${round} dispute mailed; awaiting confirmed delivery` };
+  return { phase: round, status: 'draft', label: `Round ${round} dispute draft prepared` };
+}
+
 /**
  * Returns one safe lifecycle row for every confidently diffed account.
  * `diff.unmatched` is intentionally excluded: an uncertain account match
@@ -117,13 +133,13 @@ export function buildPhaseProgress(diff, letters = [], escalations = []) {
 
   return buckets.flatMap(([reportStatus, accounts]) => accounts.map((account) => {
     const related = (letters || []).filter((letter) => matchesAccount(letter, account));
-    const phaseThree = newest(related.filter((letter) => phaseNumber(letter) === 3));
-    const phaseOne = newest(related.filter((letter) => phaseNumber(letter) < 3));
+    const phaseThree = newest(related.filter((letter) => Number(value(letter, 'roundNumber', 'round_number') || 0) > 1 || phaseNumber(letter) >= 3));
+    const phaseOne = newest(related.filter((letter) => !Number(value(letter, 'roundNumber', 'round_number') || 0) || Number(value(letter, 'roundNumber', 'round_number')) === 1).filter((letter) => phaseNumber(letter) < 3));
     const phaseThreeEscalations = (escalations || []).filter((escalation) =>
       phaseThree && escalation.phase3_letter_id === value(phaseThree, 'id', 'id')
     );
     const escalation = newest(phaseThreeEscalations);
-    const lifecycle = lifecycleForPhaseThree(phaseThree, escalation) || lifecycleForPhaseOne(phaseOne);
+    const lifecycle = lifecycleForLaterRound(phaseThree, escalation) || lifecycleForPhaseOne(phaseOne);
     const mostRecent = newest([phaseThree, phaseOne, escalation].filter(Boolean));
 
     return {

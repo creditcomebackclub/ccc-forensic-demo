@@ -236,6 +236,35 @@ export default function SettingsModal({ onClose, displayName, email }) {
                     </div>
                   </label>
                 ))}
+
+                <p className="text-[12px] text-gray-500 pt-4 mb-2 border-t border-border">
+                  Partner emails (sent to affiliates, not you).
+                </p>
+                {[
+                  { key: 'emailAffiliateReferralConfirm', label: 'Referral Received', desc: 'Confirm to the partner when their referral lands in your CRM.' },
+                  { key: 'emailAffiliateEnrolled', label: 'Client Enrolled', desc: 'When a referred client finishes enrollment / signs LPOA.' },
+                  { key: 'emailAffiliateExited', label: 'Status Exit / Pause', desc: 'When a referred client becomes Paused, Graduated, or Inactive.' },
+                  { key: 'emailAffiliateCommission', label: 'Commission Earned & Paid', desc: 'When revenue clears or you record a commission payout.' },
+                  { key: 'emailAffiliateMonthlySummary', label: 'Monthly Partner Summary', desc: 'Snapshot of referrals and commissions on the 1st of each month.' },
+                ].map(opt => (
+                  <label key={opt.key} className="flex items-start gap-3 cursor-pointer p-3 border border-border rounded-sm hover:bg-gray-50 transition-colors">
+                    <div className="pt-0.5">
+                      <input
+                        type="checkbox"
+                        checked={settings.notifications[opt.key] !== false}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          notifications: { ...settings.notifications, [opt.key]: e.target.checked }
+                        })}
+                        className="accent-navy w-4 h-4"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-bold text-navy">{opt.label}</div>
+                      <div className="text-[11px] text-gray-500">{opt.desc}</div>
+                    </div>
+                  </label>
+                ))}
               </div>
             )}
 

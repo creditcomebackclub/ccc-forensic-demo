@@ -14,6 +14,11 @@ const DEFAULT_SETTINGS = {
     emailClientUploads: true,
     emailEscalations: true,
     emailOnboardingComplete: true,
+    emailAffiliateReferralConfirm: true,
+    emailAffiliateEnrolled: true,
+    emailAffiliateExited: true,
+    emailAffiliateCommission: true,
+    emailAffiliateMonthlySummary: true,
   },
   affiliates: {
     defaultCommissionRate: 20

@@ -109,25 +109,16 @@ exports.handler = async (event) => {
   }
 
   if (action === 'send_consultation_booked') {
-    const { clientName, clientEmail, tier, portalInvited } = payload;
+    const { clientName, clientEmail } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
     if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
     const firstName = String(clientName || 'there').split(' ')[0];
-    const enrollment = tier && tier !== 'Consultation';
-    const subject = enrollment
-      ? `You're Booked, ${firstName} — Let's Get Your File Ready`
-      : `You're Booked, ${firstName} — How to Prepare for Your Credit Review`;
-    const preparation = enrollment
-      ? `<p>We know you&rsquo;re ready to get moving. Before any campaign begins, we first complete a detailed forensic audit so you can see the FCRA compliance issues, Metro 2 reporting errors, and the exact strategy we recommend.</p>
-         ${portalInvited ? `<p>We sent a separate secure portal invitation. If you want to hit the ground running before the call, you can:</p>
-         <ol style="line-height:1.8;"><li>Upload your newest three-bureau credit report.</li><li>Connect your credit-monitoring account so we can review current data and track future changes.</li><li>Review the Limited Power of Attorney (LPOA). It is a limited authorization allowing Credit Comeback Club to communicate and prepare dispute correspondence on your behalf if you choose to proceed; it does not give us control of your money, credit accounts, or financial decisions.</li></ol>
-         <p>These steps are optional before the call, but completing them early lets us spend more of the consultation on findings and strategy.</p>` : `<p>Please have your newest three-bureau credit report ready. We&rsquo;ll send secure portal-onboarding instructions separately.</p>`}`
-      : `<p>We&rsquo;re looking forward to reviewing your file. Please have a copy of your newest credit report available&mdash;ideally a current three-bureau report showing Equifax, Experian, and TransUnion.</p>
-         <p>During the consultation, we&rsquo;ll walk through the file at a forensic level: potential FCRA compliance issues, Metro 2 reporting errors, which items may warrant documented disputes, and how Credit Comeback Club may be able to help. Bring any questions and recent correspondence you&rsquo;ve received from creditors, collectors, or the bureaus.</p>`;
+    const subject = `You're Booked, ${firstName} — How to Prepare for Your Credit Review`;
     const html = branded('Your Consultation Is Booked',
       `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
       + `<p style="margin:0 0 14px;">Your consultation is on the calendar, and we&rsquo;re eager to take a close look at your file.</p>`
-      + preparation
+      + `<p style="margin:0 0 14px;">Please have a copy of your newest credit report available&mdash;ideally a current three-bureau report showing Equifax, Experian, and TransUnion. Bring any relevant recent correspondence from creditors, collectors, or the credit bureaus.</p>`
+      + `<p style="margin:0 0 14px;">We&rsquo;ll use the consultation to understand your goals, review what is happening in your file, and explain the most appropriate next step. Booking does not create a payment, service agreement, or client portal. If you choose to move forward, we&rsquo;ll send the secure agreement and onboarding steps afterward.</p>`
       + `<p style="margin:14px 0;">Calendly&rsquo;s calendar invitation contains the confirmed date, time, and meeting details. If you need to reschedule, use the link in that invitation.</p>`
       + `<p style="margin:0;">Questions before the call? Reply to this email or call ${BRAND.phone}.</p>`,
       null);

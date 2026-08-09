@@ -475,12 +475,13 @@ function OnboardingButton({ client, onChanged }) {
         </div>
       ) : (
         <div>
-          <button onClick={handleSend} disabled={sending || !client.email}
+          <button onClick={handleSend} disabled={sending || !client.email || !client.lpoaSigned}
             className="flex items-center gap-2 px-4 py-2 text-[12px] uppercase tracking-wider rounded-lg transition-colors"
-            style={{ background: sending || !client.email ? '#B5BBC9' : T.navy, color: T.gold, cursor: !client.email ? 'not-allowed' : 'pointer' }}>
+            style={{ background: sending || !client.email || !client.lpoaSigned ? '#B5BBC9' : T.navy, color: T.gold, cursor: !client.email || !client.lpoaSigned ? 'not-allowed' : 'pointer' }}>
             {sending ? 'Sending…' : sent ? '✓ Invite Sent!' : 'Send Portal Invite'}
           </button>
           {!client.email && <div className="text-[11px] text-amber-600 mt-1">Add client email first.</div>}
+          {!client.lpoaSigned && <div className="text-[11px] text-amber-600 mt-1">Complete the signed agreement packet first; it automatically sends the portal invitation.</div>}
           {err && <div className="text-[11px] text-red-600 mt-1">{err}</div>}
           {sent && <div className="text-[11px] text-green-600 mt-1">Portal invite sent to {client.email}. They set a password and complete enrollment (ID, address, LPOA) in the portal.</div>}
         </div>

@@ -78,7 +78,7 @@ async function resolveClient(userId, supabaseUrl, serviceKey) {
   if (profile.client_id) {
     const clientRes = await supabaseRequest(
       '/rest/v1/clients?id=eq.' + encodeURIComponent(profile.client_id)
-        + '&select=id,name,email,phone,lead_drips_sent,lpoa_signed,billing_tier,is_vip',
+        + '&select=id,name,email,phone,lead_drips_sent,lpoa_signed,billing_tier,is_vip,referred_by',
       'GET', null, supabaseUrl, serviceKey
     );
     client = Array.isArray(clientRes.body) && clientRes.body[0];
@@ -136,13 +136,36 @@ exports.handler = async (event) => {
 
   try {
     if (eventType === 'onboarding_complete') {
-      if (settings.emailOnboardingComplete === false) {
-        return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: 'disabled' }) };
-      }
       // Require enrollment actually complete (or LPOA signed) — don't trust the client flag alone.
       const onboarded = profile.onboarding_complete === true || (client && client.lpoa_signed === true);
       if (!onboarded) {
         return { statusCode: 409, body: JSON.stringify({ error: 'Enrollment is not complete yet' }) };
+      }
+
+      // Partner milestone is independent of staff email prefs / staff marker.
+      if (client?.referred_by && clientId) {
+        try {
+          const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+          const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer ' + serviceKey,
+            },
+            body: JSON.stringify({
+              event: 'enrolled',
+              clientId,
+              affiliateId: client.referred_by,
+            }),
+          });
+          if (!partnerRes.ok) console.warn('notify-staff: affiliate enrolled email failed', await partnerRes.text());
+        } catch (e) {
+          console.warn('notify-staff: affiliate enrolled email error', e.message);
+        }
+      }
+
+      if (settings.emailOnboardingComplete === false) {
+        return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: 'disabled' }) };
       }
 
       const markers = Array.isArray(client?.lead_drips_sent) ? client.lead_drips_sent : [];

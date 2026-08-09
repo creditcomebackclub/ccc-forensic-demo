@@ -31,9 +31,11 @@ export default function StartRoundPanel({ account, client, onClose }) {
   const [completed, setCompleted] = useState(null);
   const [openLetters, setOpenLetters] = useState([]);
   const [showCloseModal, setShowCloseModal] = useState(false);
+  const [engagementStatus, setEngagementStatus] = useState(client?.engagementStatus || null);
 
   const nextRoundNumber = (latestRound?.round_number || 0) + 1;
-  const mayStart = !latestRound || latestRound.status === 'cancelled' || (latestRound.status === 'closed' && latestRound.final_disposition === 'next_round');
+  const roundAllowsNext = !latestRound || latestRound.status === 'cancelled' || (latestRound.status === 'closed' && latestRound.final_disposition === 'next_round');
+  const mayStart = roundAllowsNext && engagementStatus === 'active';
   const needsSources = nextRoundNumber > 1;
 
   useEffect(() => {
@@ -49,13 +51,16 @@ export default function StartRoundPanel({ account, client, onClose }) {
         setLatestRound(round);
 
         const profileQuery = supabase.from('client_profiles').select('signature_data').eq('client_id', client.id).limit(1);
-        const clientQuery = supabase.from('clients').select('lpoa_signature_data,address').eq('id', client.id).limit(1);
+        const clientQuery = supabase.from('clients').select('lpoa_signature_data,address,engagement_status').eq('id', client.id).limit(1);
         const [{ data: profiles }, { data: clients }] = await Promise.all([profileQuery, clientQuery]);
         const profile = profiles?.[0];
         const clientRow = clients?.[0];
         let signatureData = profile?.signature_data || null;
         if (!signatureData && clientRow?.lpoa_signature_data) signatureData = await resolveSignatureViewUrl(supabase, clientRow.lpoa_signature_data);
-        if (!cancelled) setEnrichedClient({ ...client, signatureData, address: clientRow?.address || client.address });
+        if (!cancelled) {
+          setEngagementStatus(clientRow?.engagement_status || client.engagementStatus || 'pending_onboarding');
+          setEnrichedClient({ ...client, signatureData, address: clientRow?.address || client.address, engagementStatus: clientRow?.engagement_status || client.engagementStatus || 'pending_onboarding' });
+        }
 
         if (round?.status === 'open') {
           const { data, error: letterError } = await supabase.from('letters').select('id,html,summary,target_type,target_bureau,round_number').eq('round_id', round.round_id).order('target_bureau');
@@ -207,6 +212,10 @@ export default function StartRoundPanel({ account, client, onClose }) {
 
           {!loading && latestRound?.status === 'closed' && latestRound.final_disposition !== 'next_round' && (
             <div className="bg-blue-50 border border-blue-200 rounded p-4 text-[12px] text-blue-900 flex gap-3"><ShieldAlert size={17} className="flex-shrink-0" /><div><div className="font-medium">This account is closed as “{latestRound.final_disposition}.”</div><div className="mt-1">Reopen the final round before preparing another dispute.</div><button type="button" onClick={handleReopenRound} disabled={changingRound} className="mt-3 text-[10px] uppercase tracking-wider font-medium underline disabled:opacity-40">{changingRound ? 'Reopening…' : 'Reopen final round'}</button></div></div>
+          )}
+
+          {!loading && roundAllowsNext && engagementStatus !== 'active' && (
+            <div className="bg-amber-50 border border-amber-200 rounded p-4 text-[12px] text-amber-900 flex gap-3"><ShieldAlert size={17} className="flex-shrink-0" /><div><div className="font-medium">New rounds are paused for this engagement.</div><div className="mt-1">Service status is {String(engagementStatus || 'pending_onboarding').replace(/_/g, ' ')}. Activate the signed engagement in Billing before preparing new dispute work. Existing letters, deadlines, and response reviews are unaffected.</div></div></div>
           )}
 
           {!loading && mayStart && (

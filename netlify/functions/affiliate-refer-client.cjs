@@ -3,6 +3,20 @@
 // the partner identity and stamps the referral with the firm administrator.
 const { requireAuth } = require('./_requireAuth.cjs');
 
+async function notifyAffiliateInternal(serviceKey, payload) {
+  const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+  try {
+    const res = await fetch(`${base}/.netlify/functions/notify-affiliate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) console.error('Affiliate partner notify failed:', await res.text());
+  } catch (e) {
+    console.error('Affiliate partner notify error:', e.message);
+  }
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
   let caller;
@@ -74,10 +88,12 @@ exports.handler = async (event) => {
     const markers = Array.isArray(lead.lead_drips_sent) ? lead.lead_drips_sent : [];
     if (notifyAdmin !== false && !markers.includes(notificationMarker)) {
       const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+      // Forward the affiliate JWT — send-lpoa rejects service-role for this action.
+      const affiliateAuth = event.headers.authorization || event.headers.Authorization;
       const notificationRes = await fetch(`${base}/.netlify/functions/send-lpoa`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ action: 'affiliate_new_referral', userId: caller.userId, clientEmail: cleanEmail }),
+        headers: { 'Content-Type': 'application/json', Authorization: affiliateAuth },
+        body: JSON.stringify({ action: 'affiliate_new_referral', clientEmail: cleanEmail }),
       });
       notificationSent = notificationRes.ok;
       if (notificationSent) {
@@ -88,6 +104,15 @@ exports.handler = async (event) => {
       } else {
         console.error('Affiliate referral notification failed:', await notificationRes.text());
       }
+    }
+
+    // Partner confirmation (idempotent via notify-affiliate markers).
+    if (!duplicate) {
+      await notifyAffiliateInternal(key, {
+        event: 'referral_received',
+        clientId: lead.id,
+        affiliateId: affiliate.id,
+      });
     }
 
     return { statusCode: 200, body: JSON.stringify({ success: true, duplicate, clientId: lead.id, notificationSent }) };

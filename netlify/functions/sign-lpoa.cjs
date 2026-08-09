@@ -6,6 +6,10 @@ const {
   lpoaDocumentPath,
   buildLpoaSignatureRecord,
 } = require('./_storagePaths.cjs');
+const {
+  loadAttorneySignatureDataUrl,
+  attorneySignatureImgTag,
+} = require('./_attorneySig.cjs');
 
 function supabaseRequest(path, method, body, url, key) {
   return new Promise((resolve, reject) => {
@@ -37,8 +41,10 @@ function supabaseRequest(path, method, body, url, key) {
 
 // Section 4 (Fee Structure) receives the dynamically computed feeText
 // to ensure the signed record reflects exactly what the client agreed to.
-function buildLpoaHtml(clientName, signerName, signatureData, signedAt, feeText) {
+function buildLpoaHtml(clientName, signerName, signatureData, signedAt, feeText, attorneySigHtml) {
   const dateStr = new Date(signedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const attorneyBlock = attorneySigHtml
+    || '<span style="font-size:14px;font-weight:bold;">Christopher Holland</span>';
   return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
     + 'body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;margin:0;padding:40px;color:#000;}'
     + '.header{background:#1B2A4A;color:#C9A84C;padding:20px 32px;margin:-40px -40px 32px;}'
@@ -70,7 +76,7 @@ function buildLpoaHtml(clientName, signerName, signatureData, signedAt, feeText)
     + '<div class="sig-col"><div class="sig-line">' + (signatureData ? '<img src="' + signatureData + '" style="max-height:56px;max-width:200px;" />' : '') + '</div>'
     + '<div class="sig-label"><strong>' + signerName + '</strong> — Principal</div>'
     + '<div class="sig-label">Date: ' + dateStr + '</div></div>'
-    + '<div class="sig-col"><div class="sig-line" style="align-items:center;"><span style="font-size:14px;font-weight:bold;">Christopher Holland</span></div>'
+    + '<div class="sig-col"><div class="sig-line" style="align-items:center;">' + attorneyBlock + '</div>'
     + '<div class="sig-label"><strong>Christopher Holland</strong> — Attorney-in-Fact, Credit Comeback Club</div>'
     + '<div class="sig-label">Date: ' + dateStr + '</div></div>'
     + '</div>'
@@ -105,7 +111,7 @@ exports.handler = async (event) => {
     // 20260725), so this now requires possession of the exact link Chris
     // generated for this specific client, not just knowledge of their name.
     const tokenCheck = await supabaseRequest(
-      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,user_id,sign_token,billing_tier,service_agreement_mode,service_agreement_fee_text',
+      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,user_id,sign_token,billing_tier,service_agreement_mode,service_agreement_fee_text,referred_by',
       'GET', null, supabaseUrl, supabaseKey
     );
     const matchedRow = Array.isArray(tokenCheck.body) && tokenCheck.body[0];
@@ -196,7 +202,21 @@ exports.handler = async (event) => {
     }
 
     // Generate signed LPOA HTML with the verified backend fee text
-    const lpoaHtml = buildLpoaHtml(clientName, signerName || clientName, signatureData, signedAtTime, backendFeeText);
+    let attorneySigHtml = null;
+    try {
+      const dataUrl = await loadAttorneySignatureDataUrl(supabaseUrl, supabaseKey);
+      attorneySigHtml = attorneySignatureImgTag(dataUrl);
+    } catch (e) {
+      console.warn('sign-lpoa: attorney signature missing, using text fallback:', e.message);
+    }
+    const lpoaHtml = buildLpoaHtml(
+      clientName,
+      signerName || clientName,
+      signatureData,
+      signedAtTime,
+      backendFeeText,
+      attorneySigHtml
+    );
     const lpoaBuffer = Buffer.from(lpoaHtml, 'utf8');
     // Hashed from the exact bytes about to be uploaded — this is what lets
     // anyone later confirm the stored lpoa-signed.html hasn't been altered
@@ -309,6 +329,28 @@ exports.handler = async (event) => {
       );
     } catch (e) {
       console.warn('client_profiles LPOA path update failed (non-fatal):', e.message);
+    }
+
+    // Partner milestone when LPOA is signed outside portal onboarding.
+    if (matchedRow.referred_by) {
+      try {
+        const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+        const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + supabaseKey,
+          },
+          body: JSON.stringify({
+            event: 'enrolled',
+            clientId,
+            affiliateId: matchedRow.referred_by,
+          }),
+        });
+        if (!partnerRes.ok) console.warn('sign-lpoa: affiliate enrolled email failed', await partnerRes.text());
+      } catch (e) {
+        console.warn('sign-lpoa: affiliate enrolled email error', e.message);
+      }
     }
 
     return { statusCode: 200, body: JSON.stringify({
