@@ -71,8 +71,16 @@ export async function createCampaignFromAudit(client, auditRecord) {
 }
 
 export async function updateCampaignItemState(itemId, selectionState) {
+  return updateCampaignItemStates([itemId], selectionState);
+}
+
+export async function updateCampaignItemStates(itemIds, selectionState) {
   if (!['candidate', 'selected', 'later'].includes(selectionState)) throw new Error('Invalid dispute selection state.');
-  const { error } = await supabase.from('campaign_items').update({ selection_state: selectionState, updated_at: new Date().toISOString() }).eq('id', itemId);
+  const ids = [...new Set((itemIds || []).filter(Boolean))];
+  if (!ids.length) return;
+  const { error } = await supabase.from('campaign_items')
+    .update({ selection_state: selectionState, updated_at: new Date().toISOString() })
+    .in('id', ids);
   if (error) throw error;
 }
 

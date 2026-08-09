@@ -47,5 +47,9 @@ assert.match(api, /generate-letter-background/, 'campaign letters retain the pro
 
 const workspace = fs.readFileSync(new URL('../src/components/client-detail/ClientCampaignWorkspace.jsx', import.meta.url), 'utf8');
 assert.match(workspace, /letter\.targetType === 'bureau' \? onAnalyzeBureau : onAnalyze/, 'bureau and furnisher responses retain their specialized analyzers');
+assert.match(workspace, /Select all/, 'personal information and inquiry groups expose bulk selection');
+
+const campaignApi = fs.readFileSync(new URL('../src/utils/campaigns.js', import.meta.url), 'utf8');
+assert.match(campaignApi, /updateCampaignItemStates[\s\S]*\.in\('id', ids\)/, 'bulk selection uses one scoped database update');
 
 console.log('All client-campaign assertions passed.');
