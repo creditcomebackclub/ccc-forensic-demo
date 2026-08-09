@@ -269,6 +269,63 @@ function sendMailQuiet(to, subject, html) {
     });
 }
 
+async function automatedEmailClaim(eventKey, eventType, recipient, clientId, supabaseUrl, supabaseKey) {
+  const response = await supabaseRequest('/rest/v1/rpc/claim_automated_email_send', 'POST', {
+    p_event_key: eventKey,
+    p_event_type: eventType,
+    p_recipient: recipient,
+    p_client_id: clientId || null,
+  }, supabaseUrl, supabaseKey);
+  if (!isSuccessful(response)) throw new Error('Could not claim automated email: ' + response.status);
+  return response.body || {};
+}
+
+async function updateAutomatedEmailSend(id, changes, supabaseUrl, supabaseKey) {
+  const response = await supabaseRequest('/rest/v1/automated_email_sends?id=eq.' + encodeURIComponent(id), 'PATCH', {
+    ...changes,
+    updated_at: new Date().toISOString(),
+  }, supabaseUrl, supabaseKey);
+  if (!isSuccessful(response)) throw new Error('Could not update automated email record: ' + response.status);
+}
+
+async function sendAutomatedEmail({ eventKey, eventType, recipient, clientId, subject, html }, supabaseUrl, supabaseKey) {
+  const claim = await automatedEmailClaim(eventKey, eventType, recipient, clientId, supabaseUrl, supabaseKey);
+  if (!claim.claimed) return { skipped: 'already_claimed' };
+  try {
+    const { sendEmail } = require('./_email.cjs');
+    const resendId = await sendEmail({
+      to: recipient,
+      subject,
+      html,
+      idempotencyKey: claim.idempotency_key,
+      tags: { automated_email_send_id: claim.id },
+    });
+    await updateAutomatedEmailSend(claim.id, {
+      send_status: 'sent', resend_email_id: resendId, sent_at: new Date().toISOString(), delivery_error: null,
+    }, supabaseUrl, supabaseKey);
+    return { sent: true, resendId };
+  } catch (error) {
+    // Keep the claim after an ambiguous failure: blindly retrying could send a
+    // second notice if the provider accepted the first request before timing out.
+    await updateAutomatedEmailSend(claim.id, {
+      send_status: 'failed', delivery_error: String(error.message || error).slice(0, 1000),
+    }, supabaseUrl, supabaseKey).catch((updateError) => console.error('Could not record automated email failure:', updateError.message));
+    console.error('Automated email failed:', error.message || error);
+    return { sent: false, error: String(error.message || error) };
+  }
+}
+
+async function claimBillingInvoice({ clientId, billingPeriod, amount, description }, supabaseUrl, supabaseKey) {
+  const response = await supabaseRequest('/rest/v1/rpc/claim_billing_invoice', 'POST', {
+    p_client_id: clientId,
+    p_billing_period: billingPeriod,
+    p_amount: amount,
+    p_description: description,
+  }, supabaseUrl, supabaseKey);
+  if (!isSuccessful(response)) throw new Error('Could not claim billing invoice: ' + response.status);
+  return response.body || {};
+}
+
 function billingNoticeHtml({ name, eyebrow, paragraphs, tone, ctaLabel }) {
   const { wrapClientEmail, escapeHtml, BRAND } = require('./_email.cjs');
   const safeName = escapeHtml(name || 'there');
@@ -828,19 +885,27 @@ exports.handler = async () => {
 
         if (c.billing_tier !== 'Paid In Full' || !hasPriorBilling) {
           if (daysUntilDue === 5 && c.email && mailReady) {
-            await sendMailQuiet(c.email, 'Upcoming Invoice in 5 Days', billingNoticeHtml({
-              name: c.name,
-              eyebrow: 'Billing Reminder',
-              paragraphs: ['This is a quick reminder that your service fee will be due in 5 days.'],
-              ctaLabel: 'View billing in your portal →',
-            }));
+            await sendAutomatedEmail({
+              eventKey: `billing:${c.id}:${lastDateStr}:pre_due_5`,
+              eventType: 'billing_pre_due_5', recipient: c.email, clientId: c.id,
+              subject: 'Upcoming Invoice in 5 Days',
+              html: billingNoticeHtml({
+                name: c.name, eyebrow: 'Billing Reminder',
+                paragraphs: ['This is a quick reminder that your service fee will be due in 5 days.'],
+                ctaLabel: 'View billing in your portal →',
+              }),
+            }, supabaseUrl, supabaseKey);
           } else if (daysUntilDue === 3 && c.email && mailReady) {
-            await sendMailQuiet(c.email, 'Upcoming Invoice in 3 Days', billingNoticeHtml({
-              name: c.name,
-              eyebrow: 'Billing Reminder',
-              paragraphs: ['Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.'],
-              ctaLabel: 'Update payment in your portal →',
-            }));
+            await sendAutomatedEmail({
+              eventKey: `billing:${c.id}:${lastDateStr}:pre_due_3`,
+              eventType: 'billing_pre_due_3', recipient: c.email, clientId: c.id,
+              subject: 'Upcoming Invoice in 3 Days',
+              html: billingNoticeHtml({
+                name: c.name, eyebrow: 'Billing Reminder',
+                paragraphs: ['Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.'],
+                ctaLabel: 'Update payment in your portal →',
+              }),
+            }, supabaseUrl, supabaseKey);
           }
         }
 
@@ -873,16 +938,24 @@ exports.handler = async () => {
               status: 'Due',
               created_at: new Date().toISOString()
             };
-            ledger.push(newTx);
+            const invoiceClaim = await claimBillingInvoice({
+              clientId: c.id,
+              billingPeriod: today,
+              amount,
+              description,
+            }, supabaseUrl, supabaseKey);
+            if (!invoiceClaim.created) continue;
+            const createdInvoice = invoiceClaim.invoice || newTx;
             balanceDue = round2(balanceDue + amount);
-            
-            await supabaseRequest(
-              '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),
-              'PATCH', { ledger }, supabaseUrl, supabaseKey
-            );
 
             if (c.email && mailReady) {
-              await sendMailQuiet(c.email, 'Invoice Due Today', billingNoticeHtml({
+              await sendAutomatedEmail({
+                eventKey: `billing:${c.id}:${createdInvoice.id}:due_today`,
+                eventType: 'billing_invoice_due_today',
+                recipient: c.email,
+                clientId: c.id,
+                subject: 'Invoice Due Today',
+                html: billingNoticeHtml({
                 name: c.name,
                 eyebrow: 'Invoice Due',
                 paragraphs: [
@@ -890,7 +963,8 @@ exports.handler = async () => {
                   'Please log in to your client portal to remit payment.',
                 ],
                 ctaLabel: 'Pay invoice →',
-              }));
+                }),
+              }, supabaseUrl, supabaseKey);
             }
           }
         }
@@ -902,8 +976,15 @@ exports.handler = async () => {
       
       for (const inv of unpaidInvoices) {
         const daysPastDue = Math.floor((new Date(today) - new Date(inv.date)) / (1000 * 60 * 60 * 24));
+        const invoiceKey = String(inv.id || `${c.id}:${inv.date}:${inv.amount}:${inv.description || ''}`);
         if (daysPastDue === 1 && c.email && mailReady) {
-          await sendMailQuiet(c.email, 'Invoice 1 Day Past Due', billingNoticeHtml({
+          await sendAutomatedEmail({
+            eventKey: `billing:${c.id}:${invoiceKey}:past_due_1`,
+            eventType: 'billing_past_due_1',
+            recipient: c.email,
+            clientId: c.id,
+            subject: 'Invoice 1 Day Past Due',
+            html: billingNoticeHtml({
             name: c.name,
             eyebrow: 'Past Due Notice',
             tone: 'warning',
@@ -912,9 +993,16 @@ exports.handler = async () => {
               'Please submit your payment to avoid service interruption.',
             ],
             ctaLabel: 'Pay now →',
-          }));
+            }),
+          }, supabaseUrl, supabaseKey);
         } else if (daysPastDue === 3 && c.email && mailReady) {
-          await sendMailQuiet(c.email, 'Invoice 3 Days Past Due - Urgent', billingNoticeHtml({
+          await sendAutomatedEmail({
+            eventKey: `billing:${c.id}:${invoiceKey}:past_due_3`,
+            eventType: 'billing_past_due_3',
+            recipient: c.email,
+            clientId: c.id,
+            subject: 'Invoice 3 Days Past Due - Urgent',
+            html: billingNoticeHtml({
             name: c.name,
             eyebrow: 'Urgent — Past Due',
             tone: 'urgent',
@@ -923,10 +1011,17 @@ exports.handler = async () => {
               'Your service will be paused in 2 days if payment is not received.',
             ],
             ctaLabel: 'Pay now to avoid pause →',
-          }));
+            }),
+          }, supabaseUrl, supabaseKey);
         } else if (daysPastDue === 5 && !isPausedNow) {
           if (c.email && mailReady) {
-            await sendMailQuiet(c.email, 'Final Notice: Service Paused', billingNoticeHtml({
+            await sendAutomatedEmail({
+              eventKey: `billing:${c.id}:${invoiceKey}:service_paused`,
+              eventType: 'billing_service_paused',
+              recipient: c.email,
+              clientId: c.id,
+              subject: 'Final Notice: Service Paused',
+              html: billingNoticeHtml({
               name: c.name,
               eyebrow: 'Service Paused',
               tone: 'urgent',
@@ -935,7 +1030,8 @@ exports.handler = async () => {
                 'Please remit payment immediately to resume services.',
               ],
               ctaLabel: 'Pay to resume →',
-            }));
+              }),
+            }, supabaseUrl, supabaseKey);
           }
           await supabaseRequest(
             '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),
@@ -1064,7 +1160,14 @@ exports.handler = async () => {
       </div>
     </body></html>`;
 
-    await sendMailQuiet(ADMIN_EMAIL, `CCC Executive Briefing: ${todayISO()}`, html);
+    await sendAutomatedEmail({
+      eventKey: `executive_briefing:${todayISO()}`,
+      eventType: 'executive_briefing',
+      recipient: ADMIN_EMAIL,
+      clientId: null,
+      subject: `CCC Executive Briefing: ${todayISO()}`,
+      html,
+    }, supabaseUrl, supabaseKey);
   }
 
   // --- Partner monthly summary (1st of month) ---
