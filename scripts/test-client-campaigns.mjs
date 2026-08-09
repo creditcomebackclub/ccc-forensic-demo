@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildCampaignItems, buildCleanupRouteGroups } from '../src/utils/campaignItems.js';
 import { isPendingRoundReview } from '../src/utils/roundState.js';
+import { countMailStatuses, deriveNextAction } from '../src/components/client-detail/clientDetailUtils.js';
 
 const auditRecord = {
   id: 'audit-1',
@@ -51,6 +52,15 @@ assert.equal(isPendingRoundReview({
   letters: [legacySource, { phase: 'Phase 3 — Bureau Dispute', furnisher: 'Experian', coveredFurnishers: ['Example Bank'], savedAt: '2026-02-01' }],
 }, legacySource), false, 'a later legacy Phase 3 follow-up proves the source review already happened');
 assert.equal(isPendingRoundReview({ rounds: [{ round_id: 'round-1', status: 'open' }], letters: [legacySource] }, legacySource), true, 'an unresolved open round remains actionable');
+
+const closedStale = { id: 'closed-source', roundId: 'round-closed', furnisher: 'Closed Bank', mailedDate: '2026-01-01', responseOutcome: 'received', roundReviewStatus: 'not_reviewed' };
+const openDraft = { id: 'open-draft', roundId: 'round-open', furnisher: 'Open Bank', roundReviewStatus: 'not_reviewed' };
+const detailClient = {
+  rounds: [{ round_id: 'round-closed', status: 'closed' }, { round_id: 'round-open', status: 'open' }],
+  letters: [closedStale, openDraft],
+};
+assert.equal(countMailStatuses(detailClient.letters, detailClient.rounds).received, 0, 'closed rounds do not inflate the detail review chip');
+assert.equal(deriveNextAction(detailClient).label, 'Mail 1 letter', 'the client header points to real open work instead of a closed-round response');
 
 const migration = fs.readFileSync(new URL('../supabase/migrations/20260809150000_client_campaign_command_center.sql', import.meta.url), 'utf8');
 assert.match(migration, /dispute_rounds_one_open_per_account_target_idx/, 'direct and bureau tracks have separate open-round protection');

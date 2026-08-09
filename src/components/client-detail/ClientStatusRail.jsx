@@ -15,7 +15,7 @@ export default function ClientStatusRail({
   onMailFilter,
   onRoundsClick,
 }) {
-  const counts = countMailStatuses(letters);
+  const counts = countMailStatuses(letters, rounds);
   const mailChips = MAIL_FILTERS.filter((f) => f.key === 'all' || counts[f.key] > 0 || f.key === mailFilter);
   const roundCounts = rounds.reduce((totals, round) => {
     const status = round.status || 'open';

@@ -21,8 +21,9 @@ export default function LetterWorkboard({
   rounds = [],
   onStartRound,
 }) {
-  const counts = countMailStatuses(letters);
-  const filtered = letters.filter((l) => letterMatchesMailFilter(l, mailFilter));
+  const client = { letters, rounds };
+  const counts = countMailStatuses(letters, rounds);
+  const filtered = letters.filter((l) => letterMatchesMailFilter(l, mailFilter, client));
 
   const groups = [];
   const seen = new Map();

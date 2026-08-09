@@ -970,8 +970,9 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     const c = selectedClient;
     
     const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || isPendingRoundReview(c, l))).length;
-    const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
-    const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;
+    const activeStatusLetters = c.letters.filter((l) => !l.roundId || isOpenRoundLetter(c, l));
+    const awaiting = activeStatusLetters.filter((l) => letterStatus(l).code === 'awaiting').length;
+    const inTransit = activeStatusLetters.filter((l) => letterStatus(l).code === 'in_transit').length;
     const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
       ? isPendingRoundReview(c, l)
       : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;
@@ -1066,7 +1067,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           primaryStatus={primary}
           nextAction={nextAction}
           onBack={() => { detailRequestRef.current += 1; setSelectedClientId(null); setSelectedClient(null); setLetterMailFilter('all'); }}
-          onNextAction={() => goTab('Campaign')}
+          onNextAction={() => c.activeCampaign ? goTab('Campaign') : goLettersWithFilter(nextAction.letterFilter || 'all')}
           vipButton={
             <button
               onClick={() => handleVipToggle(c.name, c.isVip, c.id)}
@@ -1489,8 +1490,9 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       <div className="space-y-3">
         {viewTab === 'clients' && filteredClients.map((c) => {
           const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || isPendingRoundReview(c, l))).length;
-          const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
-          const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;
+          const activeStatusLetters = c.letters.filter((l) => !l.roundId || isOpenRoundLetter(c, l));
+          const awaiting = activeStatusLetters.filter((l) => letterStatus(l).code === 'awaiting').length;
+          const inTransit = activeStatusLetters.filter((l) => letterStatus(l).code === 'in_transit').length;
           const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
             ? isPendingRoundReview(c, l)
             : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;

@@ -1,6 +1,7 @@
 // Shared helpers for the staff client command-center detail view.
 // Letter status codes mirror ClientsPage.letterStatus — keep in sync.
 import { letterStatus as responseWindowStatus } from '../../utils/responseWindow.js';
+import { isOpenRoundLetter, isPendingRoundReview } from '../../utils/roundState.js';
 
 export const WINDOW_DAYS = 30;
 
@@ -39,19 +40,20 @@ export function letterStageIndex(l) {
   return 0;
 }
 
-export function letterMatchesMailFilter(l, filterKey) {
+export function letterMatchesMailFilter(l, filterKey, client = null) {
   if (!filterKey || filterKey === 'all') return true;
   const code = letterStatusCode(l);
   if (filterKey === 'outcome') return code === 'received' || code === 'no_response';
   if (filterKey === 'received') {
     return code === 'received' && (l.roundId
-      ? (!l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')
+      ? isPendingRoundReview(client, l)
       : !(l.phase || '').startsWith('Phase 3'));
   }
   return code === filterKey;
 }
 
-export function countMailStatuses(letters = []) {
+export function countMailStatuses(letters = [], rounds = []) {
+  const client = { letters, rounds };
   const counts = {
     all: letters.length,
     not_mailed: 0,
@@ -68,7 +70,7 @@ export function countMailStatuses(letters = []) {
     if (code === 'received' || code === 'no_response') counts.outcome += 1;
   }
   // Response-review chip excludes structured letters already reviewed.
-  counts.received = letters.filter((l) => letterMatchesMailFilter(l, 'received')).length;
+  counts.received = letters.filter((l) => letterMatchesMailFilter(l, 'received', client)).length;
   return counts;
 }
 
@@ -104,18 +106,18 @@ export function deriveNextAction(client) {
     if (copy) return { label: copy[0], detail: copy[1], letterFilter: 'all', tone: copy[2] };
   }
   const letters = client?.letters || [];
-  const open = letters.filter((l) => l.roundId || !(l.phase || '').startsWith('Phase 3'));
+  const open = letters.filter((l) => l.roundId ? isOpenRoundLetter(client, l) : !(l.phase || '').startsWith('Phase 3'));
 
   const notMailed = open.filter((l) => letterStatusCode(l) === 'not_mailed');
-  const logResponse = letters.filter((l) => l.mailedDate && !l.responseOutcome);
   const reviewDue = open.filter((l) => {
     const code = letterStatusCode(l);
     return (code === 'window_closed' || code === 'no_response')
-      && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed');
+      && (!l.roundId || isPendingRoundReview(client, l));
   });
   const needsAnalyze = open.filter((l) => {
     const code = letterStatusCode(l);
-    return code === 'received' || code === 'window_closed' || code === 'no_response';
+    return (code === 'received' || code === 'window_closed' || code === 'no_response')
+      && (!l.roundId || isPendingRoundReview(client, l));
   });
   const inTransit = open.filter((l) => letterStatusCode(l) === 'in_transit');
   const awaiting = open.filter((l) => letterStatusCode(l) === 'awaiting');
@@ -143,15 +145,6 @@ export function deriveNextAction(client) {
       label: n === 1 ? 'Analyze 1 response' : `Analyze ${n} responses`,
       detail: 'Response ready for forensic analysis and staff disposition',
       letterFilter: 'received',
-      tone: 'action',
-    };
-  }
-  if (logResponse.length > 0) {
-    const hasAwaiting = logResponse.some((l) => letterStatusCode(l) === 'awaiting');
-    return {
-      label: logResponse.length === 1 ? 'Log 1 response' : `Log ${logResponse.length} responses`,
-      detail: 'Mailed letters waiting for an outcome',
-      letterFilter: hasAwaiting ? 'awaiting' : 'in_transit',
       tone: 'action',
     };
   }
