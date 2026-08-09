@@ -375,6 +375,17 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'no matching letter row' }) };
   }
 
+  // Delivery starts the canonical 30-day clock for new adaptive rounds. The
+  // stored due date is authoritative and may later receive one documented +15.
+  if (isDelivered && updatedRows[0]?.target_type && !updatedRows[0]?.response_due_at) {
+    const dueAt = new Date(new Date(patch.delivered_at).getTime() + 30 * 86400000).toISOString();
+    const dueResult = await supabaseRequest(
+      '/rest/v1/letters?id=eq.' + encodeURIComponent(updatedRows[0].id) + '&response_due_at=is.null',
+      'PATCH', { response_due_at: dueAt }, supabaseUrl, supabaseKey
+    );
+    if (dueResult.status >= 200 && dueResult.status < 300) updatedRows[0].response_due_at = dueAt;
+  }
+
   console.log('Updated tracking for lob_id:', lobId, '->', trackingStatus);
 
   // Fire delivery email only on actual delivery
@@ -394,8 +405,8 @@ exports.handler = async (event) => {
           const furnisher = letter.furnisher || 'your creditor';
           const clientName = letter.client_name.split(' ')[0];
           const tn = letter.tracking_number || trackingNumber;
-          const isBureauDispute = String(letter.phase || '').startsWith('Phase 3');
-          const reviewDays = isBureauDispute ? 45 : 30;
+          const isBureauDispute = letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3');
+          const reviewDays = letter.target_type ? 30 : (isBureauDispute ? 45 : 30);
 
           const subject = 'Dispute Letter Delivered — ' + furnisher + ' Has ' + reviewDays + ' Days to Respond';
           const { wrapClientEmail, escapeHtml, BRAND } = require('./_email.cjs');
@@ -406,7 +417,7 @@ exports.handler = async (event) => {
               + (tn
                 ? `<p style="margin:0 0 14px;">Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${escapeHtml(tn)}" style="color:#1B2A4A;">USPS Tracking ${escapeHtml(String(tn).slice(-8))}</a></p>`
                 : '')
-              + `<p style="margin:0 0 14px;">We will monitor for their response and prepare Phase 3 escalation letters in advance.</p>`
+              + `<p style="margin:0 0 14px;">We will monitor the response window and review any result before deciding the next step.</p>`
               + `<p style="margin:0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
             cta: { href: BRAND.portalUrl, label: 'View in your portal →' },
           });

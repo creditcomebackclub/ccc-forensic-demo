@@ -245,7 +245,7 @@ export const ACCOUNT_ENRICHMENT_SCHEMA = {
 
 // Phase 2 (furnisher response) analysis — mirrors the JSON contract in
 // src/prompts/phase2Prompt.js field-for-field. Consumers: ResponseAnalyzer's
-// results UI and savePhase3Letters(). Do not add/rename fields here without
+// results UI and adaptive-round evidence selection. Do not add/rename fields here without
 // updating both.
 export const PHASE2_SCHEMA = {
   type: 'object',
@@ -291,18 +291,8 @@ export const PHASE2_SCHEMA = {
       },
       required: ['enclosureLegible', 'issues'],
     },
-    letters: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        equifax: { type: 'string', description: 'Complete HTML document (<!DOCTYPE html>...) for the Phase 3 letter to Equifax, styled with navy headers, violation tables, and print-ready CSS matching Phase 1 letter formatting.' },
-        experian: { type: 'string', description: 'Complete HTML document (<!DOCTYPE html>...) for the Phase 3 letter to Experian, styled with navy headers, violation tables, and print-ready CSS matching Phase 1 letter formatting.' },
-        transunion: { type: 'string', description: 'Complete HTML document (<!DOCTYPE html>...) for the Phase 3 letter to TransUnion, styled with navy headers, violation tables, and print-ready CSS matching Phase 1 letter formatting.' },
-      },
-      required: ['equifax', 'experian', 'transunion'],
-    },
   },
-  required: ['classification', 'summary', 'demandAnalysis', 'admissions', 'phase3Leverage', 'documentQuality', 'letters'],
+  required: ['classification', 'summary', 'demandAnalysis', 'admissions', 'phase3Leverage', 'documentQuality'],
 };
 
 // Bureau-response review — unlike Phase 2 it never drafts another legal

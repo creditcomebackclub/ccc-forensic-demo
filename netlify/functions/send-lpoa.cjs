@@ -198,19 +198,19 @@ exports.handler = async (event) => {
       phase1_mailed: 'Your Dispute Letter Has Been Mailed — ' + furnisher,
       phase1_delivered: 'Dispute Letter Delivered — ' + furnisher + ' Has 30 Days to Respond',
       phase2_analyzed: 'Response Analysis Complete — ' + furnisher,
-      phase3_mailed: 'Phase 3 Escalation Mailed to Credit Bureaus — ' + furnisher,
+      phase3_mailed: 'Credit Bureau Dispute Mailed — ' + furnisher,
     };
 
     const bodies = {
-      phase1_mailed: `<p>Your Phase 1 dispute letter to <strong>${furnisher}</strong> has been mailed via USPS Certified Mail.</p>
+      phase1_mailed: `<p>Your direct dispute letter to <strong>${furnisher}</strong> has been mailed via USPS Certified Mail.</p>
         ${trackingNumber ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}" style="color:#1B2A4A;">USPS Tracking ${trackingNumber.slice(-8)}</a></p>` : ''}
         <p>The furnisher has 30 days from delivery to respond. We will monitor the response and notify you of next steps.</p>`,
       phase1_delivered: `<p>Your dispute letter to <strong>${furnisher}</strong> has been delivered. Their 30-day response window has begun.</p>
-        <p>We will monitor for their response and prepare Phase 3 escalation letters in advance.</p>`,
+        <p>We will monitor for a response. A trained reviewer will evaluate the evidence and decide the appropriate next step.</p>`,
       phase2_analyzed: `<p>We have analyzed <strong>${furnisher}</strong>'s response to your dispute letter.</p>
-        <p>${details || 'Phase 3 escalation letters have been prepared and will be mailed to the credit bureaus shortly.'}</p>`,
-      phase3_mailed: `<p>Phase 3 escalation letters have been mailed to Equifax, Experian, and TransUnion regarding <strong>${furnisher}</strong>.</p>
-        <p>The bureaus now have 45 days to investigate and respond. We will track the outcome and document the next campaign step.</p>`,
+        <p>${details || 'A trained reviewer is documenting the result and the appropriate next campaign step.'}</p>`,
+      phase3_mailed: `<p>Credit bureau dispute letters have been mailed to the bureaus selected for this account regarding <strong>${furnisher}</strong>.</p>
+        <p>We will track each response window and review the evidence before choosing another step.</p>`,
     };
 
     const html = branded('Campaign Update',
@@ -438,16 +438,16 @@ exports.handler = async (event) => {
       day30_approaching: {
         subject: 'Response Deadline Approaching — ' + (furnisher || 'Your Dispute'),
         headline: 'The 30-day response window is closing.',
-        body: furnisher + ' has approximately ' + (30 - (daysElapsed || 28)) + ' days remaining to respond to your dispute. If they fail to respond or provide an inadequate investigation, we will escalate to the credit bureaus with Phase 3 letters.',
-        action: 'Continue doing nothing. We are monitoring for their response and have Phase 3 letters prepared.',
+        body: furnisher + ' has approximately ' + Math.max(0, 30 - (daysElapsed || 28)) + ' days remaining in the tracked response window. If no response is logged, staff will document the nonresponse and review the account evidence.',
+        action: 'No action is needed unless you receive correspondence. If you do, send us every page so it can be reviewed with the original dispute.',
         tone: '#FFFBEB',
         borderColor: '#FDE68A',
       },
       day35_escalation: {
-        subject: 'No Response Confirmed — Phase 3 Escalation Triggered',
-        headline: furnisher + ' failed to respond.',
-        body: furnisher + ' did not conduct a reasonable investigation within the 30-day statutory window required by 15 U.S.C. §1681s-2(b). This is an automatic federal law violation. We are now escalating to Equifax, Experian, and TransUnion with Phase 3 letters documenting their failure.',
-        action: 'Phase 3 letters are being prepared and will be mailed to all three credit bureaus. Deletions typically occur within 30 days of bureau-level escalation.',
+        subject: 'Response Window Closed — Review Underway',
+        headline: 'No response has been logged from ' + furnisher + '.',
+        body: 'The tracked response window has closed without a response in your file. We are documenting that nonresponse and reviewing the original dispute, delivery record, and account evidence before selecting any next step.',
+        action: 'No action is needed unless you received correspondence we do not have. If so, send us every page so the review is complete.',
         tone: '#F0FDF4',
         borderColor: '#BBF7D0',
       },
@@ -484,26 +484,26 @@ exports.handler = async (event) => {
       1: {
         subject: 'Thanks for reaching out to Credit Comeback Club',
         headline: 'We received your request — here\'s what happens next.',
-        content: '<p>Hi ' + firstName + ', thank you for your interest in Credit Comeback Club. We specialize in forensic credit disputes built on federal law, not generic dispute templates.</p>'
-          + '<p>Most credit repair companies send the same boilerplate letters to the credit bureaus for every client. We do something different: we perform a line-by-line forensic audit of your credit report against the Metro 2 reporting standard that creditors are legally required to follow, then build a dispute strategy around the specific violations we find in your file.</p>'
+        content: '<p>Hi ' + firstName + ', thank you for your interest in Credit Comeback Club. We prepare evidence-specific credit disputes rather than generic templates.</p>'
+          + '<p>We perform a line-by-line forensic review of your credit report, including consistency checks informed by the Metro 2 industry reporting standard. A Metro 2 difference is not automatically a legal violation, so staff reviews the report facts and applicable law before building a dispute strategy.</p>'
           + '<p><strong>What\'s next:</strong> If you haven\'t already, upload your 3-bureau credit report and we\'ll walk you through what we find — no cost, no obligation.</p>'
           + '<p>Reply to this email or call 970-644-0063 with any questions.</p>',
       },
       2: {
         subject: 'What Makes a Dispute Actually Work',
         headline: 'Why most credit repair fails — and what we do differently.',
-        content: '<p>Here\'s something most people don\'t know: when you dispute an account through the credit bureaus, your dispute is processed by an automated system called e-OSCAR. No human reviews it. The creditor\'s computer confirms their own data matches what they submitted, and the dispute is marked "verified" — even if the underlying data is wrong.</p>'
-          + '<p>This is why the same dispute letter mailed to a bureau, over and over, rarely produces results.</p>'
-          + '<p><strong>Our approach is different.</strong> We dispute directly with the furnisher — the original creditor or collector — under 15 U.S.C. §1681s-2(b). This bypasses e-OSCAR entirely and triggers a legal obligation for the furnisher to conduct an actual investigation, not just an automated database check.</p>'
-          + '<p>The legal standard comes from a real federal case, <em>Johnson v. MBNA America Bank</em>, which held that automated verification does not satisfy a furnisher\'s investigation duty. That case is the foundation of every letter we send.</p>',
+        content: '<p>Credit-report disputes can follow different legal paths. A dispute sent to a consumer reporting agency and a direct dispute sent to the company furnishing the information are not interchangeable, and each path has its own duties and evidence requirements.</p>'
+          + '<p>Repeating a generic letter without addressing the account data or the recipient\'s response can weaken the record.</p>'
+          + '<p><strong>Our approach is evidence-first.</strong> We compare the reporting across bureaus, identify supported factual inconsistencies, and choose the recipient for each round based on the reviewed record. A direct furnisher dispute is framed under the direct-dispute rules; a bureau dispute is framed under the CRA reinvestigation rules.</p>'
+          + '<p>If a bureau later notifies a furnisher of a dispute, the furnisher\'s separate duties under 15 U.S.C. §1681s-2(b) may apply. We document what was sent, what came back, and what the evidence supports before recommending another step.</p>',
       },
       3: {
         subject: 'A Real Example: How the Process Works',
         headline: 'From audit to dispute to resolution.',
         content: '<p>Here\'s what the process actually looks like once you start:</p>'
           + '<p><strong>Step 1 — Forensic Audit.</strong> We analyze your 3-bureau report field by field, identifying specific Metro 2 violations — things like charge-off accounts still reporting active past-due balances (a logical impossibility), cross-bureau data conflicts, or missing dispute flags.</p>'
-          + '<p><strong>Step 2 — Direct Furnisher Dispute.</strong> We send certified letters directly to each creditor citing the exact violations and federal statutes involved. This establishes a legal record and starts a 30-day clock.</p>'
-          + '<p><strong>Step 3 — Escalation if needed.</strong> If a creditor fails to respond adequately within 30 days — which happens often — we escalate to the credit bureaus using their own inadequate response as evidence, citing Johnson v. MBNA.</p>'
+          + '<p><strong>Step 2 — Staff-selected dispute round.</strong> We prepare account-specific letters for the furnisher or selected credit bureaus, preserve the evidence sent, and track a 30-day review window.</p>'
+          + '<p><strong>Step 3 — Forensic response review.</strong> We compare any response or documented nonresponse with the exact letter and supporting record. Staff then decides whether the account is resolved, needs documents, warrants another round, or is ready for a separately reviewed escalation.</p>'
           + '<p>Every step is documented, tracked, and visible to you in a client portal built specifically for this process.</p>',
       },
       4: {
@@ -511,13 +511,13 @@ exports.handler = async (event) => {
         headline: 'Let\'s get your forensic audit built.',
         content: '<p>' + firstName + ', if you\'re ready to move forward, here\'s what we need:</p>'
           + '<ul><li>Your most recent 3-bureau credit report (Equifax, Experian, TransUnion)</li><li>A signed Limited Power of Attorney authorizing us to act on your behalf for credit dispute purposes only</li></ul>'
-          + '<p>Once we have both, we build your forensic audit, identify every actionable violation in your file, and begin Phase 1 direct-to-furnisher disputes — typically within days.</p>'
+          + '<p>Once we have both, we build your forensic audit, identify supported issues in your file, and prepare the first staff-selected dispute round.</p>'
           + '<p>Reply to this email or call 970-644-0063 and we\'ll get you started today.</p>',
       },
       5: {
         subject: 'Still Thinking It Over?',
         headline: 'No pressure — just here when you\'re ready.',
-        content: '<p>Hi ' + firstName + ', wanted to check in one more time. Credit disputes are time-sensitive in one specific way: the sooner accurate legal disputes are on record, the sooner the 30-day furnisher response clocks start running.</p>'
+        content: '<p>Hi ' + firstName + ', wanted to check in one more time. When a dispute round is mailed, we preserve the mailing record and track its response-review window so later decisions are based on a documented timeline.</p>'
           + '<p>There\'s no cost to get your forensic audit built and reviewed with you. If you have questions about the process, your specific accounts, or anything else — just reply to this email or call 970-644-0063.</p>'
           + '<p>We\'re here whenever you\'re ready.</p>',
       },
@@ -550,39 +550,36 @@ exports.handler = async (event) => {
       1: {
         subject: 'What Is Metro 2 and Why Does It Matter For Your Credit?',
         headline: 'The reporting standard creditors are supposed to follow — but often don\'t.',
-        content: '<p>Every piece of information on your credit report is supposed to follow a technical standard called Metro 2. It was created by the Consumer Data Industry Association and defines exactly how creditors must report account data to Equifax, Experian, and TransUnion.</p>'
-          + '<p>Metro 2 has over 400 data fields. Each one has specific rules — what values are valid, how dates must be formatted, which fields are mandatory, and how fields must relate to each other logically.</p>'
-          + '<p><strong>Here\'s the problem:</strong> Creditors frequently violate these rules. They report balances on closed accounts. They suppress payment history. They report charge-offs with incorrect dates. They use status codes that contradict each other across bureaus.</p>'
-          + '<p>These aren\'t minor clerical errors — they\'re violations of the Fair Credit Reporting Act. And they\'re what we look for in your forensic audit.</p>'
-          + '<p><strong>What this means for you:</strong> Every violation we identify in your credit file is a legally actionable inaccuracy. The creditor has a legal obligation to correct it when formally disputed.</p>',
+        content: '<p>Metro 2 is an industry reporting format used to organize account data furnished to Equifax, Experian, and TransUnion.</p>'
+          + '<p>Its fields and relationships help trained reviewers spot information that may be incomplete, internally inconsistent, or inconsistent across bureaus.</p>'
+          + '<p><strong>Why context matters:</strong> A Metro 2 formatting or consistency issue is not automatically an FCRA violation. We compare the reported fields with the rest of the file and any available account evidence before deciding whether a factual or legal dispute is supported.</p>'
+          + '<p><strong>What this means for you:</strong> Findings from the forensic audit are review leads. Staff verifies the support, selects the correct dispute route, and asks the recipient to investigate the specific information identified.</p>',
       },
       2: {
         subject: 'Why Generic Credit Repair Doesn\'t Work',
-        headline: 'The e-OSCAR problem — and why we bypass it entirely.',
-        content: '<p>Most credit repair companies send dispute letters to the credit bureaus. The bureaus receive millions of disputes and process them through an automated system called e-OSCAR.</p>'
-          + '<p>Here\'s what actually happens: e-OSCAR converts your dispute into a two-digit code and forwards it to the creditor. The creditor\'s computer looks at their database, confirms the data matches what they submitted, and responds "verified." The bureau marks it verified. Your dispute dies.</p>'
-          + '<p>No human ever looks at your case. No one examines whether the data is actually accurate. The entire process is a loop of automated confirmation.</p>'
-          + '<p><strong>What we do instead:</strong> We dispute directly with the furnisher — the creditor or collector — bypassing the bureaus entirely. Under 15 U.S.C. §1681s-2(b), a direct written dispute triggers independent legal obligations that cannot be processed through e-OSCAR.</p>'
-          + '<p>The furnisher must conduct a reasonable investigation — not just an automated database check. The legal standard comes from <em>Johnson v. MBNA America Bank</em>, a Fourth Circuit federal case that held automated verification is legally insufficient.</p>'
-          + '<p>That\'s the foundation of every letter we send on your behalf.</p>',
+        headline: 'Why evidence-specific disputes matter.',
+        content: '<p>Credit bureaus and furnishers process a high volume of disputes, and a generic letter may not clearly identify the account-level facts that require investigation.</p>'
+          + '<p>A useful record ties each issue to the reporting, states what is disputed, preserves the documents sent, and evaluates the recipient\'s actual response.</p>'
+          + '<p><strong>What we do:</strong> Staff chooses whether a round goes to the furnisher or selected credit bureaus. Direct disputes use the applicable direct-dispute framework; CRA disputes use the bureau reinvestigation framework. We do not treat those duties as interchangeable.</p>'
+          + '<p>Our forensic review compares the reporting, the account evidence, and the response received. We use the legal framework that applies to the actual dispute route and facts rather than promising a predetermined result.</p>'
+          + '<p>That evidence-first review is the foundation of every letter we send on your behalf.</p>',
       },
       3: {
         subject: 'Understanding Your 30-Day Window',
         headline: 'What happens after your letters are delivered.',
-        content: '<p>Once your certified dispute letters are delivered, the furnisher has 30 days to respond with a substantive investigation. This is a federal legal requirement under 15 U.S.C. §1681s-2(b).</p>'
-          + '<p><strong>A substantive investigation means:</strong></p>'
-          + '<ul><li>Reviewing original source documentation — not just their internal database</li><li>Addressing each specific violation you identified</li><li>Providing written explanation of how they verified the disputed information</li><li>Correcting or deleting inaccurate information and notifying all bureaus</li></ul>'
+        content: '<p>Once your certified dispute letters are delivered, we track a 30-day response-review window and preserve the delivery record with the account file.</p>'
+          + '<p><strong>Our response review asks:</strong></p>'
+          + '<ul><li>Did the response address the specific facts raised?</li><li>Does it identify meaningful support for the stated result?</li><li>Did any reported information change?</li><li>Is more documentation needed before staff can choose a next step?</li></ul>'
           + '<p><strong>What usually happens:</strong></p>'
-          + '<ul><li><strong>Form letter response:</strong> Generic "verified as accurate" language with no documentation. This fails the Johnson v. MBNA standard and sets up Phase 3 escalation.</li><li><strong>No response:</strong> An automatic violation. Triggers immediate Phase 3 escalation to all three bureaus.</li><li><strong>Partial correction:</strong> They fix some issues but not all. Remaining violations are still actionable.</li><li><strong>Full correction/deletion:</strong> The best outcome. Account corrected or removed.</li></ul>'
+          + '<ul><li><strong>Form letter response:</strong> We compare its statements and support to each issue raised in the dispute.</li><li><strong>No response:</strong> We document the closed response window and review the evidence before selecting any next step.</li><li><strong>Partial correction:</strong> We verify what changed and identify anything that still requires review.</li><li><strong>Full correction/deletion:</strong> We document the result and determine whether the account can be closed.</li></ul>'
           + '<p>We monitor every letter and will notify you when responses come in or when windows close.</p>',
       },
       4: {
         subject: 'Your Credit Score: What Moves It and What Doesn\'t',
         headline: 'The mechanics behind the number.',
         content: '<p>Your credit score is a snapshot — it reflects what\'s in your credit file at this exact moment. As inaccurate negative accounts are removed or corrected, the score recalculates.</p>'
-          + '<p><strong>What has the biggest impact:</strong></p>'
-          + '<ul><li><strong>Payment history (35%):</strong> Late payments, charge-offs, and collections weigh heavily. Deletion is more impactful than correction.</li><li><strong>Amounts owed (30%):</strong> Balances reporting on closed accounts or incorrectly high balances suppress your score artificially.</li><li><strong>Age of accounts (15%):</strong> Older positive accounts help. Negative accounts with incorrect dates may be reporting longer than legally allowed.</li><li><strong>Types of credit (10%) and new inquiries (10%):</strong> Less impactful during a dispute campaign.</li></ul>'
-          + '<p><strong>What to expect during your campaign:</strong> Scores may fluctuate as disputes are processed. This is normal. When a negative account is disputed, bureaus may temporarily mark it as "in dispute," which can cause minor score movement. Deletions produce the most significant and permanent score improvement.</p>'
+          + '<p><strong>What can affect a score:</strong> payment history, amounts owed, account age, account mix, recent applications, and the particular scoring model being used. The weight and effect of any one change vary by file and model.</p>'
+          + '<p><strong>What to expect during your campaign:</strong> Scores can fluctuate as reported data changes. A correction or deletion does not guarantee a particular score increase, and different lenders may use different reports or scoring models.</p>'
           + '<p>Keep pulling your reports monthly through Privacy Guard. Every deletion confirmed is a win.</p>',
       },
       5: {

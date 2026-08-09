@@ -11,7 +11,7 @@ import { requireStaff } from './_requireAuth.cjs';
 assertMapFullySourced();
 
 const MODEL = 'claude-sonnet-5';
-const MAX_JOBS_PER_REQUEST = 2;
+const MAX_JOBS_PER_REQUEST = 3;
 const MAX_INSTRUCTION_CHARS = 120000;
 
 function validLetterJob(job) {
@@ -49,7 +49,7 @@ export const handler = async (event) => {
     return { statusCode: 400, body: 'Valid JSON with jobs array required' };
   }
   if (!payload.jobs.length || payload.jobs.length > MAX_JOBS_PER_REQUEST || !payload.jobs.every(validLetterJob)) {
-    return { statusCode: 400, body: 'One or two valid letter jobs are required' };
+    return { statusCode: 400, body: 'One to three valid letter jobs are required' };
   }
   const jobIds = payload.jobs.map((job) => job.id);
   if (new Set(jobIds).size !== jobIds.length) {
@@ -76,7 +76,7 @@ export const handler = async (event) => {
   // service-role client reads settings or calls Anthropic.
   const { data: letters, error: lettersErr } = await supabase
     .from('letters')
-    .select('id, user_id, html')
+    .select('id, user_id, html, target_type, target_bureau, dispute_basis, round_id, round_number')
     .in('id', jobIds);
   if (lettersErr) {
     console.error('generate-letter: could not validate letter ownership', lettersErr);
@@ -111,12 +111,19 @@ export const handler = async (event) => {
   } catch (e) {
     console.warn('Could not load dispute aggressiveness setting, defaulting to Aggressive:', e.message);
   }
-  const SYSTEM = [{ type: 'text', text: getLetterSystemPrompt(aggressiveness), cache_control: { type: 'ephemeral' } }];
-
   const client = new Anthropic({ apiKey: anthropicKey, maxRetries: 5 });
 
   for (const job of payload.jobs) {
     try {
+      const storedLetter = lettersById.get(job.id);
+      const targetType = storedLetter?.target_type || job.targetType || 'furnisher';
+      if (!['furnisher', 'bureau'].includes(targetType)) throw new Error('Stored letter has no valid target type');
+      if (targetType === 'bureau' && !storedLetter?.target_bureau) throw new Error('Stored bureau letter has no explicit recipient');
+      const SYSTEM = [{
+        type: 'text',
+        text: getLetterSystemPrompt(aggressiveness, targetType, storedLetter?.dispute_basis || null),
+        cache_control: { type: 'ephemeral' },
+      }];
       // 1. Generate Letter HTML, self-correcting up to 2 times if the Metro
       // 2 field-citation lint fails below. A blind user-triggered "Retry"
       // regenerates from scratch and hits similar transposition mistakes at
@@ -239,13 +246,16 @@ export const handler = async (event) => {
       let summary = null;
       if (job.generateSummary && job.account) {
         try {
+          const summaryRecipient = targetType === 'bureau'
+            ? (storedLetter?.target_bureau || 'the selected credit bureau')
+            : (job.account.furnisher || 'the furnisher');
           const sumMsg = await client.messages.create({
             model: MODEL,
             max_tokens: 1024,
             system: SYSTEM,
             messages: [{
               role: 'user',
-              content: `Write a 2-3 sentence plain-English summary for a non-expert client explaining what is being disputed on this account and why, based on the data below. Avoid legal jargon and statute citations — explain the core problem in everyday terms (e.g. "this account shows two things that can't both be true at the same time"). End with a brief note on what we're asking the furnisher to do. Output plain text only. No markdown, no headers, no fences, no prose before or after.\n\nAccount data:\n${JSON.stringify({ furnisher: job.account.furnisher, status: job.account.status, balance: job.account.balance, primaryViolation: job.account.primaryViolation, violations: job.account.violations }, null, 2)}`
+              content: `Write a 2-3 sentence plain-English summary for a non-expert client explaining what is being disputed on this account and why, based on the data below. Avoid legal jargon and statute citations — explain the core problem in everyday terms (e.g. "this account shows two things that can't both be true at the same time"). End with a brief note on what we're asking ${summaryRecipient} to do. Output plain text only. No markdown, no headers, no fences, no prose before or after.\n\nAccount data:\n${JSON.stringify({ furnisher: job.account.furnisher, targetType, targetBureau: storedLetter?.target_bureau || null, status: job.account.status, balance: job.account.balance, primaryViolation: job.account.primaryViolation, violations: job.account.violations }, null, 2)}`
             }]
           });
           const rawSum = sumMsg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
@@ -266,6 +276,19 @@ export const handler = async (event) => {
       console.error(`Failed to generate letter for job ${job.id}:`, e);
       // Mark as failed in DB so frontend stops polling
       await supabase.from('letters').update({ html: 'ERROR: ' + e.message }).eq('id', job.id);
+    }
+  }
+
+  const roundIds = [...new Set((letters || []).map((letter) => letter.round_id).filter(Boolean))];
+  if (roundIds.length) {
+    try {
+      const roundEmailModule = await import('./_roundEmail.cjs');
+      const queueRoundEvent = roundEmailModule.queueRoundEvent || roundEmailModule.default?.queueRoundEvent;
+      for (const roundId of roundIds) {
+        await queueRoundEvent?.({ roundId, eventType: 'next_round_prepared', requireAllGenerated: true });
+      }
+    } catch (emailError) {
+      console.error('Round prepared milestone email failed (letters remain saved):', emailError.message);
     }
   }
   

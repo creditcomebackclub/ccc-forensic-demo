@@ -1,0 +1,188 @@
+const { createClient } = require('@supabase/supabase-js');
+const crypto = require('node:crypto');
+const ws = require('ws');
+const { escapeHtml, sendEmail, wrapClientEmail } = require('./_email.cjs');
+
+const EVENT_COPY = {
+  next_round_prepared: {
+    subject: ({ round }) => `Round ${round.round_number} is prepared for review`,
+    body: ({ firstName, round }) => `Hi ${firstName},\n\nWe prepared Round ${round.round_number} of your dispute campaign. Our team will review the letters and mailing packet before anything is sent.\n\nYou do not need to take action right now.`,
+  },
+  round_mailed: {
+    subject: ({ round }) => `Round ${round.round_number} has been mailed`,
+    body: ({ firstName, round, letters }) => `Hi ${firstName},\n\nEvery letter in Round ${round.round_number} has now been mailed by certified mail (${letters.length} ${letters.length === 1 ? 'letter' : 'letters'}). We will monitor delivery and the response window.\n\nIf a response arrives at your home, please upload every page in your portal.`,
+  },
+  first_response_received: {
+    subject: ({ round }) => `We received a response for Round ${round.round_number}`,
+    body: ({ firstName, round }) => `Hi ${firstName},\n\nA response connected to Round ${round.round_number} has been received. Our forensic review will compare it with the exact disputes and evidence in that round before we decide what happens next.\n\nNo action is needed unless we ask for a specific document.`,
+  },
+  documents_needed: {
+    subject: ({ round }) => `Documents needed for Round ${round.round_number}`,
+    body: ({ firstName, round }) => `Hi ${firstName},\n\nOur review of Round ${round.round_number} identified documents we need from you before we can make the next decision. Please open your portal for the request and upload only the requested items.`,
+  },
+  round_resolved: {
+    subject: ({ round }) => `Round ${round.round_number} review is complete`,
+    body: ({ firstName, round }) => `Hi ${firstName},\n\nWe completed our review of every response and nonresponse in Round ${round.round_number}. This account's dispute campaign is now marked resolved. You can view the current status in your portal.`,
+  },
+  escalation_ready: {
+    subject: ({ round }) => `Round ${round.round_number} is ready for escalation review`,
+    body: ({ firstName, round }) => `Hi ${firstName},\n\nWe completed the response review for Round ${round.round_number} and marked the record ready for escalation review. This does not mean a complaint or legal filing has been submitted. Our team will review the available path and contact you if anything is needed.`,
+  },
+};
+
+function plainTextHtml(bodyText, eyebrow) {
+  const paragraphs = String(bodyText || '').split(/\n{2,}/).map((value) => value.trim()).filter(Boolean)
+    .map((value) => `<p style="margin:0 0 14px;">${escapeHtml(value).replace(/\n/g, '<br>')}</p>`).join('');
+  return wrapClientEmail({ eyebrow, bodyHtml: paragraphs, cta: undefined });
+}
+
+function dbClient() {
+  const url = process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error('Supabase server configuration is required for round emails.');
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { transport: ws } });
+}
+
+function renderTemplate(value, context) {
+  const fields = {
+    'client.name': context.client.name || '',
+    'client.address': context.client.address || '',
+    'account.furnisher': context.letters[0]?.furnisher || '',
+    'round.number': String(context.round.round_number),
+    'round.targetType': context.round.target_type === 'bureau' ? 'Credit Bureau' : 'Direct Furnisher',
+    'round.status': context.round.status || '',
+  };
+  return String(value || '').replace(/{{\s*([^{}]+?)\s*}}/g, (_match, key) => {
+    const normalized = String(key).trim();
+    if (!Object.prototype.hasOwnProperty.call(fields, normalized)) throw new Error(`Unknown client email merge field: ${normalized}`);
+    return fields[normalized];
+  });
+}
+
+async function loadContext(db, roundId) {
+  const { data: round, error: roundError } = await db.from('dispute_rounds').select('*').eq('id', roundId).single();
+  if (roundError || !round) throw new Error('Round email could not resolve the dispute round.');
+  const [{ data: client, error: clientError }, { data: letters, error: lettersError }] = await Promise.all([
+    db.from('clients').select('id,name,email,address').eq('id', round.client_id).single(),
+    db.from('letters').select('id,html,mailed_date,response_outcome,round_next_action,target_type,target_bureau,furnisher').eq('round_id', round.id).order('target_bureau'),
+  ]);
+  if (clientError || !client?.email) throw new Error('The client has no deliverable email address.');
+  if (lettersError || !letters?.length) throw new Error('The round has no letters.');
+  return { round, client, letters };
+}
+
+async function queueRoundEvent({ roundId, eventType, requireAllGenerated = false, requireAllMailed = false }) {
+  const copy = EVENT_COPY[eventType];
+  if (!copy) throw new Error('Unsupported round email event.');
+  const db = dbClient();
+  const context = await loadContext(db, roundId);
+  if ((requireAllGenerated || eventType === 'next_round_prepared') && context.letters.some((letter) => !letter.html || letter.html === 'GENERATING...' || letter.html.startsWith('ERROR:'))) return { skipped: 'round_not_generated' };
+  if ((requireAllMailed || eventType === 'round_mailed') && context.letters.some((letter) => !letter.mailed_date)) return { skipped: 'round_not_fully_mailed' };
+  if (eventType === 'first_response_received' && !context.letters.some((letter) => letter.response_outcome === 'received')) return { skipped: 'no_response_received' };
+  if (eventType === 'documents_needed' && !context.letters.some((letter) => letter.round_next_action === 'needs_documents')) return { skipped: 'documents_not_requested' };
+  if (eventType === 'round_resolved' && (context.round.status !== 'closed' || context.round.final_disposition !== 'resolved')) return { skipped: 'round_not_resolved' };
+  if (eventType === 'escalation_ready' && (context.round.status !== 'closed' || context.round.final_disposition !== 'escalate')) return { skipped: 'round_not_escalated' };
+  const eventKey = `${roundId}:${eventType}`;
+  const firstName = String(context.client.name || 'there').trim().split(/\s+/)[0];
+  const vars = { ...context, firstName };
+  const templateEvent = eventType === 'round_mailed' ? `round_mailed:${context.round.target_type}` : eventType;
+  const { data: templates, error: templateError } = await db.from('client_email_templates').select('id,event_type,subject_template,body_template')
+    .eq('user_id', context.round.user_id).eq('is_active', true).in('event_type', [templateEvent, eventType]);
+  if (templateError) throw new Error('Could not load the client email template: ' + templateError.message);
+  const template = (templates || []).find((item) => item.event_type === templateEvent) || (templates || []).find((item) => item.event_type === eventType) || null;
+  const subject = template ? renderTemplate(template.subject_template, context) : copy.subject(vars);
+  const bodyText = template ? renderTemplate(template.body_template, context) : copy.body(vars);
+  const bodyHtml = plainTextHtml(bodyText, 'Campaign Update');
+  const idempotencyKey = `ccc-${eventKey}`;
+  const { data: queued, error: queueError } = await db.from('client_emails').insert({
+    user_id: context.round.user_id,
+    client_id: context.client.id,
+    round_id: context.round.id,
+    template_id: template?.id || null,
+    event_type: eventType,
+    event_key: eventKey,
+    subject,
+    body_html: bodyHtml,
+    body_text: bodyText,
+    idempotency_key: idempotencyKey,
+  }).select('*').single();
+  if (queueError?.code === '23505') return { skipped: 'already_queued' };
+  if (queueError || !queued) throw new Error('Could not queue client milestone email: ' + (queueError?.message || 'unknown error'));
+  try {
+    await db.from('client_emails').update({ send_status: 'sending', attempts: 1, last_attempt_at: new Date().toISOString() }).eq('id', queued.id);
+    const resendId = await sendEmail({ to: context.client.email, subject, html: bodyHtml, text: bodyText, idempotencyKey, tags: { client_email_id: queued.id } });
+    await db.from('client_emails').update({ send_status: 'sent', resend_email_id: resendId, sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', queued.id);
+    return { sent: true, emailId: queued.id, resendId };
+  } catch (error) {
+    await db.from('client_emails').update({ send_status: 'failed', delivery_error: String(error.message || error).slice(0, 1000), updated_at: new Date().toISOString() }).eq('id', queued.id);
+    throw error;
+  }
+}
+
+async function sendCustomClientEmail({ staffUserId, clientId, roundId = null, templateId = null, subject, bodyText }) {
+  const cleanSubject = String(subject || '').trim();
+  const cleanBody = String(bodyText || '').trim();
+  if (!cleanSubject || cleanSubject.length > 180) throw new Error('Subject is required and must be 180 characters or fewer.');
+  if (!cleanBody || cleanBody.length > 10000) throw new Error('Message is required and must be 10,000 characters or fewer.');
+  const db = dbClient();
+  const { data: client, error } = await db.from('clients').select('id,user_id,name,email').eq('id', clientId).single();
+  if (error || !client?.email) throw new Error('Client email could not be resolved.');
+  if (roundId) {
+    const { data: round, error: roundError } = await db.from('dispute_rounds').select('id,client_id,user_id').eq('id', roundId).single();
+    if (roundError || !round || round.client_id !== client.id || round.user_id !== client.user_id) {
+      throw new Error('The selected round does not belong to this client.');
+    }
+  }
+  if (templateId) {
+    const { data: template, error: templateError } = await db.from('client_email_templates').select('id,user_id').eq('id', templateId).single();
+    if (templateError || !template || template.user_id !== client.user_id) throw new Error('The selected email template is not available for this client.');
+  }
+  const idempotencyKey = `ccc-custom-${crypto.randomUUID()}`;
+  const bodyHtml = plainTextHtml(cleanBody, 'A Note From Your Team');
+  const { data: row, error: insertError } = await db.from('client_emails').insert({ user_id: client.user_id, client_id: client.id, round_id: roundId, template_id: templateId, sent_by: staffUserId, event_type: templateId ? 'canned' : 'custom', subject: cleanSubject, body_html: bodyHtml, body_text: cleanBody, idempotency_key: idempotencyKey }).select('*').single();
+  if (insertError) throw insertError;
+  try {
+    const resendId = await sendEmail({ to: client.email, subject: cleanSubject, html: bodyHtml, text: cleanBody, idempotencyKey, tags: { client_email_id: row.id } });
+    await db.from('client_emails').update({ send_status: 'sent', attempts: 1, resend_email_id: resendId, last_attempt_at: new Date().toISOString(), sent_at: new Date().toISOString() }).eq('id', row.id);
+    return { id: row.id, resendId };
+  } catch (sendError) {
+    await db.from('client_emails').update({ send_status: 'failed', attempts: 1, delivery_error: String(sendError.message || sendError).slice(0, 1000), last_attempt_at: new Date().toISOString() }).eq('id', row.id);
+    throw sendError;
+  }
+}
+
+async function sendQueuedClientEmails(limit = 25) {
+  const db = dbClient();
+  const staleBefore = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const { error: staleError } = await db.from('client_emails').update({ send_status: 'failed', delivery_error: 'Recovered a stale sending attempt.', updated_at: new Date().toISOString() })
+    .eq('send_status', 'sending').lt('last_attempt_at', staleBefore);
+  if (staleError) throw staleError;
+  const { data: rows, error } = await db.from('client_emails').select('id,client_id,subject,body_html,body_text,idempotency_key,attempts')
+    .in('send_status', ['queued', 'failed']).lt('attempts', 5).order('created_at').limit(Math.max(1, Math.min(Number(limit) || 25, 100)));
+  if (error) throw error;
+  if (!rows?.length) return { processed: 0, sent: 0 };
+  const clientIds = [...new Set(rows.map((row) => row.client_id))];
+  const { data: clients, error: clientError } = await db.from('clients').select('id,email').in('id', clientIds);
+  if (clientError) throw clientError;
+  const emails = new Map((clients || []).map((client) => [client.id, client.email]));
+  let sent = 0;
+  for (const row of rows) {
+    const recipient = emails.get(row.client_id);
+    const attempts = Number(row.attempts || 0) + 1;
+    if (!recipient) {
+      await db.from('client_emails').update({ send_status: 'failed', attempts, delivery_error: 'Client email address is unavailable.', last_attempt_at: new Date().toISOString() }).eq('id', row.id);
+      continue;
+    }
+    await db.from('client_emails').update({ send_status: 'sending', attempts, last_attempt_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', row.id);
+    try {
+      const resendId = await sendEmail({ to: recipient, subject: row.subject, html: row.body_html, text: row.body_text, idempotencyKey: row.idempotency_key, tags: { client_email_id: row.id } });
+      await db.from('client_emails').update({ send_status: 'sent', resend_email_id: resendId, delivery_error: null, sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', row.id);
+      sent += 1;
+    } catch (sendError) {
+      await db.from('client_emails').update({ send_status: 'failed', delivery_error: String(sendError.message || sendError).slice(0, 1000), updated_at: new Date().toISOString() }).eq('id', row.id);
+    }
+  }
+  return { processed: rows.length, sent };
+}
+
+module.exports = { EVENT_COPY, plainTextHtml, queueRoundEvent, sendCustomClientEmail, sendQueuedClientEmails };

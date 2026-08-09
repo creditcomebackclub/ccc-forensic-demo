@@ -53,3 +53,33 @@ export const BUREAU_FOLLOW_UP_ENCLOSURE_RULES = `FOLLOW-UP ENCLOSURES (EXACT —
 - Enclosures line must list exactly: "Exhibit A: Prior Phase 3 CRA Dispute Letter (dated [date]); Exhibit B: [Bureau] Investigation Results (dated [date]); Exhibit C: Limited Power of Attorney."
 - Do not list the original Phase 1 letter, furnisher response, credit-report excerpts, ID, proof of address, or any other enclosure.
 - The body may refer only to Exhibit A (prior Phase 3) and Exhibit B (bureau response). Exhibit C is authority to act, not factual evidence.`;
+
+// Unified generator contract for every bureau-targeted round. This preserves
+// the forensic/legal rules that historically lived inside phase2Prompt.js,
+// while response analysis itself remains classification-only.
+export const BUREAU_ROUND_LETTER_RULES = `CRA DISPUTE LETTER CONTRACT:
+- Address the selected CRA directly. Never write "To Whom It May Concern."
+- RE line: "RE: Formal Dispute and Demand for Reinvestigation — 15 U.S.C. §1681i | Furnisher: [NAME] | Account No. [MASKED]".
+- Separate duties precisely: the CRA must reasonably reinvestigate under §1681i(a)(1)(A) and notify the furnisher under §1681i(a)(2); only after that notice do the furnisher's independent §1681s-2(b) duties attach.
+- Rebuild every supported Metro 2 inaccuracy. For each issue, identify what is reported, why the evidence disputes it, what the prior response did or did not address, and the exact correction or deletion required.
+- Correct or omit any unsupported premise in a prior letter or analysis. Never repeat it merely because it appears in an exhibit.
+- Johnson v. MBNA describes the furnisher's investigation after CRA notice; never describe it as the CRA's own reinvestigation standard.
+- Demand deletion or modification of information that cannot be verified after a reasonable reinvestigation under §1681i(a)(5)(A).
+- Request the statutory procedure description under §1681i(a)(6)(B)(iii) and (a)(7). Do not claim the CRA must produce a UDF, source records, or transaction-level records.
+- Apply the XB/Compliance Condition Code demand only for a debt purchaser, collection agency, or debt collector and frame it under the §1692e(8) exception.
+- Never demand proof of state collection-agency licensure in a CRA dispute.
+- Demand completion within thirty days. Do not present a conditional fifteen-day extension as automatic.
+- Use the exact recipient:
+  - Equifax: Equifax Information Services LLC, P.O. Box 740256, Atlanta, GA 30374-0256
+  - Experian: Experian Information Solutions Inc., P.O. Box 4500, Allen, TX 75013
+  - TransUnion: TransUnion LLC, Consumer Dispute Center, P.O. Box 2000, Chester, PA 19016
+- Close with "Consumer — All Rights Reserved" and certified-mail notation. No CCC branding, pleasantries, goodwill requests, emotional language, or invented facts.
+- Output a complete concise HTML document without CSS or inline styles. Use the established CCC letter classes so server CSS injection and citation lint remain authoritative.
+
+${PHASE3_STATUTE_CITATION_RULES}
+
+${PHASE3_METRO2_FIELD_RULES}
+
+${PHASE3_SUBSTANTIVE_RULES}
+
+${PHASE3_XB_DEMAND_RULES}`;

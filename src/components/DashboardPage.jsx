@@ -1,17 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, TrendingUp, Clock, Zap, Star, Activity, FileText, Mail, ChevronRight, Upload, CheckCircle, X, BarChart2, Award, Target, Timer, Users, Table2 } from 'lucide-react';
 import { listClientSummaries, updateLetter } from '../utils/storage';
+import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_HOURS = 24;
 const STD_RESPONSE_DAYS = 3;
-// 15 U.S.C. §1681i(a) & (e): before a CFPB complaint about a credit
-// reporting agency's investigation, the consumer must have disputed
-// directly with the CRA AND either 45 days must have passed or the
-// dispute is no longer pending. Phase 3 letters are CRA-directed, so their
-// own escalation-readiness clock needs 45 days, not the 30 used for Phase 1
-// (furnisher-directed — no such statutory prerequisite applies there).
-const CRA_WINDOW_DAYS = 45;
 // The dashboard refreshes automatically, so it must never retrieve the full
 // historical CRM payload every minute. This is a deliberately bounded
 // "most recently active" working set. The UI calls out when the business has
@@ -63,17 +57,15 @@ function fmtTime(iso) {
   } catch (e) { return iso; }
 }
 
-function letterStatus(l, windowDays = WINDOW_DAYS) {
-  if (l.responseOutcome === 'deleted') return { code: 'deleted', tone: 'green' };
-  if (l.responseOutcome === 'received') return { code: 'received', tone: 'green' };
-  if (l.responseOutcome === 'no_response') return { code: 'no_response', tone: 'red' };
-  if (!l.mailedDate) return { code: 'not_mailed', tone: 'neutral' };
-  if (!l.deliveredAt) return { code: 'in_transit', tone: 'neutral' };
-  const clockStart = l.deliveredAt.slice(0, 10);
-  const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = windowDays - elapsed;
-  if (remaining > 0) return { code: 'awaiting', remaining, tone: 'amber' };
-  return { code: 'window_closed', tone: 'red' };
+function letterStatus(l) {
+  const status = responseWindowStatus(l);
+  if (status.code === 'draft') return { ...status, code: 'not_mailed', tone: 'neutral' };
+  if (status.code === 'due_soon') return { ...status, code: 'awaiting', remaining: status.daysRemaining, tone: 'amber' };
+  if (status.code === 'awaiting') return { ...status, remaining: status.daysRemaining, tone: 'amber' };
+  if (status.code === 'window_closed') return { ...status, tone: 'red' };
+  if (status.code === 'no_response') return { ...status, tone: 'red' };
+  if (status.code === 'received' || status.code === 'deleted') return { ...status, tone: 'green' };
+  return { ...status, tone: 'neutral' };
 }
 
 function computeDashboard(clients) {
@@ -117,7 +109,8 @@ function computeDashboard(clients) {
     const letters = c.letters || [];
     const audits = c.audits || [];
 
-    const hasActiveLetters = letters.some((l) => !l.phase?.startsWith('Phase 3'));
+    const hasActiveLetters = (c.rounds || []).some((round) => round.status === 'open')
+      || letters.some((l) => !l.roundId && !l.phase?.startsWith('Phase 3'));
     if (hasActiveLetters) active++;
 
     for (const l of letters) {
@@ -141,6 +134,41 @@ function computeDashboard(clients) {
         }
       }
 
+      if (l.roundId) {
+        if (l.targetType === 'bureau') phase3++;
+        funnel.generated++;
+        if (l.mailedDate) funnel.mailed++;
+        if (l.responseOutcome === 'received' || l.responseOutcome === 'deleted') funnel.responded++;
+        if (l.responseOutcome === 'deleted') funnel.deleted++;
+
+        const structuredStatus = letterStatus(l);
+        if (structuredStatus.code === 'awaiting') {
+          awaiting++;
+          windowCountdown.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, remaining: structuredStatus.remaining, mailedDate: l.mailedDate });
+        }
+        const notReviewed = !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed';
+        if (notReviewed && ['received', 'no_response', 'window_closed'].includes(structuredStatus.code)) {
+          escalate++;
+          actions.push({
+            type: structuredStatus.code === 'received' ? 'review_round' : 'review_window',
+            priority: c.isVip ? 0 : 1,
+            client: c.name,
+            clientId: c.id,
+            furnisher: l.furnisher,
+            isVip: c.isVip,
+            label: structuredStatus.code === 'received' ? 'Response received — forensic review due' : 'Response window closed — staff review due',
+            tone: structuredStatus.code === 'received' ? 'amber' : 'red',
+            savedAt: l.responseDate || l.savedAt,
+            filter: 'received',
+            letter: l,
+          });
+        } else if (l.roundNextAction === 'needs_documents') {
+          actions.push({ type: 'documents', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'Documents requested — round paused', tone: 'amber', savedAt: l.roundReviewedAt || l.savedAt, filter: 'attention', letter: l });
+        }
+        recentActivity.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, phase: `Round ${l.roundNumber} · ${l.targetType === 'bureau' ? 'Credit Bureau' : 'Direct Furnisher'} Dispute`, savedAt: l.savedAt, type: l.responseOutcome === 'deleted' ? 'deletion' : 'letter', auditorName: l.auditorName });
+        continue;
+      }
+
       // Phase 4 letters don't exist yet (no generation flow built), but this
       // guard is here from day one so Phase 4 rows are never miscounted as
       // still-open Phase 3 once they do.
@@ -161,21 +189,16 @@ function computeDashboard(clients) {
         // queue even after staff had selected follow-up, documents, closure,
         // or escalation.
         const hasBureauDecision = l.bureauReviewStatus && l.bureauReviewStatus !== 'not_reviewed';
-        if (!hasBureauDecision) {
-          // CRA_WINDOW_DAYS (45), not WINDOW_DAYS (30) — see the constant's
-          // comment. A bureau that already responded has no waiting period
-          // left (§1681i(a)'s "or the dispute is no longer pending" branch),
-          // so 'received' is immediately actionable, just for human review
-          // of adequacy rather than an automatic escalation.
-          const st3 = letterStatus(l, CRA_WINDOW_DAYS);
-          if (st3.code === 'window_closed' || st3.code === 'no_response') {
-            readyForPhase4++;
-            actions.push({
-              type: 'escalate_phase4', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip,
-              label: st3.code === 'no_response' ? 'Bureau confirmed no response — ready for CFPB/AG' : '45-day CRA window closed — ready for CFPB/AG',
-              tone: 'red', savedAt: l.savedAt, filter: 'phase4', letter: l,
-            });
-          } else if (st3.code === 'received') {
+        if (l.bureauNextAction === 'escalation') {
+          readyForPhase4++;
+          actions.push({
+            type: 'escalate_phase4', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip,
+            label: 'Staff approved CFPB / State AG escalation',
+            tone: 'red', savedAt: l.savedAt, filter: 'phase4', letter: l,
+          });
+        } else if (!hasBureauDecision) {
+          const st3 = letterStatus(l);
+          if (st3.code === 'received') {
             actions.push({
               type: l.bureauResponseStatus === 'review_ready' ? 'review_bureau' : 'analyze_bureau',
               priority: c.isVip ? 0 : 1,
@@ -191,6 +214,9 @@ function computeDashboard(clients) {
               filter: 'phase4',
               letter: l,
             });
+          } else if (st3.code === 'window_closed' || st3.code === 'no_response') {
+            escalate++;
+            actions.push({ type: 'review_bureau', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'Bureau response window closed — staff review due', tone: 'red', savedAt: l.savedAt, filter: 'phase3', letter: l });
           }
         }
         continue;
@@ -215,12 +241,12 @@ function computeDashboard(clients) {
 
       if (st.code === 'window_closed' && !hasPhase3) {
         escalate++;
-        const item = { type: 'escalate', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'Window closed — ready to escalate', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
+        const item = { type: 'review_window', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'Window closed — staff review due', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
         actions.push(item);
       }
 
       if (st.code === 'no_response' && !hasPhase3) {
-        const item = { type: 'no_response', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'No response — generate Phase 3', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
+        const item = { type: 'no_response', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'No response — document and review', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
         actions.push(item);
       }
 
@@ -228,7 +254,7 @@ function computeDashboard(clients) {
         const deadline = c.isVip ? VIP_RESPONSE_HOURS : STD_RESPONSE_DAYS * 24;
         const hoursLeft = deadline - hoursSince(l.responseDate || l.savedAt);
         if (hoursLeft < deadline) {
-          const label = hoursLeft <= 0 ? 'Phase 3 overdue' : (c.isVip ? Math.max(0, Math.round(hoursLeft)) + 'h to respond (VIP)' : Math.ceil(hoursLeft / 24) + 'd to respond');
+          const label = hoursLeft <= 0 ? 'Response review overdue' : (c.isVip ? Math.max(0, Math.round(hoursLeft)) + 'h to review (VIP)' : Math.ceil(hoursLeft / 24) + 'd to review');
           const tone = hoursLeft <= 0 ? 'red' : c.isVip ? 'red' : 'amber';
           const item = { type: 'respond', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label, tone, savedAt: l.responseDate || l.savedAt, filter: 'received', letter: l };
           actions.push(item);
@@ -236,6 +262,14 @@ function computeDashboard(clients) {
       }
 
       recentActivity.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, phase: l.phase, savedAt: l.savedAt, type: 'letter', auditorName: l.auditorName });
+    }
+
+    for (const round of c.rounds || []) {
+      if (round.status !== 'closed' || round.final_disposition !== 'escalate') continue;
+      const roundLetter = letters.find((letter) => letter.roundId === round.round_id);
+      if (!roundLetter) continue;
+      readyForPhase4++;
+      actions.push({ type: 'escalate_phase4', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: roundLetter.furnisher, isVip: c.isVip, label: `Round ${round.round_number} — escalation approved by staff`, tone: 'red', savedAt: round.closed_at || roundLetter.savedAt, filter: 'phase4', letter: roundLetter });
     }
 
     for (const a of audits) {
@@ -446,7 +480,7 @@ function FunnelChart({ funnel }) {
               );
             })}
           </div>
-          <div style={{ fontSize: 10, color: T.faint, marginTop: 12 }}>Phase 1–2 letters · % shows conversion from the previous stage</div>
+          <div style={{ fontSize: 10, color: T.faint, marginTop: 12 }}>Dispute letters · % shows conversion from the previous stage</div>
         </div>
       )}
     </Card>
@@ -620,7 +654,7 @@ function QuickActionPanel({ action, onDone, onCancel, onNavigate }) {
       )}
       {mode === null && (
         <div className="flex items-center gap-2 flex-wrap">
-          {(action.type === 'escalate' || action.type === 'no_response' || action.type === 'escalate_phase4' || action.type === 'analyze_bureau' || action.type === 'review_bureau') && (
+          {(action.type === 'escalate' || action.type === 'no_response' || action.type === 'escalate_phase4' || action.type === 'analyze_bureau' || action.type === 'review_bureau' || action.type === 'review_round' || action.type === 'review_window' || action.type === 'documents') && (
             <button
               onClick={() => onNavigate('clients', { jumpTo: action.clientId || action.client })}
               className="text-[11px] uppercase tracking-wider text-navy hover:text-gold"
@@ -736,9 +770,9 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={Activity} label="Active campaigns" value={dash.active} sub="accounts in dispute" tone="navy" clickable={dash.active > 0} onClick={() => handleStatClick('active')} />
         <StatTile icon={Clock} label="Awaiting response" value={dash.awaiting} sub={WINDOW_DAYS + '-day windows open'} tone={dash.awaiting > 0 ? 'amber' : 'navy'} clickable={dash.awaiting > 0} onClick={() => handleStatClick('awaiting')} />
-        <StatTile icon={Zap} label="Ready to escalate" value={dash.escalate} sub="windows closed" tone={dash.escalate > 0 ? 'red' : 'navy'} clickable={dash.escalate > 0} onClick={() => handleStatClick('escalate')} />
-        <StatTile icon={TrendingUp} label="Phase 3 active" value={dash.phase3} sub="CRA letters sent" tone={dash.phase3 > 0 ? 'green' : 'navy'} clickable={dash.phase3 > 0} onClick={() => handleStatClick('phase3')} />
-        <StatTile icon={AlertCircle} label="Ready for CFPB/AG" value={dash.readyForPhase4} sub="Phase 3 exhausted" tone={dash.readyForPhase4 > 0 ? 'red' : 'navy'} clickable={dash.readyForPhase4 > 0} onClick={() => handleStatClick('phase4')} />
+        <StatTile icon={Zap} label="Response review due" value={dash.escalate} sub="received or window closed" tone={dash.escalate > 0 ? 'red' : 'navy'} clickable={dash.escalate > 0} onClick={() => handleStatClick('attention')} />
+        <StatTile icon={TrendingUp} label="Bureau disputes" value={dash.phase3} sub="structured and legacy letters" tone={dash.phase3 > 0 ? 'green' : 'navy'} clickable={dash.phase3 > 0} onClick={() => handleStatClick('phase3')} />
+        <StatTile icon={AlertCircle} label="Escalation approved" value={dash.readyForPhase4} sub="explicit staff disposition" tone={dash.readyForPhase4 > 0 ? 'red' : 'navy'} clickable={dash.readyForPhase4 > 0} onClick={() => handleStatClick('phase4')} />
       </div>
 
       {/* Results — what clients pay for */}
@@ -792,9 +826,9 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
             <Card title="VIP Clients" style={{ border: '1px solid ' + T.gold }}>
               <div className="space-y-0">
                 {dash.vipClients.map((c, i) => {
-                  const openLetters = c.letters.filter((l) => !l.phase?.startsWith('Phase 3'));
-                  const ripe = openLetters.filter((l) => letterStatus(l).code === 'window_closed').length;
-                  const needsPhase3 = openLetters.filter((l) => l.responseOutcome === 'received').length;
+                  const openLetters = c.letters.filter((l) => l.roundId || !l.phase?.startsWith('Phase 3'));
+                  const ripe = openLetters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')).length;
+                  const needsPhase3 = openLetters.filter((l) => l.responseOutcome === 'received' && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')).length;
                   return (
                     <div key={c.id || i} onClick={() => onNavigate('clients', { jumpTo: c.id || c.name })}
                       className="flex items-center justify-between py-2 border-b last:border-b-0 cursor-pointer hover:bg-amber-50 rounded px-1 transition-colors group"
@@ -804,8 +838,8 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
                         <div className="text-[12px] text-ink font-medium group-hover:text-navy">{c.name}</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {needsPhase3 > 0 && <Pill label="needs Phase 3" tone="amber" />}
-                        {ripe > 0 && <Pill label="escalate" tone="red" />}
+                        {needsPhase3 > 0 && <Pill label="response review" tone="amber" />}
+                        {ripe > 0 && <Pill label="window review" tone="red" />}
                         {!ripe && !needsPhase3 && <Pill label="on track" tone="green" />}
                         <ChevronRight size={11} strokeWidth={2} className="text-ink-faint group-hover:text-navy" />
                       </div>

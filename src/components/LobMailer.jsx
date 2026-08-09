@@ -13,7 +13,7 @@ import { listMailArtifacts } from '../utils/mailArtifacts';
 import { inferMediaType } from '../utils/responseFiles';
 import { supabase } from '../utils/supabase';
 import {
-  fetchLpoaHtml,
+  fetchLpoaHtmlForPrint,
   tempLetterAssetsPrefix,
   tempLetterPath,
 } from '../utils/storagePaths';
@@ -97,21 +97,20 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
   const idDoc = docs.find((d) => d.doc_type === 'id');
   const addressDoc = docs.find((d) => d.doc_type === 'address');
-  // "Other" documents (police reports, bank statements, anything uploaded
-  // via the Documents tab's free-text category) — staff opt in per-send,
-  // one letter's supporting evidence isn't necessarily relevant to another.
-  // Only offered for Phase 1 / initial Phase 3; bureau follow-up's exhibit
-  // set is a closed, server-validated contract (see followUpEnclosures.js)
-  // with no room for a 4th ad-hoc item.
-  const otherDocs = docs.filter((d) => d.doc_type && d.doc_type.startsWith('other-'));
+  const isBureauFollowUp = isPhase3FollowUpLetter(letter);
+  // Staff may add supporting records to any round. ID/address remain automatic
+  // in Round 1 and direct-furnisher packets, so they are offered here only
+  // when a later structured bureau round would not already include them.
+  const optionalDocs = docs.filter((doc) => doc.doc_type?.startsWith('other-')
+    || (letter.roundId && letter.targetType === 'bureau' && Number(letter.roundNumber) > 1 && ['id', 'address'].includes(doc.doc_type)));
   const toggleOtherDoc = (id) => {
     setSelectedOtherDocIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else if (next.size < 5) next.add(id);
       return next;
     });
   };
-  const isBureauFollowUp = isPhase3FollowUpLetter(letter);
   let followUpContractError = null;
   let followUpPlan = [];
   if (isBureauFollowUp) {
@@ -158,13 +157,17 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       setError('ENCLOSURE UNPARSED — MANUAL RECONCILIATION REQUIRED. This letter cannot be sent until the enclosure is re-uploaded and re-analyzed.');
       return;
     }
-    if (String(letter.phase || '').startsWith('Phase 3')
+    if ((letter.targetType === 'bureau' || String(letter.phase || '').startsWith('Phase 3'))
       && (!Array.isArray(letter.coveredFurnishers) || letter.coveredFurnishers.length === 0)) {
       setError('PHASE 3 COVERAGE MISSING — assign the specific furnisher(s) this bureau letter covers before mailing. Nothing was sent.');
       return;
     }
     if (isBureauFollowUp && followUpContractError) {
       setError(followUpContractError);
+      return;
+    }
+    if (letter.roundId && Number(letter.roundNumber) === 1 && (!idDoc || !addressDoc)) {
+      setError('Round 1 requires a government ID and proof of current address before mailing. Nothing was sent.');
       return;
     }
     setSending(true);
@@ -182,6 +185,8 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // the source HTML stays compact without omitting any evidence.
       const assetPrefix = tempLetterAssetsPrefix(user.id, batchId);
       let assetNumber = 0;
+      let optionalPageCount = 0;
+      const attachmentManifest = [];
       const uploadMailImage = async (blob) => {
         const contentType = ['image/jpeg', 'image/png', 'image/webp'].includes(blob.type) ? blob.type : 'image/jpeg';
         const extension = contentType === 'image/png' ? 'png' : (contentType === 'image/webp' ? 'webp' : 'jpg');
@@ -208,13 +213,17 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         reader.readAsDataURL(blob);
       });
 
-      const renderPdfBase64 = async (b64, heading) => {
+      const renderPdfBase64 = async (b64, heading, optional = false) => {
         const binary = atob(b64);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const pdfjsLib = await import('pdfjs-dist');
         pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
         const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+        if (optional) {
+          optionalPageCount += pdf.numPages;
+          if (optionalPageCount > 4) throw new Error('Optional supporting documents may contain at most 4 total pages.');
+        }
         let html = '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
           + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">' + heading + '</div>';
         for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -287,9 +296,32 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // etc.) — only whichever ones were checked in the Enclosures panel.
       const buildSelectedOtherDocPages = async () => {
         let pages = '';
-        for (const doc of otherDocs) {
+        for (const doc of optionalDocs) {
           if (!selectedOtherDocIds.has(doc.id)) continue;
-          pages += await buildDocumentEnclosure(doc, 'Enclosure — ' + (doc.label || doc.file_name));
+          const { data: blob, error: downloadError } = await supabase.storage.from('documents').download(doc.storage_path);
+          if (downloadError || !blob) throw downloadError || new Error('Could not read optional supporting document.');
+          if (blob.size > 5 * 1024 * 1024) throw new Error(`${doc.file_name} exceeds the 5 MB optional-document limit.`);
+          const heading = 'Enclosure — ' + (doc.label || doc.file_name);
+          const mediaType = inferMediaType(doc.file_name, blob.type);
+          let pageCount = 1;
+          if (mediaType === 'application/pdf') {
+            const pdfjsLib = await import('pdfjs-dist');
+            pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+            pageCount = pdf.numPages;
+            pages += await renderPdfBase64(await blobToBase64(blob), heading, true);
+          } else if (['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)) {
+            optionalPageCount += 1;
+            if (optionalPageCount > 4) throw new Error('Optional supporting documents may contain at most 4 total pages.');
+            const imageUrl = await uploadMailImage(blob);
+            pages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;filter:grayscale(100%);">'
+              + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">' + heading + '</div>'
+              + '<img src="' + imageUrl + '" style="max-width:100%;max-height:700px;" /></div>';
+          } else {
+            throw new Error(`${doc.file_name} must be a PDF, JPG, PNG, or WEBP file.`);
+          }
+          attachmentManifest.push({ document_id: doc.id, file_name: doc.file_name, storage_path: doc.storage_path, byte_size: blob.size, page_count: pageCount });
         }
         return pages;
       };
@@ -297,7 +329,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // Build enclosure pages — different for follow-up Phase 3, initial
       // Phase 3, and Phase 1.
       let enclosurePages = '';
-      const isPhase3 = letter.phase && letter.phase.startsWith('Phase 3');
+      const isPhase3 = letter.targetType === 'bureau' || (letter.phase && letter.phase.startsWith('Phase 3'));
       let followUpEnclosureManifest = null;
 
       if (isBureauFollowUp) {
@@ -345,7 +377,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           .limit(1);
         const { data: clientMeta, error: clientMetaError } = await clientMetaQuery;
         if (clientMetaError) throw clientMetaError;
-        const lpoaHtml = await fetchLpoaHtml(supabase, clientMeta?.[0]?.lpoa_signature_data);
+        const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data);
         if (!lpoaHtml) {
           throw new Error('FOLLOW-UP EXHIBIT C MISSING — this client has no signed Limited Power of Attorney. Nothing was sent.');
         }
@@ -367,6 +399,54 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           source_bureau_response_evidence_id: sources.sourceBureauResponseEvidenceId,
           response_storage_paths: relationship.paths,
         };
+        enclosurePages += await buildSelectedOtherDocPages();
+      } else if (isPhase3 && letter.roundId) {
+        // Adaptive rounds use the exact staff-selected source pairs. Never
+        // crawl the client's whole Phase 1 history to assemble a CRA packet.
+        const { data: links, error: linkError } = await supabase.from('letter_source_links')
+          .select('source_letter_id,response_evidence_id,source_order')
+          .eq('letter_id', letter.id)
+          .order('source_order');
+        if (linkError) throw linkError;
+        const sourceLetterIds = (links || []).map((link) => link.source_letter_id);
+        const evidenceIds = (links || []).map((link) => link.response_evidence_id).filter(Boolean);
+        const [{ data: sourceLetters, error: sourceError }, { data: evidenceRows, error: evidenceError }] = await Promise.all([
+          sourceLetterIds.length ? supabase.from('letters').select('id,html,furnisher,date,saved_at').in('id', sourceLetterIds) : { data: [], error: null },
+          evidenceIds.length ? supabase.from('response_evidence').select('id,letter_id,evidence_kind,storage_bucket,storage_paths,file_names,review_status,analysis_status').in('id', evidenceIds) : { data: [], error: null },
+        ]);
+        if (sourceError) throw sourceError;
+        if (evidenceError) throw evidenceError;
+        const sourceById = new Map((sourceLetters || []).map((source) => [source.id, source]));
+        const evidenceById = new Map((evidenceRows || []).map((record) => [record.id, record]));
+        for (const [index, link] of (links || []).entries()) {
+          const source = sourceById.get(link.source_letter_id);
+          const evidence = evidenceById.get(link.response_evidence_id);
+          if (!source?.html || !evidence || evidence.analysis_status !== 'analyzed' || evidence.review_status === 'not_reviewed') {
+            throw new Error('A selected prior letter/evidence pair is incomplete or no longer reviewed. Nothing was sent.');
+          }
+          enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
+            + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">EXHIBIT ' + String.fromCharCode(65 + index) + ' — Prior Reviewed Dispute (' + (source.furnisher || 'Account') + ')</div>'
+            + extractHtmlStyles(source.html) + extractHtmlBody(source.html) + '</div>';
+          const paths = Array.isArray(evidence.storage_paths) ? evidence.storage_paths : [];
+          const names = Array.isArray(evidence.file_names) ? evidence.file_names : [];
+          for (let fileIndex = 0; fileIndex < paths.length; fileIndex += 1) {
+            enclosurePages += await renderResponseFile(paths[fileIndex], names[fileIndex] || paths[fileIndex].split('/').pop(), 'Reviewed Response Evidence — ' + (source.furnisher || 'Account'));
+          }
+        }
+        const { data: clientMeta, error: clientMetaError } = await supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1);
+        if (clientMetaError) throw clientMetaError;
+        const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data);
+        if (!lpoaHtml) throw new Error('A signed Limited Power of Attorney is required for this bureau round. Nothing was sent.');
+        const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+        const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+        const lpoaBody = stripLpoaHeader(bodyMatch ? bodyMatch[1] : lpoaHtml);
+        if (!lpoaBody.trim()) throw new Error('The Limited Power of Attorney has no printable content. Nothing was sent.');
+        enclosurePages += '<div style="page-break-before:always;font-family:Arial,sans-serif;font-size:12px;">'
+          + (styleMatch ? '<style>' + styleMatch[1] + '</style>' : '')
+          + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Limited Power of Attorney</div>'
+          + lpoaBody + '</div>';
+        if (!(links || []).length) enclosurePages += await buildIdAddressPages();
+        enclosurePages += await buildSelectedOtherDocPages();
       } else if (isPhase3) {
         // Phase 3 enclosures: Exhibit A (Phase 1 letter(s)) + Exhibit B (furnisher response(s)) + LPOA
         // A single bureau letter can legitimately cover more than one
@@ -472,8 +552,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           const clientMetaQuery = letter.clientId
             ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
             : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
-          const { data: clientMeta } = await clientMetaQuery;
-          const lpoaHtml = await fetchLpoaHtml(supabase, clientMeta?.[0]?.lpoa_signature_data);
+          const { data: clientMeta, error: clientMetaError } = await clientMetaQuery;
+          if (clientMetaError) throw clientMetaError;
+          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data);
+          if (letter.roundId && !lpoaHtml) throw new Error('A signed Limited Power of Attorney is required for this dispute round. Nothing was sent.');
           if (lpoaHtml) {
             const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
             const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
@@ -509,7 +591,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
             : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
           const { data: clientMeta } = await clientMetaQuery;
-          const lpoaHtml = await fetchLpoaHtml(supabase, clientMeta?.[0]?.lpoa_signature_data);
+          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data);
           if (lpoaHtml) {
             const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
             const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
@@ -520,7 +602,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
               + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure 1 of ' + (idDoc ? (addressDoc ? '3' : '2') : '1') + ' — Limited Power of Attorney</div>'
               + lpoaBody + '</div>';
           }
-        } catch(e) { console.warn('Could not fetch LPOA:', e); }
+        } catch(e) {
+          if (letter.roundId) throw e;
+          console.warn('Could not fetch LPOA:', e);
+        }
 
         enclosurePages += await buildIdAddressPages();
         enclosurePages += await buildSelectedOtherDocPages();
@@ -567,6 +652,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         // timeout would otherwise create a second physical letter.
         metadata: { letter_id: String(letter.id) },
         enclosureManifest: followUpEnclosureManifest,
+        attachmentManifest,
       });
 
       // A duplicate response means Lob already accepted this exact durable
@@ -612,7 +698,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // inconsistency where a case-mismatched client could get this email
       // while other client_name-keyed reads (e.g. the portal) silently
       // returned nothing for them.
-      if (!res.duplicate) {
+      if (!res.duplicate && !letter.roundId) {
         try {
           // No name/ilike fallthrough when clientId is set — a miss means no email.
           const notifyCpQuery = letter.clientId
@@ -750,25 +836,20 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
                         ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Proof of Address — {addressDoc.file_name}</span></>
                         : <><AlertCircle size={12} strokeWidth={2} className="text-amber-500" /><span className="text-ink-muted">No proof of address — upload in client Documents section</span></>}
                     </div>
-                    {otherDocs.length > 0 && (
-                      <div className="pt-2 mt-2 border-t border-border">
-                        <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Supporting Documents</div>
-                        <div className="space-y-1">
-                          {otherDocs.map((doc) => (
-                            <label key={doc.id} className="flex items-center gap-2 text-[12px] cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={selectedOtherDocIds.has(doc.id)}
-                                onChange={() => toggleOtherDoc(doc.id)}
-                                className="accent-navy"
-                              />
-                              <span className="text-ink">{doc.label || doc.file_name}</span>
-                            </label>
-                          ))}
-                        </div>
-                        <div className="text-[10px] text-ink-faint mt-1">Checked documents are attached as additional enclosures with this mailing.</div>
-                      </div>
-                    )}
+                  </div>
+                )}
+                {optionalDocs.length > 0 && (
+                  <div className="pt-2 mt-2 border-t border-border">
+                    <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Optional Supporting Documents</div>
+                    <div className="space-y-1">
+                      {optionalDocs.map((doc) => (
+                        <label key={doc.id} className="flex items-center gap-2 text-[12px] cursor-pointer">
+                          <input type="checkbox" checked={selectedOtherDocIds.has(doc.id)} onChange={() => toggleOtherDoc(doc.id)} className="accent-navy" />
+                          <span className="text-ink">{doc.label || doc.file_name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="text-[10px] text-ink-faint mt-1">Up to 5 files, 5 MB each, and 4 optional pages total. Checked documents are hashed and snapshotted with this mailing.</div>
                   </div>
                 )}
               </div>

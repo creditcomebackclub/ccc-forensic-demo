@@ -177,6 +177,7 @@ async function sendEmail(opts) {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
+      ...(opts.idempotencyKey ? { 'Idempotency-Key': String(opts.idempotencyKey) } : {}),
     },
     body: JSON.stringify(body),
   });

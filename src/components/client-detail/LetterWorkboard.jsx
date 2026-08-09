@@ -18,6 +18,8 @@ export default function LetterWorkboard({
   onMailFilter,
   renderLetter,
   onOpenAccount,
+  rounds = [],
+  onStartRound,
 }) {
   const counts = countMailStatuses(letters);
   const filtered = letters.filter((l) => letterMatchesMailFilter(l, mailFilter));
@@ -70,7 +72,15 @@ export default function LetterWorkboard({
           No letters match this filter.
         </p>
       ) : (
-        groups.map(([furnisher, groupLetters]) => (
+        groups.map(([furnisher, groupLetters]) => {
+          const accountIds = new Set(groupLetters.map((letter) => letter.clientAccountId).filter(Boolean));
+          const groupRounds = rounds.filter((round) => accountIds.has(round.client_account_id)).sort((a, b) => Number(a.round_number) - Number(b.round_number));
+          const latestRound = groupRounds[groupRounds.length - 1];
+          const startLetter = latestRound
+            ? groupLetters.find((letter) => letter.clientAccountId === latestRound.client_account_id)
+            : groupLetters.find((letter) => letter.clientAccountId);
+          const mayStart = !!startLetter && (!latestRound || (latestRound.status === 'closed' && latestRound.final_disposition === 'next_round'));
+          return (
           <div
             key={furnisher}
             className="mb-3 bg-white overflow-visible"
@@ -94,11 +104,22 @@ export default function LetterWorkboard({
               </button>
               <span className="text-[10px]" style={{ color: T.faint }}>history →</span>
             </div>
+            {!!groupRounds.length && (
+              <div className="px-4 py-2.5 flex flex-wrap items-center gap-2" style={{ borderBottom: '1px solid ' + T.grid }}>
+                {groupRounds.map((round) => (
+                  <span key={round.round_id} className="text-[10px] px-2 py-1 rounded-full" style={{ border: '1px solid ' + T.border, color: T.muted, background: round.status === 'open' ? '#FFFBEB' : '#F8FAFC' }}>
+                    Round {round.round_number} · {round.target_type === 'bureau' ? 'Credit Bureau' : 'Direct Furnisher'} · {round.status}
+                  </span>
+                ))}
+                {mayStart && <button type="button" onClick={() => onStartRound?.(startLetter)} className="text-[10px] uppercase tracking-wider font-medium ml-auto" style={{ color: T.navy }}>Start next round</button>}
+              </div>
+            )}
             <div className="px-4 py-1">
               {groupLetters.map((l) => renderLetter(l))}
             </div>
           </div>
-        ))
+          );
+        })
       )}
     </div>
   );

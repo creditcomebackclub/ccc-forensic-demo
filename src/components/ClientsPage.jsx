@@ -12,6 +12,8 @@ import { hasInjectedSignature, injectSignatureImage } from '../utils/signatureIn
 import { supabase } from '../utils/supabase';
 import { archiveHistoricalMailpiece, getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
 import { resolveLpoaViewUrl } from '../utils/storagePaths';
+import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
+import { extendLetterDeadline } from '../utils/rounds.js';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
 import BureauResponseAnalyzer from './BureauResponseAnalyzer';
@@ -20,6 +22,8 @@ import EscalationPanel from './EscalationPanel';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
 import ClientBillingPanel from './ClientBillingPanel';
+import ClientEmailComposer from './ClientEmailComposer';
+import StartRoundPanel from './StartRoundPanel.jsx';
 import LobMailer from './LobMailer';
 import ClientCommandHeader from './client-detail/ClientCommandHeader';
 import ClientStatusRail from './client-detail/ClientStatusRail';
@@ -33,12 +37,6 @@ import {
   LIST_FILTER_TO_LETTER,
 } from './client-detail/clientDetailUtils';
 
-const WINDOW_DAYS = 30;
-// 15 U.S.C. §1681i(a)&(e): a CRA-directed CFPB complaint needs 45 days (or
-// a no-longer-pending dispute), not the 30 used for Phase 1 — see
-// DashboardPage.jsx's identical constant and the ccc-phase4-cfpb-filing-
-// rules memory this is built from.
-const CRA_WINDOW_DAYS = 45;
 const VIP_RESPONSE_DAYS = 1;
 const STD_RESPONSE_DAYS = 3;
 const CLIENT_PAGE_SIZE = 50;
@@ -102,16 +100,15 @@ function hoursBetween(aIso, bIso) {
   return Math.round((new Date(bIso) - new Date(aIso)) / 3600000);
 }
 
-function letterStatus(l, windowDays = WINDOW_DAYS) {
-  if (l.responseOutcome === 'received') return { code: 'received', label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
-  if (l.responseOutcome === 'no_response') return { code: 'no_response', label: 'No response confirmed', tone: 'red' };
-  if (!l.mailedDate) return { code: 'not_mailed', label: 'Not mailed', tone: 'neutral' };
-  if (!l.deliveredAt) return { code: 'in_transit', label: 'In Transit', tone: 'neutral' };
-  const clockStart = l.deliveredAt.slice(0, 10);
-  const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = windowDays - elapsed;
-  if (remaining > 0) return { code: 'awaiting', label: 'Awaiting · ' + remaining + 'd left', tone: 'amber' };
-  return { code: 'window_closed', label: 'Window elapsed · ready to escalate', tone: 'red' };
+function letterStatus(l) {
+  const status = responseWindowStatus(l);
+  if (status.code === 'received') return { ...status, label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
+  if (status.code === 'no_response') return { ...status, label: 'No response confirmed', tone: 'red' };
+  if (status.code === 'deleted') return { ...status, tone: 'green' };
+  if (status.code === 'draft') return { ...status, code: 'not_mailed', label: 'Not mailed', tone: 'neutral' };
+  if (status.code === 'in_transit') return { ...status, label: 'In Transit', tone: 'neutral' };
+  if (status.code === 'awaiting' || status.code === 'due_soon') return { ...status, code: 'awaiting', remaining: status.daysRemaining, label: 'Awaiting · ' + status.daysRemaining + 'd left', tone: 'amber' };
+  return { ...status, code: 'window_closed', label: 'Window elapsed · review required', tone: 'red' };
 }
 
 function importDueInfo(c) {
@@ -130,40 +127,33 @@ function importDueInfo(c) {
 
 function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
   if (!filter) return true;
-  const openLetters = (c.letters || []).filter((l) => !l.phase?.startsWith('Phase 3'));
+  const openLetters = (c.letters || []).filter((l) => l.roundId || !l.phase?.startsWith('Phase 3'));
   const lifecycle = c.billingStatus || 'Active';
   switch (filter) {
     case 'active':
-      // Open Phase 1/2 mail still in play — not CRM "status=active"
-      return openLetters.length > 0 && lifecycle !== 'Graduated' && lifecycle !== 'Inactive';
+      return ((c.rounds || []).some((round) => round.status === 'open') || openLetters.some((letter) => !letter.roundId))
+        && lifecycle !== 'Graduated' && lifecycle !== 'Inactive';
     case 'awaiting':
       return openLetters.some((l) => letterStatus(l).code === 'awaiting');
     case 'escalate':
-      return openLetters.some((l) => {
-        const st = letterStatus(l);
-        const hasPhase3 = (c.letters || []).some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher);
-        return (st.code === 'window_closed' || st.code === 'no_response') && !hasPhase3;
-      });
+      return (c.rounds || []).some((round) => round.status === 'closed' && round.final_disposition === 'escalate')
+        || (c.letters || []).some((letter) => !letter.roundId && letter.bureauNextAction === 'escalation');
     case 'ready':
-      // Phase 2 Ready — response received, still on Phase 1/2 letter
-      return openLetters.some((l) => letterStatus(l).code === 'received');
+      return openLetters.some((l) => letterStatus(l).code === 'received' && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed'));
     case 'phase3':
-      return (c.letters || []).some((l) => l.phase?.startsWith('Phase 3'));
+      return (c.letters || []).some((l) => l.targetType === 'bureau' || l.phase?.startsWith('Phase 3'));
     case 'phase4':
-      return (c.letters || []).some((l) => {
-        if (!l.phase?.startsWith('Phase 3')) return false;
-        const st3 = letterStatus(l, CRA_WINDOW_DAYS);
-        const hasBureauDecision = l.bureauReviewStatus && l.bureauReviewStatus !== 'not_reviewed';
-        return !hasBureauDecision && (st3.code === 'window_closed' || st3.code === 'no_response');
-      });
+      return (c.rounds || []).some((round) => round.status === 'closed' && round.final_disposition === 'escalate')
+        || (c.letters || []).some((letter) => !letter.roundId && letter.bureauNextAction === 'escalation');
     case 'received':
-      // Needs Phase 3 — response logged, no Phase 3 letter for that furnisher yet
       return openLetters.some((l) => {
         if (l.responseOutcome !== 'received') return false;
+        if (l.roundId) return !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed';
         return !(c.letters || []).some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
       });
     case 'attention':
       return (
+        openLetters.some((letter) => ['window_closed', 'no_response'].includes(letterStatus(letter).code) && (!letter.roundId || !letter.roundReviewStatus || letter.roundReviewStatus === 'not_reviewed')) ||
         clientMatchesFilter(c, 'escalate', unanalyzedNames, unanalyzedClientIds) ||
         clientMatchesFilter(c, 'ready', unanalyzedNames, unanalyzedClientIds) ||
         clientMatchesFilter(c, 'received', unanalyzedNames, unanalyzedClientIds) ||
@@ -190,13 +180,13 @@ function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
 const FILTER_LABELS = {
   active: 'Active Campaigns',
   awaiting: 'Awaiting Response',
-  escalate: 'Ready to Escalate',
-  ready: 'Phase 2 Ready',
+  escalate: 'Escalation Approved',
+  ready: 'Responses to Analyze',
   attention: 'Needs Attention',
   completed: 'Completed',
-  phase3: 'Phase 3 Active',
-  phase4: 'Ready for CFPB/AG',
-  received: 'Needs Phase 3',
+  phase3: 'Bureau Disputes',
+  phase4: 'Escalation Approved',
+  received: 'Needs Response Review',
   noemail: 'No Email',
   vip: 'VIP',
   unanalyzed: 'Needs Analysis',
@@ -244,8 +234,8 @@ function primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
   const clientUploaded = c.letters.some(l => l.responseOutcome === 'received' && (l.responseFileUrl || l.hasResponseFile));
   if (clientUploaded) return { label: 'Response Uploaded', tone: 'green' };
 
-  if (ripe > 0) return { label: ripe + ' to escalate', tone: 'red' };
-  if (needsPhase3 > 0) return { label: needsPhase3 + ' need Phase 3', tone: 'amber' };
+  if (ripe > 0) return { label: ripe + ' need review', tone: 'red' };
+  if (needsPhase3 > 0) return { label: needsPhase3 + ' need response review', tone: 'amber' };
   
   const importDue = importDueInfo(c);
   if (importDue && importDue.code === 'due') return importDue;
@@ -352,10 +342,10 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
-  const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
+  const isPhase3 = l.targetType === 'bureau' || (l.phase && l.phase.startsWith('Phase 3'));
   // Phase 3's own escalation-readiness uses the 45-day CRA clock, not the
   // 30-day one — same reasoning as DashboardPage.jsx's identical gate.
-  const status3 = isPhase3 ? letterStatus(l, CRA_WINDOW_DAYS) : null;
+  const status3 = isPhase3 ? letterStatus(l) : null;
 
   const urgency = (() => {
     if (hasPhase3) return null;
@@ -385,6 +375,18 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
       await deleteLetter(l.id);
       onChange();
     } catch (e) { toast.error('Could not delete: ' + (e.message || e)); }
+  };
+
+  const handleExtendDeadline = async () => {
+    const reason = window.prompt('Document the reason for this one-time 15-day extension:');
+    if (!reason?.trim()) return;
+    try {
+      await extendLetterDeadline(l.id, reason.trim());
+      toast.success('Response deadline extended by 15 days.');
+      onChange();
+    } catch (e) {
+      toast.error('Could not extend deadline: ' + (e.message || e));
+    }
   };
 
   const canAnalyze = !isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response');
@@ -437,9 +439,11 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     },
     l.mailedDate && !l.responseOutcome && { label: 'Log response…', onClick: () => { setDateVal(todayISO()); setMode('responding'); } },
     l.mailedDate && !l.responseOutcome && { label: 'Mark no response', onClick: () => save({ responseOutcome: 'no_response' }) },
+    l.roundId && l.deliveredAt && !l.responseOutcome && !l.responseWindowExtensionDays && { label: 'Extend response window +15 days…', onClick: handleExtendDeadline },
     isPhase3 && l.responseOutcome === 'received' && { label: 'Analyze bureau response…', onClick: () => onAnalyzeBureau(l) },
     isPhase3 && l.responseOutcome && { label: 'Review bureau response…', onClick: () => onReviewBureau(l) },
-    isPhase3 && needsBureauReview && { label: 'Prepare CFPB / State AG escalation…', onClick: () => onEscalate(l) },
+    isPhase3 && !l.roundId && needsBureauReview && { label: 'Prepare CFPB / State AG escalation…', onClick: () => onEscalate(l) },
+    l.roundId && l.roundNextAction === 'escalate' && { label: 'Open approved CFPB / State AG escalation…', onClick: () => onEscalate(l) },
     l.mailedDate && { label: 'Edit mail date…', onClick: () => { setDateVal(l.mailedDate); setMode('mailing'); } },
     l.responseOutcome && { label: 'Reset response', onClick: () => save({ responseOutcome: null, responseDate: null }) },
     'divider',
@@ -639,6 +643,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   }, [search]);
   const [refreshing, setRefreshing] = useState(false);
   const [editingEmail, setEditingEmail] = useState(null);
+  const [emailingClient, setEmailingClient] = useState(null);
+  const [startingRound, setStartingRound] = useState(null);
   const [activeTab, setActiveTab] = useState({});
   const [letterMailFilter, setLetterMailFilter] = useState('all');
   const [phaseProgressRows, setPhaseProgressRows] = useState([]);
@@ -961,10 +967,12 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     }
     const c = selectedClient;
     
-    const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
+    const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')).length;
     const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
     const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;
-    const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))).length;
+    const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
+      ? (!l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')
+      : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;
     const auditors = isAdmin ? [...new Set([
       ...c.audits.map((a) => a.auditorName),
       ...c.letters.map((l) => l.auditorName),
@@ -973,6 +981,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     const hasLpoa = !!(c.lpoaSignatureData && (c.lpoaSignatureData.lpoaPath || c.lpoaSignatureData.lpoaUrl));
     
     const clientMenu = [
+      { label: 'Email client…', onClick: () => setEmailingClient(c) },
       { label: 'Edit email', onClick: () => { setEditingEmail(c.id); setEmailVal(c.email || ''); } },
       'divider',
       { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
@@ -1022,6 +1031,18 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       setAccountTimeline({ accountId: letter.accountId, furnisher: letter.furnisher, letters: clientLetters, accountData, clientName: c.name });
     };
 
+    const startRoundFromLetter = (letter) => {
+      const latestAudit = [...c.audits].sort((a, b) => (b.savedAt || b.reportDate || '').localeCompare(a.savedAt || a.reportDate || ''))[0];
+      const accounts = latestAudit?.audit?.accounts || [];
+      const account = accounts.find((item) => item.clientAccountId && item.clientAccountId === letter.clientAccountId)
+        || accounts.find((item) => item.id === letter.accountId);
+      if (!account?.clientAccountId) {
+        toast.error('This account is not linked to the latest audit. Reconcile it before starting another round.');
+        return;
+      }
+      setStartingRound({ account, client: c });
+    };
+
     const renderLetter = (l) => (
       <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
         hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
@@ -1054,17 +1075,15 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               {togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP' : 'Set as VIP')}
             </button>
           }
+          emailButton={<button type="button" onClick={() => setEmailingClient(c)} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md" style={{ border: '1px solid rgba(255,255,255,0.18)', color: '#F7F4ED', background: 'rgba(255,255,255,0.06)' }}>Email client</button>}
           menu={<Menu items={clientMenu} dark />}
         >
           <ClientStatusRail
             letters={c.letters || []}
-            campaignSummary={campaignSummary}
+            rounds={c.rounds || []}
             mailFilter={letterMailFilter}
             onMailFilter={goLettersWithFilter}
-            onCampaignClick={() => {
-              if (c.audits.length >= 2) runCompare();
-              else goTab('Overview');
-            }}
+            onRoundsClick={() => goTab('Letters')}
           />
         </ClientCommandHeader>
 
@@ -1134,6 +1153,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             onMailFilter={setLetterMailFilter}
             renderLetter={renderLetter}
             onOpenAccount={openAccount}
+            rounds={c.rounds || []}
+            onStartRound={startRoundFromLetter}
           />
         )}
 
@@ -1154,7 +1175,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           return (
             <LobMailer
               letter={currentLetter}
-              furnisherAddress={currentLetter ? ((currentLetter.phase && currentLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+              furnisherAddress={currentLetter ? ((currentLetter.targetType === 'bureau' || (currentLetter.phase && currentLetter.phase.startsWith('Phase 3'))) ? parseBureauAddress(currentLetter.targetBureau || currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
               batchRemaining={lobMailerQueue.length - 1}
               onNext={() => setLobMailerQueue(prev => prev.slice(1))}
               onClose={() => setLobMailerQueue([])}
@@ -1178,6 +1199,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             onSaved={() => { setAnalyzingLetter(null); refreshSelectedClient(); if (onLeadsChanged) onLeadsChanged(); }}
           />
         )}
+        {emailingClient && <ClientEmailComposer client={emailingClient} onClose={() => setEmailingClient(null)} onSent={() => toast.success('Client email sent')} />}
         {analyzingBureauLetter && (
           <BureauResponseAnalyzer
             letter={analyzingBureauLetter.letter}
@@ -1230,6 +1252,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             onSaved={refreshSelectedClient}
           />
         )}
+        {startingRound && <StartRoundPanel account={startingRound.account} client={startingRound.client} onClose={() => { setStartingRound(null); refreshSelectedClient(); }} />}
         <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />
         <LetterEditModal letter={editingLetterHtml} onClose={() => setEditingLetterHtml(null)} onSaved={refreshSelectedClient} />
         <DiffResultModal result={diffResult} onClose={() => setDiffResult(null)} onOpenAudit={onOpenAudit} />
@@ -1282,10 +1305,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const filterChips = viewTab === 'clients'
     ? [
         { key: null, label: 'All', count: activeClients.length },
-        { key: 'ready', label: 'Phase 2 Ready', count: activeClients.filter((c) => clientMatchesFilter(c, 'ready')).length },
+        { key: 'ready', label: 'Responses to Analyze', count: activeClients.filter((c) => clientMatchesFilter(c, 'ready')).length },
         { key: 'awaiting', label: 'Awaiting', count: activeClients.filter((c) => clientMatchesFilter(c, 'awaiting')).length },
         { key: 'escalate', label: 'To escalate', count: activeClients.filter((c) => clientMatchesFilter(c, 'escalate')).length },
-        { key: 'received', label: 'Needs Phase 3', count: activeClients.filter((c) => clientMatchesFilter(c, 'received')).length },
+        { key: 'received', label: 'Needs Response Review', count: activeClients.filter((c) => clientMatchesFilter(c, 'received')).length },
         { key: 'unanalyzed', label: 'Action Items', count: activeClients.filter((c) => !!unanalyzedClientIds?.has(c.id) || !!unanalyzedNames?.has(c.name)).length },
         { key: 'attention', label: 'Needs attention', count: activeClients.filter((c) => clientMatchesFilter(c, 'attention', unanalyzedNames, unanalyzedClientIds)).length },
         { key: 'active', label: 'Active', count: activeClients.filter((c) => clientMatchesFilter(c, 'active')).length },
@@ -1450,10 +1473,12 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
       <div className="space-y-3">
         {viewTab === 'clients' && filteredClients.map((c) => {
-          const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
+          const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')).length;
           const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
           const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;
-          const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))).length;
+          const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
+            ? (!l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')
+            : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;
           const importDue = importDueInfo(c);
           const auditors = isAdmin ? [...new Set([
             ...c.audits.map((a) => a.auditorName),
@@ -1462,6 +1487,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
           const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
           const clientMenu = [
+            { label: 'Email client…', onClick: () => setEmailingClient(c) },
             { label: togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip, c.id), disabled: togglingVip === c.id },
             { label: 'Edit email', onClick: () => { setEditingEmail(c.id); setEmailVal(c.email || ''); } },
             'divider',
@@ -1573,7 +1599,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         return (
           <LobMailer
             letter={currentLetter}
-            furnisherAddress={currentLetter ? ((currentLetter.phase && currentLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+            furnisherAddress={currentLetter ? ((currentLetter.targetType === 'bureau' || (currentLetter.phase && currentLetter.phase.startsWith('Phase 3'))) ? parseBureauAddress(currentLetter.targetBureau || currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
             batchRemaining={lobMailerQueue.length - 1}
             onNext={() => setLobMailerQueue(prev => prev.slice(1))}
             onClose={() => setLobMailerQueue([])}
@@ -1598,6 +1624,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           onSaved={() => { setAnalyzingLetter(null); load(); if (onLeadsChanged) onLeadsChanged(); }}
         />
       )}
+      {emailingClient && <ClientEmailComposer client={emailingClient} onClose={() => setEmailingClient(null)} onSent={() => toast.success('Client email sent')} />}
       {createModal}
       {leadModal}
       <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />

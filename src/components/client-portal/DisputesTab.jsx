@@ -19,16 +19,18 @@ function daysBetween(aIso, bIso) {
 }
 function responseCountdown(l) {
   if (l.response_outcome === 'deleted' || l.response_outcome === 'received' || l.response_outcome === 'no_response') return null;
-  const isPhase3 = isBureauCampaign(l.phase);
+  const isPhase3 = l.target_type === 'bureau' || isBureauCampaign(l.phase);
   const isFileUpdate = isFileUpdateCampaign(l.phase);
-  const windowDays = isPhase3 ? BUREAU_RESPONSE_WINDOW_DAYS : RESPONSE_WINDOW_DAYS;
+  const windowDays = l.target_type ? RESPONSE_WINDOW_DAYS : (isPhase3 ? BUREAU_RESPONSE_WINDOW_DAYS : RESPONSE_WINDOW_DAYS);
   if (l.mailed_date && !l.delivered_at) {
     return { label: `In Transit — ${windowDays}-day window begins upon delivery`, tone: 'text-gray-600 bg-gray-50 border-gray-200' };
   }
   const clockStart = l.delivered_at ? l.delivered_at.slice(0, 10) : l.mailed_date;
   if (!clockStart) return null;
   const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = windowDays - elapsed;
+  const remaining = l.response_due_at
+    ? daysBetween(todayISO(), String(l.response_due_at).slice(0, 10))
+    : windowDays - elapsed;
   
   if (remaining > 0) {
     if (isPhase3) {
@@ -46,11 +48,11 @@ function responseCountdown(l) {
   if (isFileUpdate) {
     return { label: 'File update window closed — staff review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
   }
-  return { label: 'Response window closed — ready for escalation', tone: 'text-red-700 bg-red-50 border-red-200' };
+  return { label: 'Response window closed — staff review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
 }
 
 function responseBadge(l) {
-  const isBureau = isBureauCampaign(l.phase);
+  const isBureau = l.target_type === 'bureau' || isBureauCampaign(l.phase);
   const isFileUpdate = isFileUpdateCampaign(l.phase);
   if (l.response_outcome === 'deleted') return { label: '🏆 Deleted', tone: 'bg-green-50 text-green-700 border-green-200' };
   if (l.response_outcome === 'no_response') {
@@ -129,7 +131,10 @@ export default function DisputesTab({
               {(() => {
                 const badge = responseBadge(l);
                 const isFileUpdate = isFileUpdateCampaign(l.phase);
-                const title = isBureauCampaign(l.phase)
+                const structuredLabel = l.round_number
+                  ? `Round ${l.round_number} · ${l.target_type === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`
+                  : null;
+                const title = (l.target_type === 'bureau' || isBureauCampaign(l.phase))
                   ? `Credit Bureau Review (re: ${l.furnisher})`
                   : isFileUpdate
                     ? `File update — ${l.furnisher}`
@@ -141,7 +146,7 @@ export default function DisputesTab({
                     {title}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5">
-                    {clientCampaignLabel(l.phase)} · {clientCampaignDetail(l.phase)}{l.type ? ' · Letter type ' + l.type : ''}
+                    {structuredLabel || `${clientCampaignLabel(l.phase)} · ${clientCampaignDetail(l.phase)}`}{l.target_bureau ? ` · ${l.target_bureau.charAt(0).toUpperCase() + l.target_bureau.slice(1)}` : ''}{l.type ? ' · Letter type ' + l.type : ''}
                   </div>
                 </div>
                 <span className={`text-[10px] px-2.5 py-1 rounded-md whitespace-nowrap uppercase tracking-[0.05em] font-semibold border ${badge.tone}`}>

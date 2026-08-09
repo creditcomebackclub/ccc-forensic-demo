@@ -301,14 +301,25 @@ export default function InboxPage({ isAdmin, onNavigate }) {
         getUnanalyzedResponseStats(),
       ]);
 
-      const { data: unmailedLetters, error: unmailedError } = await supabase.from('letters')
-        .select('id,client_id,client_name,furnisher,phase,saved_at,mailed_date,covered_furnishers,lob_id,tracking_number')
+      let unmailedResult = await supabase.from('letters')
+        .select('id,client_id,client_name,furnisher,phase,round_id,round_number,target_type,target_bureau,saved_at,mailed_date,covered_furnishers,lob_id,tracking_number')
         .is('mailed_date', null)
-        .not('phase', 'ilike', 'Phase 3%')
         .order('saved_at', { ascending: true })
         .limit(300);
+      if (unmailedResult.error && /round_id|round_number|target_type|target_bureau/i.test(unmailedResult.error.message || '')) {
+        unmailedResult = await supabase.from('letters')
+          .select('id,client_id,client_name,furnisher,phase,saved_at,mailed_date,covered_furnishers,lob_id,tracking_number')
+          .is('mailed_date', null)
+          .order('saved_at', { ascending: true })
+          .limit(300);
+      }
+      const { data: unmailedLetters, error: unmailedError } = unmailedResult;
       if (unmailedError) throw unmailedError;
-      const unmaledLettersRes = { data: unmailedLetters || [] };
+      const unmaledLettersRes = {
+        data: (unmailedLetters || []).filter((letter) => letter.target_type
+          ? letter.target_type !== 'bureau'
+          : !String(letter.phase || '').startsWith('Phase 3')),
+      };
 
       const { data: allRecentAudits } = await supabase
         .from('audits')
@@ -439,7 +450,7 @@ export default function InboxPage({ isAdmin, onNavigate }) {
         return;
       }
       if (target === COL.phase2Inbox) {
-        rejectDrop('Phase 2 is driven by uploaded bureau responses.');
+        rejectDrop('Response analysis is driven by an uploaded response tied to an exact letter.');
         return;
       }
       rejectDrop('That drop is not allowed for leads.');
@@ -659,7 +670,7 @@ export default function InboxPage({ isAdmin, onNavigate }) {
           <DropColumn
             id={COL.phase2Inbox}
             icon={FileSearch}
-            title="Phase 2 Inbox"
+            title="Responses to Analyze"
             hint={COLUMN_HINTS[COL.phase2Inbox]}
             count={columns.phase2Inbox.length}
             empty="Nothing to triage"

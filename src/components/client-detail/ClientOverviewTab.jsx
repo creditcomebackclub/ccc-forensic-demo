@@ -1,6 +1,7 @@
 import React from 'react';
-import { FileText, Scale, CreditCard, ShieldCheck, ChevronRight } from 'lucide-react';
+import { FileText, Scale, CreditCard, ShieldCheck, ChevronRight, Mail } from 'lucide-react';
 import { hasCustomServiceAgreement } from '../../utils/pricing';
+import ClientEmailHistory from './ClientEmailHistory.jsx';
 
 const T = {
   navy: '#1B2A4A',
@@ -187,6 +188,10 @@ export default function ClientOverviewTab({
         >
           Documents →
         </button>
+      </Panel>
+
+      <Panel title="Client email history" icon={<Mail size={14} style={{ color: T.gold }} />}>
+        <ClientEmailHistory clientId={c.id} />
       </Panel>
     </div>
   );

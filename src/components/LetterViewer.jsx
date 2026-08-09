@@ -1,169 +1,86 @@
-import React, { useState, useEffect } from 'react';
-import { X, Loader2, Printer, Download, Mail } from 'lucide-react';
-import { generateLetter } from '../utils/api';
-import { supabase } from '../utils/supabase';
-import { resolveSignatureViewUrl } from '../utils/storagePaths';
+import React, { useMemo, useState } from 'react';
+import { CheckCircle, ChevronLeft, ChevronRight, Download, Mail, Printer, Trash2, X } from 'lucide-react';
 
-export default function LetterViewer({ account, client, onClose }) {
-  const [loading, setLoading] = useState(true);
-  const [html, setHtml] = useState(null);
-  const [error, setError] = useState(null);
+const bureauLabel = (value) => ({
+  equifax: 'Equifax',
+  experian: 'Experian',
+  transunion: 'TransUnion',
+}[String(value || '').toLowerCase()] || value);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    const fetchSigAndGenerate = async () => {
-      let enrichedClient = { ...client };
-      try {
-        // client.id preferred (client_profiles.client_id, backfilled in the
-        // client_id migration's RLS-foundation phase) — client.name alone
-        // can match the wrong client's signature if two clients share a
-        // name, which would embed the wrong signature into a mailed letter.
-        const cpQuery = client.id
-          ? supabase.from('client_profiles').select('signature_data,full_name').eq('client_id', client.id).limit(1)
-          : supabase.from('client_profiles').select('signature_data,full_name').eq('full_name', client.name).limit(1);
-        const { data: cp } = await cpQuery;
-        if (cp && cp.length > 0 && cp[0].signature_data) {
-          enrichedClient.signatureData = cp[0].signature_data;
-        }
-        // Always fetch clients table: it holds the profile-tab address (the
-        // permanent address of record) AND the fallback LPOA signature.
-        // The profile address must override whatever the audit extracted,
-        // regardless of where the signature came from.
-        const clientsQuery = client.id
-          ? supabase.from('clients').select('lpoa_signature_data,name,address').eq('id', client.id).limit(1)
-          : supabase.from('clients').select('lpoa_signature_data,name,address').eq('name', client.name).limit(1);
-        const { data: c } = await clientsQuery;
-        if (c && c.length > 0) {
-          if (!enrichedClient.signatureData && c[0].lpoa_signature_data) {
-            enrichedClient.signatureData = await resolveSignatureViewUrl(supabase, c[0].lpoa_signature_data);
-          }
-          // Profile-tab address is the permanent address of record — always
-          // wins over any address extracted from the credit report.
-          if (c[0].address) {
-            enrichedClient.address = c[0].address;
-          }
-        }
-      } catch(e) { console.warn('Could not fetch signature or address:', e); }
-      return generateLetter(account, enrichedClient);
-    };
-    fetchSigAndGenerate()
-      .then((res) => {
-        if (cancelled) return;
-        setHtml(res.html);
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err.message);
-        setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [account, client]);
+/**
+ * Display-only letter viewer. Generation belongs to StartRoundPanel so simply
+ * opening a saved letter can never create a new paid AI job or campaign row.
+ */
+export default function LetterViewer({ letters = [], account, client, roundNumber, targetType, onClose, onCancelRound, onCloseRound, cancelling = false }) {
+  const available = useMemo(() => letters.filter((letter) => letter?.html), [letters]);
+  const [index, setIndex] = useState(0);
+  const letter = available[index] || null;
+  const html = letter?.html || '';
+  const recipient = targetType === 'bureau'
+    ? bureauLabel(letter?.targetBureau || letter?.target_bureau)
+    : account?.furnisher;
+  const title = `Round ${roundNumber || letter?.roundNumber || letter?.round_number || 1} · ${targetType === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`;
 
   const handlePrint = () => {
-    // Use a Blob URL instead of document.write — document.write executes any
-    // <script> tags in the HTML, which is a XSS vector for AI-generated content.
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
     const printWindow = window.open(url, '_blank', 'width=900,height=1100');
-    if (printWindow) {
-      printWindow.focus();
-      setTimeout(() => {
-        printWindow.print();
-        URL.revokeObjectURL(url);
-      }, 500);
-    } else {
+    if (!printWindow) {
       URL.revokeObjectURL(url);
+      return;
     }
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      URL.revokeObjectURL(url);
+    }, 500);
   };
 
   const handleDownload = () => {
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const safeName = account.furnisher.replace(/[^a-z0-9]/gi, '_');
-    a.href = url;
-    a.download = `${(client.name || 'Client').replace(/[^a-z0-9]/gi, '_')}_${safeName}_Phase1.html`;
-    a.click();
+    const anchor = document.createElement('a');
+    const safeClient = (client?.name || 'Client').replace(/[^a-z0-9]/gi, '_');
+    const safeRecipient = (recipient || account?.furnisher || 'Dispute').replace(/[^a-z0-9]/gi, '_');
+    anchor.href = url;
+    anchor.download = `${safeClient}_Round_${roundNumber || 1}_${safeRecipient}.html`;
+    anchor.click();
     URL.revokeObjectURL(url);
   };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 no-print">
       <div className="bg-white rounded max-w-4xl w-full max-h-[92vh] flex flex-col">
-        {/* Toolbar */}
         <div className="px-5 py-3 border-b border-border flex items-center justify-between flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <Mail size={14} className="text-navy" />
-            <span className="text-[13px] font-medium text-ink">
-              Phase 1 Letter — {account.furnisher}
-            </span>
+          <div className="flex items-center gap-2 min-w-0">
+            <Mail size={14} className="text-navy flex-shrink-0" />
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium text-ink truncate">{title}</div>
+              <div className="text-[11px] text-ink-muted truncate">{recipient || account?.furnisher}</div>
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            {html && !loading && (
-              <>
-                <button
-                  onClick={handleDownload}
-                  className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-border text-ink-muted hover:bg-gray-50 flex items-center gap-1.5"
-                >
-                  <Download size={11} /> HTML
-                </button>
-                <button
-                  onClick={handlePrint}
-                  className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm bg-navy text-white hover:bg-navy-dark flex items-center gap-1.5"
-                >
-                  <Printer size={11} /> Print / Save as PDF
-                </button>
-              </>
+            {available.length > 1 && (
+              <div className="flex items-center gap-1 mr-1">
+                <button onClick={() => setIndex((value) => Math.max(0, value - 1))} disabled={index === 0} className="p-1.5 border border-border rounded disabled:opacity-30" aria-label="Previous letter"><ChevronLeft size={13} /></button>
+                <span className="text-[11px] text-ink-muted px-1">{index + 1}/{available.length}</span>
+                <button onClick={() => setIndex((value) => Math.min(available.length - 1, value + 1))} disabled={index === available.length - 1} className="p-1.5 border border-border rounded disabled:opacity-30" aria-label="Next letter"><ChevronRight size={13} /></button>
+              </div>
             )}
-            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded">
-              <X size={14} className="text-ink-muted" />
-            </button>
+            <button onClick={handleDownload} className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-border text-ink-muted hover:bg-gray-50 flex items-center gap-1.5"><Download size={11} /> HTML</button>
+            {onCloseRound && <button onClick={onCloseRound} className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-green-200 text-green-700 hover:bg-green-50 flex items-center gap-1.5"><CheckCircle size={11} /> Close reviewed round</button>}
+            {onCancelRound && <button onClick={onCancelRound} disabled={cancelling} className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-40 flex items-center gap-1.5"><Trash2 size={11} />{cancelling ? 'Cancelling…' : 'Cancel round'}</button>}
+            <button onClick={handlePrint} className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm bg-navy text-white hover:bg-navy-dark flex items-center gap-1.5"><Printer size={11} /> Print / Save as PDF</button>
+            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded" aria-label="Close letter viewer"><X size={14} className="text-ink-muted" /></button>
           </div>
         </div>
-
-        {/* Body */}
         <div className="flex-1 overflow-auto bg-gray-100 p-6">
-          {loading && (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <Loader2 size={28} className="text-gold animate-spin mx-auto mb-3" />
-                <div className="text-[13px] text-ink-muted">
-                  Drafting forensic Phase 1 letter...
-                </div>
-                <div className="text-[11px] text-ink-faint mt-1">
-                  Citing Metro 2 fields and FCRA violations
-                </div>
-              </div>
+          {letter ? (
+            <div className="bg-white shadow-md mx-auto max-w-3xl letter-print-area" style={{ minHeight: '11in' }}>
+              <iframe srcDoc={html} sandbox="allow-same-origin" title={`${title} — ${recipient || ''}`} className="w-full" style={{ minHeight: '11in', border: 'none' }} />
             </div>
-          )}
-
-          {error && (
-            <div className="max-w-md mx-auto bg-red-50 border border-red-200 rounded p-4 text-[13px] text-red-900">
-              <div className="font-medium mb-1">Letter generation failed</div>
-              <div className="text-[12px]">{error}</div>
-            </div>
-          )}
-
-          {html && !loading && (
-            <div
-              className="bg-white shadow-md mx-auto max-w-3xl letter-print-area"
-              style={{ minHeight: '11in' }}
-            >
-              <iframe
-                srcDoc={html}
-                sandbox="allow-same-origin"
-                title="Phase 1 Letter"
-                className="w-full"
-                style={{ minHeight: '11in', border: 'none' }}
-              />
-            </div>
+          ) : (
+            <div className="max-w-md mx-auto bg-amber-50 border border-amber-200 rounded p-4 text-[13px] text-amber-900">No completed letter is available to display.</div>
           )}
         </div>
       </div>

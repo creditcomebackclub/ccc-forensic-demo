@@ -1,5 +1,6 @@
 // Shared helpers for the staff client command-center detail view.
 // Letter status codes mirror ClientsPage.letterStatus — keep in sync.
+import { letterStatus as responseWindowStatus } from '../../utils/responseWindow.js';
 
 export const WINDOW_DAYS = 30;
 
@@ -10,8 +11,8 @@ export const MAIL_FILTERS = [
   { key: 'not_mailed', label: 'Not mailed' },
   { key: 'in_transit', label: 'In transit' },
   { key: 'awaiting', label: 'Awaiting' },
-  { key: 'window_closed', label: 'Ready to escalate' },
-  { key: 'received', label: 'Needs Phase 3' },
+  { key: 'window_closed', label: 'Window closed' },
+  { key: 'received', label: 'Needs response review' },
   { key: 'outcome', label: 'Outcome logged' },
 ];
 
@@ -24,28 +25,11 @@ export const LIST_FILTER_TO_LETTER = {
   received: 'received',
 };
 
-function todayISO() {
-  const d = new Date();
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
-}
-
-function daysBetween(aIso, bIso) {
-  const a = new Date(String(aIso).slice(0, 10) + 'T00:00:00');
-  const b = new Date(String(bIso).slice(0, 10) + 'T00:00:00');
-  return Math.round((b - a) / 86400000);
-}
-
-export function letterStatusCode(l, windowDays = WINDOW_DAYS) {
-  if (l.responseOutcome === 'received') return 'received';
-  if (l.responseOutcome === 'no_response') return 'no_response';
-  if (!l.mailedDate) return 'not_mailed';
-  if (!l.deliveredAt) return 'in_transit';
-  const clockStart = l.deliveredAt.slice(0, 10);
-  const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = windowDays - elapsed;
-  if (remaining > 0) return 'awaiting';
-  return 'window_closed';
+export function letterStatusCode(l) {
+  const code = responseWindowStatus(l).code;
+  if (code === 'draft') return 'not_mailed';
+  if (code === 'due_soon') return 'awaiting';
+  return code;
 }
 
 export function letterStageIndex(l) {
@@ -60,8 +44,9 @@ export function letterMatchesMailFilter(l, filterKey) {
   const code = letterStatusCode(l);
   if (filterKey === 'outcome') return code === 'received' || code === 'no_response';
   if (filterKey === 'received') {
-    // Needs Phase 3: response received on Phase 1/2, or ready-to-analyze
-    return code === 'received' && !(l.phase || '').startsWith('Phase 3');
+    return code === 'received' && (l.roundId
+      ? (!l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')
+      : !(l.phase || '').startsWith('Phase 3'));
   }
   return code === filterKey;
 }
@@ -82,7 +67,7 @@ export function countMailStatuses(letters = []) {
     if (counts[code] != null) counts[code] += 1;
     if (code === 'received' || code === 'no_response') counts.outcome += 1;
   }
-  // Needs Phase 3 chip uses a tighter match than raw `received` status
+  // Response-review chip excludes structured letters already reviewed.
   counts.received = letters.filter((l) => letterMatchesMailFilter(l, 'received')).length;
   return counts;
 }
@@ -107,16 +92,14 @@ export function summarizeCampaignPhases(phaseRows = []) {
  */
 export function deriveNextAction(client) {
   const letters = client?.letters || [];
-  const open = letters.filter((l) => !(l.phase || '').startsWith('Phase 3'));
+  const open = letters.filter((l) => l.roundId || !(l.phase || '').startsWith('Phase 3'));
 
   const notMailed = open.filter((l) => letterStatusCode(l) === 'not_mailed');
   const logResponse = letters.filter((l) => l.mailedDate && !l.responseOutcome);
-  const escalate = open.filter((l) => {
+  const reviewDue = open.filter((l) => {
     const code = letterStatusCode(l);
-    const hasPhase3 = letters.some(
-      (pl) => (pl.phase || '').startsWith('Phase 3') && pl.furnisher === l.furnisher
-    );
-    return (code === 'window_closed' || code === 'no_response') && !hasPhase3;
+    return (code === 'window_closed' || code === 'no_response')
+      && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed');
   });
   const needsAnalyze = open.filter((l) => {
     const code = letterStatusCode(l);
@@ -125,10 +108,19 @@ export function deriveNextAction(client) {
   const inTransit = open.filter((l) => letterStatusCode(l) === 'in_transit');
   const awaiting = open.filter((l) => letterStatusCode(l) === 'awaiting');
 
-  if (escalate.length > 0) {
+  const approvedEscalations = (client?.rounds || []).filter((round) => round.status === 'closed' && round.final_disposition === 'escalate');
+  if (approvedEscalations.length > 0) {
     return {
-      label: escalate.length === 1 ? 'Escalate 1 letter' : `Escalate ${escalate.length} letters`,
-      detail: 'Window elapsed — ready for Phase 3',
+      label: approvedEscalations.length === 1 ? '1 escalation approved' : `${approvedEscalations.length} escalations approved`,
+      detail: 'Explicit staff disposition — nothing is filed automatically',
+      letterFilter: 'all',
+      tone: 'urgent',
+    };
+  }
+  if (reviewDue.length > 0) {
+    return {
+      label: reviewDue.length === 1 ? 'Review 1 closed window' : `Review ${reviewDue.length} closed windows`,
+      detail: 'Document response or nonresponse before choosing a next step',
       letterFilter: 'window_closed',
       tone: 'urgent',
     };
@@ -137,7 +129,7 @@ export function deriveNextAction(client) {
     const n = needsAnalyze.filter((l) => letterStatusCode(l) === 'received').length;
     return {
       label: n === 1 ? 'Analyze 1 response' : `Analyze ${n} responses`,
-      detail: 'Client or bureau response ready for Phase 2',
+      detail: 'Response ready for forensic analysis and staff disposition',
       letterFilter: 'received',
       tone: 'action',
     };
@@ -178,7 +170,7 @@ export function deriveNextAction(client) {
   if (letters.length === 0) {
     return {
       label: 'Run an audit',
-      detail: 'No letters yet — generate Phase 1 from an audit',
+      detail: 'No letters yet — prepare an explicit dispute round from an audit',
       letterFilter: 'all',
       tone: 'neutral',
     };

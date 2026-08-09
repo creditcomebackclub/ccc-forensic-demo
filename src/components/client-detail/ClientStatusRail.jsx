@@ -10,13 +10,18 @@ const T = {
 
 export default function ClientStatusRail({
   letters = [],
-  campaignSummary,
+  rounds = [],
   mailFilter,
   onMailFilter,
-  onCampaignClick,
+  onRoundsClick,
 }) {
   const counts = countMailStatuses(letters);
   const mailChips = MAIL_FILTERS.filter((f) => f.key === 'all' || counts[f.key] > 0 || f.key === mailFilter);
+  const roundCounts = rounds.reduce((totals, round) => {
+    const status = round.status || 'open';
+    if (totals[status] != null) totals[status] += 1;
+    return totals;
+  }, { open: 0, closed: 0, cancelled: 0 });
 
   return (
     <div className="px-5 sm:px-6 pb-5 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
@@ -53,36 +58,40 @@ export default function ClientStatusRail({
 
         <div>
           <div className="text-[9px] uppercase tracking-[0.16em] font-bold mb-2" style={{ color: T.gold }}>
-            Campaign phases
+            Dispute rounds
           </div>
-          {(!campaignSummary || campaignSummary.total === 0) ? (
+          {!rounds.length ? (
             <button
               type="button"
-              onClick={() => onCampaignClick?.()}
+              onClick={() => onRoundsClick?.()}
               className="text-[11px] text-left"
               style={{ color: T.muted }}
             >
-              No compared accounts yet — open Report Comparison after a second audit
+              No adaptive rounds yet — legacy history remains available in Letters
             </button>
           ) : (
             <div className="flex flex-wrap gap-1.5">
-              {[1, 2, 3, 4].map((p) => {
-                const n = campaignSummary.byPhase[p] || 0;
-                const dominant = campaignSummary.dominant === p;
+              {[
+                { key: 'open', label: 'Open' },
+                { key: 'closed', label: 'Closed' },
+                { key: 'cancelled', label: 'Cancelled' },
+              ].map(({ key, label }) => {
+                const n = roundCounts[key];
+                const emphasized = key === 'open' && n > 0;
                 return (
                   <button
-                    key={p}
+                    key={key}
                     type="button"
-                    onClick={() => onCampaignClick?.(p)}
+                    onClick={() => onRoundsClick?.(key)}
                     disabled={n === 0}
                     className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-full transition-colors disabled:opacity-35"
                     style={{
-                      background: dominant ? T.chipOn : T.chip,
-                      color: dominant ? T.gold : T.muted,
-                      border: dominant ? '1px solid rgba(201,168,76,0.45)' : '1px solid rgba(255,255,255,0.08)',
+                      background: emphasized ? T.chipOn : T.chip,
+                      color: emphasized ? T.gold : T.muted,
+                      border: emphasized ? '1px solid rgba(201,168,76,0.45)' : '1px solid rgba(255,255,255,0.08)',
                     }}
                   >
-                    Phase {p}
+                    {label}
                     <span className="ml-1 opacity-70">{n}</span>
                   </button>
                 );

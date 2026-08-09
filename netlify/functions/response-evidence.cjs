@@ -11,6 +11,7 @@ const ws = require('ws');
 const crypto = require('crypto');
 const { requireAuth } = require('./_requireAuth.cjs');
 const { responseEvidencePrefix, responseEvidencePrefixes } = require('./_storagePaths.cjs');
+const { queueRoundEvent } = require('./_roundEmail.cjs');
 
 // Canonical path: responses/{firmUid}/{clientId}/response-evidence/{evidenceId}/…
 
@@ -40,7 +41,7 @@ function cleanName(value) {
 }
 
 function isBureauLetter(letter) {
-  return String(letter.phase || '').startsWith('Phase 3');
+  return letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3');
 }
 
 function clientMatchesLetter(clientProfile, letter) {
@@ -238,6 +239,14 @@ async function completeUpload(db, userId, body) {
   }
   const { error: letterError } = await db.from('letters').update(letterPatch).eq('id', letter.id);
   if (letterError) throw letterError;
+
+  if (letter.round_id) {
+    try {
+      await queueRoundEvent({ roundId: letter.round_id, eventType: 'first_response_received' });
+    } catch (emailError) {
+      console.error('First-response milestone email failed (response remains saved):', emailError.message);
+    }
+  }
 
   return response(200, {
     evidenceId: evidence.id,

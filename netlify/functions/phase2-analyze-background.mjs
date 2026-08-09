@@ -22,7 +22,6 @@ import {
   assertMapFullySourced,
   autoFixFieldCitations,
   collectBureauFollowUpProblems,
-  collectPhase3CitationProblems,
   normalizeFollowUpPresentation,
 } from '../../src/constants/metro2Fields.js';
 import { requireStaff } from './_requireAuth.cjs';
@@ -220,6 +219,30 @@ export const handler = async (event) => {
     const { data: letter, error: letterErr } = await db.from('letters').select('*').eq('id', job.letter_id).single();
     if (letterErr || !letter) throw new Error('Could not find the Phase 1 letter for this job.');
 
+    // Silence is evidence too. Persist an explicit nonresponse record so a
+    // later round links the reviewed pair rather than inferring an absence.
+    if (job.kind === 'non_response' && !evidence) {
+      const { data: row, error: createError } = await db.from('response_evidence').insert({
+        firm_user_id: letter.user_id,
+        client_id: letter.client_id,
+        client_account_id: letter.client_account_id,
+        client_name: letter.client_name,
+        letter_id: letter.id,
+        response_kind: letter.target_type === 'bureau' ? 'bureau' : 'furnisher',
+        source: 'staff_nonresponse',
+        evidence_kind: 'non_response',
+        storage_paths: [],
+        file_names: [],
+        upload_status: 'received',
+        received_at: new Date().toISOString(),
+        submitted_by: caller.userId,
+        analysis_status: 'running',
+      }).select('*').single();
+      if (createError || !row) throw new Error('Could not create non-response evidence: ' + (createError?.message || 'unknown error'));
+      evidence = row;
+      await db.from('phase2_jobs').update({ response_evidence_id: evidence.id }).eq('id', jobId);
+    }
+
     // Follow-up drafts reuse an already-analyzed evidence row. Do not flip
     // analysis_status to running/error — that would clobber the prior review.
     if (evidence && job.kind !== 'bureau_follow_up') {
@@ -242,7 +265,7 @@ export const handler = async (event) => {
         role: 'user',
         content: [{
           type: 'text',
-          text: `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\nLetter mailed: ${mailed}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER (no response was received within 30 days):\n${letter.html}\n\nThe furnisher failed to respond to the direct dispute within 30 days. IMPORTANT LEGAL FRAMING: this non-response is a failure of the furnisher's direct-dispute investigation duties under 12 CFR §1022.43(e) — it is NOT itself a §1681s-2(b) violation, because §1681s-2(b) duties only attach after the furnisher receives CRA notice under §1681i(a)(2), which is exactly what these Phase 3 letters now initiate. Frame it correctly: the documented non-response is powerful Johnson v. MBNA evidence of what this furnisher's "investigation" looks like, and once the bureau forwards this dispute, the furnisher's §1681s-2(b) duties attach against that record. Classify this as NON_RESPONSE and generate three Phase 3 CRA letters on that framing.`,
+          text: `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\nLetter mailed: ${mailed}\n\nPRIOR DIRECT DISPUTE LETTER (no response was received within the recorded response window):\n${letter.html}\n\nClassify this as NON_RESPONSE and perform the same forensic demand-by-demand analysis. Do not call silence an automatic §1681s-2(b) violation; §1681s-2(b) attaches only after CRA notice under §1681i(a)(2). Analyze only. Do not draft a follow-up letter.`,
         }],
       }];
     } else {
@@ -291,7 +314,7 @@ export const handler = async (event) => {
                 : `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — FURNISHER RESPONSE${pageNote}`,
             },
             ...pageBlocks,
-            { type: 'text', text: bureauResponse ? 'Perform the bureau-response staff review analysis.' : 'Perform Phase 2 analysis.' },
+            { type: 'text', text: bureauResponse ? 'Perform the bureau-response staff review analysis.' : 'Perform forensic furnisher-response analysis only. Do not draft a follow-up letter.' },
           ],
         }];
       }
@@ -302,23 +325,17 @@ export const handler = async (event) => {
     await updateJob({
       stage: isBureauFollowUp
         ? 'Drafting bureau follow-up letter'
-        : (isBureauResponse ? 'Analyzing bureau response against Phase 3 dispute' : 'Analyzing response against Phase 1 demands'),
+        : (isBureauResponse ? 'Analyzing bureau response against prior dispute' : 'Analyzing response against prior demands'),
     }, true);
 
-    // 64000 (matches audit-run-background). 32000 was fine while ledgers
-    // came back illegible and analyses stayed thin, but a legible enclosure
-    // produces a much richer analysis plus three full Phase 3 letters and
-    // hit the cap mid-generation (stop_reason: max_tokens). The three-letter
-    // output is itself the main cost — the schema requires equifax,
-    // experian and transunion even when the account reports to only one
-    // bureau; a future optimization is to generate only the bureaus the
-    // account is actually on.
+    // Response review remains detailed. Letter drafting now occurs only after
+    // staff disposition and explicit target selection.
     let streamedTokenTotal = 0;
     const runModel = async (modelMessages, stageLabel) => {
       if (stageLabel) await updateJob({ stage: stageLabel }, true);
       const stream = anthropic.messages.stream({
         model: MODEL,
-        max_tokens: isBureauFollowUp ? 24000 : (isBureauResponse ? 12000 : 64000),
+        max_tokens: isBureauFollowUp ? 24000 : (isBureauResponse ? 12000 : 16000),
         system: isBureauFollowUp ? BUREAU_FOLLOW_UP_SYSTEM : (isBureauResponse ? BUREAU_SYSTEM : FURNISHER_SYSTEM),
         messages: modelMessages,
         output_config: {
@@ -415,56 +432,7 @@ export const handler = async (event) => {
       }
     }
 
-    // Initial Phase 3 (furnisher Phase 2 → three CRA letters): same autofix +
-    // rewrite loop as Phase 1 / follow-up. Autofix alone left too many
-    // first-try failures on multi-occurrence swaps and substantive slips.
-    if (!isBureauResponse && !isBureauFollowUp && analysis?.letters) {
-      const collectPhase3AllProblems = () => {
-        const all = [];
-        for (const bureau of ['equifax', 'experian', 'transunion']) {
-          const html = analysis.letters?.[bureau];
-          if (!html) continue;
-          for (const p of collectPhase3CitationProblems(html)) {
-            all.push(`${bureau}: ${p}`);
-          }
-        }
-        return all;
-      };
-
-      for (const bureau of ['equifax', 'experian', 'transunion']) {
-        if (analysis.letters[bureau]) {
-          analysis.letters[bureau] = autoFixFieldCitations(analysis.letters[bureau]).html;
-        }
-      }
-
-      for (let attempt = 1; attempt < MAX_LINT_ATTEMPTS; attempt++) {
-        const citationProblems = collectPhase3AllProblems();
-        if (!citationProblems.length) break;
-        console.warn(`[phase2] Phase 3 production lint failed (attempt ${attempt}); requesting rewrite`, citationProblems);
-        const rewriteMessages = [
-          ...messages,
-          {
-            role: 'user',
-            content: [{
-              type: 'text',
-              text: `CRITICAL CORRECTION: One or more Phase 3 CRA letters failed production-safety lint. Return a complete corrected JSON object. Fix EVERY issue below in the corresponding letters.{bureau} HTML. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)"; CRA duties are under §1681i; furnisher §1681s-2(b) attaches after CRA notice.\n- Field 19 = Special Comment; Field 20 = Compliance Condition Code; Field 21 = Current Balance; Field 22 = Amount Past Due; Field 23 = Original Charge-off Amount; Field 27 = Date of Last Payment.\n- Status 97 may carry balance/past due; equality is not a violation by itself.\n- Field 18 is rolling 24 months. Do not challenge C/O after closure solely because it follows closure.\n- A returned payment date alone is not DOFD.\n- Request §1681i(a)(6)(B)(iii)/(a)(7) procedure description; do not claim a right to UDF/source documents.\n\nBAD DRAFT letters JSON:\n${JSON.stringify(analysis.letters, null, 2)}`,
-            }],
-          },
-        ];
-        const rebuilt = await runModel(rewriteMessages, `Rewriting Phase 3 letters to fix production lint (attempt ${attempt + 1})`);
-        analysis = rebuilt.parsed;
-        for (const bureau of ['equifax', 'experian', 'transunion']) {
-          if (analysis?.letters?.[bureau]) {
-            analysis.letters[bureau] = autoFixFieldCitations(analysis.letters[bureau]).html;
-          }
-        }
-        mergeUsage(rebuilt.usage);
-      }
-    }
-
-    // Inject standard letter CSS only for the furnisher workflow, which is
-    // the one that generates Phase 3 letters. Bureau analysis records facts
-    // and a staff recommendation; it never drafts another letter.
+    // Standard CSS remains only for the legacy bureau-follow-up drafting job.
     const baseCss = `
       body { font-family: Arial, sans-serif; line-height: 1.5; margin: 1in; color: #333333; }
       .date-line { margin-bottom: 20px; }
@@ -490,13 +458,6 @@ export const handler = async (event) => {
       .enclosures { margin-top: 14px; }
     `;
 
-    if (!isBureauResponse && !isBureauFollowUp && analysis && analysis.letters) {
-      for (const bureau of ['equifax', 'experian', 'transunion']) {
-        if (analysis.letters[bureau]) {
-          analysis.letters[bureau] = injectLetterCss(analysis.letters[bureau], baseCss);
-        }
-      }
-    }
     if (isBureauFollowUp && analysis?.letterHtml) {
       analysis.letterHtml = injectLetterCss(analysis.letterHtml, baseCss);
       const expectedBureau = bureauFromPhase(letter.phase);
@@ -517,24 +478,16 @@ export const handler = async (event) => {
       blockIssues.push(...(dq.issues && dq.issues.length ? dq.issues : ['An enclosed document could not be reliably read.']));
     }
 
-    // Production-safety lint: citation, substantive, and enclosure failures.
-    if (!isBureauResponse) {
-      if (isBureauFollowUp) {
-        const html = analysis && analysis.letterHtml;
-        const bureau = (analysis && analysis.bureau) || bureauFromPhase(letter.phase) || 'bureau';
-        for (const p of collectBureauFollowUpProblems(html)) {
-          blockIssues.push(`The generated ${bureau} follow-up letter failed production-safety lint: ${p}`);
-        }
-      } else {
-        for (const bureau of ['equifax', 'experian', 'transunion']) {
-          const html = analysis && analysis.letters && analysis.letters[bureau];
-          for (const p of collectPhase3CitationProblems(html)) {
-            blockIssues.push(`The generated ${bureau} letter failed production-safety lint: ${p}`);
-          }
-        }
+    // Production-safety lint applies to the remaining legacy follow-up draft.
+    if (isBureauFollowUp) {
+      const html = analysis && analysis.letterHtml;
+      const bureau = (analysis && analysis.bureau) || bureauFromPhase(letter.phase) || 'bureau';
+      for (const p of collectBureauFollowUpProblems(html)) {
+        blockIssues.push(`The generated ${bureau} follow-up letter failed production-safety lint: ${p}`);
       }
     }
     const parseBlocked = blockIssues.length > 0;
+    if (evidence) analysis.responseEvidenceId = evidence.id;
     if (isBureauFollowUp) {
       analysis.enclosure_parse_blocked = parseBlocked;
       analysis.enclosure_parse_issues = blockIssues;

@@ -80,6 +80,15 @@ function artifactIdFrom(payload) {
     || null;
 }
 
+function clientEmailIdFrom(payload) {
+  const data = payload?.data || payload || {};
+  const tags = data.tags || {};
+  if (Array.isArray(tags)) {
+    return tags.find((tag) => tag?.name === 'client_email_id')?.value || null;
+  }
+  return tags.client_email_id || data.client_email_id || null;
+}
+
 function emailIdFrom(payload) {
   return payload?.data?.email_id || payload?.email_id || null;
 }
@@ -102,17 +111,18 @@ exports.handler = async (event) => {
       const kind = normalizeKind(item?.type || item?.event);
       if (!EVENT_PRIORITY[kind]) continue;
       const id = artifactIdFrom(item);
+      const clientEmailId = clientEmailIdFrom(item);
       const emailId = emailIdFrom(item);
-      const keyId = id || (emailId ? `email:${emailId}` : null);
+      const keyId = id ? `blueprint:${id}` : clientEmailId ? `client:${clientEmailId}` : (emailId ? `email:${emailId}` : null);
       if (!keyId) continue;
       const current = byArtifact.get(keyId);
       if (!current || EVENT_PRIORITY[kind] >= EVENT_PRIORITY[current.kind]) {
-        byArtifact.set(keyId, { kind, item, artifactId: id, emailId });
+        byArtifact.set(keyId, { kind, item, artifactId: id, clientEmailId, emailId });
       }
     }
 
     for (const entry of byArtifact.values()) {
-      const { kind, item, artifactId, emailId } = entry;
+      const { kind, item, artifactId, clientEmailId, emailId } = entry;
       const occurredAt = item.created_at
         ? new Date(item.created_at).toISOString()
         : (item.data?.created_at ? new Date(item.data.created_at).toISOString() : new Date().toISOString());
@@ -127,11 +137,30 @@ exports.handler = async (event) => {
       if (kind === 'delivered') patch.delivered_at = occurredAt;
       if (emailId) patch.sendgrid_message_id = emailId;
 
-      let query = db.from('recovery_blueprints').update(patch);
-      if (artifactId) query = query.eq('id', artifactId);
-      else query = query.eq('sendgrid_message_id', emailId);
-      const { error } = await query;
-      if (error) throw error;
+      if (artifactId) {
+        const { error } = await db.from('recovery_blueprints').update(patch).eq('id', artifactId);
+        if (error) throw error;
+      } else if (!clientEmailId && emailId) {
+        const { error } = await db.from('recovery_blueprints').update(patch).eq('sendgrid_message_id', emailId);
+        if (error) throw error;
+      }
+
+      // Adaptive-round and manual client emails share the same verified Resend
+      // webhook. Track them by the immutable Resend id even when no recovery
+      // blueprint tag is present.
+      if (clientEmailId || emailId) {
+        const clientPatch = {
+          delivery_status: kind,
+          delivery_event_at: occurredAt,
+          delivery_error: patch.delivery_error,
+          updated_at: new Date().toISOString(),
+        };
+        if (kind === 'delivered') clientPatch.delivered_at = occurredAt;
+        let clientQuery = db.from('client_emails').update(clientPatch);
+        clientQuery = clientEmailId ? clientQuery.eq('id', clientEmailId) : clientQuery.eq('resend_email_id', emailId);
+        const { error: clientEmailError } = await clientQuery;
+        if (clientEmailError && clientEmailError.code !== '42P01') throw clientEmailError;
+      }
     }
 
     return { statusCode: 204, body: '' };

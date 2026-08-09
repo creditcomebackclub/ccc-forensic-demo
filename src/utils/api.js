@@ -2,6 +2,10 @@ import { saveLetter } from "./storage.js";
 import { supabase } from "./supabase";
 import { runAuditJob } from "./auditJobs.js";
 import { resolveSignatureViewUrl } from "./storagePaths.js";
+import { startRound } from './rounds.js';
+import { BUREAU_LABEL, resolveActiveBureaus } from './roundTargets.js';
+import { buildPriorRoundLeverageBlock } from './roundEvidence.js';
+export { buildPriorRoundLeverageBlock } from './roundEvidence.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -71,60 +75,150 @@ export async function runMergeBureauAudits(clientSelection, onProgress) {
   return runAuditJob({ mode: 'merge', files: [], clientSelection }, onProgress);
 }
 
-export async function generateLetter(account, client) {
-  const t = today();
-  const isTypeC = account && account.type === 'C';
-  const baseData = JSON.stringify({ account, client, clientSignature: client.signatureData || null }, null, 2);
+async function loadPriorSources(sources = []) {
+  if (!sources.length) return [];
+  const letterIds = [...new Set(sources.map((item) => item.sourceLetterId).filter(Boolean))];
+  const evidenceIds = [...new Set(sources.map((item) => item.responseEvidenceId).filter(Boolean))];
+  const [{ data: letters, error: letterError }, evidenceResult] = await Promise.all([
+    supabase.from('letters').select('id,target_type,target_bureau,html,summary,phase,date,saved_at').in('id', letterIds),
+    evidenceIds.length
+      ? supabase.from('response_evidence').select('id,letter_id,response_kind,evidence_kind,analysis,review_status,received_at').in('id', evidenceIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (letterError) throw new Error('Could not load prior letters: ' + letterError.message);
+  if (evidenceResult.error) throw new Error('Could not load prior response evidence: ' + evidenceResult.error.message);
+  const byLetter = new Map((letters || []).map((row) => [row.id, row]));
+  const byEvidence = new Map((evidenceResult.data || []).map((row) => [row.id, row]));
+  return sources.map((source, index) => {
+    const letter = byLetter.get(source.sourceLetterId);
+    const evidence = source.responseEvidenceId ? byEvidence.get(source.responseEvidenceId) : null;
+    if (!letter) throw new Error('A selected prior letter is no longer available.');
+    if (source.responseEvidenceId && (!evidence || evidence.letter_id !== letter.id)) {
+      throw new Error('Selected prior evidence does not belong to the selected prior letter.');
+    }
+    return { ...source, sourceOrder: source.sourceOrder ?? index, letter, evidence };
+  });
+}
 
-  if (isTypeC) {
-    const baseInstructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nData:\n${baseData}\n\nIf clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or any tracking/article number field or placeholder — state only "Sent via Certified Mail" with no number. Output complete HTML only. No prose. No fences.`;
+/**
+ * Explicit-target round generator. The atomic RPC creates every placeholder;
+ * the background generator can then retry individual failed siblings safely.
+ */
+export async function generateRoundLetter({
+  account,
+  client,
+  targetType,
+  selectedBureaus = [],
+  priorSources = [],
+}) {
+  if (!account?.clientAccountId) throw new Error('This account must be reconciled to a stable identity before starting a round.');
+  if (!client?.id) throw new Error('A stable client ID is required before starting a round.');
+  if (!['furnisher', 'bureau'].includes(targetType)) throw new Error('Choose furnisher or bureau before generating.');
 
-    const fdcpaId = await saveLetter(account, client, 'GENERATING...', null, 'Phase 1 — FDCPA §1692g(b) Validation');
-    const disputeId = await saveLetter(account, client, 'GENERATING...', null, 'Phase 1 — Furnisher Dispute §1681s-2(a)', '__dispute');
-
-    const res = await fetch('/.netlify/functions/generate-letter-background', {
-      method: 'POST',
-      headers: await staffJsonHeaders(),
-      body: JSON.stringify({
-        jobs: [
-          {
-            id: fdcpaId,
-            account,
-            generateSummary: true,
-            instructions: baseInstructions + '\n\nGenerate ONLY the FDCPA §1692g(b) Debt Validation Demand letter. This letter demands the collector prove: (1) the amount owed, (2) the name of the original creditor, (3) proof they have the legal right to collect this debt. Cite §1692g(b) — all collection activity must cease until validation is provided. Do NOT include §1681s-2(a) furnisher dispute language in this letter. This is a standalone debt validation demand.'
-          },
-          {
-            id: disputeId,
-            account,
-            generateSummary: false,
-            instructions: baseInstructions + '\n\nGenerate ONLY the FCRA §1681s-2(a) Furnisher Dispute letter. This letter disputes the specific Metro 2 violations in the account data. Follow the 16-step structure. Include §1692g(b) cessation notice as a secondary demand but lead with the Metro 2 violations and FCRA demands. Do NOT make this primarily a debt validation letter.'
-          }
-        ]
-      })
+  let bureaus = [];
+  if (targetType === 'bureau') {
+    const resolved = await resolveActiveBureaus({
+      clientId: client.id,
+      clientName: client.name,
+      clientAccountId: account.clientAccountId,
+      accountId: account.accountNumberMasked || account.id,
+      furnisher: account.furnisher,
     });
-    if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
-
-    const [fdcpaRes, disputeRes] = await Promise.all([
-      pollForLetter(fdcpaId),
-      pollForLetter(disputeId)
-    ]);
-
-    return { html: disputeRes.html, summary: fdcpaRes.summary };
+    const active = new Set(resolved.activeBureaus);
+    bureaus = [...new Set(selectedBureaus.map((value) => String(value).toLowerCase()))];
+    if (!bureaus.length) throw new Error('Confirm at least one reporting bureau.');
+    if (bureaus.some((bureau) => !active.has(bureau))) {
+      throw new Error('A selected bureau is not proven active for this account on the latest audit.');
+    }
   }
 
-  const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nGenerate the Phase 1 dispute letter HTML for this account.\n\nData:\n${JSON.stringify({ account, client, clientSignature: client.signatureData || null }, null, 2)}\n\nFollow the 16-step structure. If clientSignature is provided embed it in the signature block. Do NOT include a "Certified Mail #" or any tracking/article number field or placeholder — state only "Sent via Certified Mail" with no number. Output complete HTML only. No prose. No fences.`;
-  
-  const id = await saveLetter(account, client, 'GENERATING...', null);
-  const res = await fetch('/.netlify/functions/generate-letter-background', {
+  const isTypeC = account.type === 'C';
+  const letterSpecs = targetType === 'bureau'
+    ? bureaus.map((targetBureau) => ({
+      furnisher: account.furnisher,
+      account_id: account.accountNumberMasked || account.id || '',
+      type: account.type || null,
+      target_bureau: targetBureau,
+      dispute_basis: null,
+    }))
+    : isTypeC
+      ? [
+        { furnisher: account.furnisher, account_id: account.accountNumberMasked || account.id || '', type: account.type, dispute_basis: 'FDCPA' },
+        { furnisher: account.furnisher, account_id: account.accountNumberMasked || account.id || '', type: account.type, dispute_basis: 'FCRA_DIRECT' },
+      ]
+      : [{ furnisher: account.furnisher, account_id: account.accountNumberMasked || account.id || '', type: account.type || null, dispute_basis: 'FCRA_DIRECT' }];
+
+  const loadedSources = await loadPriorSources(priorSources);
+  const sourcePayload = loadedSources.map((source) => ({
+    source_letter_id: source.sourceLetterId,
+    response_evidence_id: source.responseEvidenceId || null,
+    apply_to_bureau: source.applyToBureau || null,
+    source_order: source.sourceOrder,
+  }));
+  const started = await startRound({
+    clientAccountId: account.clientAccountId,
+    targetType,
+    letters: letterSpecs,
+    sources: sourcePayload,
+  });
+  const ids = started?.letter_ids || [];
+  if (ids.length !== letterSpecs.length) throw new Error('The round was created without every required letter placeholder.');
+
+  const priorBlocks = loadedSources.map((source) => buildPriorRoundLeverageBlock({
+    priorTargetType: source.letter.target_type || 'furnisher',
+    nextTargetType: targetType,
+    priorLetterHtml: source.letter.html,
+    priorLetterSummary: source.letter.summary,
+    priorResponseClassification: source.evidence?.analysis?.classification,
+    priorResponseSummary: source.evidence?.analysis?.summary,
+  })).join('\n\n---\n\n');
+  const t = today();
+  const baseData = JSON.stringify({
+    account,
+    client,
+    roundNumber: started.round_number,
+    targetType,
+    clientSignature: client.signatureData || null,
+  }, null, 2);
+  const jobs = ids.map((id, index) => {
+    const spec = letterSpecs[index];
+    const target = targetType === 'bureau' ? BUREAU_LABEL[spec.target_bureau] : account.furnisher;
+    let purpose;
+    if (spec.dispute_basis === 'FDCPA') {
+      purpose = 'Generate ONLY the standalone FDCPA §1692g(b) Debt Validation Demand. Do not include an FCRA direct dispute in this sibling letter.';
+    } else if (targetType === 'bureau') {
+      purpose = `Generate ONLY one CRA dispute addressed to ${target}. Apply §1681i framing and never generate an FDCPA validation letter.`;
+    } else {
+      purpose = 'Generate ONLY the FCRA/Regulation V direct furnisher dispute. Use the established 16-step structure.';
+    }
+    return {
+      id,
+      account,
+      targetType,
+      generateSummary: true,
+      instructions: `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date.\nRound: ${started.round_number}\nExplicit recipient: ${target}\n\n${purpose}\n\nData:\n${baseData}\n\n${priorBlocks || 'This is Round 1; there is no prior-round evidence.'}\n\nOutput complete HTML only. No prose or fences. Do not include a tracking-number placeholder.`,
+    };
+  });
+
+  const response = await fetch('/.netlify/functions/generate-letter-background', {
     method: 'POST',
     headers: await staffJsonHeaders(),
-    body: JSON.stringify({
-      jobs: [{ id, account, generateSummary: true, instructions }]
-    })
+    body: JSON.stringify({ jobs }),
   });
-  if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
-
-  return await pollForLetter(id);
+  if (!response.ok) throw new Error('The round exists, but letter generation could not start. Retry the failed round before mailing.');
+  const results = await Promise.all(ids.map((id) => pollForLetter(id)));
+  return {
+    roundId: started.round_id,
+    roundNumber: started.round_number,
+    letterIds: ids,
+    letters: results.map((result, index) => ({
+      ...result,
+      id: ids[index],
+      targetType,
+      targetBureau: letterSpecs[index].target_bureau || null,
+      roundNumber: started.round_number,
+    })),
+  };
 }
 
 export async function generateCombinedCleanupLetter(client, inquiries) {

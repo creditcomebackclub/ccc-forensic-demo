@@ -287,7 +287,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const windowCloseDate = earliestPhase1MailDate
     ? new Date(new Date(earliestPhase1MailDate).getTime() + 30 * 86400000).toISOString()
     : null;
-  const phase3Mailed = letters.some(l => l.phase?.startsWith('Phase 3') && l.mailed_date);
+  const phase3Mailed = letters.some(l => (l.target_type === 'bureau' || l.phase?.startsWith('Phase 3')) && l.mailed_date);
   const firstDeletionDate = deletions
     .map(d => d.response_date)
     .filter(Boolean)
@@ -320,7 +320,7 @@ export default function ClientPortal({ session, onSignOut }) {
       timeline.push({ date: l.mailed_date, icon: '📬', title: 'Out for Delivery — ' + l.furnisher, subtitle: 'Expected delivery today', tone: 'gold' });
 
     if (l.tracking_status === 'Delivered') {
-      const responseWindow = isBureauCampaign(l.phase) ? '45-day bureau review' : '30-day response';
+      const responseWindow = l.target_type ? '30-day response' : (isBureauCampaign(l.phase) ? '45-day bureau review' : '30-day response');
       timeline.push({ date: l.delivered_at || l.mailed_date, icon: '✅', title: 'Delivered — ' + l.furnisher, subtitle: responseWindow + ' response window started', tone: 'green', lobId: l.lob_id, trackingNumber: l.tracking_number });
     }
     if (l.tracking_status === 'Returned to Sender') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '↩️', title: 'Returned to Sender — ' + l.furnisher, subtitle: 'Letter returned — address may need to be verified', tone: 'red' });

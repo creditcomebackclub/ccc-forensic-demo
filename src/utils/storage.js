@@ -201,6 +201,13 @@ export async function saveLetter(account, client, html, summary, phase, idSuffix
     date,
     html,
     summary: summary || null,
+    ...('roundId' in metadata ? { round_id: metadata.roundId || null } : {}),
+    ...('roundNumber' in metadata ? { round_number: metadata.roundNumber || null } : {}),
+    ...('letterKind' in metadata ? { letter_kind: metadata.letterKind || null } : {}),
+    ...('targetType' in metadata ? { target_type: metadata.targetType || null } : {}),
+    ...('targetBureau' in metadata ? { target_bureau: metadata.targetBureau || null } : {}),
+    ...('disputeBasis' in metadata ? { dispute_basis: metadata.disputeBasis || null } : {}),
+    ...('roundReviewStatus' in metadata ? { round_review_status: metadata.roundReviewStatus || null } : {}),
     ...('coveredFurnishers' in metadata ? { covered_furnishers: metadata.coveredFurnishers || [] } : {}),
     ...('enclosureParseBlocked' in metadata ? { enclosure_parse_blocked: !!metadata.enclosureParseBlocked } : {}),
     ...('enclosureParseIssues' in metadata ? { enclosure_parse_issues: metadata.enclosureParseIssues || [] } : {}),
@@ -241,6 +248,11 @@ export async function updateLetter(id, patch) {
   if ('sourceBureauResponseEvidenceId' in patch) {
     mapped.source_bureau_response_evidence_id = patch.sourceBureauResponseEvidenceId || null;
   }
+  if ('responseDueAt' in patch) mapped.response_due_at = patch.responseDueAt || null;
+  if ('roundReviewStatus' in patch) mapped.round_review_status = patch.roundReviewStatus || null;
+  if ('roundNextAction' in patch) mapped.round_next_action = patch.roundNextAction || null;
+  if ('roundReviewedAt' in patch) mapped.round_reviewed_at = patch.roundReviewedAt || null;
+  if ('roundReviewedBy' in patch) mapped.round_reviewed_by = patch.roundReviewedBy || null;
 
   const { data, error } = await supabase
     .from('letters')
@@ -319,6 +331,19 @@ function normalizeLetter(l) {
     sourcePhase3LetterId: l.source_phase3_letter_id || null,
     sourceBureauResponseEvidenceId: l.source_bureau_response_evidence_id || null,
     clientAccountId: l.client_account_id || null,
+    roundId: l.round_id || null,
+    roundNumber: l.round_number || null,
+    letterKind: l.letter_kind || null,
+    targetType: l.target_type || null,
+    targetBureau: l.target_bureau || null,
+    responseDueAt: l.response_due_at || null,
+    responseWindowExtensionDays: l.response_window_extension_days || 0,
+    responseWindowExtendedAt: l.response_window_extended_at || null,
+    responseWindowExtensionReason: l.response_window_extension_reason || null,
+    roundReviewStatus: l.round_review_status || null,
+    roundNextAction: l.round_next_action || null,
+    roundReviewedAt: l.round_reviewed_at || null,
+    legacyReconciliationStatus: l.legacy_reconciliation_status || null,
     auditorName: l.auditor_name || null,
   };
 }
@@ -338,6 +363,7 @@ function normalizeClientSummary(row) {
     address: row.address || null,
     audits: (row.audits || []).map(normalizeAudit),
     letters: (row.letters || []).map(normalizeLetter),
+    rounds: [],
     auditCount: Number(row.audit_count || 0),
     letterCount: Number(row.letter_count || 0),
     lastActivity: row.last_activity || '',
@@ -445,6 +471,53 @@ export async function listClientSummaries({ limit = 50, cursor = null, search = 
   const rows = data || [];
   const hasMore = rows.length > pageSize;
   const page = rows.slice(0, pageSize).map(normalizeClientSummary);
+  const clientIds = page.map((client) => client.id).filter(Boolean);
+  if (clientIds.length) {
+    const [structuredLettersRes, roundsRes] = await Promise.all([
+      supabase.from('letters')
+        .select('id,client_id,round_id,round_number,letter_kind,target_type,target_bureau,response_due_at,response_window_extension_days,round_review_status,round_next_action,round_reviewed_at')
+        .in('client_id', clientIds)
+        .not('round_id', 'is', null),
+      supabase.from('dispute_round_summary')
+        .select('round_id,client_id,client_account_id,round_number,target_type,status,final_disposition,opened_at,closed_at,letter_count,generated_count,mailed_count,reviewed_count,ready_to_close,target_bureaus')
+        .in('client_id', clientIds),
+    ]);
+    const adaptiveUnavailable = (error) => error && /round_id|round_number|letter_kind|target_type|target_bureau|response_due_at|dispute_round_summary/i.test(error.message || '');
+    if (structuredLettersRes.error && !adaptiveUnavailable(structuredLettersRes.error)) throw structuredLettersRes.error;
+    if (roundsRes.error && !adaptiveUnavailable(roundsRes.error)) throw roundsRes.error;
+    if (structuredLettersRes.error || roundsRes.error) {
+      // Keep the existing CRM usable while the additive adaptive-round
+      // migration is pending in a preview/production database. Structured
+      // controls remain unavailable until the migration is applied.
+      for (const client of page) client.rounds = [];
+    } else {
+    const metadataByLetterId = new Map((structuredLettersRes.data || []).map((letter) => [letter.id, {
+      roundId: letter.round_id,
+      roundNumber: letter.round_number,
+      letterKind: letter.letter_kind,
+      targetType: letter.target_type,
+      targetBureau: letter.target_bureau,
+      responseDueAt: letter.response_due_at,
+      responseWindowExtensionDays: letter.response_window_extension_days || 0,
+      roundReviewStatus: letter.round_review_status,
+      roundNextAction: letter.round_next_action,
+      roundReviewedAt: letter.round_reviewed_at,
+    }]));
+    const roundsByClientId = new Map();
+    for (const round of roundsRes.data || []) {
+      const current = roundsByClientId.get(round.client_id) || [];
+      current.push(round);
+      roundsByClientId.set(round.client_id, current);
+    }
+    for (const client of page) {
+      client.letters = client.letters.map((letter) => {
+        const metadata = metadataByLetterId.get(letter.id);
+        return metadata ? { ...letter, ...metadata } : letter;
+      });
+      client.rounds = (roundsByClientId.get(client.id) || []).sort((a, b) => Number(b.round_number) - Number(a.round_number));
+    }
+    }
+  }
   const last = page[page.length - 1];
   return {
     clients: page,
@@ -536,7 +609,7 @@ export async function getClientDetails(clientId) {
   if (sameNameError) throw sameNameError;
   const canUseLegacyNameFallback = sameNameCount === 1;
 
-  const [auditsRes, lettersRes, portalRes, legacyAuditsRes, legacyLettersRes] = await Promise.all([
+  const [auditsRes, lettersRes, portalRes, legacyAuditsRes, legacyLettersRes, roundsRes] = await Promise.all([
     supabase.from('audits').select('*').eq('user_id', client.user_id).eq('client_id', clientId).order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').eq('user_id', client.user_id).eq('client_id', clientId).order('saved_at', { ascending: false }),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at').eq('client_id', clientId).limit(1),
@@ -546,12 +619,14 @@ export async function getClientDetails(clientId) {
     canUseLegacyNameFallback
       ? supabase.from('letters').select('*').eq('user_id', client.user_id).is('client_id', null).eq('client_name', client.name).order('saved_at', { ascending: false })
       : Promise.resolve({ data: [], error: null }),
+    supabase.from('dispute_round_summary').select('*').eq('client_id', clientId).order('round_number', { ascending: false }),
   ]);
   if (auditsRes.error) throw auditsRes.error;
   if (lettersRes.error) throw lettersRes.error;
   if (portalRes.error) throw portalRes.error;
   if (legacyAuditsRes.error) throw legacyAuditsRes.error;
   if (legacyLettersRes.error) throw legacyLettersRes.error;
+  if (roundsRes.error && !/dispute_round_summary/i.test(roundsRes.error.message || '')) throw roundsRes.error;
 
   const rawAudits = [...(auditsRes.data || []), ...(legacyAuditsRes.data || [])]
     .sort((a, b) => (b.saved_at || '').localeCompare(a.saved_at || ''));
@@ -580,7 +655,7 @@ export async function getClientDetails(clientId) {
     return { ...normalizeLetter(letter), auditorName: author ? (author.full_name || author.email) : null };
   });
 
-  return hydrateClientRecord(client, audits, letters, (portalRes.data || [])[0] || null);
+  return { ...hydrateClientRecord(client, audits, letters, (portalRes.data || [])[0] || null), rounds: roundsRes.error ? [] : (roundsRes.data || []) };
 }
 
 // Navigation elsewhere in the app still carries a client name today. This is
@@ -656,12 +731,13 @@ export async function runProgressDiff(clientName, clientId) {
   // Persist a safe joined snapshot here so the same status is visible to the
   // staff comparison modal and the client portal after every 35-day report.
   const lettersQuery = clientId
-    ? supabase.from('letters').select('id,client_id,client_account_id,furnisher,account_id,phase,saved_at,date,mailed_date,delivered_at,response_outcome,response_date,phase2_analyzed_at,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,bureau_reviewed_at').eq('user_id', userId).eq('client_id', clientId)
-    : supabase.from('letters').select('id,client_id,client_account_id,furnisher,account_id,phase,saved_at,date,mailed_date,delivered_at,response_outcome,response_date,phase2_analyzed_at,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,bureau_reviewed_at').eq('user_id', userId).eq('client_name', clientName);
+    ? supabase.from('letters').select('id,client_id,client_account_id,furnisher,account_id,phase,round_id,round_number,target_type,target_bureau,saved_at,date,mailed_date,delivered_at,response_outcome,response_date,phase2_analyzed_at,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,bureau_reviewed_at').eq('user_id', userId).eq('client_id', clientId)
+    : supabase.from('letters').select('id,client_id,client_account_id,furnisher,account_id,phase,round_id,round_number,target_type,target_bureau,saved_at,date,mailed_date,delivered_at,response_outcome,response_date,phase2_analyzed_at,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,bureau_reviewed_at').eq('user_id', userId).eq('client_name', clientName);
   const { data: letterRows, error: lettersError } = await lettersQuery;
   if (lettersError) throw lettersError;
   const phase3Ids = (letterRows || [])
-    .filter((letter) => String(letter.phase || '').startsWith('Phase 3'))
+    .filter((letter) => letter.target_type === 'bureau'
+      || (!letter.round_id && String(letter.phase || '').startsWith('Phase 3')))
     .map((letter) => letter.id);
   let escalationRows = [];
   if (phase3Ids.length > 0) {

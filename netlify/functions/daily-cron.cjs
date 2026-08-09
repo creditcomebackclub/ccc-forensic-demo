@@ -1,4 +1,5 @@
 const https = require('https');
+const { sendQueuedClientEmails } = require('./_roundEmail.cjs');
 
 function supabaseRequest(path, method, body, url, key, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
@@ -308,6 +309,7 @@ exports.handler = async () => {
   const yesterday = new Date(Date.now() - 86400000).toISOString();
   let leadsDrippedCount = 0;
   let clientUpdatesCount = 0;
+  let clientEmailRetries = { processed: 0, sent: 0 };
 
   // "Action Required Escalations" in Settings > Notifications previously had
   // no effect anywhere — the daily digest below always includes escalations
@@ -354,7 +356,7 @@ exports.handler = async () => {
 
   // --- 1. Process tracked delivery clocks and client updates ---
   const letters = await listAllRows(
-    '/rest/v1/letters?select=id,client_id,client_name,furnisher,phase,mailed_date,delivered_at,response_outcome,notifications_sent,bureau_review_status&response_outcome=is.null&order=id.asc',
+    '/rest/v1/letters?select=id,client_id,client_name,furnisher,phase,round_number,target_type,target_bureau,mailed_date,delivered_at,response_due_at,response_outcome,notifications_sent,bureau_review_status,round_review_status&response_outcome=is.null&order=id.asc',
     supabaseUrl,
     supabaseKey
   );
@@ -376,11 +378,15 @@ exports.handler = async () => {
     // with no delivery event is an exception to reconcile with Lob/USPS, not
     // a silently assumed deadline based on its mailing date.
     if (!letter.delivered_at) continue;
-    const isPhase3 = String(letter.phase || '').startsWith('Phase 3');
-    const windowDays = isPhase3 ? 45 : 30;
-    const adminNotificationKey = isPhase3 ? 'admin45' : 'admin30';
+    const isBureauDispute = letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3');
+    const isStructuredRound = !!letter.target_type;
+    const baseWindowDays = isStructuredRound ? 30 : (isBureauDispute ? 45 : 30);
+    const adminNotificationKey = isStructuredRound ? 'adminDue' : (isBureauDispute ? 'admin45' : 'admin30');
     const clockStart = letter.delivered_at.slice(0, 10);
     const daysElapsed = daysBetween(clockStart, today);
+    const windowDays = letter.response_due_at
+      ? Math.max(baseWindowDays, daysBetween(clockStart, String(letter.response_due_at).slice(0, 10)))
+      : baseWindowDays;
     const sent = letter.notifications_sent || [];
     let newSent = [...sent];
     let touched = false;
@@ -394,7 +400,10 @@ exports.handler = async () => {
       clientEmail = profile && profile.email || null;
     }
 
-    if (mailReady && clientEmail && daysElapsed >= 7 && daysElapsed < 8 && !sent.includes('day7')) {
+    // Structured rounds use the durable client_emails milestones. Keep these
+    // campaign drips only for unreconciled legacy phase rows so clients do not
+    // receive duplicate or contradictory status messages.
+    if (!isStructuredRound && mailReady && clientEmail && daysElapsed >= 7 && daysElapsed < 8 && !sent.includes('day7')) {
       try {
         await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day7_checkin', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day7'); touched = true;
@@ -402,7 +411,7 @@ exports.handler = async () => {
       } catch(e) { console.error('day7 email failed:', e); }
     }
 
-    if (!isPhase3 && mailReady && clientEmail && daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
+    if (!isStructuredRound && !isBureauDispute && mailReady && clientEmail && daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
       try {
         await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day30_approaching', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day30'); touched = true;
@@ -422,10 +431,10 @@ exports.handler = async () => {
 
       if (mailReady && emailEscalationsEnabled) {
         try {
-          await sendMailQuiet(ADMIN_EMAIL, (isPhase3 ? 'Bureau Response Review: ' : 'Escalation Ready: ') + letter.client_name + ' / ' + letter.furnisher, (() => {
+          await sendMailQuiet(ADMIN_EMAIL, (isBureauDispute ? 'Bureau Response Review: ' : 'Response Review: ') + letter.client_name + ' / ' + letter.furnisher, (() => {
             const { wrapStaffEmail } = require('./_email.cjs');
             return wrapStaffEmail({
-              eyebrow: isPhase3 ? 'Bureau Response Review' : 'Escalation Ready',
+              eyebrow: isBureauDispute ? 'Bureau Response Review' : 'Response Review',
               title: letter.client_name + ' — ' + letter.furnisher,
               rows: [
                 ['Phase', letter.phase || 'Phase 1'],
@@ -783,7 +792,7 @@ exports.handler = async () => {
   let billingAlerts = [];
   try {
     const activeClients = await listAllRows(
-      '/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date,billing_tier&order=id.asc',
+      '/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date,billing_tier,referred_by&order=id.asc',
       supabaseUrl,
       supabaseKey
     );
@@ -934,6 +943,28 @@ exports.handler = async () => {
           );
           isPausedNow = true;
           billingAlerts.push({ client: c.name, type: 'PAUSED', balance: balanceDue });
+          if (c.referred_by && mailReady) {
+            try {
+              const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+              const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: 'Bearer ' + supabaseKey,
+                },
+                body: JSON.stringify({
+                  event: 'exited',
+                  clientId: c.id,
+                  affiliateId: c.referred_by,
+                  billingStatus: 'Paused',
+                  exitReason: 'non_payment',
+                }),
+              });
+              if (!partnerRes.ok) console.warn('daily-cron: affiliate exit email failed', await partnerRes.text());
+            } catch (err) {
+              console.warn('daily-cron: affiliate exit email error', err.message);
+            }
+          }
         }
       }
 
@@ -1036,6 +1067,45 @@ exports.handler = async () => {
     await sendMailQuiet(ADMIN_EMAIL, `CCC Executive Briefing: ${todayISO()}`, html);
   }
 
+  // --- Partner monthly summary (1st of month) ---
+  let affiliateSummariesSent = 0;
+  if (mailReady && todayISO().slice(8, 10) === '01') {
+    try {
+      const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+      // Summarize the month that just ended.
+      const prior = new Date(Date.UTC(
+        Number(todayISO().slice(0, 4)),
+        Number(todayISO().slice(5, 7)) - 2,
+        1
+      ));
+      const monthKey = prior.toISOString().slice(0, 7);
+      const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + supabaseKey,
+        },
+        body: JSON.stringify({ event: 'monthly_summary', monthKey }),
+      });
+      if (partnerRes.ok) {
+        const body = await partnerRes.json().catch(() => ({}));
+        affiliateSummariesSent = body.count || 0;
+      } else {
+        console.warn('daily-cron: affiliate monthly summary failed', await partnerRes.text());
+      }
+    } catch (e) {
+      console.warn('daily-cron: affiliate monthly summary error', e.message);
+    }
+  }
+
+  if (mailReady) {
+    try {
+      clientEmailRetries = await sendQueuedClientEmails(25);
+    } catch (e) {
+      console.warn('daily-cron: queued client email retry failed', e.message || e);
+    }
+  }
+
   return {
     statusCode: 200,
     body: JSON.stringify({
@@ -1044,6 +1114,8 @@ exports.handler = async () => {
       leadNurtureSent: nurtureDripsCount,
       updatesSent: clientUpdatesCount,
       winbackSent: winbackSentCount,
+      affiliateSummariesSent,
+      clientEmailRetries,
       tempsPurged,
     }),
   };

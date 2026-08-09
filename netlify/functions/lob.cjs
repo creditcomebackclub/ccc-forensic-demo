@@ -1,7 +1,9 @@
 const https = require('https');
 const crypto = require('crypto');
+const { PDFDocument } = require('pdf-lib');
 const { archiveLobArtifact } = require('./_lobArtifacts.cjs');
 const { responseEvidencePrefixes } = require('./_storagePaths.cjs');
+const { queueRoundEvent } = require('./_roundEmail.cjs');
 
 function lobRequest(path, method, body, apiKey, extraHeaders) {
   return new Promise((resolve, reject) => {
@@ -80,11 +82,83 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_name,phase,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id',
+      + '&select=id,user_id,client_id,client_account_id,client_name,phase,round_id,round_number,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
   return Array.isArray(result.body) ? result.body[0] : null;
+}
+
+async function validateStructuredRoundPreflight(letter, supabaseUrl, serviceKey) {
+  if (!letter.round_id) return;
+  const roundResult = await supabaseRequest('/rest/v1/dispute_rounds?id=eq.' + encodeURIComponent(letter.round_id) + '&select=id,user_id,client_id,client_account_id,round_number,target_type,status', 'GET', null, supabaseUrl, serviceKey);
+  const round = Array.isArray(roundResult.body) ? roundResult.body[0] : null;
+  if (!isSuccess(roundResult) || !round || round.status !== 'open') throw new Error('Only a letter in an open dispute round may be mailed.');
+  if (round.user_id !== letter.user_id || round.client_id !== letter.client_id || round.client_account_id !== letter.client_account_id || round.round_number !== letter.round_number || round.target_type !== letter.target_type) {
+    throw new Error('The letter does not match its structured dispute round.');
+  }
+  const clientResult = await supabaseRequest('/rest/v1/clients?id=eq.' + encodeURIComponent(letter.client_id) + '&select=id,user_id,lpoa_signature_data', 'GET', null, supabaseUrl, serviceKey);
+  const client = Array.isArray(clientResult.body) ? clientResult.body[0] : null;
+  if (!isSuccess(clientResult) || !client || client.user_id !== letter.user_id || !client.lpoa_signature_data) {
+    throw new Error('A signed Limited Power of Attorney is required before mailing a structured dispute round.');
+  }
+  if (round.round_number === 1) {
+    const docsResult = await supabaseRequest('/rest/v1/documents?client_id=eq.' + encodeURIComponent(letter.client_id) + '&doc_type=in.(id,address)&select=id,doc_type', 'GET', null, supabaseUrl, serviceKey);
+    const docTypes = new Set((Array.isArray(docsResult.body) ? docsResult.body : []).map((doc) => doc.doc_type));
+    if (!isSuccess(docsResult) || !docTypes.has('id') || !docTypes.has('address')) {
+      throw new Error('Round 1 requires a government ID and proof of current address before mailing.');
+    }
+  }
+  if (round.round_number <= 1) return;
+  const linksResult = await supabaseRequest('/rest/v1/letter_source_links?user_id=eq.' + encodeURIComponent(letter.user_id) + '&letter_id=eq.' + encodeURIComponent(letter.id) + '&select=source_letter_id,response_evidence_id', 'GET', null, supabaseUrl, serviceKey);
+  const links = Array.isArray(linksResult.body) ? linksResult.body : [];
+  if (!isSuccess(linksResult) || !links.length || links.some((link) => !link.response_evidence_id)) throw new Error('A later-round letter requires reviewed prior source evidence before mailing.');
+  const evidenceIds = [...new Set(links.map((link) => link.response_evidence_id))];
+  const evidenceResult = await supabaseRequest('/rest/v1/response_evidence?id=in.(' + evidenceIds.map(encodeURIComponent).join(',') + ')&select=id,firm_user_id,analysis_status,review_status', 'GET', null, supabaseUrl, serviceKey);
+  const evidence = Array.isArray(evidenceResult.body) ? evidenceResult.body : [];
+  if (!isSuccess(evidenceResult) || evidence.length !== evidenceIds.length || evidence.some((row) => row.firm_user_id !== letter.user_id || row.analysis_status !== 'analyzed' || row.review_status === 'not_reviewed')) {
+    throw new Error('A selected prior source is no longer analyzed and reviewed.');
+  }
+}
+
+async function validateOptionalAttachments(letter, manifest, supabaseUrl, serviceKey) {
+  const items = Array.isArray(manifest) ? manifest : [];
+  if (items.length > 5) throw new Error('At most five optional supporting documents may be mailed.');
+  if (!items.length) return [];
+  const ids = [...new Set(items.map((item) => String(item.document_id || '')).filter(Boolean))];
+  if (ids.length !== items.length) throw new Error('Optional attachment identifiers are missing or duplicated.');
+  const result = await supabaseRequest('/rest/v1/documents?id=in.(' + ids.map(encodeURIComponent).join(',') + ')&select=id,user_id,client_id,file_name,storage_path', 'GET', null, supabaseUrl, serviceKey);
+  if (!isSuccess(result) || !Array.isArray(result.body) || result.body.length !== ids.length) throw new Error('One or more optional documents no longer exist.');
+  const byId = new Map(result.body.map((doc) => [doc.id, doc]));
+  const validated = [];
+  let totalPages = 0;
+  for (const item of items) {
+    const doc = byId.get(item.document_id);
+    if (!doc || doc.user_id !== letter.user_id || doc.client_id !== letter.client_id || doc.storage_path !== item.storage_path) throw new Error('An optional document does not belong to this client.');
+    const objectPath = String(doc.storage_path).split('/').map(encodeURIComponent).join('/');
+    const objectResponse = await fetch(`${supabaseUrl}/storage/v1/object/authenticated/documents/${objectPath}`, {
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+    });
+    if (!objectResponse.ok) throw new Error('An optional supporting document could not be read from private storage.');
+    const bytes = new Uint8Array(await objectResponse.arrayBuffer());
+    if (bytes.byteLength > 5 * 1024 * 1024) throw new Error(`${doc.file_name} exceeds the 5 MB optional-document limit.`);
+    const isPdf = /\.pdf$/i.test(doc.file_name || '') || /application\/pdf/i.test(objectResponse.headers.get('content-type') || '');
+    const isImage = /\.(jpe?g|png|webp)$/i.test(doc.file_name || '') || /^image\/(jpeg|png|webp)/i.test(objectResponse.headers.get('content-type') || '');
+    if (!isPdf && !isImage) throw new Error(`${doc.file_name} must be a PDF, JPG, PNG, or WEBP file.`);
+    let pageCount = 1;
+    if (isPdf) {
+      try {
+        const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
+        pageCount = pdf.getPageCount();
+      } catch (pdfError) {
+        throw new Error(`${doc.file_name} is not a readable PDF.`);
+      }
+    }
+    totalPages += pageCount;
+    if (totalPages > 4) throw new Error('Optional supporting documents may contain at most four total pages.');
+    validated.push({ document_id: doc.id, file_name: doc.file_name, storage_path: doc.storage_path, byte_size: bytes.byteLength, page_count: pageCount, sha256: crypto.createHash('sha256').update(bytes).digest('hex') });
+  }
+  return validated;
 }
 
 function isBureauFollowUp(letter) {
@@ -328,7 +402,7 @@ exports.handler = async (event) => {
     }
 
     if (action === 'send_letter') {
-      const { toAddress, fromAddress, remoteUrl, description, metadata, enclosureManifest } = payload;
+      const { toAddress, fromAddress, remoteUrl, description, metadata, enclosureManifest, attachmentManifest } = payload;
       const letterId = metadata && metadata.letter_id;
       if (!letterId || !remoteUrl || !toAddress || !fromAddress) {
         return { statusCode: 400, body: JSON.stringify({ error: 'letter_id, rendered letter URL, and complete addresses are required' }) };
@@ -340,7 +414,9 @@ exports.handler = async (event) => {
       // another tab.
       const letter = await findLetter(letterId, supabaseUrl, serviceKey);
       if (!letter) return { statusCode: 404, body: JSON.stringify({ error: 'Letter not found' }) };
-      if (String(letter.phase || '').startsWith('Phase 3')) {
+      await validateStructuredRoundPreflight(letter, supabaseUrl, serviceKey);
+      const validatedAttachments = await validateOptionalAttachments(letter, attachmentManifest, supabaseUrl, serviceKey);
+      if (letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3')) {
         const {
           autoFixFieldCitations,
           collectBureauFollowUpProblems,
@@ -397,7 +473,7 @@ exports.handler = async (event) => {
       // A bureau-facing Phase 3 packet must identify the exact furnishers it
       // covers. Never use a client-wide fallback here: it can attach unrelated
       // Phase 1 disputes and responses to the wrong bureau reinvestigation.
-      if (String(letter.phase || '').startsWith('Phase 3')
+      if ((letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3'))
         && (!Array.isArray(letter.covered_furnishers) || letter.covered_furnishers.length === 0)) {
         return {
           statusCode: 422,
@@ -468,6 +544,7 @@ exports.handler = async (event) => {
         attempt_count: (submission.attempt_count || 0) + 1,
         last_attempt_at: new Date().toISOString(),
         last_error: null,
+        attachment_manifest: validatedAttachments,
       }, supabaseUrl, serviceKey);
 
       const letterPayload = {
@@ -553,6 +630,22 @@ exports.handler = async (event) => {
         submitted_at: new Date().toISOString(),
         last_error: letterWasSaved ? null : 'Lob accepted the mailpiece, but the letters row requires reconciliation.',
       }, supabaseUrl, serviceKey);
+      if (letterWasSaved && validatedAttachments.length) {
+        const snapshotRows = validatedAttachments.map((item) => ({
+          user_id: letter.user_id,
+          letter_id: letter.id,
+          document_id: item.document_id,
+          mail_submission_id: submission.id,
+          storage_path: item.storage_path,
+          file_name: item.file_name,
+          byte_size: item.byte_size,
+          page_count: item.page_count,
+          sha256: item.sha256,
+          included_by: admin.userId,
+        }));
+        const snapshotResult = await supabaseRequest('/rest/v1/letter_attachments?on_conflict=user_id,letter_id,document_id,mail_submission_id', 'POST', snapshotRows, supabaseUrl, serviceKey, { Prefer: 'resolution=ignore-duplicates,return=minimal' });
+        if (!isSuccess(snapshotResult)) console.error('Could not snapshot optional mail attachments:', requestError(snapshotResult, 'unknown error'));
+      }
       // Archive the immutable, Lob-rendered mailpiece while this request still
       // knows the CCC letter id. This is evidence capture, never a condition
       // of mailing: Lob already accepted the mailpiece, so an archive failure
@@ -572,6 +665,13 @@ exports.handler = async (event) => {
           if (!artifactArchive.archived) console.warn('Lob mailpiece not archived yet:', artifactArchive.reason, result.body.id);
         } catch (archiveErr) {
           console.error('Lob mailpiece archive failed (mail was still accepted):', result.body.id, archiveErr.message);
+        }
+      }
+      if (letterWasSaved && letter.round_id) {
+        try {
+          await queueRoundEvent({ roundId: letter.round_id, eventType: 'round_mailed', requireAllMailed: true });
+        } catch (emailError) {
+          console.error('Round mailed milestone email failed (mail was still accepted):', emailError.message);
         }
       }
       return {

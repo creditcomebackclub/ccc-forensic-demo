@@ -293,7 +293,8 @@ function ResponsesSection({ clientId, clientName, letters, setAnalyzingLetter })
             phase: matchedLetter ? matchedLetter.phase : (record.response_kind === 'bureau' ? 'Phase 3' : 'Phase 1'),
             createdAt: record.received_at || record.created_at,
             letter: matchedLetter,
-            hasPhase3: matchedLetter ? letters.some((item) => item.furnisher === matchedLetter.furnisher && item.phase?.startsWith('Phase 3')) : false,
+            hasPhase3: matchedLetter ? letters.some((item) => item.furnisher === matchedLetter.furnisher
+              && (item.targetType === 'bureau' || (!item.roundId && item.phase?.startsWith('Phase 3')))) : false,
             responseKind: record.response_kind,
             evidenceId: record.id,
             analysisStatus: record.analysis_status,

@@ -16,7 +16,8 @@
     "test:pdf-page-chunks": "node scripts/test-pdf-page-chunks.mjs",
     "test:audit-bureau-parses": "node scripts/test-audit-bureau-parses.mjs",
     "test:recovery-blueprint": "node scripts/test-recovery-blueprint.mjs",
-    "test:operations": "node scripts/test-operations-control-center.mjs"
+    "test:operations": "node scripts/test-operations-control-center.mjs",
+    "test:adaptive-rounds": "node scripts/test-adaptive-rounds.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

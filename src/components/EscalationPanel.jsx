@@ -6,6 +6,7 @@ import { runPhase4Job } from '../utils/phase4Jobs';
 import { updateLetter } from '../utils/storage';
 import { getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
 import { resolveLpoaViewUrl } from '../utils/storagePaths';
+import TargetPicker from './TargetPicker.jsx';
 
 // Best-effort extraction from a free-text "123 Main St, City, ST 12345"
 // address — clients has no structured state column. Good enough to
@@ -186,20 +187,7 @@ export default function EscalationPanel({ letter, client, onClose, onSaved }) {
           <div>
             <Section title="Step 1 — Who is this complaint about?">
               <div className="text-[11px] text-ink-faint mb-2">One complaint per company — this creates a separate filing for each target you pick. Every company is its own escalation, never one covering the whole file.</div>
-              <div className="flex flex-col gap-2">
-                {furnisherOptions.map((f) => (
-                  <button key={f} onClick={() => setTarget({ track: 'furnisher', furnisherName: f })}
-                    className="text-left text-[12px] border rounded-md px-3 py-2 hover:border-navy"
-                    style={{ borderColor: target?.furnisherName === f ? '#1B2A4A' : '#E7EAF0', background: target?.furnisherName === f ? '#F5F7FB' : '#fff' }}>
-                    Furnisher: <strong>{f}</strong> — using the Phase 1 + Phase 3 failure as evidence (§1681s-2(b))
-                  </button>
-                ))}
-                <button onClick={() => setTarget({ track: 'bureau' })}
-                  className="text-left text-[12px] border rounded-md px-3 py-2 hover:border-navy"
-                  style={{ borderColor: target?.track === 'bureau' ? '#1B2A4A' : '#E7EAF0', background: target?.track === 'bureau' ? '#F5F7FB' : '#fff' }}>
-                  Bureau: <strong>{letter.furnisher}</strong> — the CRA's own reinvestigation failure (§1681i)
-                </button>
-              </div>
+              <TargetPicker value={target} onChange={setTarget} furnisherOptions={furnisherOptions} bureauName={letter.targetBureau || letter.furnisher} compact />
             </Section>
 
             {target && (

@@ -13,7 +13,7 @@ const UploadZone = lazy(() => import('./components/UploadZone'));
 const AuditProgress = lazy(() => import('./components/AuditProgress'));
 const AuditResults = lazy(() => import('./components/AuditResults'));
 const BureauParseStatus = lazy(() => import('./components/BureauParseStatus'));
-const LetterViewer = lazy(() => import('./components/LetterViewer'));
+const StartRoundPanel = lazy(() => import('./components/StartRoundPanel'));
 const ClientsPage = lazy(() => import('./components/ClientsPage'));
 const MethodologyPage = lazy(() => import('./components/MethodologyPage'));
 const AuthPage = lazy(() => import('./components/AuthPage'));
@@ -682,8 +682,7 @@ export default function App() {
   const handleReset = () => { setView(VIEW.AUDIT); setState(STATE.IDLE); setAuditResult(null); setError(null); };
   const handleGenerateLetter = (account) => setActiveLetter(account);
   // autoOpenAccount: optional — used by the Report Comparison modal's
-  // "Generate Letter" shortcut to jump straight to LetterViewer for a
-  // specific account instead of just opening the audit.
+  // "Generate Letter" now opens explicit round setup for a specific account.
   const handleOpenSavedAudit = (audit, autoOpenAccount) => {
     setAuditResult(audit);
     setState(STATE.RESULTS);
@@ -743,7 +742,7 @@ export default function App() {
       </main>
       <Suspense fallback={null}>
         {activeLetter && auditResult && (
-          <LetterViewer account={activeLetter} client={auditResult.client} onClose={() => setActiveLetter(null)} />
+          <StartRoundPanel account={activeLetter} client={auditResult.client} onClose={() => setActiveLetter(null)} />
         )}
         {showSettings && (
           <SettingsModal onClose={() => setShowSettings(false)} displayName={displayName} email={user.email} />

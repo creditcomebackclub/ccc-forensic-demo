@@ -47,6 +47,7 @@ export default function ClientCommandHeader({
   onBack,
   onNextAction,
   vipButton,
+  emailButton,
   menu,
   children,
 }) {
@@ -154,6 +155,7 @@ export default function ClientCommandHeader({
               </button>
             )}
             <div className="flex items-center gap-2 justify-end">
+              {emailButton}
               {vipButton}
               {menu}
             </div>
