@@ -1,0 +1,63 @@
+const bureauCode = (value) => {
+  const v = String(value || '').toLowerCase();
+  if (v === 'eq' || v.includes('equifax')) return 'equifax';
+  if (v === 'exp' || v.includes('experian')) return 'experian';
+  if (v === 'tu' || v.includes('transunion')) return 'transunion';
+  return null;
+};
+
+const stableKey = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
+export function buildCampaignItems(auditRecord) {
+  const audit = auditRecord?.audit || {};
+  const items = [];
+  let sort = 0;
+  for (const account of audit.accounts || []) {
+    if (!account.clientAccountId) continue;
+    items.push({
+      item_kind: 'account',
+      source_key: `account:${account.clientAccountId}`,
+      client_account_id: account.clientAccountId,
+      label: account.furnisher || 'Unknown account',
+      snapshot: account,
+      sort_order: sort++,
+    });
+  }
+  const personal = audit.personalInfo || {};
+  const protectedNames = new Set([audit.client?.name, personal.keepOnFile?.name].map(stableKey).filter(Boolean));
+  const personalGroups = [
+    ['former_address', personal.formerAddresses || personal.addresses || [], 'Former address'],
+    ['name_variant', personal.nameVariants || personal.names || [], 'Name variation'],
+    ['former_employer', personal.formerEmployers || personal.employers || [], 'Former employer'],
+  ];
+  for (const [category, values, prefix] of personalGroups) {
+    for (const value of values) {
+      const label = typeof value === 'string' ? value : (value?.address || value?.name || value?.employer || JSON.stringify(value));
+      if (!label) continue;
+      if (category === 'name_variant' && protectedNames.has(stableKey(label))) continue;
+      items.push({
+        item_kind: 'personal_info', source_key: `personal:${category}:${stableKey(label)}`,
+        client_account_id: null, label: `${prefix}: ${label}`,
+        snapshot: { category, value: label, bureaus: ['EQ', 'EXP', 'TU'], personalInfo: personal }, sort_order: sort++,
+      });
+    }
+  }
+  for (const inquiry of audit.inquiries || []) {
+    if (inquiry.category === 'linked_to_open_account') continue;
+    const bureaus = [...new Set((inquiry.bureaus || []).map(bureauCode).filter(Boolean))];
+    items.push({
+      item_kind: 'inquiry',
+      source_key: `inquiry:${stableKey(inquiry.furnisher)}:${stableKey(inquiry.date)}:${bureaus.join('-')}`,
+      client_account_id: null,
+      label: `${inquiry.furnisher || 'Inquiry'}${inquiry.date ? ` · ${inquiry.date}` : ''}`,
+      snapshot: { ...inquiry, bureaus: bureaus.map((b) => ({ equifax: 'EQ', experian: 'EXP', transunion: 'TU' }[b])) },
+      sort_order: sort++,
+    });
+  }
+  const seen = new Set();
+  return items.filter((item) => {
+    if (seen.has(item.source_key)) return false;
+    seen.add(item.source_key);
+    return true;
+  });
+}

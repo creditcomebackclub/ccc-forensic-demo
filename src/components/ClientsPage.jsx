@@ -40,6 +40,7 @@ import {
 const VIP_RESPONSE_DAYS = 1;
 const STD_RESPONSE_DAYS = 3;
 const CLIENT_PAGE_SIZE = 50;
+const ClientCampaignWorkspace = React.lazy(() => import('./client-detail/ClientCampaignWorkspace.jsx'));
 
 // Brand tokens — matches the dashboard card system
 const T = {
@@ -789,7 +790,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       setActiveTab((p) => ({ ...p, [clientId]: 'Letters' }));
     } else {
       setLetterMailFilter('all');
-      setActiveTab((p) => ({ ...p, [clientId]: 'Overview' }));
+      setActiveTab((p) => ({ ...p, [clientId]: 'Campaign' }));
     }
     setSelectedClientId(clientId);
   };
@@ -1001,7 +1002,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
     const nextAction = deriveNextAction(c);
     const campaignSummary = summarizeCampaignPhases(phaseProgressRows);
-    const currentTab = activeTab[c.id] || 'Overview';
+    const currentTab = activeTab[c.id] || 'Campaign';
 
     const goTab = (tab) => setActiveTab((p) => ({ ...p, [c.id]: tab }));
     const goLettersWithFilter = (filterKey) => {
@@ -1053,7 +1054,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         onReviewBureau={(letter) => setReviewingBureauLetter({ letter, client: c })} />
     );
 
-    const detailTabs = ['Overview', 'Letters', 'Profile', 'Billing', 'Documents'];
+    const detailTabs = ['Campaign', 'Overview', 'Letters', 'Profile', 'Billing', 'Documents'];
 
     return (
       <div className="max-w-5xl mx-auto" style={{ padding: '20px 32px 32px' }}>
@@ -1064,7 +1065,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           primaryStatus={primary}
           nextAction={nextAction}
           onBack={() => { detailRequestRef.current += 1; setSelectedClientId(null); setSelectedClient(null); setLetterMailFilter('all'); }}
-          onNextAction={(action) => goLettersWithFilter(action?.letterFilter || 'all')}
+          onNextAction={() => goTab('Campaign')}
           vipButton={
             <button
               onClick={() => handleVipToggle(c.name, c.isVip, c.id)}
@@ -1144,6 +1145,19 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             onGoTab={goTab}
             fmtTime={fmtTime}
           />
+        )}
+
+        {currentTab === 'Campaign' && (
+          <React.Suspense fallback={<div className="py-16 text-center text-[12px] text-ink-muted"><RefreshCw size={18} className="animate-spin mx-auto mb-3" />Loading campaign workspace…</div>}>
+            <ClientCampaignWorkspace
+              client={c}
+              onOpenAudit={() => goTab('Overview')}
+              onOpenLetters={() => goTab('Letters')}
+              onMail={(letters) => setLobMailerQueue(letters)}
+              onAnalyze={setAnalyzingLetter}
+              onAnalyzeBureau={(letter) => setAnalyzingBureauLetter({ letter, client: c })}
+            />
+          </React.Suspense>
         )}
 
         {currentTab === 'Letters' && (
@@ -1486,6 +1500,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           ].filter(Boolean))] : [];
 
           const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
+          const campaignStageLabel = c.activeCampaign ? {
+            select_disputes: 'Select disputes', configure_letters: 'Build letters', letter_review: 'Letter review',
+            mailing: 'Mailing', awaiting_responses: 'Awaiting responses', response_review: 'Response review',
+          }[c.activeCampaign.stage] : null;
           const clientMenu = [
             { label: 'Email client…', onClick: () => setEmailingClient(c) },
             { label: togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip, c.id), disabled: togglingVip === c.id },
@@ -1548,13 +1566,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   </div>
                 </div>
                 <div className="flex items-center gap-2.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <StatusBadge label={primary.label} tone={primary.tone} />
-                  <span className="flex items-center gap-1 text-[11px]" style={{ color: T.faint }} title={c.audits.length + ' audits'}>
-                    <FileText size={12} strokeWidth={1.75} />{c.audits.length}
-                  </span>
-                  <span className="flex items-center gap-1 text-[11px]" style={{ color: T.faint }} title={c.letters.length + ' letters'}>
-                    <Mail size={12} strokeWidth={1.75} />{c.letters.length}
-                  </span>
+                  <StatusBadge
+                    label={c.activeCampaign ? `Round ${c.activeCampaign.round_number} · ${campaignStageLabel}` : primary.label}
+                    tone={c.activeCampaign ? (c.activeCampaign.stage === 'awaiting_responses' ? 'wait' : 'action') : primary.tone}
+                  />
                   <Menu items={clientMenu} />
                 </div>
               </div>

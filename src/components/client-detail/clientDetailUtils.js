@@ -91,6 +91,18 @@ export function summarizeCampaignPhases(phaseRows = []) {
  * Returns { label, detail, letterFilter, tone }
  */
 export function deriveNextAction(client) {
+  const campaign = client?.activeCampaign;
+  if (campaign) {
+    const copy = {
+      select_disputes: ['Select Round ' + campaign.round_number + ' disputes', 'Choose audit findings for this round', 'action'],
+      configure_letters: ['Build Round ' + campaign.round_number + ' letters', 'Configure recipients and forensic strategy', 'action'],
+      letter_review: ['Review Round ' + campaign.round_number + ' letters', 'Approve every generated letter before mailing', 'action'],
+      mailing: ['Mail Round ' + campaign.round_number, 'Send the approved batch and preserve tracking', 'action'],
+      awaiting_responses: ['Round ' + campaign.round_number + ' awaiting responses', 'Deadlines and delivery tracking remain active', 'wait'],
+      response_review: ['Review Round ' + campaign.round_number + ' responses', 'Compare responses against the exact disputes and evidence', 'urgent'],
+    }[campaign.stage];
+    if (copy) return { label: copy[0], detail: copy[1], letterFilter: 'all', tone: copy[2] };
+  }
   const letters = client?.letters || [];
   const open = letters.filter((l) => l.roundId || !(l.phase || '').startsWith('Phase 3'));
 

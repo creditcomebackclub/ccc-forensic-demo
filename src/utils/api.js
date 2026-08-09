@@ -5,6 +5,7 @@ import { resolveSignatureViewUrl } from "./storagePaths.js";
 import { startRound } from './rounds.js';
 import { BUREAU_LABEL, resolveActiveBureaus } from './roundTargets.js';
 import { buildPriorRoundLeverageBlock } from './roundEvidence.js';
+import { setRouteResult } from './campaigns.js';
 export { buildPriorRoundLeverageBlock } from './roundEvidence.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -221,7 +222,77 @@ export async function generateRoundLetter({
   };
 }
 
-export async function generateCombinedCleanupLetter(client, inquiries) {
+const CAMPAIGN_STYLE_INSTRUCTIONS = {
+  forensic: 'Use the established forensic strategy selected by the audit findings. Preserve every supported Metro 2/FCRA issue and omit unsupported claims.',
+  metro2_accuracy: 'Emphasize the supported Metro 2 data-integrity conflicts and the recipient-specific FCRA duties. Do not add generic credit-repair language.',
+  direct_furnisher: 'Use the established direct-furnisher dispute strategy and the existing 16-step structure.',
+  debt_validation: 'Generate the standalone FDCPA debt-validation sibling only when the stored dispute basis is FDCPA.',
+  procedural_request: 'Focus on the documented investigation procedure and exact unresolved evidence without asserting a right to documents the statute does not require.',
+  custom: 'Follow the staff strategy below only where it remains supported by the frozen audit and evidence. Never invent a fact, violation, or citation.',
+};
+
+export async function generateCampaignAccountRoute({ route, item, campaign, client, priorSources = [] }) {
+  const account = item?.snapshot || {};
+  if (!item?.clientAccountId || !campaign?.id || !route?.id) throw new Error('The campaign route is missing its linked account identity.');
+  const targetType = route.targetType;
+  if (!['furnisher', 'bureau'].includes(targetType)) throw new Error('This route is not an account dispute route.');
+  const isTypeC = account.type === 'C';
+  const letterSpecs = targetType === 'bureau'
+    ? [{ furnisher: account.furnisher, account_id: account.accountNumberMasked || account.id || '', type: account.type || null, target_bureau: route.targetBureau, dispute_basis: null }]
+    : isTypeC
+      ? [
+        { furnisher: account.furnisher, account_id: account.accountNumberMasked || account.id || '', type: account.type, dispute_basis: 'FDCPA' },
+        { furnisher: account.furnisher, account_id: account.accountNumberMasked || account.id || '', type: account.type, dispute_basis: 'FCRA_DIRECT' },
+      ]
+      : [{ furnisher: account.furnisher, account_id: account.accountNumberMasked || account.id || '', type: account.type || null, dispute_basis: 'FCRA_DIRECT' }];
+  try {
+    const loadedSources = await loadPriorSources(priorSources);
+    const sourcePayload = loadedSources.map((source) => ({
+      source_letter_id: source.sourceLetterId, response_evidence_id: source.responseEvidenceId,
+      apply_to_bureau: route.targetBureau || null, source_order: source.sourceOrder || 0,
+    }));
+    const { data: started, error } = await supabase.rpc('start_campaign_route', {
+      p_route_id: route.id, p_letters: letterSpecs, p_sources: sourcePayload,
+    });
+    if (error) throw error;
+    const ids = started?.letter_ids || [];
+    if (ids.length !== letterSpecs.length) throw new Error('The campaign route did not create every required letter placeholder.');
+    const priorBlocks = loadedSources.map((source) => buildPriorRoundLeverageBlock({
+      priorTargetType: source.letter.target_type || 'furnisher', nextTargetType: targetType,
+      priorLetterHtml: source.letter.html, priorLetterSummary: source.letter.summary,
+      priorResponseClassification: source.evidence?.analysis?.classification,
+      priorResponseSummary: source.evidence?.analysis?.summary,
+    })).join('\n\n---\n\n');
+    const styleInstruction = CAMPAIGN_STYLE_INSTRUCTIONS[route.letterStyle] || CAMPAIGN_STYLE_INSTRUCTIONS.forensic;
+    const customInstruction = route.customInstructions ? `\nStaff strategy: ${route.customInstructions}` : '';
+    const baseData = JSON.stringify({ account, client, roundNumber: campaign.roundNumber, targetType, clientSignature: client.signatureData || null }, null, 2);
+    const jobs = ids.map((id, index) => {
+      const spec = letterSpecs[index];
+      const target = targetType === 'bureau' ? BUREAU_LABEL[route.targetBureau] : account.furnisher;
+      const purpose = spec.dispute_basis === 'FDCPA'
+        ? 'Generate ONLY the standalone FDCPA §1692g(b) Debt Validation Demand. Do not include an FCRA direct dispute in this sibling letter.'
+        : targetType === 'bureau'
+          ? `Generate ONLY one CRA dispute addressed to ${target}. Apply §1681i framing and never generate an FDCPA validation letter.`
+          : 'Generate ONLY the FCRA/Regulation V direct furnisher dispute. Use the established 16-step structure.';
+      return {
+        id, account, targetType, generateSummary: true,
+        instructions: `LETTER_HTML_MODE\n\nToday is ${today()}. Use this exact date.\nClient campaign round: ${campaign.roundNumber}\nExplicit recipient: ${target}\n\n${purpose}\n\nStrategy: ${styleInstruction}${customInstruction}\n\nFrozen audit data:\n${baseData}\n\n${priorBlocks || 'This account has no reviewed prior-round evidence; use only the frozen audit findings.'}\n\nOutput complete HTML only. No prose or fences. Do not include a tracking-number placeholder.`,
+      };
+    });
+    const response = await fetch('/.netlify/functions/generate-letter-background', {
+      method: 'POST', headers: await staffJsonHeaders(), body: JSON.stringify({ jobs }),
+    });
+    if (!response.ok) throw new Error('The route exists, but Claude letter generation could not start.');
+    const results = await Promise.all(ids.map((id) => pollForLetter(id)));
+    await setRouteResult(route.id, { status: 'generated', letterIds: ids, generationError: null, generatedAt: new Date().toISOString() });
+    return ids.map((id, index) => ({ id, ...results[index] }));
+  } catch (error) {
+    await setRouteResult(route.id, { status: 'failed', generationError: String(error.message || error).slice(0, 1000) }).catch(() => {});
+    throw error;
+  }
+}
+
+export async function generateCombinedCleanupLetter(client, inquiries, metadata = {}) {
   const t = today();
   const personalInfo = (client && client.personalInfo) || {};
   const hasPersonalInfo = (personalInfo.formerAddresses || []).length > 0 ||
@@ -273,12 +344,12 @@ export async function generateCombinedCleanupLetter(client, inquiries) {
     ? { ...client, address: profileAddress }
     : client;
   
-  const data = JSON.stringify({ client: clientWithAddress, personalInfo: hasPersonalInfo ? personalInfo : undefined, inquiries: hasInquiries ? eligibleInquiries : undefined, bureau, lpoaSigned, clientSignature: signatureData }, null, 2);
+  const data = JSON.stringify({ client: clientWithAddress, personalInfo: hasPersonalInfo ? personalInfo : undefined, inquiries: hasInquiries ? eligibleInquiries : undefined, bureau, lpoaSigned, clientSignature: signatureData, staffStrategy: metadata.customInstructions || undefined }, null, 2);
   
   const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting a Personal Information & Inquiry Reinvestigation Demand addressed directly to ${bureau}, NOT to any furnisher. This letter disputes both the accuracy of identifying information in the consumer's file AND unverified hard inquiries. It does NOT dispute any tradeline, account balance, or payment history.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department.\n2. Cite 15 U.S.C. §1681e(b) for the maximum possible accuracy standard regarding the personal information (if any is provided).\n3. Cite 15 U.S.C. §1681i for the reinvestigation duty and 15 U.S.C. §1681b for the permissible purpose requirement for each inquiry listed (if any are provided).\n4. For personal info: List each specific former address, name variant, and former employer provided in personalInfo.formerAddresses / personalInfo.nameVariants / personalInfo.formerEmployers, and demand each one be removed. These lists already EXCLUDE the items the consumer wants to keep. If personalInfo.keepOnFile is present, affirm the consumer's correct name as keepOnFile.name (and correct current employer as keepOnFile.employer when non-null) and state that only that identifying information should remain. Do NOT demand removal of keepOnFile.name or keepOnFile.employer.\n5. For inquiries: For each inquiry listed, state the furnisher name and date, and state that the consumer does not recognize or cannot verify a permissible purpose for this specific inquiry. Demand the bureau contact each listed subscriber to verify permissible purpose, and demand deletion of any inquiry the subscriber cannot verify within 30 days per 15 U.S.C. §1681i(a)(5)(A).\n6. Do NOT state or imply fraud or identity theft unless that is explicitly present in the provided data.\n7. Do NOT dispute any account, balance, or payment history in this letter.\n8. Demand written confirmation of the results within 30 days.\n9. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, statements and demands only.\n10. ALWAYS include a signature block at the bottom of the letter. Print the consumer's full name. If \`clientSignature\` is provided in the data, embed it using an <img> tag above the printed name with a style like \`max-height: 60px;\`. If \`clientSignature\` is null, simply leave a few blank lines above the printed name for a physical signature. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n11. ALWAYS include an "Enclosures:" section below the signature block listing ONLY: "Government-Issued Photo ID" and "Proof of Current Address (Bank Statement)". Do NOT include a Limited Power of Attorney — this letter type does not require it.\n12. MANDATORY IDENTITY TABLE: Immediately after the introductory paragraph(s) and before any disputed-information sections, output a 2-column summary table with class='id-table'. This table MUST always be present for every bureau and MUST contain exactly these rows in order: "Consumer Name" (use personalInfo.keepOnFile.name when present, otherwise client.name), "Date of Birth on File" (use client.dateOfBirth if provided, otherwise omit this row only), "Current Verified Address" (use client.address — this is the permanent verified address of record, NOT any former address), "Bureau" (use the bureau name), "Report Date" (use the report date from the audit data if available, otherwise use today's date). Do NOT skip this table for any bureau.\n13. LETTER HEADER ORDER: At the very top of the letter, in this exact order: (1) today's date, (2) the consumer's full name and current verified address (client.address) as the return/sender address block, (3) the bureau's dispute-department address block. Do NOT put the sender address before the date — the date leads. The sender address must match the "Current Verified Address" row in the id-table. Use keepOnFile.name (when present) as the printed consumer name in the sender block.\n14. CRITICAL CONCISENESS RULE: Do NOT generate a separate 'STATUTORY OBLIGATIONS' or 'LEGAL BASIS' table or section. Incorporate all legal citations directly inline in the brief introductory paragraphs. Do NOT generate any CSS, <style> block, or inline style attributes. Output plain HTML using these exact classes: class='id-table', class='list-table', class='demands-table', class='signature-block', class='enclosures', class='mail-notation'. This is required to prevent the API output from truncating.\n\nOutput complete HTML only. No prose. No fences.`;
 
   const syntheticAccount = { furnisher: bureau, id: 'personal-info-inquiries', type: null };
-  const id = await saveLetter(syntheticAccount, client, 'GENERATING...', null, 'Personal Info & Inquiries');
+  const id = await saveLetter(syntheticAccount, client, 'GENERATING...', null, 'Personal Info & Inquiries', null, metadata);
   
   const res = await fetch('/.netlify/functions/generate-letter-background', {
     method: 'POST',
@@ -290,7 +361,58 @@ export async function generateCombinedCleanupLetter(client, inquiries) {
   if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
 
   // Fire-and-forget
-  return 'GENERATING...';
+  return id;
+}
+
+export async function generateCampaignCleanupRoute({ route, item, campaign, client }) {
+  if (route.targetType !== 'bureau' || !route.targetBureau) throw new Error('Personal information and inquiry routes require a bureau recipient.');
+  const bureau = BUREAU_LABEL[route.targetBureau];
+  const snapshot = item.snapshot || {};
+  const basePersonal = snapshot.personalInfo || {};
+  const personalInfo = item.kind === 'personal_info' ? {
+    formerAddresses: snapshot.category === 'former_address' ? [snapshot.value] : [],
+    nameVariants: snapshot.category === 'name_variant' ? [snapshot.value] : [],
+    formerEmployers: snapshot.category === 'former_employer' ? [snapshot.value] : [],
+    keepOnFile: basePersonal.keepOnFile || { name: client.name, employer: null },
+  } : {};
+  const inquiries = item.kind === 'inquiry' ? [snapshot] : [];
+  try {
+    const id = await generateCombinedCleanupLetter({
+      ...client, bureau, personalInfo, lpoaSigned: client.lpoaSigned,
+    }, inquiries, {
+      campaignId: campaign.id, campaignItemId: item.id, campaignRouteId: route.id,
+      generationStyle: route.letterStyle, targetType: 'bureau', targetBureau: route.targetBureau,
+      letterKind: 'file_update', customInstructions: route.customInstructions,
+    });
+    await setRouteResult(route.id, { status: 'generating', letterIds: [id], generationError: null });
+    const result = await pollForLetter(id);
+    await setRouteResult(route.id, { status: 'generated', letterIds: [id], generationError: null, generatedAt: new Date().toISOString() });
+    return [{ id, ...result }];
+  } catch (error) {
+    await setRouteResult(route.id, { status: 'failed', generationError: String(error.message || error).slice(0, 1000) }).catch(() => {});
+    throw error;
+  }
+}
+
+export async function generateInterimLetter({ account, client, targetType, targetBureau = null, style = 'procedural_request', customInstructions = '' }) {
+  if (!account || !client?.id) throw new Error('Choose an audited account for the interim letter.');
+  if (!['furnisher', 'bureau'].includes(targetType)) throw new Error('Choose a furnisher or bureau recipient.');
+  if (targetType === 'bureau' && !targetBureau) throw new Error('Choose the bureau recipient.');
+  const target = targetType === 'bureau' ? BUREAU_LABEL[targetBureau] : account.furnisher;
+  const metadata = {
+    letterKind: 'file_update', targetType, targetBureau: targetType === 'bureau' ? targetBureau : null,
+    generationStyle: style,
+  };
+  const id = await saveLetter(account, client, 'GENERATING...', null, 'Interim Letter', `__interim-${Date.now()}`, metadata);
+  const styleInstruction = CAMPAIGN_STYLE_INSTRUCTIONS[style] || CAMPAIGN_STYLE_INSTRUCTIONS.procedural_request;
+  const instructions = `LETTER_HTML_MODE\n\nToday is ${today()}. Use this exact date.\n\nDraft a standalone interim letter addressed to ${target}. This is an intentional file-update letter between structured campaign rounds. It must not claim that a new campaign round has started, alter a stored deadline, or describe itself as a response that has not actually been received.\n\nStrategy: ${styleInstruction}${customInstructions ? `\nStaff instructions: ${customInstructions}` : ''}\n\nUse only the supported frozen account data and client information below. Preserve the established forensic voice and recipient-specific FCRA/Metro 2 framing. Never invent a fact, response, investigation, violation, or enclosure.\n\n${JSON.stringify({ account, client, targetType, targetBureau, clientSignature: client.signatureData || null }, null, 2)}\n\nOutput complete HTML only. No prose or fences. Do not include a tracking-number placeholder.`;
+  const response = await fetch('/.netlify/functions/generate-letter-background', {
+    method: 'POST', headers: await staffJsonHeaders(),
+    body: JSON.stringify({ jobs: [{ id, account, targetType, generateSummary: true, instructions }] }),
+  });
+  if (!response.ok) throw new Error('Could not start the interim Claude letter generation.');
+  const result = await pollForLetter(id);
+  return { id, ...result, furnisher: target, targetType, targetBureau, phase: 'Interim Letter' };
 }
 
 export async function getReturnReceiptUrl(lobId) {

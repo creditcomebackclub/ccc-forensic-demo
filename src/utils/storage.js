@@ -215,6 +215,10 @@ export async function saveLetter(account, client, html, summary, phase, idSuffix
     ...('sourceBureauResponseEvidenceId' in metadata
       ? { source_bureau_response_evidence_id: metadata.sourceBureauResponseEvidenceId || null }
       : {}),
+    ...('campaignId' in metadata ? { campaign_id: metadata.campaignId || null } : {}),
+    ...('campaignItemId' in metadata ? { campaign_item_id: metadata.campaignItemId || null } : {}),
+    ...('campaignRouteId' in metadata ? { campaign_route_id: metadata.campaignRouteId || null } : {}),
+    ...('generationStyle' in metadata ? { generation_style: metadata.generationStyle || null } : {}),
   });
   if (error) throw error;
   return id;
@@ -344,6 +348,11 @@ function normalizeLetter(l) {
     roundNextAction: l.round_next_action || null,
     roundReviewedAt: l.round_reviewed_at || null,
     legacyReconciliationStatus: l.legacy_reconciliation_status || null,
+    campaignId: l.campaign_id || null,
+    campaignItemId: l.campaign_item_id || null,
+    campaignRouteId: l.campaign_route_id || null,
+    generationStyle: l.generation_style || null,
+    draftApprovedAt: l.draft_approved_at || null,
     auditorName: l.auditor_name || null,
   };
 }
@@ -364,6 +373,7 @@ function normalizeClientSummary(row) {
     audits: (row.audits || []).map(normalizeAudit),
     letters: (row.letters || []).map(normalizeLetter),
     rounds: [],
+    activeCampaign: null,
     auditCount: Number(row.audit_count || 0),
     letterCount: Number(row.letter_count || 0),
     lastActivity: row.last_activity || '',
@@ -475,7 +485,7 @@ export async function listClientSummaries({ limit = 50, cursor = null, search = 
   const page = rows.slice(0, pageSize).map(normalizeClientSummary);
   const clientIds = page.map((client) => client.id).filter(Boolean);
   if (clientIds.length) {
-    const [structuredLettersRes, roundsRes] = await Promise.all([
+    const [structuredLettersRes, roundsRes, campaignsRes] = await Promise.all([
       supabase.from('letters')
         .select('id,client_id,round_id,round_number,letter_kind,target_type,target_bureau,response_due_at,response_window_extension_days,round_review_status,round_next_action,round_reviewed_at')
         .in('client_id', clientIds)
@@ -483,10 +493,15 @@ export async function listClientSummaries({ limit = 50, cursor = null, search = 
       supabase.from('dispute_round_summary')
         .select('round_id,client_id,client_account_id,round_number,target_type,status,final_disposition,opened_at,closed_at,letter_count,generated_count,mailed_count,reviewed_count,ready_to_close,target_bureaus')
         .in('client_id', clientIds),
+      supabase.from('client_campaigns')
+        .select('id,client_id,round_number,stage,builder_mode,opened_at')
+        .in('client_id', clientIds)
+        .in('stage', ['select_disputes', 'configure_letters', 'letter_review', 'mailing', 'awaiting_responses', 'response_review']),
     ]);
     const adaptiveUnavailable = (error) => error && /round_id|round_number|letter_kind|target_type|target_bureau|response_due_at|dispute_round_summary/i.test(error.message || '');
     if (structuredLettersRes.error && !adaptiveUnavailable(structuredLettersRes.error)) throw structuredLettersRes.error;
     if (roundsRes.error && !adaptiveUnavailable(roundsRes.error)) throw roundsRes.error;
+    if (campaignsRes.error && !/client_campaigns/i.test(campaignsRes.error.message || '')) throw campaignsRes.error;
     if (structuredLettersRes.error || roundsRes.error) {
       // Keep the existing CRM usable while the additive adaptive-round
       // migration is pending in a preview/production database. Structured
@@ -511,12 +526,18 @@ export async function listClientSummaries({ limit = 50, cursor = null, search = 
       current.push(round);
       roundsByClientId.set(round.client_id, current);
     }
+    const campaignByClientId = new Map();
+    for (const campaign of campaignsRes.data || []) {
+      const current = campaignByClientId.get(campaign.client_id);
+      if (!current || Number(campaign.round_number) > Number(current.round_number)) campaignByClientId.set(campaign.client_id, campaign);
+    }
     for (const client of page) {
       client.letters = client.letters.map((letter) => {
         const metadata = metadataByLetterId.get(letter.id);
         return metadata ? { ...letter, ...metadata } : letter;
       });
       client.rounds = (roundsByClientId.get(client.id) || []).sort((a, b) => Number(b.round_number) - Number(a.round_number));
+      client.activeCampaign = campaignByClientId.get(client.id) || null;
     }
     }
   }
@@ -611,7 +632,7 @@ export async function getClientDetails(clientId) {
   if (sameNameError) throw sameNameError;
   const canUseLegacyNameFallback = sameNameCount === 1;
 
-  const [auditsRes, lettersRes, portalRes, legacyAuditsRes, legacyLettersRes, roundsRes] = await Promise.all([
+  const [auditsRes, lettersRes, portalRes, legacyAuditsRes, legacyLettersRes, roundsRes, campaignsRes] = await Promise.all([
     supabase.from('audits').select('*').eq('user_id', client.user_id).eq('client_id', clientId).order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').eq('user_id', client.user_id).eq('client_id', clientId).order('saved_at', { ascending: false }),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at').eq('client_id', clientId).limit(1),
@@ -622,6 +643,10 @@ export async function getClientDetails(clientId) {
       ? supabase.from('letters').select('*').eq('user_id', client.user_id).is('client_id', null).eq('client_name', client.name).order('saved_at', { ascending: false })
       : Promise.resolve({ data: [], error: null }),
     supabase.from('dispute_round_summary').select('*').eq('client_id', clientId).order('round_number', { ascending: false }),
+    supabase.from('client_campaigns').select('id,client_id,round_number,stage,builder_mode,opened_at')
+      .eq('client_id', clientId)
+      .in('stage', ['select_disputes', 'configure_letters', 'letter_review', 'mailing', 'awaiting_responses', 'response_review'])
+      .order('round_number', { ascending: false }).limit(1),
   ]);
   if (auditsRes.error) throw auditsRes.error;
   if (lettersRes.error) throw lettersRes.error;
@@ -629,6 +654,7 @@ export async function getClientDetails(clientId) {
   if (legacyAuditsRes.error) throw legacyAuditsRes.error;
   if (legacyLettersRes.error) throw legacyLettersRes.error;
   if (roundsRes.error && !/dispute_round_summary/i.test(roundsRes.error.message || '')) throw roundsRes.error;
+  if (campaignsRes.error && !/client_campaigns/i.test(campaignsRes.error.message || '')) throw campaignsRes.error;
 
   const rawAudits = [...(auditsRes.data || []), ...(legacyAuditsRes.data || [])]
     .sort((a, b) => (b.saved_at || '').localeCompare(a.saved_at || ''));
@@ -657,7 +683,11 @@ export async function getClientDetails(clientId) {
     return { ...normalizeLetter(letter), auditorName: author ? (author.full_name || author.email) : null };
   });
 
-  return { ...hydrateClientRecord(client, audits, letters, (portalRes.data || [])[0] || null), rounds: roundsRes.error ? [] : (roundsRes.data || []) };
+  return {
+    ...hydrateClientRecord(client, audits, letters, (portalRes.data || [])[0] || null),
+    rounds: roundsRes.error ? [] : (roundsRes.data || []),
+    activeCampaign: campaignsRes.error ? null : (campaignsRes.data || [])[0] || null,
+  };
 }
 
 // Navigation elsewhere in the app still carries a client name today. This is
