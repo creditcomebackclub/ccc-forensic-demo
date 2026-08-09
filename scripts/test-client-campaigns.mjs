@@ -38,6 +38,7 @@ assert.match(migration, /campaign_letter_routes_bureau_uidx/, 'bureau routes are
 assert.match(migration, /coalesce\(v_client\.engagement_status,'pending_onboarding'\) <> 'active'/, 'new campaign generation is engagement gated');
 assert.match(migration, /v_evidence\.analysis_status<>'analyzed'/, 'later routes require analyzed prior evidence');
 assert.match(migration, /greatest\(v_campaign_max, v_dispute_max\) \+ 1/, 'campaign numbering continues existing adaptive-round history');
+assert.match(migration, /client_campaigns_round_uidx[\s\S]*where stage <> 'legacy'/, 'legacy reference rows cannot collide with real campaign round numbers');
 
 const api = fs.readFileSync(new URL('../src/utils/api.js', import.meta.url), 'utf8');
 assert.match(api, /generateCampaignAccountRoute/, 'campaign routes use the server-side Claude generator');

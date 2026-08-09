@@ -17,10 +17,12 @@ create table if not exists public.client_campaigns (
   opened_at timestamptz not null default now(),
   closed_at timestamptz,
   updated_at timestamptz not null default now(),
-  unique (user_id, client_id, round_number),
   foreign key (user_id, audit_id) references public.audits(user_id, id) on delete restrict
 );
 
+create unique index if not exists client_campaigns_round_uidx
+  on public.client_campaigns (user_id, client_id, round_number)
+  where stage <> 'legacy';
 create unique index if not exists client_campaigns_one_active_idx
   on public.client_campaigns (user_id, client_id)
   where stage not in ('closed', 'cancelled', 'legacy');
