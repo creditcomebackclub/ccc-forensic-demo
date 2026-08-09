@@ -55,8 +55,12 @@ function responseBadge(l) {
   const isBureau = l.target_type === 'bureau' || isBureauCampaign(l.phase);
   const isFileUpdate = isFileUpdateCampaign(l.phase);
   if (l.response_outcome === 'deleted') return { label: '🏆 Deleted', tone: 'bg-green-50 text-green-700 border-green-200' };
+  if (l.round_review_status === 'resolved') return { label: 'Review Complete', tone: 'bg-green-50 text-green-700 border-green-200' };
+  if (l.round_review_status === 'follow_up') return { label: 'Next Round Approved', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
+  if (l.round_review_status === 'needs_documents') return { label: 'Documents Requested', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (l.round_review_status === 'escalated') return { label: 'Escalation Review Approved', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   if (l.response_outcome === 'no_response') {
-    const closedLabel = isBureau ? 'Bureau window closed' : isFileUpdate ? 'File update window closed' : 'No Response — Escalated';
+    const closedLabel = isBureau ? 'Bureau review pending' : isFileUpdate ? 'File update review pending' : 'Staff review pending';
     return { label: closedLabel, tone: 'bg-red-50 text-red-700 border-red-200' };
   }
   if (l.response_outcome === 'received' && isBureau) {
@@ -105,6 +109,7 @@ function ReturnReceiptButton({ lobId, returnReceiptUrl }) {
 
 export default function DisputesTab({
   letters,
+  rounds = [],
   manualUploadUnlocked,
   setManualUploadUnlocked,
   uploadSuccess,
@@ -120,6 +125,27 @@ export default function DisputesTab({
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
       <h2 className="text-xl font-bold text-slate-900 mb-2">Your Campaign Letters</h2>
+      {rounds.filter((round) => round.status !== 'cancelled').length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {rounds.filter((round) => round.status !== 'cancelled').map((round) => {
+            const target = round.target_type === 'bureau' ? 'Credit Bureau' : 'Direct Furnisher';
+            const status = round.status === 'open'
+              ? (round.reviewed_count > 0 ? 'Staff review in progress' : round.mailed_count === round.letter_count ? 'Response window in progress' : 'Preparation and mailing in progress')
+              : round.final_disposition === 'resolved'
+                ? 'Review complete · account campaign resolved'
+                : round.final_disposition === 'escalate'
+                  ? 'Ready for escalation review · no filing has been submitted'
+                  : 'Review complete · another round may be prepared';
+            return (
+              <div key={round.round_id} className="rounded-xl border border-slate-200 bg-white/80 px-4 py-3 shadow-sm">
+                <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-500">Round {round.round_number} · {target}</div>
+                <div className="mt-1 text-xs font-semibold text-slate-800">{status}</div>
+                <div className="mt-1 text-[10px] text-slate-400">{round.mailed_count}/{round.letter_count} mailed · {round.reviewed_count}/{round.letter_count} reviewed</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {letters.length === 0 ? (
         <div className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-10 text-center shadow-sm">
           <p className="text-sm text-gray-400">No campaign letters yet. Your campaign will begin shortly.</p>

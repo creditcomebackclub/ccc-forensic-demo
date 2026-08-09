@@ -27,6 +27,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const [profile, setProfile] = useState(null);
   const [clientMeta, setClientMeta] = useState(null);
   const [letters, setLetters] = useState([]);
+  const [rounds, setRounds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [auditHistory, setAuditHistory] = useState([]);
   const [progressUpdates, setProgressUpdates] = useState([]);
@@ -79,10 +80,13 @@ export default function ClientPortal({ session, onSignOut }) {
         // The client portal needs campaign state, not staff-only model output
         // or response-review notes. Keep the browser query intentionally
         // narrow; raw response evidence remains private to the staff UI.
-        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status';
+        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,round_id,round_number,letter_kind,target_type,target_bureau,response_due_at,response_window_extension_days,round_review_status';
         const lettersQuery = cp.client_id
           ? supabase.from('letters').select(portalLetterColumns).eq('client_id', cp.client_id).order('saved_at', { ascending: true })
           : supabase.from('letters').select(portalLetterColumns).eq('client_name', cp.full_name).order('saved_at', { ascending: true });
+        const roundsQuery = cp.client_id
+          ? supabase.from('client_dispute_round_status').select('round_id,client_id,client_account_id,round_number,target_type,status,final_disposition,opened_at,closed_at,cancelled_at,letter_count,mailed_count,reviewed_count').eq('client_id', cp.client_id).order('round_number', { ascending: false })
+          : Promise.resolve({ data: [], error: null });
         const auditsQuery = cp.client_id
           ? supabase.from('audits').select('audit,saved_at').eq('client_id', cp.client_id).order('saved_at', { ascending: false }).limit(5)
           : supabase.from('audits').select('audit,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5);
@@ -92,14 +96,17 @@ export default function ClientPortal({ session, onSignOut }) {
           ? supabase.from('progress_updates').select('*').eq('client_id', cp.client_id).or('status.eq.sent,emailed_at.not.is.null').order('to_report_date', { ascending: false })
           : supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).or('status.eq.sent,emailed_at.not.is.null').order('to_report_date', { ascending: false });
 
-        const [lettersRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
+        const [lettersRes, roundsRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
           lettersQuery,
+          roundsQuery,
           clientsQuery,
           auditsQuery,
           progressQuery,
           documentsQuery,
         ]);
         setLetters(lettersRes.data || []);
+        if (roundsRes.error) console.warn('Client round status unavailable:', roundsRes.error.message);
+        else setRounds(roundsRes.data || []);
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
         setProgressUpdates(progressRes.data || []);
@@ -279,10 +286,10 @@ export default function ClientPortal({ session, onSignOut }) {
   // Onboarding timeline (Overview tab) — stage from earliest account-dispute mail.
   // File-update letters (PI / inquiries) do not start the dispute journey clock.
   const phase1Mailed = letters
-    .filter(l => isAccountDisputeCampaign(l.phase) && l.mailed_date)
+    .filter(l => (l.target_type || isAccountDisputeCampaign(l.phase)) && l.mailed_date)
     .sort((a, b) => new Date(a.mailed_date) - new Date(b.mailed_date));
   const earliestPhase1MailDate = phase1Mailed[0]?.mailed_date || null;
-  const accountDisputeLetters = letters.filter(l => isAccountDisputeCampaign(l.phase) || isBureauCampaign(l.phase));
+  const accountDisputeLetters = letters.filter(l => l.target_type || isAccountDisputeCampaign(l.phase) || isBureauCampaign(l.phase));
   const fileUpdateLetters = letters.filter(l => isFileUpdateCampaign(l.phase));
   const windowCloseDate = earliestPhase1MailDate
     ? new Date(new Date(earliestPhase1MailDate).getTime() + 30 * 86400000).toISOString()
@@ -310,7 +317,10 @@ export default function ClientPortal({ session, onSignOut }) {
     const preparedTitle = fileUpdate
       ? 'File update prepared — ' + l.furnisher
       : 'Dispute letter prepared — ' + l.furnisher;
-    if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: preparedTitle, subtitle: clientCampaignLabel(l.phase), tone: 'blue' });
+    const roundLabel = l.round_number
+      ? `Round ${l.round_number} · ${l.target_type === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`
+      : clientCampaignLabel(l.phase);
+    if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: preparedTitle, subtitle: roundLabel, tone: 'blue' });
     if (l.mailed_date) timeline.push({ date: l.mailed_date, icon: '✉️', title: 'Letter mailed via certified mail — ' + l.furnisher, subtitle: l.tracking_number ? 'USPS #' + l.tracking_number.slice(-8) : null, tone: 'default' });
 
     // Granular in-transit milestones from Lob webhook
@@ -327,7 +337,7 @@ export default function ClientPortal({ session, onSignOut }) {
     if (l.tracking_status === 'Available for Pickup') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '🏢', title: 'Available for Pickup — ' + l.furnisher, subtitle: 'Awaiting pickup at post office', tone: 'gold' });
 
     if (l.response_outcome === 'received') {
-      const bureauUpdate = isBureauCampaign(l.phase);
+      const bureauUpdate = l.target_type === 'bureau' || isBureauCampaign(l.phase);
       const bureauStatus = l.bureau_response_status;
       const subtitle = bureauUpdate
         ? (bureauStatus === 'analyzing' ? 'Staff is reviewing the bureau response' : bureauStatus === 'review_ready' ? 'Staff review is ready for the next decision' : bureauStatus === 'reviewed' ? 'Next campaign step recorded' : 'Response received and queued for staff review')
@@ -343,8 +353,8 @@ export default function ClientPortal({ session, onSignOut }) {
     }
     if (l.response_outcome === 'no_response') {
       const closedTitle = fileUpdate
-        ? 'File update window closed — next action underway'
-        : 'Response window closed — next action underway';
+        ? 'File update window closed — staff review pending'
+        : 'Response window closed — staff review pending';
       timeline.push({ date: l.response_date || l.mailed_date, icon: '⚠️', title: closedTitle, subtitle: l.furnisher, tone: 'red' });
     }
     if (l.response_outcome === 'deleted') {
@@ -353,6 +363,15 @@ export default function ClientPortal({ session, onSignOut }) {
         : 'Account removed from your credit report';
       timeline.push({ date: l.response_date, icon: '🏆', title: 'DELETED — ' + l.furnisher, subtitle: deletedSubtitle, tone: 'green', responseUrl: l.response_file_url || null });
     }
+  });
+
+  rounds.filter((round) => round.status === 'closed' && round.closed_at).forEach((round) => {
+    const outcome = round.final_disposition === 'resolved'
+      ? { title: `Round ${round.round_number} review complete`, subtitle: 'Account campaign resolved', tone: 'green', icon: '✅' }
+      : round.final_disposition === 'escalate'
+        ? { title: `Round ${round.round_number} ready for escalation review`, subtitle: 'No complaint or legal filing has been submitted', tone: 'gold', icon: '⚖️' }
+        : { title: `Round ${round.round_number} review complete`, subtitle: 'Another round may be prepared', tone: 'blue', icon: '📋' };
+    timeline.push({ date: round.closed_at, ...outcome });
   });
 
   if (clientMeta?.created_at) timeline.push({ date: clientMeta.created_at, icon: '👋', title: 'Enrolled in Credit Comeback Club', tone: 'blue' });
@@ -475,6 +494,7 @@ export default function ClientPortal({ session, onSignOut }) {
             {activeTab === 'disputes' && (
               <DisputesTab 
                 letters={letters}
+                rounds={rounds}
                 manualUploadUnlocked={manualUploadUnlocked}
                 setManualUploadUnlocked={setManualUploadUnlocked}
                 uploadSuccess={uploadSuccess}

@@ -21,9 +21,12 @@ function PhaseProgressBar({ letters }) {
 
   const groups = {};
   letters.forEach(l => {
-    const campaign = clientCampaignLabel(l.phase);
-    if (!groups[campaign]) groups[campaign] = [];
-    groups[campaign].push(l);
+    const label = l.round_number
+      ? `Round ${l.round_number} · ${l.target_type === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`
+      : clientCampaignLabel(l.phase);
+    const key = l.round_id || `legacy:${label}`;
+    if (!groups[key]) groups[key] = { label, letters: [] };
+    groups[key].letters.push(l);
   });
 
   return (
@@ -31,7 +34,9 @@ function PhaseProgressBar({ letters }) {
       <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-slate-900 mb-1">📊 Campaign Progress</div>
       <p className="text-[11px] text-slate-500 mb-4">Your case may move directly to a bureau review when the record supports it. Internal phases are managed by our team.</p>
       <div className="space-y-5">
-        {Object.entries(groups).map(([campaign, campaignLetters]) => {
+        {Object.entries(groups).map(([groupKey, group]) => {
+          const campaign = group.label;
+          const campaignLetters = group.letters;
           const maxStep = Math.max(...campaignLetters.map(letterPhaseStep));
           const currentLabel = CAMPAIGN_STEPS[maxStep] === 'Delivered' ? 'Response Window' : CAMPAIGN_STEPS[maxStep];
           const allHaveOutcome = campaignLetters.every(l => l.response_outcome);
@@ -43,11 +48,11 @@ function PhaseProgressBar({ letters }) {
             : responses > 0
               ? 'Response review in progress'
               : noResponses > 0
-                ? 'Next action queued'
+                ? 'Staff review pending'
                 : allHaveOutcome ? 'Team review in progress' : currentLabel;
 
           return (
-            <div key={campaign}>
+            <div key={groupKey}>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-semibold text-slate-800">{campaign}</span>
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border
