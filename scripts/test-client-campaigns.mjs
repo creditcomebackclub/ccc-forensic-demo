@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { buildCampaignItems } from '../src/utils/campaignItems.js';
+import { buildCampaignItems, buildCleanupRouteGroups } from '../src/utils/campaignItems.js';
+import { isPendingRoundReview } from '../src/utils/roundState.js';
 
 const auditRecord = {
   id: 'audit-1',
@@ -32,6 +33,25 @@ assert(items.some((item) => item.label.includes('Jamie S Sample')), 'real name v
 assert(!items.some((item) => item.label === 'Name variation: Jamie Sample'), 'keep-on-file name cannot become a dispute candidate');
 assert.equal(new Set(items.map((item) => item.source_key)).size, items.length, 'all frozen source keys are unique');
 
+const cleanupGroups = buildCleanupRouteGroups([
+  { id: 'pi-1', kind: 'personal_info', snapshot: { bureaus: ['EQ', 'EXP', 'TU'] } },
+  { id: 'inq-eq', kind: 'inquiry', snapshot: { bureaus: ['EQ'] } },
+  { id: 'inq-exp-tu', kind: 'inquiry', snapshot: { bureaus: ['EXP', 'TU'] } },
+  { id: 'account-1', kind: 'account', snapshot: { bureaus: ['EQ'] } },
+]);
+assert.equal(cleanupGroups.length, 3, 'cleanup routes consolidate to at most one route per bureau');
+assert.deepEqual(cleanupGroups.find((group) => group.targetBureau === 'equifax').itemIds, ['pi-1', 'inq-eq'], 'Equifax receives only matching selected cleanup findings');
+assert.deepEqual(cleanupGroups.find((group) => group.targetBureau === 'experian').itemIds, ['pi-1', 'inq-exp-tu'], 'Experian receives only matching selected cleanup findings');
+assert.deepEqual(cleanupGroups.find((group) => group.targetBureau === 'transunion').itemIds, ['pi-1', 'inq-exp-tu'], 'TransUnion receives only matching selected cleanup findings');
+
+const legacySource = { id: 'source', roundId: 'round-1', furnisher: 'Example Bank', savedAt: '2026-01-01', roundReviewStatus: 'not_reviewed' };
+assert.equal(isPendingRoundReview({ rounds: [{ round_id: 'round-1', status: 'closed' }], letters: [legacySource] }, legacySource), false, 'closed round lifecycle overrides a stale letter flag');
+assert.equal(isPendingRoundReview({
+  rounds: [{ round_id: 'round-1', status: 'open' }],
+  letters: [legacySource, { phase: 'Phase 3 — Bureau Dispute', furnisher: 'Experian', coveredFurnishers: ['Example Bank'], savedAt: '2026-02-01' }],
+}, legacySource), false, 'a later legacy Phase 3 follow-up proves the source review already happened');
+assert.equal(isPendingRoundReview({ rounds: [{ round_id: 'round-1', status: 'open' }], letters: [legacySource] }, legacySource), true, 'an unresolved open round remains actionable');
+
 const migration = fs.readFileSync(new URL('../supabase/migrations/20260809150000_client_campaign_command_center.sql', import.meta.url), 'utf8');
 assert.match(migration, /dispute_rounds_one_open_per_account_target_idx/, 'direct and bureau tracks have separate open-round protection');
 assert.match(migration, /campaign_letter_routes_bureau_uidx/, 'bureau routes are unique per item and bureau');
@@ -48,6 +68,14 @@ assert.match(api, /generate-letter-background/, 'campaign letters retain the pro
 const workspace = fs.readFileSync(new URL('../src/components/client-detail/ClientCampaignWorkspace.jsx', import.meta.url), 'utf8');
 assert.match(workspace, /letter\.targetType === 'bureau' \? onAnalyzeBureau : onAnalyze/, 'bureau and furnisher responses retain their specialized analyzers');
 assert.match(workspace, /Select all/, 'personal information and inquiry groups expose bulk selection');
+assert.match(workspace, /Generate cleanup letters/, 'cleanup letters can be generated before account disputes');
+assert.match(workspace, /Mail approved cleanup/, 'approved cleanup letters can be mailed before the account batch');
+
+const groupedRoutes = fs.readFileSync(new URL('../supabase/migrations/20260809164000_campaign_grouped_cleanup_routes.sql', import.meta.url), 'utf8');
+assert.match(groupedRoutes, /item_ids uuid\[\]/, 'campaign routes persist all findings consolidated into a bureau letter');
+
+const roundState = fs.readFileSync(new URL('../src/utils/roundState.js', import.meta.url), 'utf8');
+assert.match(roundState, /round\.status === 'open'/, 'closed rounds cannot resurface as pending review');
 
 const campaignApi = fs.readFileSync(new URL('../src/utils/campaigns.js', import.meta.url), 'utf8');
 assert.match(campaignApi, /updateCampaignItemStates[\s\S]*\.in\('id', ids\)/, 'bulk selection uses one scoped database update');

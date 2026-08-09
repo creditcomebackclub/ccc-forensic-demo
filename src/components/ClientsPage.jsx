@@ -14,6 +14,7 @@ import { archiveHistoricalMailpiece, getMailArtifactUrl, listMailArtifacts } fro
 import { resolveLpoaViewUrl } from '../utils/storagePaths';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
 import { extendLetterDeadline } from '../utils/rounds.js';
+import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
 import BureauResponseAnalyzer from './BureauResponseAnalyzer';
@@ -128,7 +129,7 @@ function importDueInfo(c) {
 
 function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
   if (!filter) return true;
-  const openLetters = (c.letters || []).filter((l) => l.roundId || !l.phase?.startsWith('Phase 3'));
+  const openLetters = (c.letters || []).filter((l) => l.roundId ? isOpenRoundLetter(c, l) : !l.phase?.startsWith('Phase 3'));
   const lifecycle = c.billingStatus || 'Active';
   switch (filter) {
     case 'active':
@@ -140,7 +141,7 @@ function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
       return (c.rounds || []).some((round) => round.status === 'closed' && round.final_disposition === 'escalate')
         || (c.letters || []).some((letter) => !letter.roundId && letter.bureauNextAction === 'escalation');
     case 'ready':
-      return openLetters.some((l) => letterStatus(l).code === 'received' && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed'));
+      return openLetters.some((l) => letterStatus(l).code === 'received' && (!l.roundId || isPendingRoundReview(c, l)));
     case 'phase3':
       return (c.letters || []).some((l) => l.targetType === 'bureau' || l.phase?.startsWith('Phase 3'));
     case 'phase4':
@@ -149,12 +150,12 @@ function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
     case 'received':
       return openLetters.some((l) => {
         if (l.responseOutcome !== 'received') return false;
-        if (l.roundId) return !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed';
+        if (l.roundId) return isPendingRoundReview(c, l);
         return !(c.letters || []).some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
       });
     case 'attention':
       return (
-        openLetters.some((letter) => ['window_closed', 'no_response'].includes(letterStatus(letter).code) && (!letter.roundId || !letter.roundReviewStatus || letter.roundReviewStatus === 'not_reviewed')) ||
+        openLetters.some((letter) => ['window_closed', 'no_response'].includes(letterStatus(letter).code) && (!letter.roundId || isPendingRoundReview(c, letter))) ||
         clientMatchesFilter(c, 'escalate', unanalyzedNames, unanalyzedClientIds) ||
         clientMatchesFilter(c, 'ready', unanalyzedNames, unanalyzedClientIds) ||
         clientMatchesFilter(c, 'received', unanalyzedNames, unanalyzedClientIds) ||
@@ -968,11 +969,11 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     }
     const c = selectedClient;
     
-    const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')).length;
+    const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || isPendingRoundReview(c, l))).length;
     const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
     const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;
     const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
-      ? (!l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')
+      ? isPendingRoundReview(c, l)
       : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;
     const auditors = isAdmin ? [...new Set([
       ...c.audits.map((a) => a.auditorName),
@@ -1487,11 +1488,11 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
       <div className="space-y-3">
         {viewTab === 'clients' && filteredClients.map((c) => {
-          const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')).length;
+          const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || isPendingRoundReview(c, l))).length;
           const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
           const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;
           const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
-            ? (!l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')
+            ? isPendingRoundReview(c, l)
             : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;
           const importDue = importDueInfo(c);
           const auditors = isAdmin ? [...new Set([

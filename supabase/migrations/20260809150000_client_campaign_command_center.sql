@@ -54,6 +54,7 @@ create table if not exists public.campaign_letter_routes (
   id uuid primary key default gen_random_uuid(),
   campaign_id uuid not null references public.client_campaigns(id) on delete cascade,
   item_id uuid not null references public.campaign_items(id) on delete cascade,
+  item_ids uuid[] not null default '{}',
   user_id uuid not null references auth.users(id) on delete cascade,
   client_id uuid not null references public.clients(id) on delete cascade,
   target_type text not null check (target_type in ('furnisher', 'bureau', 'interim')),

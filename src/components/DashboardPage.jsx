@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, TrendingUp, Clock, Zap, Star, Activity, FileText, Mail, ChevronRight, Upload, CheckCircle, X, BarChart2, Award, Target, Timer, Users, Table2 } from 'lucide-react';
 import { listClientSummaries, updateLetter } from '../utils/storage';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
+import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_HOURS = 24;
@@ -142,11 +143,12 @@ function computeDashboard(clients) {
         if (l.responseOutcome === 'deleted') funnel.deleted++;
 
         const structuredStatus = letterStatus(l);
-        if (structuredStatus.code === 'awaiting') {
+        const roundOpen = isOpenRoundLetter(c, l);
+        if (roundOpen && structuredStatus.code === 'awaiting') {
           awaiting++;
           windowCountdown.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, remaining: structuredStatus.remaining, mailedDate: l.mailedDate });
         }
-        const notReviewed = !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed';
+        const notReviewed = isPendingRoundReview(c, l);
         if (notReviewed && ['received', 'no_response', 'window_closed'].includes(structuredStatus.code)) {
           escalate++;
           actions.push({
@@ -162,7 +164,7 @@ function computeDashboard(clients) {
             filter: 'received',
             letter: l,
           });
-        } else if (l.roundNextAction === 'needs_documents') {
+        } else if (roundOpen && l.roundNextAction === 'needs_documents') {
           actions.push({ type: 'documents', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'Documents requested — round paused', tone: 'amber', savedAt: l.roundReviewedAt || l.savedAt, filter: 'attention', letter: l });
         }
         recentActivity.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, phase: `Round ${l.roundNumber} · ${l.targetType === 'bureau' ? 'Credit Bureau' : 'Direct Furnisher'} Dispute`, savedAt: l.savedAt, type: l.responseOutcome === 'deleted' ? 'deletion' : 'letter', auditorName: l.auditorName });
@@ -827,8 +829,8 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
               <div className="space-y-0">
                 {dash.vipClients.map((c, i) => {
                   const openLetters = c.letters.filter((l) => l.roundId || !l.phase?.startsWith('Phase 3'));
-                  const ripe = openLetters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')).length;
-                  const needsPhase3 = openLetters.filter((l) => l.responseOutcome === 'received' && (!l.roundId || !l.roundReviewStatus || l.roundReviewStatus === 'not_reviewed')).length;
+                  const ripe = openLetters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || isPendingRoundReview(c, l))).length;
+                  const needsPhase3 = openLetters.filter((l) => l.responseOutcome === 'received' && (!l.roundId || isPendingRoundReview(c, l))).length;
                   return (
                     <div key={c.id || i} onClick={() => onNavigate('clients', { jumpTo: c.id || c.name })}
                       className="flex items-center justify-between py-2 border-b last:border-b-0 cursor-pointer hover:bg-amber-50 rounded px-1 transition-colors group"

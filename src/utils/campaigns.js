@@ -1,5 +1,5 @@
 import { supabase } from './supabase.js';
-import { buildCampaignItems } from './campaignItems.js';
+import { buildCampaignItems, getCampaignItemBureaus } from './campaignItems.js';
 export { buildCampaignItems } from './campaignItems.js';
 
 export const CAMPAIGN_STAGES = [
@@ -30,6 +30,7 @@ function normalizeRoute(row) {
     targetBureau: row.target_bureau, letterStyle: row.letter_style,
     customInstructions: row.custom_instructions || '', status: row.status,
     disputeRoundId: row.dispute_round_id, letterIds: row.letter_ids || [],
+    itemIds: row.item_ids?.length ? row.item_ids : [row.item_id],
     approvedLetterIds: row.approved_letter_ids || [], generationError: row.generation_error || null,
   };
 }
@@ -105,10 +106,22 @@ export async function replaceConfiguredRoutes(campaign, items, routeSpecs) {
   const userId = campaign.userId;
   const byId = new Map(items.map((item) => [item.id, item]));
   const rows = routeSpecs.map((spec) => {
-    const item = byId.get(spec.itemId);
+    const itemIds = [...new Set((spec.itemIds?.length ? spec.itemIds : [spec.itemId]).filter(Boolean))];
+    const item = byId.get(spec.itemId || itemIds[0]);
     if (!item) throw new Error('A configured route references an unavailable dispute item.');
+    if (!itemIds.length || itemIds.some((id) => !byId.has(id))) throw new Error('A grouped route contains an unavailable dispute item.');
+    const groupedItems = itemIds.map((id) => byId.get(id));
+    if (groupedItems.some((groupedItem) => groupedItem.selectionState !== 'selected')) throw new Error('Only items selected for this round can be routed.');
+    const cleanup = groupedItems.every((groupedItem) => ['personal_info', 'inquiry'].includes(groupedItem.kind));
+    if (cleanup) {
+      if (spec.targetType !== 'bureau' || !spec.targetBureau) throw new Error('Cleanup findings require a bureau route.');
+      if (groupedItems.some((groupedItem) => !getCampaignItemBureaus(groupedItem).includes(spec.targetBureau))) throw new Error('A cleanup route contains a finding that is not reported by its target bureau.');
+    } else if (groupedItems.length !== 1 || item.kind !== 'account') {
+      throw new Error('Account disputes must use one account per route.');
+    }
     return {
       campaign_id: campaign.id, item_id: item.id, user_id: userId, client_id: campaign.clientId,
+      item_ids: itemIds,
       target_type: spec.targetType, target_bureau: spec.targetBureau || null,
       letter_style: spec.letterStyle || 'forensic', custom_instructions: String(spec.customInstructions || '').trim() || null,
     };

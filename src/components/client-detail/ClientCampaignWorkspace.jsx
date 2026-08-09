@@ -6,6 +6,7 @@ import {
   replaceConfiguredRoutes, updateCampaign, updateCampaignItemState, updateCampaignItemStates,
 } from '../../utils/campaigns.js';
 import { generateCampaignAccountRoute, generateCampaignCleanupRoute, generateInterimLetter } from '../../utils/api.js';
+import { buildCleanupRouteGroups, getCampaignItemBureaus } from '../../utils/campaignItems.js';
 
 const T = { navy: '#1B2A4A', gold: '#C9A84C', border: '#E7EAF0', grid: '#EEF0F4', ink: '#111827', muted: '#6B7280', faint: '#9CA3AF' };
 const BUREAUS = ['equifax', 'experian', 'transunion'];
@@ -16,9 +17,7 @@ const STAGES = [
 ];
 
 function activeBureaus(item) {
-  const raw = item.snapshot?.bureaus || [];
-  const values = raw.map((value) => String(value).toLowerCase());
-  const matched = BUREAUS.filter((bureau) => values.some((value) => value === bureau || value === ({ equifax: 'eq', experian: 'exp', transunion: 'tu' }[bureau])));
+  const matched = getCampaignItemBureaus(item);
   return matched.length ? matched : (item.kind === 'personal_info' ? BUREAUS : []);
 }
 
@@ -137,31 +136,147 @@ function BuilderChoice({ onChoose, onStandalone }) {
 
 function RouteConfigurator({ workspace, mode, onSave, busy }) {
   const selected = workspace.items.filter((item) => item.selectionState === 'selected');
-  const [config, setConfig] = useState(() => Object.fromEntries(selected.map((item) => [item.id, {
-    direct: item.kind === 'account', bureaus: item.kind === 'account' ? [] : activeBureaus(item),
-    style: item.kind === 'account' ? 'forensic' : item.kind === 'inquiry' ? 'inquiry' : 'personal_information',
+  const accounts = selected.filter((item) => item.kind === 'account');
+  const cleanupGroups = buildCleanupRouteGroups(selected);
+  const [cleanupBureaus, setCleanupBureaus] = useState(() => cleanupGroups.map((group) => group.targetBureau));
+  const [config, setConfig] = useState(() => Object.fromEntries(accounts.map((item) => [item.id, {
+    direct: true, bureaus: [], style: 'forensic',
     instructions: '',
   }])));
   const toggleBureau = (itemId, bureau) => setConfig((current) => ({ ...current, [itemId]: { ...current[itemId], bureaus: current[itemId].bureaus.includes(bureau) ? current[itemId].bureaus.filter((b) => b !== bureau) : [...current[itemId].bureaus, bureau] } }));
-  const routes = selected.flatMap((item) => {
+  const accountRoutes = accounts.flatMap((item) => {
     const value = config[item.id];
     return [
-      ...(item.kind === 'account' && value.direct ? [{ itemId: item.id, targetType: 'furnisher', letterStyle: value.style, customInstructions: value.instructions }] : []),
+      ...(value.direct ? [{ itemId: item.id, itemIds: [item.id], targetType: 'furnisher', letterStyle: value.style, customInstructions: value.instructions }] : []),
       ...value.bureaus.map((bureau) => ({ itemId: item.id, targetType: 'bureau', targetBureau: bureau, letterStyle: value.style, customInstructions: value.instructions })),
     ];
   });
-  return <div className="space-y-4"><div className="bg-white rounded-2xl px-5 py-4" style={{ border: `1px solid ${T.border}` }}><div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>{mode === 'guided' ? 'Guided Round' : 'Custom Round'}</div><h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>Configure recipients and letter strategy</h2><p className="text-[11px] mt-1" style={{ color: T.muted }}>The frozen forensic findings remain the factual foundation. These controls change routing and strategic framing only.</p></div>{selected.map((item) => { const value = config[item.id]; const allowed = activeBureaus(item); return <div key={item.id} className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${T.border}` }}><div className="flex items-start gap-3"><div className="flex-1"><div className="text-[12px] font-semibold" style={{ color: T.ink }}>{item.label}</div><div className="text-[10px] mt-0.5 uppercase tracking-wider" style={{ color: T.faint }}>{item.kind.replace('_', ' ')}</div></div><select value={value.style} onChange={(e) => setConfig((current) => ({ ...current, [item.id]: { ...current[item.id], style: e.target.value } }))} className="text-[11px] border rounded-lg px-2.5 py-2" style={{ borderColor: T.border, color: T.navy }}><option value="forensic">Forensic recommended</option>{item.kind === 'account' && <option value="metro2_accuracy">Metro 2 accuracy</option>}{item.kind === 'account' && <option value="direct_furnisher">Direct furnisher</option>}{item.kind === 'personal_info' && <option value="personal_information">Personal information</option>}{item.kind === 'inquiry' && <option value="inquiry">Inquiry reinvestigation</option>}<option value="custom">Custom strategy</option></select></div><div className="flex flex-wrap gap-2 mt-4">{item.kind === 'account' && <button onClick={() => setConfig((current) => ({ ...current, [item.id]: { ...current[item.id], direct: !current[item.id].direct } }))} className="px-3 py-2 rounded-lg text-[10px] font-semibold" style={{ background: value.direct ? T.navy : '#F7F8FA', color: value.direct ? T.gold : T.muted, border: `1px solid ${value.direct ? T.navy : T.border}` }}>Direct furnisher</button>}{allowed.map((bureau) => <button key={bureau} onClick={() => toggleBureau(item.id, bureau)} className="px-3 py-2 rounded-lg text-[10px] font-semibold" style={{ background: value.bureaus.includes(bureau) ? '#EEF6FF' : '#F7F8FA', color: value.bureaus.includes(bureau) ? '#235C9F' : T.muted, border: `1px solid ${value.bureaus.includes(bureau) ? '#91B9E6' : T.border}` }}>{BUREAU_LABEL[bureau]}</button>)}</div>{value.style === 'custom' && <textarea value={value.instructions} onChange={(e) => setConfig((current) => ({ ...current, [item.id]: { ...current[item.id], instructions: e.target.value } }))} rows={3} className="w-full mt-3 border rounded-lg px-3 py-2 text-[11px] resize-none" style={{ borderColor: T.border }} placeholder="Give Claude supported strategic direction for this item. Frozen audit facts and citation checks still control the draft." />}</div>;})}<div className="flex justify-end"><button onClick={() => onSave(routes)} disabled={!routes.length || busy || selected.some((item) => { const value = config[item.id]; return (!value.direct && !value.bureaus.length) || (value.style === 'custom' && !value.instructions.trim()); })} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{busy ? 'Saving…' : `Save ${routes.length} letter route${routes.length === 1 ? '' : 's'}`}</button></div></div>;
+  const cleanupRoutes = cleanupGroups
+    .filter((group) => cleanupBureaus.includes(group.targetBureau))
+    .map((group) => ({
+      itemId: group.itemIds[0], itemIds: group.itemIds, targetType: 'bureau',
+      targetBureau: group.targetBureau, letterStyle: 'forensic', customInstructions: '',
+    }));
+  const routes = [...cleanupRoutes, ...accountRoutes];
+  const invalidAccount = accounts.some((item) => {
+    const value = config[item.id];
+    return (!value.direct && !value.bureaus.length) || (value.style === 'custom' && !value.instructions.trim());
+  });
+  return <div className="space-y-4">
+    <div className="bg-white rounded-2xl px-5 py-4" style={{ border: `1px solid ${T.border}` }}>
+      <div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>{mode === 'guided' ? 'Guided Round' : 'Custom Round'}</div>
+      <h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>Configure recipients and letter strategy</h2>
+      <p className="text-[11px] mt-1" style={{ color: T.muted }}>Cleanup findings are consolidated into one matching letter per bureau. Account disputes remain individually routed.</p>
+    </div>
+    {cleanupGroups.length > 0 && <div className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${T.border}` }}>
+      <div className="flex items-start gap-3">
+        <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: '#F5F3FF', color: '#6D4DB1' }}><FileText size={17} /></div>
+        <div><div className="text-[12px] font-semibold" style={{ color: T.ink }}>Personal information & inquiry cleanup</div><div className="text-[10px] mt-1" style={{ color: T.muted }}>Each bureau receives only the selected items shown on its report—never one letter per inquiry.</div></div>
+      </div>
+      <div className="grid sm:grid-cols-3 gap-2 mt-4">{cleanupGroups.map((group) => {
+        const enabled = cleanupBureaus.includes(group.targetBureau);
+        return <button key={group.targetBureau} onClick={() => setCleanupBureaus((current) => enabled ? current.filter((bureau) => bureau !== group.targetBureau) : [...current, group.targetBureau])} className="p-3 rounded-xl text-left" style={{ background: enabled ? '#EEF6FF' : '#F7F8FA', border: `1px solid ${enabled ? '#91B9E6' : T.border}` }}>
+          <div className="text-[11px] font-semibold" style={{ color: enabled ? '#235C9F' : T.muted }}>{BUREAU_LABEL[group.targetBureau]} {enabled ? '✓' : ''}</div>
+          <div className="text-[9px] mt-1" style={{ color: T.muted }}>{group.personalInfoCount} personal info · {group.inquiryCount} inquir{group.inquiryCount === 1 ? 'y' : 'ies'} · 1 letter</div>
+        </button>;
+      })}</div>
+    </div>}
+    {accounts.map((item) => { const value = config[item.id]; const allowed = activeBureaus(item); return <div key={item.id} className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${T.border}` }}>
+      <div className="flex items-start gap-3"><div className="flex-1"><div className="text-[12px] font-semibold" style={{ color: T.ink }}>{item.label}</div><div className="text-[10px] mt-0.5 uppercase tracking-wider" style={{ color: T.faint }}>account</div></div><select value={value.style} onChange={(e) => setConfig((current) => ({ ...current, [item.id]: { ...current[item.id], style: e.target.value } }))} className="text-[11px] border rounded-lg px-2.5 py-2" style={{ borderColor: T.border, color: T.navy }}><option value="forensic">Forensic recommended</option><option value="metro2_accuracy">Metro 2 accuracy</option><option value="direct_furnisher">Direct furnisher</option><option value="custom">Custom strategy</option></select></div>
+      <div className="flex flex-wrap gap-2 mt-4"><button onClick={() => setConfig((current) => ({ ...current, [item.id]: { ...current[item.id], direct: !current[item.id].direct } }))} className="px-3 py-2 rounded-lg text-[10px] font-semibold" style={{ background: value.direct ? T.navy : '#F7F8FA', color: value.direct ? T.gold : T.muted, border: `1px solid ${value.direct ? T.navy : T.border}` }}>Direct furnisher</button>{allowed.map((bureau) => <button key={bureau} onClick={() => toggleBureau(item.id, bureau)} className="px-3 py-2 rounded-lg text-[10px] font-semibold" style={{ background: value.bureaus.includes(bureau) ? '#EEF6FF' : '#F7F8FA', color: value.bureaus.includes(bureau) ? '#235C9F' : T.muted, border: `1px solid ${value.bureaus.includes(bureau) ? '#91B9E6' : T.border}` }}>{BUREAU_LABEL[bureau]}</button>)}</div>
+      {value.style === 'custom' && <textarea value={value.instructions} onChange={(e) => setConfig((current) => ({ ...current, [item.id]: { ...current[item.id], instructions: e.target.value } }))} rows={3} className="w-full mt-3 border rounded-lg px-3 py-2 text-[11px] resize-none" style={{ borderColor: T.border }} placeholder="Give Claude supported strategic direction for this item. Frozen audit facts and citation checks still control the draft." />}
+    </div>;})}
+    <div className="flex justify-end"><button onClick={() => onSave(routes)} disabled={!routes.length || busy || invalidAccount} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{busy ? 'Saving…' : `Save ${routes.length} letter route${routes.length === 1 ? '' : 's'}`}</button></div>
+  </div>;
 }
 
-function LetterReview({ workspace, clientLetters, selectedLetterId, setSelectedLetterId, onApprove, onReady, busy }) {
+function routeItems(route, itemById) {
+  return (route.itemIds?.length ? route.itemIds : [route.itemId]).map((id) => itemById.get(id)).filter(Boolean);
+}
+
+function isCleanupRoute(route, itemById) {
+  const items = routeItems(route, itemById);
+  return items.length > 0 && items.every((item) => ['personal_info', 'inquiry'].includes(item.kind));
+}
+
+function BuildQueue({ workspace, busy, onGenerate, onReview }) {
+  const itemById = new Map(workspace.items.map((item) => [item.id, item]));
+  const pending = workspace.routes.filter((route) => route.status !== 'generated');
+  const cleanup = pending.filter((route) => isCleanupRoute(route, itemById));
+  const accounts = pending.filter((route) => !isCleanupRoute(route, itemById));
+  const generated = workspace.routes.filter((route) => route.status === 'generated');
+  return <div className="space-y-4">
+    <div className="bg-white rounded-2xl px-5 py-4" style={{ border: `1px solid ${T.border}` }}>
+      <div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>Generation queue</div>
+      <h2 className="ccc-display text-[20px] font-semibold mt-0.5" style={{ color: T.navy }}>Choose what to generate first</h2>
+      <p className="text-[11px] mt-1" style={{ color: T.muted }}>Cleanup letters can be reviewed and mailed before the account disputes. Every route still uses the existing Claude forensic letter pipeline.</p>
+    </div>
+    <div className="grid md:grid-cols-2 gap-4">
+      <div className="bg-white rounded-2xl p-5" style={{ border: `1px solid ${T.border}` }}>
+        <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ background: '#F5F3FF', color: '#6D4DB1' }}><FileText size={20} /></div>
+        <h3 className="ccc-display text-[17px] font-semibold" style={{ color: T.navy }}>File cleanup letters</h3>
+        <p className="text-[11px] mt-1 min-h-[34px]" style={{ color: T.muted }}>{cleanup.length ? `${cleanup.length} bureau letter${cleanup.length === 1 ? '' : 's'}—one per bureau with its matching selected PI and inquiries.` : 'No ungenerated cleanup letters remain.'}</p>
+        <button disabled={busy || !cleanup.length} onClick={() => onGenerate(cleanup)} className="mt-4 px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: '#6D4DB1', color: '#fff' }}>{busy ? 'Generating…' : 'Generate cleanup letters'}</button>
+      </div>
+      <div className="bg-white rounded-2xl p-5" style={{ border: `1px solid ${T.border}` }}>
+        <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ background: '#FBF7EA', color: T.gold }}><Sparkles size={20} /></div>
+        <h3 className="ccc-display text-[17px] font-semibold" style={{ color: T.navy }}>Account dispute letters</h3>
+        <p className="text-[11px] mt-1 min-h-[34px]" style={{ color: T.muted }}>{accounts.length ? `${accounts.length} recipient route${accounts.length === 1 ? '' : 's'} for the selected account disputes.` : 'No ungenerated account-dispute letters remain.'}</p>
+        <button disabled={busy || !accounts.length} onClick={() => onGenerate(accounts)} className="mt-4 px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{busy ? 'Generating…' : 'Generate account letters'}</button>
+      </div>
+    </div>
+    <div className="flex flex-wrap justify-end gap-2">
+      {generated.length > 0 && <button onClick={onReview} disabled={busy} className="px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.navy, border: `1px solid ${T.border}`, background: '#fff' }}>Review {generated.length} generated route{generated.length === 1 ? '' : 's'}</button>}
+      <button disabled={busy || !pending.length} onClick={() => onGenerate(pending)} className="px-5 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{busy ? 'Generating forensic letters…' : `Generate all ${pending.length} remaining`}</button>
+    </div>
+  </div>;
+}
+
+function LetterReview({ workspace, clientLetters, selectedLetterId, setSelectedLetterId, onApprove, onReady, onBuildRemaining, onMail, busy }) {
   const routeByLetter = new Map(workspace.routes.flatMap((route) => route.letterIds.map((id) => [id, route])));
   const itemById = new Map(workspace.items.map((item) => [item.id, item]));
   const letters = workspace.routes.flatMap((route) => route.letterIds.map((id) => toUiLetter(clientLetters.find((letter) => letter.id === id) || workspace.letters.find((letter) => letter.id === id)))).filter(Boolean);
   const selected = letters.find((letter) => letter.id === selectedLetterId) || letters[0];
   const allGenerated = workspace.routes.length > 0 && workspace.routes.every((route) => route.status === 'generated');
   const allApproved = letters.length > 0 && letters.every((letter) => routeByLetter.get(letter.id)?.approvedLetterIds.includes(letter.id));
+  const approvedCleanupLetters = letters.filter((letter) => {
+    const route = routeByLetter.get(letter.id);
+    return route && isCleanupRoute(route, itemById) && route.approvedLetterIds.includes(letter.id) && !(letter.mailedDate || letter.mailed_date);
+  });
   useEffect(() => { if (!selectedLetterId && letters[0]) setSelectedLetterId(letters[0].id); }, [selectedLetterId, letters, setSelectedLetterId]);
-  return <div className="grid lg:grid-cols-[300px_1fr] gap-4 min-h-[620px]"><div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${T.border}` }}><div className="px-4 py-3" style={{ borderBottom: `1px solid ${T.grid}` }}><div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.navy }}>Letters to review</div><div className="text-[10px] mt-1" style={{ color: T.muted }}>{letters.filter((l) => routeByLetter.get(l.id)?.approvedLetterIds.includes(l.id)).length} of {letters.length} approved</div></div>{workspace.routes.some((route) => route.status === 'failed') && <div className="m-3 p-3 rounded-lg text-[11px] text-red-700 bg-red-50"><AlertTriangle size={13} className="inline mr-1" />One or more letters failed to generate. Generate All retries the same protected placeholders.</div>}{letters.map((letter) => { const route = routeByLetter.get(letter.id); const item = itemById.get(route?.itemId); const approved = route?.approvedLetterIds.includes(letter.id); return <button key={letter.id} onClick={() => setSelectedLetterId(letter.id)} className="w-full text-left px-4 py-3 flex gap-3" style={{ background: selected?.id === letter.id ? '#FBF9F2' : '#fff', borderTop: `1px solid ${T.grid}` }}><div className="mt-0.5">{approved ? <div className="w-5 h-5 rounded-full flex items-center justify-center bg-green-100 text-green-700"><Check size={11} /></div> : <Circle size={18} style={{ color: T.faint }} />}</div><div className="min-w-0"><div className="text-[11px] font-semibold truncate" style={{ color: T.ink }}>{item?.label || letter.furnisher}</div><div className="text-[10px] mt-0.5" style={{ color: T.muted }}>{route?.targetType === 'bureau' ? BUREAU_LABEL[route.targetBureau] : letter.dispute_basis === 'FDCPA' ? 'Debt validation' : 'Direct furnisher'}</div></div></button>;})}</div><div className="bg-white rounded-2xl overflow-hidden flex flex-col" style={{ border: `1px solid ${T.border}` }}><div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: `1px solid ${T.grid}` }}><div><div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.gold }}>Letter Preview</div><div className="text-[12px] font-semibold mt-0.5" style={{ color: T.navy }}>{selected?.furnisher || 'Generate letters to begin review'}</div></div>{selected && (() => { const route = routeByLetter.get(selected.id); const approved = route?.approvedLetterIds.includes(selected.id); return <button onClick={() => onApprove(route, selected.id, !approved)} disabled={busy} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ background: approved ? '#ECFDF3' : T.navy, color: approved ? '#166534' : T.gold, border: approved ? '1px solid #BBF7D0' : 'none' }}>{approved ? 'Approved ✓' : 'Approve letter'}</button>;})()}</div><div className="flex-1 bg-gray-100 p-3">{selected?.html && selected.html !== 'GENERATING...' ? <iframe title="Letter preview" sandbox="" srcDoc={selected.html} className="w-full h-full min-h-[520px] bg-white rounded border-0" /> : <div className="h-full min-h-[520px] flex items-center justify-center text-[12px]" style={{ color: T.muted }}>{allGenerated ? 'Select a letter.' : <><Loader2 size={16} className="animate-spin mr-2" />Generating forensic letters…</>}</div>}</div>{allGenerated && <div className="px-4 py-3 flex justify-end" style={{ borderTop: `1px solid ${T.grid}` }}><button onClick={onReady} disabled={!allApproved || busy} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>Move approved batch to mailing</button></div>}</div></div>;
+  return <div className="grid lg:grid-cols-[300px_1fr] gap-4 min-h-[620px]">
+    <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${T.border}` }}>
+      <div className="px-4 py-3" style={{ borderBottom: `1px solid ${T.grid}` }}>
+        <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.navy }}>Letters to review</div>
+        <div className="text-[10px] mt-1" style={{ color: T.muted }}>{letters.filter((letter) => routeByLetter.get(letter.id)?.approvedLetterIds.includes(letter.id)).length} of {letters.length} approved</div>
+      </div>
+      {workspace.routes.some((route) => route.status === 'failed') && <div className="m-3 p-3 rounded-lg text-[11px] text-red-700 bg-red-50"><AlertTriangle size={13} className="inline mr-1" />One or more routes failed. Return to Build to retry them.</div>}
+      {letters.map((letter) => {
+        const route = routeByLetter.get(letter.id);
+        const items = routeItems(route, itemById);
+        const cleanup = isCleanupRoute(route, itemById);
+        const approved = route?.approvedLetterIds.includes(letter.id);
+        const label = cleanup ? `${BUREAU_LABEL[route.targetBureau]} file cleanup` : items[0]?.label || letter.furnisher;
+        const detail = cleanup ? `${items.length} selected PI/inquiry item${items.length === 1 ? '' : 's'} · 1 letter` : route?.targetType === 'bureau' ? BUREAU_LABEL[route.targetBureau] : letter.dispute_basis === 'FDCPA' ? 'Debt validation' : 'Direct furnisher';
+        return <button key={letter.id} onClick={() => setSelectedLetterId(letter.id)} className="w-full text-left px-4 py-3 flex gap-3" style={{ background: selected?.id === letter.id ? '#FBF9F2' : '#fff', borderTop: `1px solid ${T.grid}` }}>
+          <div className="mt-0.5">{approved ? <div className="w-5 h-5 rounded-full flex items-center justify-center bg-green-100 text-green-700"><Check size={11} /></div> : <Circle size={18} style={{ color: T.faint }} />}</div>
+          <div className="min-w-0"><div className="text-[11px] font-semibold truncate" style={{ color: T.ink }}>{label}</div><div className="text-[10px] mt-0.5" style={{ color: T.muted }}>{detail}</div></div>
+        </button>;
+      })}
+    </div>
+    <div className="bg-white rounded-2xl overflow-hidden flex flex-col" style={{ border: `1px solid ${T.border}` }}>
+      <div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: `1px solid ${T.grid}` }}>
+        <div><div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.gold }}>Letter Preview</div><div className="text-[12px] font-semibold mt-0.5" style={{ color: T.navy }}>{selected?.furnisher || 'Generate letters to begin review'}</div></div>
+        {selected && (() => { const route = routeByLetter.get(selected.id); const approved = route?.approvedLetterIds.includes(selected.id); return <button onClick={() => onApprove(route, selected.id, !approved)} disabled={busy} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ background: approved ? '#ECFDF3' : T.navy, color: approved ? '#166534' : T.gold, border: approved ? '1px solid #BBF7D0' : 'none' }}>{approved ? 'Approved ✓' : 'Approve letter'}</button>; })()}
+      </div>
+      <div className="flex-1 bg-gray-100 p-3">{selected?.html && selected.html !== 'GENERATING...' ? <iframe title="Letter preview" sandbox="" srcDoc={selected.html} className="w-full h-full min-h-[520px] bg-white rounded border-0" /> : <div className="h-full min-h-[520px] flex items-center justify-center text-[12px]" style={{ color: T.muted }}>Select a generated letter.</div>}</div>
+      <div className="px-4 py-3 flex flex-wrap justify-end gap-2" style={{ borderTop: `1px solid ${T.grid}` }}>
+        {!allGenerated && <button onClick={onBuildRemaining} disabled={busy} className="px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.navy, background: '#fff', border: `1px solid ${T.border}` }}>Back to build remaining letters</button>}
+        {approvedCleanupLetters.length > 0 && <button onClick={() => onMail(approvedCleanupLetters)} disabled={busy} className="px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ background: '#6D4DB1', color: '#fff' }}>Mail approved cleanup ({approvedCleanupLetters.length})</button>}
+        {allGenerated && <button onClick={onReady} disabled={!allApproved || busy} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>Move approved batch to mailing</button>}
+      </div>
+    </div>
+  </div>;
 }
 
 function MailingAndTracking({ workspace, clientLetters, clientRounds, onMail, onAnalyze, onAnalyzeBureau, onOpenLetters, onCloseCampaign, busy }) {
@@ -229,5 +344,29 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
   if (error && !workspace) return <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-[12px] text-red-700">{error}</div>;
   if (!workspace?.campaign) return <EmptyCampaign client={client} latestAudit={latestAudit} busy={busy} onOpenAudit={onOpenAudit} onStart={() => run(() => createCampaignFromAudit(client, latestAudit))} />;
   const stage = workspace.campaign.stage;
-  return <div className="space-y-4"><CampaignRail stage={stage} />{error && <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-[11px] text-red-700">{error}</div>}{stage === 'select_disputes' && <DisputePicker workspace={workspace} busy={busy} onState={(item, state) => run(() => updateCampaignItemState(item.id, state))} onBulkState={(items, state) => run(() => updateCampaignItemStates(items.map((item) => item.id), state))} onContinue={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} />}{stage === 'configure_letters' && !workspace.campaign.builderMode && <BuilderChoice onChoose={(mode) => run(() => updateCampaign(workspace.campaign.id, { builderMode: mode }))} onStandalone={() => setShowInterim(true)} />}{stage === 'configure_letters' && workspace.campaign.builderMode && !workspace.routes.length && <RouteConfigurator workspace={workspace} mode={workspace.campaign.builderMode} busy={busy} onSave={(routes) => run(() => replaceConfiguredRoutes(workspace.campaign, workspace.items, routes))} />}{stage === 'configure_letters' && workspace.routes.length > 0 && <div className="bg-white rounded-2xl p-8 text-center" style={{ border: `1px solid ${T.border}` }}><Sparkles size={26} className="mx-auto mb-3" style={{ color: T.gold }} /><h2 className="ccc-display text-[20px] font-semibold" style={{ color: T.navy }}>{workspace.routes.length} letter route{workspace.routes.length === 1 ? '' : 's'} configured</h2><p className="text-[11px] mt-2 mb-5" style={{ color: T.muted }}>Generate All will run every route through the existing Claude forensic letter pipeline and citation checks.</p><button disabled={busy} onClick={() => run(async () => { for (const route of workspace.routes) { const item = workspace.items.find((candidate) => candidate.id === route.itemId); if (item.kind === 'account') { const priorSources = await getReviewedPriorSources(item.clientAccountId); await generateCampaignAccountRoute({ route, item, campaign: workspace.campaign, client, priorSources }); } else { await generateCampaignCleanupRoute({ route, item, campaign: workspace.campaign, client }); } } await updateCampaign(workspace.campaign.id, { stage: 'letter_review' }); })} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{busy ? 'Generating forensic letters…' : 'Generate All Letters'}</button></div>}{stage === 'letter_review' && <LetterReview workspace={workspace} clientLetters={client.letters || []} selectedLetterId={selectedLetterId} setSelectedLetterId={setSelectedLetterId} busy={busy} onApprove={(route, id, approved) => run(() => approveCampaignLetter(route, id, approved))} onReady={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'mailing' }))} />}{['mailing', 'awaiting_responses', 'response_review'].includes(stage) && <MailingAndTracking workspace={workspace} clientLetters={client.letters || []} clientRounds={client.rounds || []} onMail={onMail} onAnalyze={onAnalyze} onAnalyzeBureau={onAnalyzeBureau} onOpenLetters={onOpenLetters} busy={busy} onCloseCampaign={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'closed', closedAt: new Date().toISOString() }))} />}{showInterim && <InterimLetterBuilder client={client} audit={latestAudit} onClose={() => setShowInterim(false)} onMail={onMail} onOpenLetters={() => { setShowInterim(false); onOpenLetters?.(); }} />}</div>;
+  const generateRoutes = async (routes) => {
+    const itemById = new Map(workspace.items.map((item) => [item.id, item]));
+    for (const route of routes) {
+      const items = routeItems(route, itemById);
+      const account = items.find((item) => item.kind === 'account');
+      if (account) {
+        const priorSources = await getReviewedPriorSources(account.clientAccountId);
+        await generateCampaignAccountRoute({ route, item: account, campaign: workspace.campaign, client, priorSources });
+      } else {
+        await generateCampaignCleanupRoute({ route, items, campaign: workspace.campaign, client });
+      }
+    }
+    await updateCampaign(workspace.campaign.id, { stage: 'letter_review' });
+  };
+  return <div className="space-y-4">
+    <CampaignRail stage={stage} />
+    {error && <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-[11px] text-red-700">{error}</div>}
+    {stage === 'select_disputes' && <DisputePicker workspace={workspace} busy={busy} onState={(item, state) => run(() => updateCampaignItemState(item.id, state))} onBulkState={(items, state) => run(() => updateCampaignItemStates(items.map((item) => item.id), state))} onContinue={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} />}
+    {stage === 'configure_letters' && !workspace.campaign.builderMode && <BuilderChoice onChoose={(mode) => run(() => updateCampaign(workspace.campaign.id, { builderMode: mode }))} onStandalone={() => setShowInterim(true)} />}
+    {stage === 'configure_letters' && workspace.campaign.builderMode && !workspace.routes.length && <RouteConfigurator workspace={workspace} mode={workspace.campaign.builderMode} busy={busy} onSave={(routes) => run(() => replaceConfiguredRoutes(workspace.campaign, workspace.items, routes))} />}
+    {stage === 'configure_letters' && workspace.routes.length > 0 && <BuildQueue workspace={workspace} busy={busy} onGenerate={(routes) => run(() => generateRoutes(routes))} onReview={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'letter_review' }))} />}
+    {stage === 'letter_review' && <LetterReview workspace={workspace} clientLetters={client.letters || []} selectedLetterId={selectedLetterId} setSelectedLetterId={setSelectedLetterId} busy={busy} onApprove={(route, id, approved) => run(() => approveCampaignLetter(route, id, approved))} onReady={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'mailing' }))} onBuildRemaining={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} onMail={onMail} />}
+    {['mailing', 'awaiting_responses', 'response_review'].includes(stage) && <MailingAndTracking workspace={workspace} clientLetters={client.letters || []} clientRounds={client.rounds || []} onMail={onMail} onAnalyze={onAnalyze} onAnalyzeBureau={onAnalyzeBureau} onOpenLetters={onOpenLetters} busy={busy} onCloseCampaign={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'closed', closedAt: new Date().toISOString() }))} />}
+    {showInterim && <InterimLetterBuilder client={client} audit={latestAudit} onClose={() => setShowInterim(false)} onMail={onMail} onOpenLetters={() => { setShowInterim(false); onOpenLetters?.(); }} />}
+  </div>;
 }

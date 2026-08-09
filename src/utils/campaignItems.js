@@ -6,6 +6,31 @@ const bureauCode = (value) => {
   return null;
 };
 
+export function getCampaignItemBureaus(item) {
+  const raw = item?.snapshot?.bureaus || [];
+  return [...new Set(raw.map(bureauCode).filter(Boolean))];
+}
+
+export function buildCleanupRouteGroups(items = []) {
+  const groups = new Map();
+  for (const item of items) {
+    const kind = item.kind || item.item_kind;
+    if (!['personal_info', 'inquiry'].includes(kind) || !item.id) continue;
+    for (const targetBureau of getCampaignItemBureaus(item)) {
+      const group = groups.get(targetBureau) || {
+        targetBureau, itemIds: [], personalInfoCount: 0, inquiryCount: 0,
+      };
+      group.itemIds.push(item.id);
+      if (kind === 'personal_info') group.personalInfoCount += 1;
+      else group.inquiryCount += 1;
+      groups.set(targetBureau, group);
+    }
+  }
+  return ['equifax', 'experian', 'transunion']
+    .map((bureau) => groups.get(bureau))
+    .filter(Boolean);
+}
+
 const stableKey = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
 export function buildCampaignItems(auditRecord) {
@@ -35,10 +60,19 @@ export function buildCampaignItems(auditRecord) {
       const label = typeof value === 'string' ? value : (value?.address || value?.name || value?.employer || JSON.stringify(value));
       if (!label) continue;
       if (category === 'name_variant' && protectedNames.has(stableKey(label))) continue;
+      const reportedBureaus = typeof value === 'object' && value !== null
+        ? [...new Set((value.bureaus || []).map(bureauCode).filter(Boolean))]
+        : [];
       items.push({
         item_kind: 'personal_info', source_key: `personal:${category}:${stableKey(label)}`,
         client_account_id: null, label: `${prefix}: ${label}`,
-        snapshot: { category, value: label, bureaus: ['EQ', 'EXP', 'TU'], personalInfo: personal }, sort_order: sort++,
+        snapshot: {
+          category, value: label,
+          bureaus: (reportedBureaus.length ? reportedBureaus : ['equifax', 'experian', 'transunion'])
+            .map((b) => ({ equifax: 'EQ', experian: 'EXP', transunion: 'TU' }[b])),
+          personalInfo: personal,
+        },
+        sort_order: sort++,
       });
     }
   }
@@ -54,10 +88,16 @@ export function buildCampaignItems(auditRecord) {
       sort_order: sort++,
     });
   }
-  const seen = new Set();
-  return items.filter((item) => {
-    if (seen.has(item.source_key)) return false;
-    seen.add(item.source_key);
-    return true;
-  });
+  const unique = new Map();
+  for (const item of items) {
+    const existing = unique.get(item.source_key);
+    if (!existing) {
+      unique.set(item.source_key, item);
+      continue;
+    }
+    if (item.item_kind === 'personal_info') {
+      existing.snapshot.bureaus = [...new Set([...(existing.snapshot.bureaus || []), ...(item.snapshot.bureaus || [])])];
+    }
+  }
+  return [...unique.values()];
 }

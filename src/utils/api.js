@@ -6,6 +6,7 @@ import { startRound } from './rounds.js';
 import { BUREAU_LABEL, resolveActiveBureaus } from './roundTargets.js';
 import { buildPriorRoundLeverageBlock } from './roundEvidence.js';
 import { setRouteResult } from './campaigns.js';
+import { getCampaignItemBureaus } from './campaignItems.js';
 export { buildPriorRoundLeverageBlock } from './roundEvidence.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -364,23 +365,37 @@ export async function generateCombinedCleanupLetter(client, inquiries, metadata 
   return id;
 }
 
-export async function generateCampaignCleanupRoute({ route, item, campaign, client }) {
+export async function generateCampaignCleanupRoute({ route, items, campaign, client }) {
   if (route.targetType !== 'bureau' || !route.targetBureau) throw new Error('Personal information and inquiry routes require a bureau recipient.');
   const bureau = BUREAU_LABEL[route.targetBureau];
-  const snapshot = item.snapshot || {};
-  const basePersonal = snapshot.personalInfo || {};
-  const personalInfo = item.kind === 'personal_info' ? {
-    formerAddresses: snapshot.category === 'former_address' ? [snapshot.value] : [],
-    nameVariants: snapshot.category === 'name_variant' ? [snapshot.value] : [],
-    formerEmployers: snapshot.category === 'former_employer' ? [snapshot.value] : [],
+  const groupedItems = [...new Map((items || []).filter(Boolean).map((item) => [item.id, item])).values()];
+  if (!groupedItems.length) throw new Error(`No selected cleanup findings are available for ${bureau}.`);
+  if (groupedItems.some((item) => !['personal_info', 'inquiry'].includes(item.kind))) {
+    throw new Error('A cleanup route can contain only personal information and inquiries.');
+  }
+  if (groupedItems.some((item) => !getCampaignItemBureaus(item).includes(route.targetBureau))) {
+    throw new Error(`A selected cleanup finding does not belong on the ${bureau} report.`);
+  }
+
+  const personalItems = groupedItems.filter((item) => item.kind === 'personal_info');
+  const inquiryItems = groupedItems.filter((item) => item.kind === 'inquiry');
+  const basePersonal = personalItems.find((item) => item.snapshot?.personalInfo)?.snapshot?.personalInfo || {};
+  const valuesFor = (category) => [...new Set(personalItems
+    .filter((item) => item.snapshot?.category === category)
+    .map((item) => item.snapshot?.value)
+    .filter(Boolean))];
+  const personalInfo = {
+    formerAddresses: valuesFor('former_address'),
+    nameVariants: valuesFor('name_variant'),
+    formerEmployers: valuesFor('former_employer'),
     keepOnFile: basePersonal.keepOnFile || { name: client.name, employer: null },
-  } : {};
-  const inquiries = item.kind === 'inquiry' ? [snapshot] : [];
+  };
+  const inquiries = inquiryItems.map((item) => item.snapshot || {});
   try {
     const id = await generateCombinedCleanupLetter({
       ...client, bureau, personalInfo, lpoaSigned: client.lpoaSigned,
     }, inquiries, {
-      campaignId: campaign.id, campaignItemId: item.id, campaignRouteId: route.id,
+      campaignId: campaign.id, campaignItemId: groupedItems[0].id, campaignRouteId: route.id,
       generationStyle: route.letterStyle, targetType: 'bureau', targetBureau: route.targetBureau,
       letterKind: 'file_update', customInstructions: route.customInstructions,
     });
