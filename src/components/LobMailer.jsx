@@ -13,6 +13,7 @@ import { listMailArtifacts } from '../utils/mailArtifacts';
 import { inferMediaType } from '../utils/responseFiles';
 import { supabase } from '../utils/supabase';
 import { canMailLetter, generationErrorMessage, isGenerationRunning } from '../utils/letterGeneration.js';
+import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../utils/letterMailing.js';
 import {
   fetchLpoaHtmlForPrint,
   tempLetterAssetsPrefix,
@@ -80,6 +81,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
   const [step, setStep] = useState('confirm');
   const [toAddr, setToAddr] = useState(furnisherAddress || { name: letter.furnisher, line1: '', line2: '', city: '', state: '', zip: '' });
   const [docs, setDocs] = useState([]);
+  const [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -91,19 +93,26 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
     if (!letter.clientId) {
       console.warn('LobMailer: letter missing clientId — skipping document enclosure lookup');
       setDocs([]);
+      setDocumentsLoaded(true);
       return;
     }
-    getDocuments(letter.clientName, letter.clientId).then(setDocs).catch(console.error);
+    setDocumentsLoaded(false);
+    getDocuments(letter.clientName, letter.clientId)
+      .then(setDocs)
+      .catch(console.error)
+      .finally(() => setDocumentsLoaded(true));
   }, [letter.clientName, letter.clientId]);
 
   const idDoc = docs.find((d) => d.doc_type === 'id');
   const addressDoc = docs.find((d) => d.doc_type === 'address');
   const isBureauFollowUp = isPhase3FollowUpLetter(letter);
+  const isFileUpdate = isFileUpdateLetter(letter);
+  const isPersonalInfoCleanup = isPersonalInfoCleanupLetter(letter);
   // Staff may add supporting records to any round. ID/address remain automatic
   // in Round 1 and direct-furnisher packets, so they are offered here only
   // when a later structured bureau round would not already include them.
-  const optionalDocs = docs.filter((doc) => doc.doc_type?.startsWith('other-')
-    || (letter.roundId && letter.targetType === 'bureau' && Number(letter.roundNumber) > 1 && ['id', 'address'].includes(doc.doc_type)));
+  const optionalDocs = docs.filter((doc) => !isPersonalInfoCleanup && (doc.doc_type?.startsWith('other-')
+    || (letter.roundId && letter.targetType === 'bureau' && Number(letter.roundNumber) > 1 && ['id', 'address'].includes(doc.doc_type))));
   const toggleOtherDoc = (id) => {
     setSelectedOtherDocIds((prev) => {
       const next = new Set(prev);
@@ -164,9 +173,17 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       setError('ENCLOSURE UNPARSED — MANUAL RECONCILIATION REQUIRED. This letter cannot be sent until the enclosure is re-uploaded and re-analyzed.');
       return;
     }
-    if ((letter.targetType === 'bureau' || String(letter.phase || '').startsWith('Phase 3'))
+    if (isBureauAccountDisputeLetter(letter)
       && (!Array.isArray(letter.coveredFurnishers) || letter.coveredFurnishers.length === 0)) {
       setError('PHASE 3 COVERAGE MISSING — assign the specific furnisher(s) this bureau letter covers before mailing. Nothing was sent.');
+      return;
+    }
+    if (isPersonalInfoCleanup && !documentsLoaded) {
+      setError('IDENTITY DOCUMENTS ARE STILL LOADING — wait a moment and try again. Nothing was sent.');
+      return;
+    }
+    if (isPersonalInfoCleanup && (!idDoc || !addressDoc)) {
+      setError('PI/INQUIRY ENCLOSURES MISSING — upload both a government-issued photo ID and proof of current address before mailing. Nothing was sent.');
       return;
     }
     if (isBureauFollowUp && followUpContractError) {
@@ -336,7 +353,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // Build enclosure pages — different for follow-up Phase 3, initial
       // Phase 3, and Phase 1.
       let enclosurePages = '';
-      const isPhase3 = letter.targetType === 'bureau' || (letter.phase && letter.phase.startsWith('Phase 3'));
+      const isPhase3 = isBureauAccountDisputeLetter(letter);
       let followUpEnclosureManifest = null;
 
       if (isBureauFollowUp) {
@@ -454,6 +471,13 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Limited Power of Attorney</div>'
           + lpoaBody + '</div>';
         if (!(links || []).length) enclosurePages += await buildIdAddressPages();
+        enclosurePages += await buildSelectedOtherDocPages();
+      } else if (isPersonalInfoCleanup && letter.targetType === 'bureau') {
+        // PI/inquiry and other file-update letters go to a bureau, but they
+        // are not Phase 3 account disputes. Attach only identity documents
+        // and any explicitly selected supporting records—never prior account
+        // letters, furnisher responses, or an LPOA.
+        enclosurePages += await buildIdAddressPages();
         enclosurePages += await buildSelectedOtherDocPages();
       } else if (isPhase3) {
         // Phase 3 enclosures: Exhibit A (Phase 1 letter(s)) + Exhibit B (furnisher response(s)) + LPOA
@@ -706,7 +730,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // inconsistency where a case-mismatched client could get this email
       // while other client_name-keyed reads (e.g. the portal) silently
       // returned nothing for them.
-      if (!res.duplicate && !letter.roundId) {
+      if (!res.duplicate && !letter.roundId && !isFileUpdate) {
         try {
           // No name/ilike fallthrough when clientId is set — a miss means no email.
           const notifyCpQuery = letter.clientId

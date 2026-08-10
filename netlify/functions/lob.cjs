@@ -82,7 +82,7 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_account_id,client_name,phase,round_id,round_number,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,campaign_route_id',
+      + '&select=id,user_id,client_id,client_account_id,client_name,phase,round_id,round_number,letter_kind,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,campaign_route_id',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
@@ -164,6 +164,46 @@ async function validateOptionalAttachments(letter, manifest, supabaseUrl, servic
 function isBureauFollowUp(letter) {
   return /^Phase 3\b.*\(Follow-up\)/i.test(String(letter?.phase || ''))
     || !!(letter?.source_phase3_letter_id || letter?.source_bureau_response_evidence_id);
+}
+
+function isFileUpdateLetter(letter) {
+  const cleanupPhases = new Set([
+    'Personal Info Cleanup',
+    'Inquiry Removal',
+    'Personal Info & Inquiries',
+    'Interim Letter',
+  ]);
+  return String(letter?.letter_kind || '') === 'file_update'
+    || cleanupPhases.has(String(letter?.phase || ''));
+}
+
+function isPersonalInfoCleanupLetter(letter) {
+  return ['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries']
+    .includes(String(letter?.phase || ''));
+}
+
+async function validatePersonalInfoCleanupPreflight(letter, supabaseUrl, serviceKey) {
+  if (!isPersonalInfoCleanupLetter(letter)) return;
+  if (!letter.client_id || !letter.user_id) {
+    throw new Error('PI/inquiry letters require a linked client before mailing.');
+  }
+  const docsResult = await supabaseRequest(
+    '/rest/v1/documents?client_id=eq.' + encodeURIComponent(letter.client_id)
+      + '&doc_type=in.(id,address)&select=id,user_id,client_id,doc_type',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  const docs = Array.isArray(docsResult.body) ? docsResult.body : [];
+  const validTypes = new Set(docs
+    .filter((doc) => doc.user_id === letter.user_id && doc.client_id === letter.client_id)
+    .map((doc) => doc.doc_type));
+  if (!isSuccess(docsResult) || !validTypes.has('id') || !validTypes.has('address')) {
+    throw new Error('PI/inquiry letters require a government-issued photo ID and proof of current address before mailing.');
+  }
+}
+
+function isBureauAccountDisputeLetter(letter) {
+  if (!letter || isFileUpdateLetter(letter)) return false;
+  return letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3');
 }
 
 function bureauFromPhase(phase) {
@@ -431,8 +471,9 @@ exports.handler = async (event) => {
         };
       }
       await validateStructuredRoundPreflight(letter, supabaseUrl, serviceKey);
+      await validatePersonalInfoCleanupPreflight(letter, supabaseUrl, serviceKey);
       const validatedAttachments = await validateOptionalAttachments(letter, attachmentManifest, supabaseUrl, serviceKey);
-      if (letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3')) {
+      if (isBureauAccountDisputeLetter(letter)) {
         const {
           autoFixFieldCitations,
           collectBureauFollowUpProblems,
@@ -489,7 +530,7 @@ exports.handler = async (event) => {
       // A bureau-facing Phase 3 packet must identify the exact furnishers it
       // covers. Never use a client-wide fallback here: it can attach unrelated
       // Phase 1 disputes and responses to the wrong bureau reinvestigation.
-      if ((letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3'))
+      if (isBureauAccountDisputeLetter(letter)
         && (!Array.isArray(letter.covered_furnishers) || letter.covered_furnishers.length === 0)) {
         return {
           statusCode: 422,

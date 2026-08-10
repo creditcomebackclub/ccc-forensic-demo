@@ -5,6 +5,7 @@ import { isPendingRoundReview } from '../src/utils/roundState.js';
 import { countMailStatuses, deriveNextAction } from '../src/components/client-detail/clientDetailUtils.js';
 import { canMailLetter, generatedLetterValidationError, letterGenerationState } from '../src/utils/letterGeneration.js';
 import { buildKeepOnFileIdentity, clientForLetterPrompt } from '../src/utils/letterPromptData.js';
+import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../src/utils/letterMailing.js';
 
 const auditRecord = {
   id: 'audit-1',
@@ -79,6 +80,13 @@ assert.match(generatedLetterValidationError(truncatedDraft), /incomplete/i, 'tru
 assert.match(generatedLetterValidationError('<!DOCTYPE html><html><body><p>Done</p></body></html>', { requireSections: true }), /signature block/i, 'new generator output requires the signature section');
 assert.equal(generatedLetterValidationError("<!DOCTYPE html><html><body><div class='signature-block'>Name</div><div class='mail-notation'>Certified</div><div class='enclosures'>ID</div></body></html>", { requireSections: true }), null, 'new generator output accepts every required closing section');
 
+const cleanupLetter = { phase: 'Personal Info & Inquiries', letterKind: 'file_update', targetType: 'bureau', coveredFurnishers: [] };
+assert.equal(isFileUpdateLetter(cleanupLetter), true, 'PI/inquiry letters are classified as file updates');
+assert.equal(isPersonalInfoCleanupLetter(cleanupLetter), true, 'PI/inquiry letters receive their identity-document enclosure path');
+assert.equal(isBureauAccountDisputeLetter(cleanupLetter), false, 'a bureau recipient does not turn a PI/inquiry letter into a Phase 3 account dispute');
+assert.equal(isBureauAccountDisputeLetter({ phase: 'Phase 3 — Bureau Dispute', targetType: 'bureau', coveredFurnishers: ['Acme Bank'] }), true, 'real Phase 3 bureau disputes retain account safeguards');
+assert.equal(isFileUpdateLetter({ phase: 'Personal Info & Inquiries' }), true, 'legacy cleanup letters remain recognizable without newer metadata');
+
 const promptClient = clientForLetterPrompt({
   id: 'client-1', name: 'Robert', address: '1 Main St', dateOfBirth: '1964-05-01', currentEmployer: 'Verified Employer', signatureData: 'secret-signature',
   audits: [{ reportDate: '2026-08-07', audit: { inquiries: [{ furnisher: 'Wrong bureau evidence' }] } }],
@@ -143,6 +151,9 @@ const lobFunction = fs.readFileSync(new URL('../netlify/functions/lob.cjs', impo
 assert.match(lobFunction, /storedHtml === 'GENERATING\.\.\.'/i, 'server-side mailing rejects generation placeholders');
 assert.match(lobFunction, /storedHtml\.startsWith\('ERROR:'\)/i, 'server-side mailing rejects failed generation output');
 assert.match(lobFunction, /incompleteDocument/i, 'server-side mailing rejects truncated HTML documents');
+assert.match(lobFunction, /isBureauAccountDisputeLetter\(letter\)[\s\S]*PHASE 3 COVERAGE MISSING/, 'server applies covered-furnisher requirements only to account disputes');
+assert.match(lobFunction, /select=id[^'\n]*letter_kind[^'\n]*target_type/, 'server loads the durable letter classification before mailing');
+assert.match(lobFunction, /validatePersonalInfoCleanupPreflight\(letter/, 'server verifies PI/inquiry identity enclosures independently of the browser');
 
 const letterGenerator = fs.readFileSync(new URL('../netlify/functions/generate-letter-background.mjs', import.meta.url), 'utf8');
 assert.match(letterGenerator, /MAX_LETTER_TOKENS = 12000/, 'letter generation has enough output budget for large inquiry tables');
