@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { readClientSensitiveData, writeClientSensitiveData } from '../utils/clientSensitiveData';
+import { canMailLetter } from '../utils/letterGeneration.js';
 import { ExternalLink, Edit2, Check, X } from 'lucide-react';
 
 // Brand tokens — matches the dashboard / clients card system
@@ -394,12 +395,12 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
         <Row label="Letters">
           <div className="flex items-center gap-3">
             <span className="text-[12px]" style={{ color: T.ink }}>{client.letters ? client.letters.length : 0} total</span>
-            {client.letters && client.letters.filter(l => !l.mailed_date && !l.mailedDate).length > 0 && (
+            {client.letters && client.letters.filter(l => !l.mailed_date && !l.mailedDate && canMailLetter(l)).length > 0 && (
               <button 
-                onClick={() => onBatchMail(client.letters.filter(l => !l.mailed_date && !l.mailedDate))}
+                onClick={() => onBatchMail(client.letters.filter(l => !l.mailed_date && !l.mailedDate && canMailLetter(l)))}
                 className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm hover:opacity-90"
               >
-                Mail {client.letters.filter(l => !l.mailed_date && !l.mailedDate).length} Unmailed
+                Mail {client.letters.filter(l => !l.mailed_date && !l.mailedDate && canMailLetter(l)).length} Unmailed
               </button>
             )}
           </div>

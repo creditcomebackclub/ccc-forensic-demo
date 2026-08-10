@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js';
 import { buildCampaignItems, getCampaignItemBureaus } from './campaignItems.js';
+import { generationErrorMessage, letterGenerationState } from './letterGeneration.js';
 export { buildCampaignItems } from './campaignItems.js';
 
 export const CAMPAIGN_STAGES = [
@@ -52,11 +53,32 @@ export async function getCampaignWorkspace(clientId) {
   if (itemsRes.error) throw itemsRes.error;
   if (routesRes.error) throw routesRes.error;
   if (lettersRes.error) throw lettersRes.error;
+  const letters = lettersRes.data || [];
+  const letterById = new Map(letters.map((letter) => [letter.id, letter]));
+  const routes = (routesRes.data || []).map(normalizeRoute);
+  const reconciliations = [];
+  for (const route of routes) {
+    if (!['generating', 'failed'].includes(route.status) || !route.letterIds.length) continue;
+    const routeLetters = route.letterIds.map((id) => letterById.get(id)).filter(Boolean);
+    if (routeLetters.length !== route.letterIds.length) continue;
+    const states = routeLetters.map(letterGenerationState);
+    if (states.every((state) => state === 'ready')) {
+      route.status = 'generated';
+      route.generationError = null;
+      reconciliations.push(setRouteResult(route.id, { status: 'generated', generationError: null, generatedAt: new Date().toISOString() }));
+    } else if (!states.includes('generating') && states.includes('failed')) {
+      const failedLetter = routeLetters.find((letter) => letterGenerationState(letter) === 'failed');
+      route.status = 'failed';
+      route.generationError = generationErrorMessage(failedLetter);
+      reconciliations.push(setRouteResult(route.id, { status: 'failed', generationError: route.generationError }));
+    }
+  }
+  if (reconciliations.length) await Promise.all(reconciliations);
   return {
     campaign,
     items: (itemsRes.data || []).map(normalizeItem),
-    routes: (routesRes.data || []).map(normalizeRoute),
-    letters: lettersRes.data || [],
+    routes,
+    letters,
   };
 }
 

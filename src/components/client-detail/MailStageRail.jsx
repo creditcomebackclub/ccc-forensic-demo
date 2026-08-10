@@ -1,5 +1,6 @@
 import React from 'react';
 import { LETTER_STAGES, letterStageIndex } from './clientDetailUtils';
+import { letterGenerationState } from '../../utils/letterGeneration.js';
 
 const T = {
   navy: '#1B2A4A',
@@ -10,6 +11,19 @@ const T = {
 
 /** Labeled mail lifecycle rail — never mystery dots alone. */
 export default function MailStageRail({ letter }) {
+  const generation = letterGenerationState(letter);
+  if (generation !== 'ready') {
+    const failed = generation === 'failed';
+    return (
+      <div
+        className="text-[9px] uppercase tracking-wider font-semibold px-2 py-1 rounded-md"
+        style={{ color: failed ? '#B91C1C' : '#6B7280', background: failed ? '#FEF2F2' : '#F3F4F6', border: `1px solid ${failed ? '#FECACA' : '#E5E7EB'}` }}
+        title={failed ? 'Generation failed — mailing blocked' : 'Claude generation is still running'}
+      >
+        {failed ? 'Generation failed' : 'Generating'}
+      </div>
+    );
+  }
   const idx = letterStageIndex(letter);
   const current = LETTER_STAGES[idx];
 

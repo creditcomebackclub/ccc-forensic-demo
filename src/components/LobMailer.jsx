@@ -12,6 +12,7 @@ import {
 import { listMailArtifacts } from '../utils/mailArtifacts';
 import { inferMediaType } from '../utils/responseFiles';
 import { supabase } from '../utils/supabase';
+import { canMailLetter, generationErrorMessage, isGenerationRunning } from '../utils/letterGeneration.js';
 import {
   fetchLpoaHtmlForPrint,
   tempLetterAssetsPrefix,
@@ -153,6 +154,12 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
     // (which checks the DB row directly and cannot be bypassed) — this one
     // just avoids a wasted round-trip and gives an immediate, specific
     // error instead of a generic Lob failure.
+    if (!canMailLetter(letter)) {
+      setError(isGenerationRunning(letter)
+        ? 'LETTER GENERATION IS STILL RUNNING — nothing was sent.'
+        : `LETTER GENERATION FAILED — ${generationErrorMessage(letter)} Nothing was sent.`);
+      return;
+    }
     if (letter.enclosureParseBlocked) {
       setError('ENCLOSURE UNPARSED — MANUAL RECONCILIATION REQUIRED. This letter cannot be sent until the enclosure is re-uploaded and re-analyzed.');
       return;

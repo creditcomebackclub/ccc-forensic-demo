@@ -15,6 +15,7 @@ import { resolveLpoaViewUrl } from '../utils/storagePaths';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
 import { extendLetterDeadline } from '../utils/rounds.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
+import { canMailLetter, generationErrorMessage, letterGenerationState } from '../utils/letterGeneration.js';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
 import BureauResponseAnalyzer from './BureauResponseAnalyzer';
@@ -103,6 +104,9 @@ function hoursBetween(aIso, bIso) {
 }
 
 function letterStatus(l) {
+  const generation = letterGenerationState(l);
+  if (generation === 'failed') return { code: 'generation_failed', label: 'Generation failed', tone: 'red' };
+  if (generation === 'generating') return { code: 'generating', label: 'Generating', tone: 'neutral' };
   const status = responseWindowStatus(l);
   if (status.code === 'received') return { ...status, label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
   if (status.code === 'no_response') return { ...status, label: 'No response confirmed', tone: 'red' };
@@ -379,6 +383,8 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
+  const generation = letterGenerationState(l);
+  const mailReady = canMailLetter(l);
   const isPhase3 = l.targetType === 'bureau' || (l.phase && l.phase.startsWith('Phase 3'));
   // Phase 3's own escalation-readiness uses the 45-day CRA clock, not the
   // 30-day one — same reasoning as DashboardPage.jsx's identical gate.
@@ -431,6 +437,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
 
   // One visible action per letter; the rest live in the ⋯ menu
   const primaryAction = (() => {
+    if (!mailReady) return null;
     if (!l.mailedDate) return (
       <button onClick={() => onLobMail(l)}
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border transition-colors shrink-0"
@@ -463,11 +470,11 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   })();
 
   const menuItems = [
-    { label: 'View letter', onClick: () => onView(l) },
-    onEdit && { label: 'Edit letter', onClick: () => onEdit(l) },
+    mailReady && { label: 'View letter', onClick: () => onView(l) },
+    mailReady && onEdit && { label: 'Edit letter', onClick: () => onEdit(l) },
     { label: 'Account history', onClick: () => onOpenAccount(l) },
     'divider',
-    !l.mailedDate && !l.lobId && { label: 'Mark as mailed…', onClick: () => { setDateVal(todayISO()); setMode('mailing'); } },
+    mailReady && !l.mailedDate && !l.lobId && { label: 'Mark as mailed…', onClick: () => { setDateVal(todayISO()); setMode('mailing'); } },
     l.mailedDate && !l.lobId && { label: 'Clear mail date', onClick: () => save({ mailedDate: null }) },
     l.mailedDate && l.lobId && {
       label: 'Resend requires reviewed revision',
@@ -560,6 +567,12 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
           <Menu items={menuItems} />
         </div>
       </div>
+
+      {generation !== 'ready' && (
+        <div className="mt-2 text-[10px] rounded-lg px-3 py-2" style={{ color: generation === 'failed' ? '#B91C1C' : T.muted, background: generation === 'failed' ? '#FEF2F2' : '#F3F4F6', border: `1px solid ${generation === 'failed' ? '#FECACA' : T.border}` }}>
+          {generation === 'failed' ? `${generationErrorMessage(l)} Retry this route from the Campaign tab.` : 'Claude is still generating this letter. Mailing remains blocked until the final draft is saved.'}
+        </div>
+      )}
 
       {mode === 'mailing' && (
         <div className="mt-2 flex items-center gap-2">
@@ -697,6 +710,15 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const listRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
   const jumpResolutionRef = useRef(null);
+
+  const queueLettersForMail = (letters) => {
+    const requested = (Array.isArray(letters) ? letters : [letters]).filter(Boolean);
+    const ready = requested.filter(canMailLetter);
+    if (ready.length !== requested.length) {
+      toast.error('One or more letters are still generating or failed generation. Nothing invalid was added to the mail queue.');
+    }
+    if (ready.length) setLobMailerQueue(ready);
+  };
 
   const load = async ({ append = false, cursor = null, searchTerm = debouncedSearch, throwOnError = false } = {}) => {
     const requestId = ++listRequestRef.current;
@@ -867,6 +889,12 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
 
   const openLetter = (letter) => {
+    if (!canMailLetter(letter)) {
+      toast.error(letterGenerationState(letter) === 'generating'
+        ? 'This letter is still generating.'
+        : `This letter failed generation: ${generationErrorMessage(letter)}`);
+      return;
+    }
     if (!letter.html) {
       toast.error('This letter has no HTML content to view.');
       return;
@@ -1092,7 +1120,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     const renderLetter = (l) => (
       <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
         hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
-        onView={openLetter} onChange={refreshSelectedClient} onAnalyze={setAnalyzingLetter} onLobMail={(letter) => setLobMailerQueue([letter])}
+        onView={openLetter} onChange={refreshSelectedClient} onAnalyze={setAnalyzingLetter} onLobMail={(letter) => queueLettersForMail([letter])}
         onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount}
         onEscalate={(letter) => setEscalatingLetter({ letter, client: c })}
         onAnalyzeBureau={(letter) => setAnalyzingBureauLetter({ letter, client: c })}
@@ -1198,7 +1226,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               client={c}
               onOpenAudit={() => goTab('Overview')}
               onOpenLetters={() => goTab('Letters')}
-              onMail={(letters) => setLobMailerQueue(letters)}
+              onMail={queueLettersForMail}
               onAnalyze={setAnalyzingLetter}
               onAnalyzeBureau={(letter) => setAnalyzingBureauLetter({ letter, client: c })}
             />
@@ -1218,7 +1246,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         )}
 
         {currentTab === 'Profile' && (
-          <ClientProfilePanel client={c} onChanged={refreshSelectedClient} onBatchMail={setLobMailerQueue} />
+          <ClientProfilePanel client={c} onChanged={refreshSelectedClient} onBatchMail={queueLettersForMail} />
         )}
 
         {currentTab === 'Billing' && (

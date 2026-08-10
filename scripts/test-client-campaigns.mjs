@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { buildCampaignItems, buildCleanupRouteGroups } from '../src/utils/campaignItems.js';
 import { isPendingRoundReview } from '../src/utils/roundState.js';
 import { countMailStatuses, deriveNextAction } from '../src/components/client-detail/clientDetailUtils.js';
+import { canMailLetter, letterGenerationState } from '../src/utils/letterGeneration.js';
 
 const auditRecord = {
   id: 'audit-1',
@@ -54,13 +55,26 @@ assert.equal(isPendingRoundReview({
 assert.equal(isPendingRoundReview({ rounds: [{ round_id: 'round-1', status: 'open' }], letters: [legacySource] }, legacySource), true, 'an unresolved open round remains actionable');
 
 const closedStale = { id: 'closed-source', roundId: 'round-closed', furnisher: 'Closed Bank', mailedDate: '2026-01-01', responseOutcome: 'received', roundReviewStatus: 'not_reviewed' };
-const openDraft = { id: 'open-draft', roundId: 'round-open', furnisher: 'Open Bank', roundReviewStatus: 'not_reviewed' };
+const openDraft = { id: 'open-draft', roundId: 'round-open', furnisher: 'Open Bank', roundReviewStatus: 'not_reviewed', html: '<!DOCTYPE html><html><body><p>Complete reviewed dispute letter content.</p></body></html>' };
 const detailClient = {
   rounds: [{ round_id: 'round-closed', status: 'closed' }, { round_id: 'round-open', status: 'open' }],
   letters: [closedStale, openDraft],
 };
 assert.equal(countMailStatuses(detailClient.letters, detailClient.rounds).received, 0, 'closed rounds do not inflate the detail review chip');
 assert.equal(deriveNextAction(detailClient).label, 'Mail 1 letter', 'the client header points to real open work instead of a closed-round response');
+
+const failedDraft = { id: 'failed', html: 'ERROR: Generated letter is empty or too short' };
+const runningDraft = { id: 'running', html: 'GENERATING...' };
+const validDraft = { id: 'valid', html: '<!DOCTYPE html><html><body><p>Complete reviewed dispute letter content.</p></body></html>' };
+assert.equal(letterGenerationState(failedDraft), 'failed', 'server generation errors remain explicit letter failures');
+assert.equal(letterGenerationState(runningDraft), 'generating', 'placeholders remain in-progress rather than mail-ready');
+assert.equal(canMailLetter(failedDraft), false, 'failed generation placeholders can never enter mailing');
+assert.equal(canMailLetter(runningDraft), false, 'in-progress placeholders can never enter mailing');
+assert.equal(canMailLetter(validDraft), true, 'completed HTML remains mail eligible');
+const generationCounts = countMailStatuses([failedDraft, runningDraft, validDraft], []);
+assert.equal(generationCounts.generation_failed, 1, 'failed generation has its own mail-workboard status');
+assert.equal(generationCounts.generating, 1, 'running generation has its own mail-workboard status');
+assert.equal(generationCounts.not_mailed, 1, 'only valid completed HTML counts as not mailed');
 
 const migration = fs.readFileSync(new URL('../supabase/migrations/20260809150000_client_campaign_command_center.sql', import.meta.url), 'utf8');
 assert.match(migration, /dispute_rounds_one_open_per_account_target_idx/, 'direct and bureau tracks have separate open-round protection');
@@ -74,12 +88,17 @@ const api = fs.readFileSync(new URL('../src/utils/api.js', import.meta.url), 'ut
 assert.match(api, /generateCampaignAccountRoute/, 'campaign routes use the server-side Claude generator');
 assert.match(api, /validate|citation|frozen audit/i, 'campaign generation preserves forensic validation framing');
 assert.match(api, /generate-letter-background/, 'campaign letters retain the protected background generation endpoint');
+assert.match(api, /existingLetterId/, 'failed cleanup retries reuse the existing technical placeholder instead of creating duplicate letters');
+assert.match(api, /jobIndexes/, 'multi-letter account retries regenerate only failed sibling placeholders');
+assert.match(api, /isBackgroundPollTimeout/, 'a browser polling timeout leaves the background route recoverable');
 
 const workspace = fs.readFileSync(new URL('../src/components/client-detail/ClientCampaignWorkspace.jsx', import.meta.url), 'utf8');
 assert.match(workspace, /letter\.targetType === 'bureau' \? onAnalyzeBureau : onAnalyze/, 'bureau and furnisher responses retain their specialized analyzers');
 assert.match(workspace, /Select all/, 'personal information and inquiry groups expose bulk selection');
 assert.match(workspace, /Generate cleanup letters/, 'cleanup letters can be generated before account disputes');
 assert.match(workspace, /Mail approved cleanup/, 'approved cleanup letters can be mailed before the account batch');
+assert.match(workspace, /failures\.push/, 'one failed route does not abort generation of later siblings');
+assert.match(workspace, /generationProgress/, 'the queue exposes route-specific progress instead of one shared spinner label');
 
 const groupedRoutes = fs.readFileSync(new URL('../supabase/migrations/20260809164000_campaign_grouped_cleanup_routes.sql', import.meta.url), 'utf8');
 assert.match(groupedRoutes, /item_ids uuid\[\]/, 'campaign routes persist all findings consolidated into a bureau letter');
@@ -89,5 +108,9 @@ assert.match(roundState, /round\.status === 'open'/, 'closed rounds cannot resur
 
 const campaignApi = fs.readFileSync(new URL('../src/utils/campaigns.js', import.meta.url), 'utf8');
 assert.match(campaignApi, /updateCampaignItemStates[\s\S]*\.in\('id', ids\)/, 'bulk selection uses one scoped database update');
+
+const lobFunction = fs.readFileSync(new URL('../netlify/functions/lob.cjs', import.meta.url), 'utf8');
+assert.match(lobFunction, /storedHtml === 'GENERATING\.\.\.'/i, 'server-side mailing rejects generation placeholders');
+assert.match(lobFunction, /storedHtml\.startsWith\('ERROR:'\)/i, 'server-side mailing rejects failed generation output');
 
 console.log('All client-campaign assertions passed.');

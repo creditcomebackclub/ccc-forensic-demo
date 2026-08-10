@@ -7,6 +7,7 @@ import {
 } from '../../utils/campaigns.js';
 import { generateCampaignAccountRoute, generateCampaignCleanupRoute, generateInterimLetter } from '../../utils/api.js';
 import { buildCleanupRouteGroups, getCampaignItemBureaus } from '../../utils/campaignItems.js';
+import { canMailLetter } from '../../utils/letterGeneration.js';
 
 const T = { navy: '#1B2A4A', gold: '#C9A84C', border: '#E7EAF0', grid: '#EEF0F4', ink: '#111827', muted: '#6B7280', faint: '#9CA3AF' };
 const BUREAUS = ['equifax', 'experian', 'transunion'];
@@ -199,35 +200,69 @@ function isCleanupRoute(route, itemById) {
   return items.length > 0 && items.every((item) => ['personal_info', 'inquiry'].includes(item.kind));
 }
 
-function BuildQueue({ workspace, busy, onGenerate, onReview }) {
+function routeDisplayName(route, itemById) {
+  const items = routeItems(route, itemById);
+  if (isCleanupRoute(route, itemById)) return `${BUREAU_LABEL[route.targetBureau] || 'Bureau'} cleanup letter`;
+  const item = items[0];
+  const target = route.targetType === 'bureau' ? BUREAU_LABEL[route.targetBureau] : 'direct furnisher';
+  return `${item?.label || 'Account dispute'} → ${target}`;
+}
+
+function BuildQueue({ workspace, busy, generationProgress, onGenerate, onReview }) {
   const itemById = new Map(workspace.items.map((item) => [item.id, item]));
   const pending = workspace.routes.filter((route) => route.status !== 'generated');
   const cleanup = pending.filter((route) => isCleanupRoute(route, itemById));
   const accounts = pending.filter((route) => !isCleanupRoute(route, itemById));
+  const runnable = pending.filter((route) => ['configured', 'failed'].includes(route.status));
+  const cleanupRunnable = runnable.filter((route) => isCleanupRoute(route, itemById));
+  const accountRunnable = runnable.filter((route) => !isCleanupRoute(route, itemById));
+  const cleanupFailed = cleanup.filter((route) => route.status === 'failed');
+  const accountFailed = accounts.filter((route) => route.status === 'failed');
+  const running = pending.filter((route) => route.status === 'generating');
   const generated = workspace.routes.filter((route) => route.status === 'generated');
+  const progressLabel = generationProgress ? `Generating ${generationProgress.completed + 1} of ${generationProgress.total}` : null;
+  const cleanupButtonLabel = generationProgress?.kind === 'cleanup'
+    ? `${progressLabel}…`
+    : cleanupFailed.length && cleanupFailed.length === cleanupRunnable.length
+      ? `Retry ${cleanupFailed.length} failed cleanup letter${cleanupFailed.length === 1 ? '' : 's'}`
+      : 'Generate cleanup letters';
+  const accountButtonLabel = generationProgress?.kind === 'accounts'
+    ? `${progressLabel}…`
+    : accountFailed.length && accountFailed.length === accountRunnable.length
+      ? `Retry ${accountFailed.length} failed account route${accountFailed.length === 1 ? '' : 's'}`
+      : 'Generate account letters';
   return <div className="space-y-4">
     <div className="bg-white rounded-2xl px-5 py-4" style={{ border: `1px solid ${T.border}` }}>
       <div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>Generation queue</div>
       <h2 className="ccc-display text-[20px] font-semibold mt-0.5" style={{ color: T.navy }}>Choose what to generate first</h2>
       <p className="text-[11px] mt-1" style={{ color: T.muted }}>Cleanup letters can be reviewed and mailed before the account disputes. Every route still uses the existing Claude forensic letter pipeline.</p>
     </div>
+    {generationProgress && <div className="rounded-xl px-4 py-3 flex items-center gap-3" style={{ color: T.navy, background: '#EEF6FF', border: '1px solid #BFDBFE' }}>
+      <Loader2 size={16} className="animate-spin shrink-0" />
+      <div><div className="text-[11px] font-semibold">{progressLabel} · {generationProgress.current}</div><div className="text-[10px] mt-0.5" style={{ color: T.muted }}>Each route can take about 45–90 seconds. Completed siblings are preserved if another route fails.</div></div>
+    </div>}
+    {!generationProgress && running.length > 0 && <div className="rounded-xl px-4 py-3 text-[10px]" style={{ color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+      {running.length} route{running.length === 1 ? ' is' : 's are'} still marked generating. Refresh shortly; mailing stays blocked until a final draft is saved.
+    </div>}
     <div className="grid md:grid-cols-2 gap-4">
       <div className="bg-white rounded-2xl p-5" style={{ border: `1px solid ${T.border}` }}>
         <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ background: '#F5F3FF', color: '#6D4DB1' }}><FileText size={20} /></div>
         <h3 className="ccc-display text-[17px] font-semibold" style={{ color: T.navy }}>File cleanup letters</h3>
         <p className="text-[11px] mt-1 min-h-[34px]" style={{ color: T.muted }}>{cleanup.length ? `${cleanup.length} bureau letter${cleanup.length === 1 ? '' : 's'}—one per bureau with its matching selected PI and inquiries.` : 'No ungenerated cleanup letters remain.'}</p>
-        <button disabled={busy || !cleanup.length} onClick={() => onGenerate(cleanup)} className="mt-4 px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: '#6D4DB1', color: '#fff' }}>{busy ? 'Generating…' : 'Generate cleanup letters'}</button>
+        {cleanupFailed.length > 0 && <div className="text-[10px] mt-2 text-red-700">{cleanupFailed.length} failed route{cleanupFailed.length === 1 ? '' : 's'} ready to retry. Successful bureau letters will not be duplicated.</div>}
+        <button disabled={busy || !cleanupRunnable.length} onClick={() => onGenerate(cleanupRunnable, 'cleanup')} className="mt-4 px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: '#6D4DB1', color: '#fff' }}>{cleanupButtonLabel}</button>
       </div>
       <div className="bg-white rounded-2xl p-5" style={{ border: `1px solid ${T.border}` }}>
         <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ background: '#FBF7EA', color: T.gold }}><Sparkles size={20} /></div>
         <h3 className="ccc-display text-[17px] font-semibold" style={{ color: T.navy }}>Account dispute letters</h3>
         <p className="text-[11px] mt-1 min-h-[34px]" style={{ color: T.muted }}>{accounts.length ? `${accounts.length} recipient route${accounts.length === 1 ? '' : 's'} for the selected account disputes.` : 'No ungenerated account-dispute letters remain.'}</p>
-        <button disabled={busy || !accounts.length} onClick={() => onGenerate(accounts)} className="mt-4 px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{busy ? 'Generating…' : 'Generate account letters'}</button>
+        {accountFailed.length > 0 && <div className="text-[10px] mt-2 text-red-700">{accountFailed.length} failed route{accountFailed.length === 1 ? '' : 's'} ready to retry.</div>}
+        <button disabled={busy || !accountRunnable.length} onClick={() => onGenerate(accountRunnable, 'accounts')} className="mt-4 px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{accountButtonLabel}</button>
       </div>
     </div>
     <div className="flex flex-wrap justify-end gap-2">
       {generated.length > 0 && <button onClick={onReview} disabled={busy} className="px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.navy, border: `1px solid ${T.border}`, background: '#fff' }}>Review {generated.length} generated route{generated.length === 1 ? '' : 's'}</button>}
-      <button disabled={busy || !pending.length} onClick={() => onGenerate(pending)} className="px-5 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{busy ? 'Generating forensic letters…' : `Generate all ${pending.length} remaining`}</button>
+      <button disabled={busy || !runnable.length} onClick={() => onGenerate(runnable, 'all')} className="px-5 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{generationProgress?.kind === 'all' ? `${progressLabel}…` : `Generate all ${runnable.length} remaining`}</button>
     </div>
   </div>;
 }
@@ -235,7 +270,7 @@ function BuildQueue({ workspace, busy, onGenerate, onReview }) {
 function LetterReview({ workspace, clientLetters, selectedLetterId, setSelectedLetterId, onApprove, onReady, onBuildRemaining, onMail, busy }) {
   const routeByLetter = new Map(workspace.routes.flatMap((route) => route.letterIds.map((id) => [id, route])));
   const itemById = new Map(workspace.items.map((item) => [item.id, item]));
-  const letters = workspace.routes.flatMap((route) => route.letterIds.map((id) => toUiLetter(clientLetters.find((letter) => letter.id === id) || workspace.letters.find((letter) => letter.id === id)))).filter(Boolean);
+  const letters = workspace.routes.filter((route) => route.status === 'generated').flatMap((route) => route.letterIds.map((id) => toUiLetter(clientLetters.find((letter) => letter.id === id) || workspace.letters.find((letter) => letter.id === id)))).filter((letter) => letter && canMailLetter(letter));
   const selected = letters.find((letter) => letter.id === selectedLetterId) || letters[0];
   const allGenerated = workspace.routes.length > 0 && workspace.routes.every((route) => route.status === 'generated');
   const allApproved = letters.length > 0 && letters.every((letter) => routeByLetter.get(letter.id)?.approvedLetterIds.includes(letter.id));
@@ -317,6 +352,7 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
   const [workspace, setWorkspace] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(null);
   const [error, setError] = useState(null);
   const [selectedLetterId, setSelectedLetterId] = useState(null);
   const [showInterim, setShowInterim] = useState(false);
@@ -339,24 +375,52 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
       updateCampaign(workspace.campaign.id, { stage: 'response_review' }).then(load).catch((e) => setError(e.message));
     }
   }, [workspace, client.letters]);
-  const run = async (fn) => { setBusy(true); setError(null); try { await fn(); await load(); } catch (e) { setError(e.message || String(e)); toast.error(e.message || String(e)); } finally { setBusy(false); } };
+  const run = async (fn) => {
+    setBusy(true); setError(null);
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      const message = e.message || String(e);
+      await load().catch(() => {});
+      setError(message);
+      toast.error(message);
+    } finally {
+      setBusy(false);
+    }
+  };
   if (loading) return <div className="py-20 text-center text-[12px]" style={{ color: T.muted }}><Loader2 size={22} className="animate-spin mx-auto mb-3" />Loading campaign command center…</div>;
   if (error && !workspace) return <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-[12px] text-red-700">{error}</div>;
   if (!workspace?.campaign) return <EmptyCampaign client={client} latestAudit={latestAudit} busy={busy} onOpenAudit={onOpenAudit} onStart={() => run(() => createCampaignFromAudit(client, latestAudit))} />;
   const stage = workspace.campaign.stage;
-  const generateRoutes = async (routes) => {
+  const generateRoutes = async (routes, kind = 'all') => {
     const itemById = new Map(workspace.items.map((item) => [item.id, item]));
-    for (const route of routes) {
-      const items = routeItems(route, itemById);
-      const account = items.find((item) => item.kind === 'account');
-      if (account) {
-        const priorSources = await getReviewedPriorSources(account.clientAccountId);
-        await generateCampaignAccountRoute({ route, item: account, campaign: workspace.campaign, client, priorSources });
-      } else {
-        await generateCampaignCleanupRoute({ route, items, campaign: workspace.campaign, client });
+    const failures = [];
+    try {
+      for (let index = 0; index < routes.length; index++) {
+        const route = routes[index];
+        const items = routeItems(route, itemById);
+        const account = items.find((item) => item.kind === 'account');
+        setGenerationProgress({ kind, completed: index, total: routes.length, current: routeDisplayName(route, itemById) });
+        try {
+          if (account) {
+            const priorSources = await getReviewedPriorSources(account.clientAccountId);
+            await generateCampaignAccountRoute({ route, item: account, campaign: workspace.campaign, client, priorSources });
+          } else {
+            await generateCampaignCleanupRoute({ route, items, campaign: workspace.campaign, client });
+          }
+        } catch (routeError) {
+          failures.push({ route: routeDisplayName(route, itemById), message: routeError.message || String(routeError) });
+        }
       }
+      if (failures.length) {
+        const succeeded = routes.length - failures.length;
+        throw new Error(`${succeeded} route${succeeded === 1 ? '' : 's'} completed; ${failures.length} failed. ${failures.map((failure) => `${failure.route}: ${failure.message}`).join(' | ')}`);
+      }
+      await updateCampaign(workspace.campaign.id, { stage: 'letter_review' });
+    } finally {
+      setGenerationProgress(null);
     }
-    await updateCampaign(workspace.campaign.id, { stage: 'letter_review' });
   };
   return <div className="space-y-4">
     <CampaignRail stage={stage} />
@@ -364,7 +428,7 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
     {stage === 'select_disputes' && <DisputePicker workspace={workspace} busy={busy} onState={(item, state) => run(() => updateCampaignItemState(item.id, state))} onBulkState={(items, state) => run(() => updateCampaignItemStates(items.map((item) => item.id), state))} onContinue={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} />}
     {stage === 'configure_letters' && !workspace.campaign.builderMode && <BuilderChoice onChoose={(mode) => run(() => updateCampaign(workspace.campaign.id, { builderMode: mode }))} onStandalone={() => setShowInterim(true)} />}
     {stage === 'configure_letters' && workspace.campaign.builderMode && !workspace.routes.length && <RouteConfigurator workspace={workspace} mode={workspace.campaign.builderMode} busy={busy} onSave={(routes) => run(() => replaceConfiguredRoutes(workspace.campaign, workspace.items, routes))} />}
-    {stage === 'configure_letters' && workspace.routes.length > 0 && <BuildQueue workspace={workspace} busy={busy} onGenerate={(routes) => run(() => generateRoutes(routes))} onReview={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'letter_review' }))} />}
+    {stage === 'configure_letters' && workspace.routes.length > 0 && <BuildQueue workspace={workspace} busy={busy} generationProgress={generationProgress} onGenerate={(routes, kind) => run(() => generateRoutes(routes, kind))} onReview={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'letter_review' }))} />}
     {stage === 'letter_review' && <LetterReview workspace={workspace} clientLetters={client.letters || []} selectedLetterId={selectedLetterId} setSelectedLetterId={setSelectedLetterId} busy={busy} onApprove={(route, id, approved) => run(() => approveCampaignLetter(route, id, approved))} onReady={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'mailing' }))} onBuildRemaining={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} onMail={onMail} />}
     {['mailing', 'awaiting_responses', 'response_review'].includes(stage) && <MailingAndTracking workspace={workspace} clientLetters={client.letters || []} clientRounds={client.rounds || []} onMail={onMail} onAnalyze={onAnalyze} onAnalyzeBureau={onAnalyzeBureau} onOpenLetters={onOpenLetters} busy={busy} onCloseCampaign={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'closed', closedAt: new Date().toISOString() }))} />}
     {showInterim && <InterimLetterBuilder client={client} audit={latestAudit} onClose={() => setShowInterim(false)} onMail={onMail} onOpenLetters={() => { setShowInterim(false); onOpenLetters?.(); }} />}

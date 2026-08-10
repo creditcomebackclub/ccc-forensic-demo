@@ -7,6 +7,7 @@ import { BUREAU_LABEL, resolveActiveBureaus } from './roundTargets.js';
 import { buildPriorRoundLeverageBlock } from './roundEvidence.js';
 import { setRouteResult } from './campaigns.js';
 import { getCampaignItemBureaus } from './campaignItems.js';
+import { letterGenerationState } from './letterGeneration.js';
 export { buildPriorRoundLeverageBlock } from './roundEvidence.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -32,6 +33,8 @@ async function pollForLetter(id) {
   }
   throw new Error('Letter generation timed out. It may still be processing in the background.');
 }
+
+const isBackgroundPollTimeout = (error) => /timed out.*background/i.test(String(error?.message || error));
 
 const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -246,7 +249,23 @@ export async function generateCampaignAccountRoute({ route, item, campaign, clie
         { furnisher: account.furnisher, account_id: account.accountNumberMasked || account.id || '', type: account.type, dispute_basis: 'FCRA_DIRECT' },
       ]
       : [{ furnisher: account.furnisher, account_id: account.accountNumberMasked || account.id || '', type: account.type || null, dispute_basis: 'FCRA_DIRECT' }];
+  let attemptedLetterIds = [];
+  let backgroundAccepted = false;
   try {
+    if (route.status === 'failed' && route.letterIds?.length) {
+      const { data: failedRows, error: failedRowsError } = await supabase.from('letters')
+        .select('id,html,mailed_date,lob_id,campaign_route_id')
+        .in('id', route.letterIds);
+      if (failedRowsError) throw failedRowsError;
+      const retryIds = (failedRows || [])
+        .filter((letter) => letter.campaign_route_id === route.id && letterGenerationState(letter) === 'failed' && !letter.mailed_date && !letter.lob_id)
+        .map((letter) => letter.id);
+      if (retryIds.length) {
+        const { error: resetError } = await supabase.from('letters').update({ html: 'GENERATING...', summary: null }).in('id', retryIds);
+        if (resetError) throw resetError;
+        attemptedLetterIds = retryIds;
+      }
+    }
     const loadedSources = await loadPriorSources(priorSources);
     const sourcePayload = loadedSources.map((source) => ({
       source_letter_id: source.sourceLetterId, response_evidence_id: source.responseEvidenceId,
@@ -257,7 +276,19 @@ export async function generateCampaignAccountRoute({ route, item, campaign, clie
     });
     if (error) throw error;
     const ids = started?.letter_ids || [];
+    attemptedLetterIds = ids;
     if (ids.length !== letterSpecs.length) throw new Error('The campaign route did not create every required letter placeholder.');
+    const { data: storedJobs, error: storedJobsError } = await supabase.from('letters').select('id,html').in('id', ids);
+    if (storedJobsError) throw storedJobsError;
+    const storedById = new Map((storedJobs || []).map((letter) => [letter.id, letter]));
+    const jobIndexes = ids.map((id, index) => ({ id, index, state: letterGenerationState(storedById.get(id)) }))
+      .filter((entry) => entry.state === 'generating');
+    if (!jobIndexes.length && ids.every((id) => letterGenerationState(storedById.get(id)) === 'ready')) {
+      const results = await Promise.all(ids.map((id) => pollForLetter(id)));
+      await setRouteResult(route.id, { status: 'generated', letterIds: ids, generationError: null, generatedAt: new Date().toISOString() });
+      return ids.map((id, index) => ({ id, ...results[index] }));
+    }
+    if (!jobIndexes.length) throw new Error('The failed route has no safe letter placeholder to retry.');
     const priorBlocks = loadedSources.map((source) => buildPriorRoundLeverageBlock({
       priorTargetType: source.letter.target_type || 'furnisher', nextTargetType: targetType,
       priorLetterHtml: source.letter.html, priorLetterSummary: source.letter.summary,
@@ -267,7 +298,7 @@ export async function generateCampaignAccountRoute({ route, item, campaign, clie
     const styleInstruction = CAMPAIGN_STYLE_INSTRUCTIONS[route.letterStyle] || CAMPAIGN_STYLE_INSTRUCTIONS.forensic;
     const customInstruction = route.customInstructions ? `\nStaff strategy: ${route.customInstructions}` : '';
     const baseData = JSON.stringify({ account, client, roundNumber: campaign.roundNumber, targetType, clientSignature: client.signatureData || null }, null, 2);
-    const jobs = ids.map((id, index) => {
+    const jobs = jobIndexes.map(({ id, index }) => {
       const spec = letterSpecs[index];
       const target = targetType === 'bureau' ? BUREAU_LABEL[route.targetBureau] : account.furnisher;
       const purpose = spec.dispute_basis === 'FDCPA'
@@ -284,11 +315,16 @@ export async function generateCampaignAccountRoute({ route, item, campaign, clie
       method: 'POST', headers: await staffJsonHeaders(), body: JSON.stringify({ jobs }),
     });
     if (!response.ok) throw new Error('The route exists, but Claude letter generation could not start.');
+    backgroundAccepted = true;
     const results = await Promise.all(ids.map((id) => pollForLetter(id)));
     await setRouteResult(route.id, { status: 'generated', letterIds: ids, generationError: null, generatedAt: new Date().toISOString() });
     return ids.map((id, index) => ({ id, ...results[index] }));
   } catch (error) {
-    await setRouteResult(route.id, { status: 'failed', generationError: String(error.message || error).slice(0, 1000) }).catch(() => {});
+    const message = String(error.message || error).slice(0, 1000);
+    if (!backgroundAccepted && attemptedLetterIds.length) {
+      try { await supabase.from('letters').update({ html: `ERROR: ${message}` }).in('id', attemptedLetterIds).eq('html', 'GENERATING...'); } catch (_) {}
+    }
+    await setRouteResult(route.id, { status: isBackgroundPollTimeout(error) ? 'generating' : 'failed', generationError: message }).catch(() => {});
     throw error;
   }
 }
@@ -350,16 +386,35 @@ export async function generateCombinedCleanupLetter(client, inquiries, metadata 
   const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting a Personal Information & Inquiry Reinvestigation Demand addressed directly to ${bureau}, NOT to any furnisher. This letter disputes both the accuracy of identifying information in the consumer's file AND unverified hard inquiries. It does NOT dispute any tradeline, account balance, or payment history.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department.\n2. Cite 15 U.S.C. §1681e(b) for the maximum possible accuracy standard regarding the personal information (if any is provided).\n3. Cite 15 U.S.C. §1681i for the reinvestigation duty and 15 U.S.C. §1681b for the permissible purpose requirement for each inquiry listed (if any are provided).\n4. For personal info: List each specific former address, name variant, and former employer provided in personalInfo.formerAddresses / personalInfo.nameVariants / personalInfo.formerEmployers, and demand each one be removed. These lists already EXCLUDE the items the consumer wants to keep. If personalInfo.keepOnFile is present, affirm the consumer's correct name as keepOnFile.name (and correct current employer as keepOnFile.employer when non-null) and state that only that identifying information should remain. Do NOT demand removal of keepOnFile.name or keepOnFile.employer.\n5. For inquiries: For each inquiry listed, state the furnisher name and date, and state that the consumer does not recognize or cannot verify a permissible purpose for this specific inquiry. Demand the bureau contact each listed subscriber to verify permissible purpose, and demand deletion of any inquiry the subscriber cannot verify within 30 days per 15 U.S.C. §1681i(a)(5)(A).\n6. Do NOT state or imply fraud or identity theft unless that is explicitly present in the provided data.\n7. Do NOT dispute any account, balance, or payment history in this letter.\n8. Demand written confirmation of the results within 30 days.\n9. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, statements and demands only.\n10. ALWAYS include a signature block at the bottom of the letter. Print the consumer's full name. If \`clientSignature\` is provided in the data, embed it using an <img> tag above the printed name with a style like \`max-height: 60px;\`. If \`clientSignature\` is null, simply leave a few blank lines above the printed name for a physical signature. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n11. ALWAYS include an "Enclosures:" section below the signature block listing ONLY: "Government-Issued Photo ID" and "Proof of Current Address (Bank Statement)". Do NOT include a Limited Power of Attorney — this letter type does not require it.\n12. MANDATORY IDENTITY TABLE: Immediately after the introductory paragraph(s) and before any disputed-information sections, output a 2-column summary table with class='id-table'. This table MUST always be present for every bureau and MUST contain exactly these rows in order: "Consumer Name" (use personalInfo.keepOnFile.name when present, otherwise client.name), "Date of Birth on File" (use client.dateOfBirth if provided, otherwise omit this row only), "Current Verified Address" (use client.address — this is the permanent verified address of record, NOT any former address), "Bureau" (use the bureau name), "Report Date" (use the report date from the audit data if available, otherwise use today's date). Do NOT skip this table for any bureau.\n13. LETTER HEADER ORDER: At the very top of the letter, in this exact order: (1) today's date, (2) the consumer's full name and current verified address (client.address) as the return/sender address block, (3) the bureau's dispute-department address block. Do NOT put the sender address before the date — the date leads. The sender address must match the "Current Verified Address" row in the id-table. Use keepOnFile.name (when present) as the printed consumer name in the sender block.\n14. CRITICAL CONCISENESS RULE: Do NOT generate a separate 'STATUTORY OBLIGATIONS' or 'LEGAL BASIS' table or section. Incorporate all legal citations directly inline in the brief introductory paragraphs. Do NOT generate any CSS, <style> block, or inline style attributes. Output plain HTML using these exact classes: class='id-table', class='list-table', class='demands-table', class='signature-block', class='enclosures', class='mail-notation'. This is required to prevent the API output from truncating.\n\nOutput complete HTML only. No prose. No fences.`;
 
   const syntheticAccount = { furnisher: bureau, id: 'personal-info-inquiries', type: null };
-  const id = await saveLetter(syntheticAccount, client, 'GENERATING...', null, 'Personal Info & Inquiries', null, metadata);
+  let id = metadata.existingLetterId || null;
+  if (id) {
+    const { data: existing, error: existingError } = await supabase.from('letters')
+      .select('id,html,mailed_date,lob_id,campaign_route_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing || existing.campaign_route_id !== metadata.campaignRouteId || existing.mailed_date || existing.lob_id || letterGenerationState(existing) !== 'failed') {
+      throw new Error('The failed cleanup placeholder is not safe to retry.');
+    }
+    const { error: resetError } = await supabase.from('letters').update({ html: 'GENERATING...', summary: null }).eq('id', id);
+    if (resetError) throw resetError;
+  } else {
+    id = await saveLetter(syntheticAccount, client, 'GENERATING...', null, 'Personal Info & Inquiries', null, metadata);
+  }
   
-  const res = await fetch('/.netlify/functions/generate-letter-background', {
-    method: 'POST',
-    headers: await staffJsonHeaders(),
-    body: JSON.stringify({
-      jobs: [{ id, account: null, generateSummary: false, instructions }]
-    })
-  });
-  if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
+  try {
+    const res = await fetch('/.netlify/functions/generate-letter-background', {
+      method: 'POST',
+      headers: await staffJsonHeaders(),
+      body: JSON.stringify({
+        jobs: [{ id, account: null, generateSummary: false, instructions }]
+      })
+    });
+    if (!res.ok) throw new Error('Could not start letter generation on the server. Please try again.');
+  } catch (error) {
+    try { await supabase.from('letters').update({ html: `ERROR: ${String(error.message || error).slice(0, 900)}` }).eq('id', id).eq('html', 'GENERATING...'); } catch (_) {}
+    throw error;
+  }
 
   // Fire-and-forget
   return id;
@@ -398,13 +453,14 @@ export async function generateCampaignCleanupRoute({ route, items, campaign, cli
       campaignId: campaign.id, campaignItemId: groupedItems[0].id, campaignRouteId: route.id,
       generationStyle: route.letterStyle, targetType: 'bureau', targetBureau: route.targetBureau,
       letterKind: 'file_update', customInstructions: route.customInstructions,
+      existingLetterId: route.status === 'failed' && route.letterIds?.length === 1 ? route.letterIds[0] : null,
     });
     await setRouteResult(route.id, { status: 'generating', letterIds: [id], generationError: null });
     const result = await pollForLetter(id);
     await setRouteResult(route.id, { status: 'generated', letterIds: [id], generationError: null, generatedAt: new Date().toISOString() });
     return [{ id, ...result }];
   } catch (error) {
-    await setRouteResult(route.id, { status: 'failed', generationError: String(error.message || error).slice(0, 1000) }).catch(() => {});
+    await setRouteResult(route.id, { status: isBackgroundPollTimeout(error) ? 'generating' : 'failed', generationError: String(error.message || error).slice(0, 1000) }).catch(() => {});
     throw error;
   }
 }

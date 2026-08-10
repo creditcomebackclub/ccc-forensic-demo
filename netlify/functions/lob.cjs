@@ -414,6 +414,18 @@ exports.handler = async (event) => {
       // another tab.
       const letter = await findLetter(letterId, supabaseUrl, serviceKey);
       if (!letter) return { statusCode: 404, body: JSON.stringify({ error: 'Letter not found' }) };
+      const storedHtml = String(letter.html || '').trim();
+      if (!storedHtml || storedHtml === 'GENERATING...' || storedHtml.startsWith('ERROR:')) {
+        return {
+          statusCode: 422,
+          body: JSON.stringify({
+            error: storedHtml === 'GENERATING...'
+              ? 'LETTER GENERATION IS STILL RUNNING — nothing was sent.'
+              : 'LETTER GENERATION FAILED — regenerate and review the letter before mailing. Nothing was sent.',
+            blocked: true,
+          }),
+        };
+      }
       await validateStructuredRoundPreflight(letter, supabaseUrl, serviceKey);
       const validatedAttachments = await validateOptionalAttachments(letter, attachmentManifest, supabaseUrl, serviceKey);
       if (letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3')) {

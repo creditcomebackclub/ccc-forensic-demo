@@ -2,6 +2,7 @@
 // Letter status codes mirror ClientsPage.letterStatus — keep in sync.
 import { letterStatus as responseWindowStatus } from '../../utils/responseWindow.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../../utils/roundState.js';
+import { letterGenerationState } from '../../utils/letterGeneration.js';
 
 export const WINDOW_DAYS = 30;
 
@@ -9,6 +10,8 @@ export const LETTER_STAGES = ['Generated', 'Mailed', 'Delivered', 'Outcome'];
 
 export const MAIL_FILTERS = [
   { key: 'all', label: 'All' },
+  { key: 'generation_failed', label: 'Failed' },
+  { key: 'generating', label: 'Generating' },
   { key: 'not_mailed', label: 'Not mailed' },
   { key: 'in_transit', label: 'In transit' },
   { key: 'awaiting', label: 'Awaiting' },
@@ -27,6 +30,9 @@ export const LIST_FILTER_TO_LETTER = {
 };
 
 export function letterStatusCode(l) {
+  const generation = letterGenerationState(l);
+  if (generation === 'failed') return 'generation_failed';
+  if (generation === 'generating') return 'generating';
   const code = responseWindowStatus(l).code;
   if (code === 'draft') return 'not_mailed';
   if (code === 'due_soon') return 'awaiting';
@@ -56,6 +62,8 @@ export function countMailStatuses(letters = [], rounds = []) {
   const client = { letters, rounds };
   const counts = {
     all: letters.length,
+    generation_failed: 0,
+    generating: 0,
     not_mailed: 0,
     in_transit: 0,
     awaiting: 0,
@@ -109,6 +117,7 @@ export function deriveNextAction(client) {
   const open = letters.filter((l) => l.roundId ? isOpenRoundLetter(client, l) : !(l.phase || '').startsWith('Phase 3'));
 
   const notMailed = open.filter((l) => letterStatusCode(l) === 'not_mailed');
+  const failedGeneration = open.filter((l) => letterStatusCode(l) === 'generation_failed');
   const reviewDue = open.filter((l) => {
     const code = letterStatusCode(l);
     return (code === 'window_closed' || code === 'no_response')
@@ -146,6 +155,14 @@ export function deriveNextAction(client) {
       detail: 'Response ready for forensic analysis and staff disposition',
       letterFilter: 'received',
       tone: 'action',
+    };
+  }
+  if (failedGeneration.length > 0) {
+    return {
+      label: failedGeneration.length === 1 ? 'Retry 1 failed letter' : `Retry ${failedGeneration.length} failed letters`,
+      detail: 'Generation failed — the draft is blocked from mailing',
+      letterFilter: 'generation_failed',
+      tone: 'urgent',
     };
   }
   if (notMailed.length > 0) {
