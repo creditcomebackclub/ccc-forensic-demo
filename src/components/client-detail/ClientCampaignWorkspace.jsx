@@ -8,6 +8,7 @@ import {
 import { generateCampaignAccountRoute, generateCampaignCleanupRoute, generateInterimLetter } from '../../utils/api.js';
 import { buildCleanupRouteGroups, getCampaignItemBureaus } from '../../utils/campaignItems.js';
 import { canMailLetter } from '../../utils/letterGeneration.js';
+import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../../utils/campaignMailing.js';
 
 const T = { navy: '#1B2A4A', gold: '#C9A84C', border: '#E7EAF0', grid: '#EEF0F4', ink: '#111827', muted: '#6B7280', faint: '#9CA3AF' };
 const BUREAUS = ['equifax', 'experian', 'transunion'];
@@ -267,7 +268,7 @@ function BuildQueue({ workspace, busy, generationProgress, onGenerate, onReview 
   </div>;
 }
 
-function LetterReview({ workspace, clientLetters, selectedLetterId, setSelectedLetterId, onApprove, onReady, onBuildRemaining, onMail, busy }) {
+function LetterReview({ workspace, clientLetters, selectedLetterId, setSelectedLetterId, onApprove, onReady, onBuildRemaining, busy }) {
   const routeByLetter = new Map(workspace.routes.flatMap((route) => route.letterIds.map((id) => [id, route])));
   const itemById = new Map(workspace.items.map((item) => [item.id, item]));
   const letters = workspace.routes.filter((route) => route.status === 'generated').flatMap((route) => route.letterIds.map((id) => toUiLetter(clientLetters.find((letter) => letter.id === id) || workspace.letters.find((letter) => letter.id === id)))).filter((letter) => letter && canMailLetter(letter));
@@ -307,22 +308,68 @@ function LetterReview({ workspace, clientLetters, selectedLetterId, setSelectedL
       <div className="flex-1 bg-gray-100 p-3">{selected?.html && selected.html !== 'GENERATING...' ? <iframe title="Letter preview" sandbox="" srcDoc={selected.html} className="w-full h-full min-h-[520px] bg-white rounded border-0" /> : <div className="h-full min-h-[520px] flex items-center justify-center text-[12px]" style={{ color: T.muted }}>Select a generated letter.</div>}</div>
       <div className="px-4 py-3 flex flex-wrap justify-end gap-2" style={{ borderTop: `1px solid ${T.grid}` }}>
         {!allGenerated && <button onClick={onBuildRemaining} disabled={busy} className="px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.navy, background: '#fff', border: `1px solid ${T.border}` }}>Back to build remaining letters</button>}
-        {approvedCleanupLetters.length > 0 && <button onClick={() => onMail(approvedCleanupLetters)} disabled={busy} className="px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ background: '#6D4DB1', color: '#fff' }}>Mail approved cleanup ({approvedCleanupLetters.length})</button>}
+        {!allGenerated && approvedCleanupLetters.length > 0 && <button onClick={onReady} disabled={busy} className="px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ background: '#6D4DB1', color: '#fff' }}>Continue approved cleanup to Mail ({approvedCleanupLetters.length})</button>}
         {allGenerated && <button onClick={onReady} disabled={!allApproved || busy} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>Move approved batch to mailing</button>}
       </div>
     </div>
   </div>;
 }
 
-function MailingAndTracking({ workspace, clientLetters, clientRounds, onMail, onAnalyze, onAnalyzeBureau, onOpenLetters, onCloseCampaign, busy }) {
+function MailingAndTracking({ workspace, clientLetters, clientRounds, onMail, onAnalyze, onAnalyzeBureau, onOpenLetters, onCloseCampaign, onBuildRemaining, onBackReview, busy }) {
   const ids = workspace.routes.flatMap((route) => route.letterIds);
   const letters = ids.map((id) => toUiLetter(clientLetters.find((letter) => letter.id === id) || workspace.letters.find((letter) => letter.id === id))).filter(Boolean);
+  const routeByLetter = new Map(workspace.routes.flatMap((route) => route.letterIds.map((id) => [id, route])));
   const awaiting = workspace.campaign.stage === 'awaiting_responses' || workspace.campaign.stage === 'response_review';
+  const remainingBuildRoutes = workspace.routes.filter((route) => route.status !== 'generated').length;
+  const ready = letters.filter((letter) => routeByLetter.get(letter.id)?.approvedLetterIds.includes(letter.id) && !isMailedMail(letter) && !isCancelledMail(letter));
+  const mailed = letters.filter(isMailedMail);
+  const cancelled = letters.filter(isCancelledMail);
   const roundIds = [...new Set(workspace.routes.map((route) => route.disputeRoundId).filter(Boolean))];
   const roundsClosed = roundIds.every((id) => (clientRounds || []).some((round) => round.round_id === id && round.status === 'closed'));
   const standaloneResolved = letters.filter((letter) => !(letter.roundId || letter.round_id)).every((letter) => !!letter.responseOutcome);
   const mayClose = workspace.campaign.stage === 'response_review' && roundsClosed && standaloneResolved;
-  return <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${T.border}` }}><div className="px-5 py-4 flex items-start justify-between gap-4" style={{ borderBottom: `1px solid ${T.grid}` }}><div><div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>{awaiting ? 'Response tracking' : 'Mailing queue'}</div><h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>{awaiting ? `Round ${workspace.campaign.roundNumber} is awaiting responses` : 'Mail the approved batch'}</h2><p className="text-[11px] mt-1" style={{ color: T.muted }}>{awaiting ? 'Existing deadlines, deliveries, and response protections remain active until staff reviews and explicitly closes the round.' : 'Each letter remains individually traceable. The campaign advances after the final approved letter is mailed.'}</p></div>{awaiting && <div className="flex gap-2"><button onClick={onOpenLetters} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold shrink-0" style={{ background: '#EEF1F7', color: T.navy }}>Full response workboard</button>{mayClose && <button onClick={onCloseCampaign} disabled={busy} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold shrink-0 disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>Close reviewed round</button>}</div>}</div>{letters.map((letter) => { const mailed = !!(letter.mailedDate || letter.mailed_date); const response = letter.responseOutcome || letter.response_outcome; const analyze = letter.targetType === 'bureau' ? onAnalyzeBureau : onAnalyze; return <div key={letter.id} className="px-5 py-3 flex items-center gap-3" style={{ borderTop: `1px solid ${T.grid}` }}><div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: mailed ? '#ECFDF3' : '#FBF7EA', color: mailed ? '#15803D' : T.gold }}>{mailed ? <Check size={14} /> : <Mail size={14} />}</div><div className="flex-1 min-w-0"><div className="text-[12px] font-semibold truncate" style={{ color: T.ink }}>{letter.furnisher}</div><div className="text-[10px] mt-0.5" style={{ color: T.muted }}>{response ? `Response: ${response}` : mailed ? `Mailed ${letter.mailedDate || letter.mailed_date}${letter.trackingNumber ? ` · ${letter.trackingNumber}` : ''}` : 'Approved · ready to mail'}</div></div>{!mailed ? <button onClick={() => onMail([letter])} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ background: T.navy, color: T.gold }}>Mail letter</button> : response === 'received' ? <button onClick={() => analyze(letter)} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ background: '#EEF1F7', color: T.navy }}>Analyze response</button> : <span className="text-[9px] uppercase tracking-wider font-semibold text-green-700">{response || 'Tracking'}</span>}</div>;})}</div>;
+  return <div className="space-y-4">
+    <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${T.border}` }}>
+      <div className="px-5 py-4 flex items-start justify-between gap-4" style={{ borderBottom: `1px solid ${T.grid}` }}>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>{awaiting ? 'Response tracking' : 'Mailing section'}</div>
+          <h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>{awaiting ? `Round ${workspace.campaign.roundNumber} is awaiting responses` : 'Review enclosures and mail each approved letter'}</h2>
+          <p className="text-[11px] mt-1" style={{ color: T.muted }}>{awaiting ? 'Existing deadlines, deliveries, and response protections remain active until staff reviews and explicitly closes the round.' : 'Lob opens from this queue. After each successful send, you return here with the remaining letters and their durable status.'}</p>
+        </div>
+        {awaiting && <div className="flex gap-2"><button onClick={onOpenLetters} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold shrink-0" style={{ background: '#EEF1F7', color: T.navy }}>Full response workboard</button>{mayClose && <button onClick={onCloseCampaign} disabled={busy} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold shrink-0 disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>Close reviewed round</button>}</div>}
+      </div>
+      {!awaiting && <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-4" style={{ background: '#FAFBFC' }}>
+        {[[ready.length, 'Ready to mail', T.navy], [mailed.length, 'Successfully mailed', '#15803D'], [cancelled.length, 'Canceled in Lob', '#B45309'], [remainingBuildRoutes, 'Routes left to build', '#6D4DB1']].map(([count, label, color]) => <div key={label} className="bg-white rounded-xl px-3 py-3" style={{ border: `1px solid ${T.border}` }}><div className="text-[20px] font-semibold" style={{ color }}>{count}</div><div className="text-[9px] uppercase tracking-wider mt-1" style={{ color: T.muted }}>{label}</div></div>)}
+      </div>}
+      {cancelled.length > 0 && !awaiting && <div className="mx-4 mb-3 p-3 rounded-xl text-[11px]" style={{ color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A' }}><AlertTriangle size={14} className="inline mr-1.5" />Canceled mailpieces were removed from Lob production and do not count as mailed. Replace any incorrect document, then explicitly re-mail from its row.</div>}
+      {letters.map((letter) => {
+        const route = routeByLetter.get(letter.id);
+        const approved = route?.approvedLetterIds.includes(letter.id);
+        const wasMailed = isMailedMail(letter);
+        const wasCancelled = isCancelledMail(letter);
+        const response = letter.responseOutcome || letter.response_outcome;
+        const analyze = letter.targetType === 'bureau' ? onAnalyzeBureau : onAnalyze;
+        const subtitle = response ? `Response: ${response}`
+          : wasCancelled ? 'Canceled in Lob before production · replace incorrect documents before re-mailing'
+            : wasMailed ? `Mailed ${letter.mailedDate || letter.mailed_date}${letter.trackingNumber ? ` · ${letter.trackingNumber}` : ''}`
+              : approved ? 'Approved · ready to verify enclosures and mail' : 'Needs review and approval';
+        return <div key={letter.id} className="px-5 py-4 flex items-center gap-3" style={{ borderTop: `1px solid ${T.grid}` }}>
+          <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: wasCancelled ? '#FFF7ED' : wasMailed ? '#ECFDF3' : '#FBF7EA', color: wasCancelled ? '#B45309' : wasMailed ? '#15803D' : T.gold }}>{wasCancelled ? <AlertTriangle size={15} /> : wasMailed ? <Check size={15} /> : <Mail size={15} />}</div>
+          <div className="flex-1 min-w-0"><div className="text-[12px] font-semibold truncate" style={{ color: T.ink }}>{letter.furnisher}</div><div className="text-[10px] mt-0.5" style={{ color: wasCancelled ? '#B45309' : T.muted }}>{subtitle}</div></div>
+          {!awaiting && approved && !wasMailed && <button onClick={() => {
+            if (wasCancelled && !window.confirm('Confirm the incorrect document has been replaced and this letter is ready to be submitted to Lob again.')) return;
+            onMail([letter]);
+          }} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ background: wasCancelled ? '#B45309' : T.navy, color: wasCancelled ? '#fff' : T.gold }}>{wasCancelled ? 'Re-mail after correction' : 'Open mailer'}</button>}
+          {!awaiting && !approved && <button onClick={onBackReview} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ background: '#EEF1F7', color: T.navy }}>Return to review</button>}
+          {awaiting && response === 'received' ? <button onClick={() => analyze(letter)} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold" style={{ background: '#EEF1F7', color: T.navy }}>Analyze response</button> : awaiting && wasMailed ? <span className="text-[9px] uppercase tracking-wider font-semibold text-green-700">{response || 'Tracking'}</span> : null}
+        </div>;
+      })}
+      {!awaiting && <div className="px-5 py-4 flex flex-wrap justify-between gap-2" style={{ borderTop: `1px solid ${T.grid}` }}>
+        <button onClick={onBackReview} disabled={busy} className="px-3 py-2 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ color: T.navy, background: '#fff', border: `1px solid ${T.border}` }}>Back to Review</button>
+        {remainingBuildRoutes > 0 && <button onClick={onBuildRemaining} disabled={busy} className="px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: '#6D4DB1', color: '#fff' }}>Build remaining {remainingBuildRoutes} route{remainingBuildRoutes === 1 ? '' : 's'}</button>}
+      </div>}
+    </div>
+  </div>;
 }
 
 function InterimLetterBuilder({ client, audit, onClose, onMail, onOpenLetters }) {
@@ -357,14 +404,12 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
   const [selectedLetterId, setSelectedLetterId] = useState(null);
   const [showInterim, setShowInterim] = useState(false);
   const latestAudit = [...(client.audits || [])].sort((a, b) => String(b.savedAt || b.reportDate || '').localeCompare(String(a.savedAt || a.reportDate || '')))[0];
-  const letterActivityKey = (client.letters || []).map((letter) => `${letter.id}:${letter.mailedDate || ''}:${letter.responseOutcome || ''}:${letter.roundReviewStatus || ''}`).join('|');
+  const letterActivityKey = (client.letters || []).map((letter) => `${letter.id}:${letter.mailedDate || ''}:${letter.trackingStatus || ''}:${letter.responseOutcome || ''}:${letter.roundReviewStatus || ''}`).join('|');
   const load = async () => { setLoading(true); try { setWorkspace(await getCampaignWorkspace(client.id)); setError(null); } catch (e) { setError(e.message); } finally { setLoading(false); } };
   useEffect(() => { load(); }, [client.id, letterActivityKey]);
   useEffect(() => {
     if (!workspace?.campaign || workspace.campaign.stage !== 'mailing') return;
-    const ids = workspace.routes.flatMap((route) => route.letterIds);
-    const byId = new Map([...(workspace.letters || []), ...(client.letters || [])].map((letter) => [letter.id, letter]));
-    if (ids.length && ids.every((id) => { const letter = byId.get(id); return !!(letter?.mailedDate || letter?.mailed_date); })) {
+    if (campaignReadyForTracking(workspace, client.letters || [])) {
       updateCampaign(workspace.campaign.id, { stage: 'awaiting_responses' }).then(load).catch((e) => setError(e.message));
     }
   }, [workspace, client.letters]);
@@ -429,8 +474,8 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
     {stage === 'configure_letters' && !workspace.campaign.builderMode && <BuilderChoice onChoose={(mode) => run(() => updateCampaign(workspace.campaign.id, { builderMode: mode }))} onStandalone={() => setShowInterim(true)} />}
     {stage === 'configure_letters' && workspace.campaign.builderMode && !workspace.routes.length && <RouteConfigurator workspace={workspace} mode={workspace.campaign.builderMode} busy={busy} onSave={(routes) => run(() => replaceConfiguredRoutes(workspace.campaign, workspace.items, routes))} />}
     {stage === 'configure_letters' && workspace.routes.length > 0 && <BuildQueue workspace={workspace} busy={busy} generationProgress={generationProgress} onGenerate={(routes, kind) => run(() => generateRoutes(routes, kind))} onReview={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'letter_review' }))} />}
-    {stage === 'letter_review' && <LetterReview workspace={workspace} clientLetters={client.letters || []} selectedLetterId={selectedLetterId} setSelectedLetterId={setSelectedLetterId} busy={busy} onApprove={(route, id, approved) => run(() => approveCampaignLetter(route, id, approved))} onReady={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'mailing' }))} onBuildRemaining={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} onMail={onMail} />}
-    {['mailing', 'awaiting_responses', 'response_review'].includes(stage) && <MailingAndTracking workspace={workspace} clientLetters={client.letters || []} clientRounds={client.rounds || []} onMail={onMail} onAnalyze={onAnalyze} onAnalyzeBureau={onAnalyzeBureau} onOpenLetters={onOpenLetters} busy={busy} onCloseCampaign={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'closed', closedAt: new Date().toISOString() }))} />}
+    {stage === 'letter_review' && <LetterReview workspace={workspace} clientLetters={client.letters || []} selectedLetterId={selectedLetterId} setSelectedLetterId={setSelectedLetterId} busy={busy} onApprove={(route, id, approved) => run(() => approveCampaignLetter(route, id, approved))} onReady={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'mailing' }))} onBuildRemaining={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} />}
+    {['mailing', 'awaiting_responses', 'response_review'].includes(stage) && <MailingAndTracking workspace={workspace} clientLetters={client.letters || []} clientRounds={client.rounds || []} onMail={onMail} onAnalyze={onAnalyze} onAnalyzeBureau={onAnalyzeBureau} onOpenLetters={onOpenLetters} busy={busy} onBackReview={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'letter_review' }))} onBuildRemaining={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} onCloseCampaign={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'closed', closedAt: new Date().toISOString() }))} />}
     {showInterim && <InterimLetterBuilder client={client} audit={latestAudit} onClose={() => setShowInterim(false)} onMail={onMail} onOpenLetters={() => { setShowInterim(false); onOpenLetters?.(); }} />}
   </div>;
 }

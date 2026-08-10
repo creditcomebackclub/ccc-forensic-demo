@@ -393,6 +393,43 @@ async function prepareFailedRetry(letter, submission, supabaseUrl, serviceKey) {
   return reset.body[0];
 }
 
+// A canceled Lob job may be mailed again only through an explicit staff
+// action after the bad enclosure has been corrected. Rotate idempotency so
+// Lob creates a genuinely new mailpiece while retaining the canceled job in
+// lob_webhook_events and the current lob_id until this guarded transition.
+async function prepareCancelledRetry(letter, submission, supabaseUrl, serviceKey) {
+  if (submission.status !== 'cancelled' || letter.tracking_status !== 'Cancelled') {
+    throw new Error('This mailpiece is not a confirmed canceled Lob send and cannot be re-mailed.');
+  }
+  if (letter.lob_id) {
+    const cleared = await supabaseRequest(
+      '/rest/v1/letters?id=eq.' + encodeURIComponent(letter.id)
+        + '&lob_id=eq.' + encodeURIComponent(letter.lob_id)
+        + '&tracking_status=eq.Cancelled',
+      'PATCH',
+      { lob_id: null, mailed_date: null, tracking_number: null, tracking_status: 'Cancelled', delivered_at: null },
+      supabaseUrl, serviceKey
+    );
+    if (!isSuccess(cleared) || !Array.isArray(cleared.body) || cleared.body.length !== 1) {
+      throw new Error('The canceled mailpiece changed before it could be re-mailed. Refresh the letter and try again.');
+    }
+  }
+  const reset = await supabaseRequest(
+    '/rest/v1/mail_submissions?letter_id=eq.' + encodeURIComponent(letter.id) + '&status=eq.cancelled',
+    'PATCH',
+    {
+      idempotency_key: crypto.randomUUID(), status: 'pending', lob_id: null,
+      tracking_number: null, submitted_at: null, last_error: null,
+      updated_at: new Date().toISOString(),
+    },
+    supabaseUrl, serviceKey
+  );
+  if (!isSuccess(reset) || !Array.isArray(reset.body) || reset.body.length !== 1) {
+    throw new Error('Could not prepare a fresh safe send for this canceled mailpiece.');
+  }
+  return reset.body[0];
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
@@ -594,6 +631,9 @@ exports.handler = async (event) => {
 
       if (submission.status === 'failed') {
         submission = await prepareFailedRetry(letter, submission, supabaseUrl, serviceKey);
+      }
+      if (submission.status === 'cancelled') {
+        submission = await prepareCancelledRetry(letter, submission, supabaseUrl, serviceKey);
       }
 
       await updateSubmission(letterId, {

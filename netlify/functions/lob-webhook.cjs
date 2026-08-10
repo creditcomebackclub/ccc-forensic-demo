@@ -104,6 +104,7 @@ const RETURN_RECEIPT_EVENTS = new Set([
 // so _lobArtifacts retrieves the authoritative letter record with Lob's API.
 const RENDERED_PDF_EVENTS = new Set(['letter.rendered_pdf']);
 const FAILED_EVENTS = new Set(['letter.failed', 'letter.certified.failed']);
+const DELETED_EVENTS = new Set(['letter.deleted']);
 
 
 exports.handler = async (event) => {
@@ -269,7 +270,7 @@ exports.handler = async (event) => {
     );
     if (Array.isArray(rcptRes.body) && rcptRes.body.length === 0 && metaLetterId) {
       rcptRes = await supabaseRequest(
-        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId),
+        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null',
         'PATCH', { return_receipt_url: receiptUrl, lob_id: lobId }, supabaseUrl, supabaseKey
       );
     }
@@ -311,7 +312,7 @@ exports.handler = async (event) => {
     );
     if (Array.isArray(failedLetter.body) && failedLetter.body.length === 0 && metaLetterId) {
       failedLetter = await supabaseRequest(
-        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId),
+        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null',
         'PATCH',
         { tracking_status: 'Failed', mailed_date: null, tracking_number: null, delivered_at: null },
         supabaseUrl, supabaseKey
@@ -329,6 +330,41 @@ exports.handler = async (event) => {
     }
     console.warn('Lob mailpiece failed before mailing:', lobId, failureMessage);
     return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Failed', retryable: true }) };
+  }
+
+  // Lob emits `letter.deleted` when a mailpiece is successfully canceled
+  // before production. A cancellation is not a completed mailing: clear the
+  // operational dates/tracking data while retaining lob_id and the signed
+  // webhook ledger as the immutable record of the abandoned attempt.
+  if (DELETED_EVENTS.has(eventType)) {
+    const cancelledPatch = {
+      tracking_status: 'Cancelled',
+      mailed_date: null,
+      tracking_number: null,
+      delivered_at: null,
+    };
+    let cancelledLetter = await supabaseRequest(
+      '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId),
+      'PATCH', cancelledPatch, supabaseUrl, supabaseKey
+    );
+    if (Array.isArray(cancelledLetter.body) && cancelledLetter.body.length === 0 && metaLetterId) {
+      cancelledLetter = await supabaseRequest(
+        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null',
+        'PATCH', { ...cancelledPatch, lob_id: lobId }, supabaseUrl, supabaseKey
+      );
+    }
+    const cancelledSubmission = await supabaseRequest(
+      '/rest/v1/mail_submissions?lob_id=eq.' + encodeURIComponent(lobId),
+      'PATCH', { status: 'cancelled', last_error: 'Cancelled in Lob before production.' },
+      supabaseUrl, supabaseKey
+    );
+    if (cancelledLetter.status < 200 || cancelledLetter.status >= 300
+      || cancelledSubmission.status < 200 || cancelledSubmission.status >= 300) {
+      console.error('Could not record Lob mail cancellation:', lobId, cancelledLetter.status, cancelledSubmission.status);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Could not record canceled Lob mailpiece' }) };
+    }
+    console.log('Lob mailpiece canceled before production:', lobId);
+    return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Cancelled', retryable: true }) };
   }
 
   const trackingStatus = statusMap[eventType];
@@ -350,7 +386,10 @@ exports.handler = async (event) => {
   // `delivered` webhooks harmless and keep a late in-transit event from
   // overwriting a confirmed delivery. The client notification is sent only
   // by the request that wins this transition.
-  const unresolvedFilter = '&delivered_at=is.null';
+  // A confirmed cancellation is terminal for that Lob ID. The id filter
+  // below is also constrained to rows without a Lob ID so a late event from
+  // an abandoned attempt can never overwrite a newer explicit re-mail.
+  const unresolvedFilter = '&delivered_at=is.null&or=(tracking_status.is.null,tracking_status.neq.Cancelled)';
   let updateRes = await supabaseRequest(
     '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId) + unresolvedFilter,
     'PATCH', patch, supabaseUrl, supabaseKey
@@ -359,7 +398,7 @@ exports.handler = async (event) => {
 
   if (updatedRows.length === 0 && metaLetterId) {
     updateRes = await supabaseRequest(
-      '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + unresolvedFilter,
+      '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null' + unresolvedFilter,
       'PATCH', { ...patch, lob_id: lobId }, supabaseUrl, supabaseKey
     );
     updatedRows = Array.isArray(updateRes.body) ? updateRes.body : [];

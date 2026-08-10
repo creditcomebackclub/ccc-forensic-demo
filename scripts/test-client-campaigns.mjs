@@ -6,6 +6,7 @@ import { countMailStatuses, deriveNextAction } from '../src/components/client-de
 import { canMailLetter, generatedLetterValidationError, letterGenerationState } from '../src/utils/letterGeneration.js';
 import { buildKeepOnFileIdentity, clientForLetterPrompt } from '../src/utils/letterPromptData.js';
 import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../src/utils/letterMailing.js';
+import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../src/utils/campaignMailing.js';
 
 const auditRecord = {
   id: 'audit-1',
@@ -107,6 +108,24 @@ assert.equal(generationCounts.generation_failed, 1, 'failed generation has its o
 assert.equal(generationCounts.generating, 1, 'running generation has its own mail-workboard status');
 assert.equal(generationCounts.not_mailed, 1, 'only valid completed HTML counts as not mailed');
 
+const mailingWorkspace = {
+  routes: [
+    { status: 'generated', letterIds: ['mailed-letter'], approvedLetterIds: ['mailed-letter'] },
+    { status: 'pending', letterIds: [], approvedLetterIds: [] },
+  ],
+  letters: [],
+};
+const mailedLetter = { id: 'mailed-letter', mailed_date: '2026-08-09', tracking_status: 'Mailed' };
+assert.equal(isMailedMail(mailedLetter), true, 'a completed Lob submission counts as mailed');
+assert.equal(campaignReadyForTracking(mailingWorkspace, [mailedLetter]), false, 'ungenerated routes keep a partial batch in the Mail step');
+mailingWorkspace.routes[1] = { status: 'generated', letterIds: ['cancelled-letter'], approvedLetterIds: ['cancelled-letter'] };
+const cancelledLetter = { id: 'cancelled-letter', mailed_date: '2026-08-09', tracking_status: 'Cancelled' };
+assert.equal(isCancelledMail(cancelledLetter), true, 'a signed Lob cancellation is recognized');
+assert.equal(isMailedMail(cancelledLetter), false, 'a canceled mailpiece never counts as mailed even if stale date data remains');
+assert.equal(campaignReadyForTracking(mailingWorkspace, [mailedLetter, cancelledLetter]), false, 'a canceled letter blocks automatic advancement to Track');
+cancelledLetter.tracking_status = 'Mailed';
+assert.equal(campaignReadyForTracking(mailingWorkspace, [mailedLetter, cancelledLetter]), true, 'only a complete generated, approved, mailed batch advances to Track');
+
 const migration = fs.readFileSync(new URL('../supabase/migrations/20260809150000_client_campaign_command_center.sql', import.meta.url), 'utf8');
 assert.match(migration, /dispute_rounds_one_open_per_account_target_idx/, 'direct and bureau tracks have separate open-round protection');
 assert.match(migration, /campaign_letter_routes_bureau_uidx/, 'bureau routes are unique per item and bureau');
@@ -131,7 +150,10 @@ const workspace = fs.readFileSync(new URL('../src/components/client-detail/Clien
 assert.match(workspace, /letter\.targetType === 'bureau' \? onAnalyzeBureau : onAnalyze/, 'bureau and furnisher responses retain their specialized analyzers');
 assert.match(workspace, /Select all/, 'personal information and inquiry groups expose bulk selection');
 assert.match(workspace, /Generate cleanup letters/, 'cleanup letters can be generated before account disputes');
-assert.match(workspace, /Mail approved cleanup/, 'approved cleanup letters can be mailed before the account batch');
+assert.match(workspace, /Continue approved cleanup to Mail/, 'approved cleanup letters move into the dedicated Mail step before the account batch');
+assert.match(workspace, /Mailing section/, 'campaigns expose a durable mailing workspace');
+assert.match(workspace, /Canceled in Lob/, 'the mailing workspace distinguishes canceled Lob jobs from successful mail');
+assert.doesNotMatch(workspace, /Mail approved cleanup/, 'review no longer opens the mailer directly');
 assert.match(workspace, /failures\.push/, 'one failed route does not abort generation of later siblings');
 assert.match(workspace, /generationProgress/, 'the queue exposes route-specific progress instead of one shared spinner label');
 
@@ -154,6 +176,18 @@ assert.match(lobFunction, /incompleteDocument/i, 'server-side mailing rejects tr
 assert.match(lobFunction, /isBureauAccountDisputeLetter\(letter\)[\s\S]*PHASE 3 COVERAGE MISSING/, 'server applies covered-furnisher requirements only to account disputes');
 assert.match(lobFunction, /select=id[^'\n]*letter_kind[^'\n]*target_type/, 'server loads the durable letter classification before mailing');
 assert.match(lobFunction, /validatePersonalInfoCleanupPreflight\(letter/, 'server verifies PI/inquiry identity enclosures independently of the browser');
+assert.match(lobFunction, /submission\.status === 'cancelled'/, 'an explicitly canceled submission can enter the guarded re-mail path');
+assert.match(lobFunction, /prepareCancelledRetry[\s\S]*crypto\.randomUUID\(\)/, 'a canceled re-mail rotates Lob idempotency instead of reusing the abandoned job');
+
+const lobWebhook = fs.readFileSync(new URL('../netlify/functions/lob-webhook.cjs', import.meta.url), 'utf8');
+assert.match(lobWebhook, /letter\.deleted/, 'signed Lob deletion events are handled as cancellations');
+assert.match(lobWebhook, /tracking_status: 'Cancelled'/, 'a cancellation clears the false mailed state');
+assert.match(lobWebhook, /status: 'cancelled'/, 'the durable submission records the canceled terminal state');
+assert.match(lobWebhook, /tracking_status\.is\.null,tracking_status\.neq\.Cancelled/, 'late tracking events cannot revive a canceled Lob job');
+assert.match(lobWebhook, /lob_id=is\.null.*unresolvedFilter/, 'an old webhook cannot overwrite a newer explicit re-mail Lob id');
+
+const cancellationMigration = fs.readFileSync(new URL('../supabase/migrations/20260809171000_lob_cancelled_submissions.sql', import.meta.url), 'utf8');
+assert.match(cancellationMigration, /accepted_unreconciled', 'cancelled'/, 'mail submissions permit the durable canceled state');
 
 const letterGenerator = fs.readFileSync(new URL('../netlify/functions/generate-letter-background.mjs', import.meta.url), 'utf8');
 assert.match(letterGenerator, /MAX_LETTER_TOKENS = 12000/, 'letter generation has enough output budget for large inquiry tables');
