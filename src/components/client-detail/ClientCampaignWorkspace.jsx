@@ -18,6 +18,15 @@ const STAGES = [
   ['letter_review', 'Review'], ['mailing', 'Mail'], ['awaiting_responses', 'Track'],
 ];
 
+function normalizedStage(stage) {
+  if (stage === 'response_review' || stage === 'closed') return 'awaiting_responses';
+  return STAGES.some(([key]) => key === stage) ? stage : 'select_disputes';
+}
+
+function stageIndex(stage) {
+  return STAGES.findIndex(([key]) => key === normalizedStage(stage));
+}
+
 function activeBureaus(item) {
   const matched = getCampaignItemBureaus(item);
   return matched.length ? matched : (item.kind === 'personal_info' ? BUREAUS : []);
@@ -45,25 +54,35 @@ function toUiLetter(letter) {
   };
 }
 
-function CampaignRail({ stage }) {
-  const activeIndex = Math.max(1, STAGES.findIndex(([key]) => key === stage));
+function CampaignRail({ lifecycleStage, viewStage, canNavigate, onNavigate }) {
+  const progressIndex = stageIndex(lifecycleStage);
   return (
     <div className="bg-white rounded-2xl px-4 py-4 overflow-x-auto" style={{ border: `1px solid ${T.border}` }}>
       <div className="flex items-center min-w-[650px]">
         {STAGES.map(([key, label], index) => {
-          const done = index < activeIndex;
-          const current = index === activeIndex;
+          const done = index < progressIndex;
+          const current = key === viewStage;
+          const enabled = canNavigate(key);
           return <React.Fragment key={key}>
-            {index > 0 && <div className="h-px flex-1" style={{ background: done || current ? T.gold : '#DDE1E8' }} />}
-            <div className="flex flex-col items-center gap-1.5 min-w-[72px]">
-              <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: done ? T.navy : current ? T.gold : '#F3F4F6', color: done ? T.gold : current ? T.navy : T.faint, border: `1px solid ${done || current ? T.gold : '#DDE1E8'}` }}>
+            {index > 0 && <div className="h-px flex-1" style={{ background: index <= progressIndex ? T.gold : '#DDE1E8' }} />}
+            <button
+              type="button"
+              disabled={!enabled}
+              onClick={() => onNavigate(key)}
+              aria-current={current ? 'step' : undefined}
+              title={enabled ? `Open ${label}` : `${label} unlocks when the prior campaign work is complete`}
+              className="flex flex-col items-center gap-1.5 min-w-[72px] rounded-xl py-1.5 transition disabled:cursor-not-allowed disabled:opacity-60"
+              style={{ background: current ? '#FBF7EA' : 'transparent', boxShadow: current ? `0 0 0 1px ${T.gold}` : 'none' }}
+            >
+              <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: done ? T.navy : index === progressIndex ? T.gold : '#F3F4F6', color: done ? T.gold : index === progressIndex ? T.navy : T.faint, border: `1px solid ${index <= progressIndex ? T.gold : '#DDE1E8'}` }}>
                 {done ? <Check size={13} strokeWidth={2.5} /> : <span className="text-[10px] font-semibold">{index + 1}</span>}
               </div>
               <span className="text-[9px] uppercase tracking-[0.1em] font-semibold" style={{ color: current ? T.navy : T.muted }}>{label}</span>
-            </div>
+            </button>
           </React.Fragment>;
         })}
       </div>
+      <p className="text-[9px] text-center mt-2 min-w-[650px]" style={{ color: T.faint }}>Click an available step to revisit its workspace. Future steps unlock only when their required work is complete.</p>
     </div>
   );
 }
@@ -86,7 +105,7 @@ function EmptyCampaign({ client, latestAudit, onStart, busy, onOpenAudit }) {
   );
 }
 
-function DisputePicker({ workspace, onState, onBulkState, onContinue, busy }) {
+function DisputePicker({ workspace, onState, onBulkState, onContinue, busy, readOnly = false }) {
   const groups = [
     ['account', 'Accounts'], ['personal_info', 'Personal Information'], ['inquiry', 'Hard Inquiries'],
   ];
@@ -95,7 +114,7 @@ function DisputePicker({ workspace, onState, onBulkState, onContinue, busy }) {
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-2xl px-5 py-4 flex items-center justify-between gap-4" style={{ border: `1px solid ${T.border}` }}>
-        <div><div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>Round {workspace.campaign.roundNumber}</div><h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>Choose this round’s disputes</h2><p className="text-[11px] mt-1" style={{ color: T.muted }}>Selected items move to letter strategy. “Later” stays attached to this frozen audit for a future round.</p></div>
+        <div><div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>Round {workspace.campaign.roundNumber}</div><h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>{readOnly ? 'Review this round’s saved disputes' : 'Choose this round’s disputes'}</h2><p className="text-[11px] mt-1" style={{ color: T.muted }}>{readOnly ? 'This selection snapshot is locked because downstream letters already exist. Existing generated or mailed packets will not be silently changed.' : 'Selected items move to letter strategy. “Later” stays attached to this frozen audit for a future round.'}</p></div>
         <div className="text-right shrink-0"><div className="text-[20px] font-semibold" style={{ color: T.navy }}>{selected}</div><div className="text-[9px] uppercase tracking-wider" style={{ color: T.faint }}>selected · {later} later</div></div>
       </div>
       {groups.map(([kind, title]) => {
@@ -107,8 +126,8 @@ function DisputePicker({ workspace, onState, onBulkState, onContinue, busy }) {
           <div className="px-5 py-3 flex items-center justify-between gap-3" style={{ borderBottom: `1px solid ${T.grid}` }}>
             <div className="text-[11px] uppercase tracking-[0.12em] font-semibold" style={{ color: T.navy }}>{title} <span style={{ color: T.faint }}>({rows.length})</span></div>
             {supportsBulkSelection && <div className="flex items-center gap-1.5">
-              <button onClick={() => onBulkState(rows, 'selected')} disabled={busy || allSelected} className="px-2.5 py-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: allSelected ? '#ECFDF3' : T.navy, color: allSelected ? '#166534' : T.gold, border: `1px solid ${allSelected ? '#BBF7D0' : T.navy}` }}>{allSelected ? 'All selected ✓' : 'Select all'}</button>
-              <button onClick={() => onBulkState(rows, 'candidate')} disabled={busy || rows.every((item) => item.selectionState === 'candidate')} className="px-2.5 py-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: '#F7F8FA', color: T.muted, border: `1px solid ${T.border}` }}>Clear</button>
+              <button onClick={() => onBulkState(rows, 'selected')} disabled={busy || readOnly || allSelected} className="px-2.5 py-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: allSelected ? '#ECFDF3' : T.navy, color: allSelected ? '#166534' : T.gold, border: `1px solid ${allSelected ? '#BBF7D0' : T.navy}` }}>{allSelected ? 'All selected ✓' : 'Select all'}</button>
+              <button onClick={() => onBulkState(rows, 'candidate')} disabled={busy || readOnly || rows.every((item) => item.selectionState === 'candidate')} className="px-2.5 py-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: '#F7F8FA', color: T.muted, border: `1px solid ${T.border}` }}>Clear</button>
             </div>}
           </div>
           {rows.map((item) => {
@@ -117,13 +136,13 @@ function DisputePicker({ workspace, onState, onBulkState, onContinue, busy }) {
               <span className="text-[9px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0" style={{ background: bg, color }}>{tag}</span>
               <div className="flex-1 min-w-0"><div className="text-[12px] font-medium truncate" style={{ color: T.ink }}>{item.label}</div>{item.kind === 'account' && <div className="text-[10px] mt-0.5 truncate" style={{ color: T.muted }}>{(item.snapshot.violations || []).length} supported finding{(item.snapshot.violations || []).length === 1 ? '' : 's'} · {(item.snapshot.bureaus || []).join('/') || 'bureau reporting unavailable'}</div>}</div>
               <div className="flex gap-1.5 shrink-0">
-                {[['selected', 'This round'], ['later', 'Later'], ['candidate', 'Skip']].map(([state, label]) => <button key={state} onClick={() => onState(item, state)} disabled={busy} className="px-2.5 py-1.5 rounded-md text-[10px] font-medium" style={{ background: item.selectionState === state ? T.navy : '#F7F8FA', color: item.selectionState === state ? '#fff' : T.muted, border: `1px solid ${item.selectionState === state ? T.navy : T.border}` }}>{label}</button>)}
+                {[['selected', 'This round'], ['later', 'Later'], ['candidate', 'Skip']].map(([state, label]) => <button key={state} onClick={() => onState(item, state)} disabled={busy || readOnly} className="px-2.5 py-1.5 rounded-md text-[10px] font-medium disabled:cursor-not-allowed" style={{ background: item.selectionState === state ? T.navy : '#F7F8FA', color: item.selectionState === state ? '#fff' : T.muted, border: `1px solid ${item.selectionState === state ? T.navy : T.border}` }}>{label}</button>)}
               </div>
             </div>;
           })}
         </div>;
       })}
-      <div className="flex justify-end"><button onClick={onContinue} disabled={!selected || busy} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40 flex items-center gap-2" style={{ background: T.navy, color: T.gold }}>Choose letter builder <ChevronRight size={13} /></button></div>
+      <div className="flex justify-end"><button onClick={onContinue} disabled={!selected || busy} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40 flex items-center gap-2" style={{ background: T.navy, color: T.gold }}>{readOnly ? 'Open Build' : 'Choose letter builder'} <ChevronRight size={13} /></button></div>
     </div>
   );
 }
@@ -315,11 +334,11 @@ function LetterReview({ workspace, clientLetters, selectedLetterId, setSelectedL
   </div>;
 }
 
-function MailingAndTracking({ workspace, clientLetters, clientRounds, onMail, onAnalyze, onAnalyzeBureau, onOpenLetters, onCloseCampaign, onBuildRemaining, onBackReview, busy }) {
+function MailingAndTracking({ workspace, viewStage, clientLetters, clientRounds, onMail, onAnalyze, onAnalyzeBureau, onOpenLetters, onCloseCampaign, onBuildRemaining, onBackReview, busy }) {
   const ids = workspace.routes.flatMap((route) => route.letterIds);
   const letters = ids.map((id) => toUiLetter(clientLetters.find((letter) => letter.id === id) || workspace.letters.find((letter) => letter.id === id))).filter(Boolean);
   const routeByLetter = new Map(workspace.routes.flatMap((route) => route.letterIds.map((id) => [id, route])));
-  const awaiting = workspace.campaign.stage === 'awaiting_responses' || workspace.campaign.stage === 'response_review';
+  const awaiting = viewStage === 'awaiting_responses';
   const remainingBuildRoutes = workspace.routes.filter((route) => route.status !== 'generated').length;
   const ready = letters.filter((letter) => routeByLetter.get(letter.id)?.approvedLetterIds.includes(letter.id) && !isMailedMail(letter) && !isCancelledMail(letter));
   const mailed = letters.filter(isMailedMail);
@@ -403,14 +422,16 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
   const [error, setError] = useState(null);
   const [selectedLetterId, setSelectedLetterId] = useState(null);
   const [showInterim, setShowInterim] = useState(false);
+  const [viewStage, setViewStage] = useState(null);
   const latestAudit = [...(client.audits || [])].sort((a, b) => String(b.savedAt || b.reportDate || '').localeCompare(String(a.savedAt || a.reportDate || '')))[0];
   const letterActivityKey = (client.letters || []).map((letter) => `${letter.id}:${letter.mailedDate || ''}:${letter.trackingStatus || ''}:${letter.responseOutcome || ''}:${letter.roundReviewStatus || ''}`).join('|');
   const load = async () => { setLoading(true); try { setWorkspace(await getCampaignWorkspace(client.id)); setError(null); } catch (e) { setError(e.message); } finally { setLoading(false); } };
+  useEffect(() => { setViewStage(null); }, [client.id]);
   useEffect(() => { load(); }, [client.id, letterActivityKey]);
   useEffect(() => {
     if (!workspace?.campaign || workspace.campaign.stage !== 'mailing') return;
     if (campaignReadyForTracking(workspace, client.letters || [])) {
-      updateCampaign(workspace.campaign.id, { stage: 'awaiting_responses' }).then(load).catch((e) => setError(e.message));
+      updateCampaign(workspace.campaign.id, { stage: 'awaiting_responses' }).then(() => { setViewStage('awaiting_responses'); return load(); }).catch((e) => setError(e.message));
     }
   }, [workspace, client.letters]);
   useEffect(() => {
@@ -437,7 +458,25 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
   if (loading) return <div className="py-20 text-center text-[12px]" style={{ color: T.muted }}><Loader2 size={22} className="animate-spin mx-auto mb-3" />Loading campaign command center…</div>;
   if (error && !workspace) return <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-[12px] text-red-700">{error}</div>;
   if (!workspace?.campaign) return <EmptyCampaign client={client} latestAudit={latestAudit} busy={busy} onOpenAudit={onOpenAudit} onStart={() => run(() => createCampaignFromAudit(client, latestAudit))} />;
-  const stage = workspace.campaign.stage;
+  const lifecycleStage = workspace.campaign.stage;
+  const stage = viewStage || normalizedStage(lifecycleStage);
+  const progressIndex = stageIndex(lifecycleStage);
+  const hasGeneratedLetters = workspace.routes.some((route) => route.status === 'generated' && route.letterIds.length > 0);
+  const hasApprovedLetters = workspace.routes.some((route) => route.approvedLetterIds.length > 0);
+  const canNavigate = (target) => {
+    if (target === 'audit' || target === 'select_disputes') return true;
+    if (target === 'configure_letters') return progressIndex >= stageIndex('configure_letters');
+    if (target === 'letter_review') return hasGeneratedLetters;
+    if (target === 'mailing') return hasApprovedLetters || progressIndex >= stageIndex('mailing');
+    if (target === 'awaiting_responses') return ['awaiting_responses', 'response_review', 'closed'].includes(lifecycleStage);
+    return false;
+  };
+  const navigateTo = (target) => {
+    if (!canNavigate(target)) return;
+    if (target === 'audit') { onOpenAudit?.(client); return; }
+    setViewStage(target);
+  };
+  const runAndView = (target, fn) => run(async () => { await fn(); setViewStage(target); });
   const generateRoutes = async (routes, kind = 'all') => {
     const itemById = new Map(workspace.items.map((item) => [item.id, item]));
     const failures = [];
@@ -462,20 +501,21 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
         const succeeded = routes.length - failures.length;
         throw new Error(`${succeeded} route${succeeded === 1 ? '' : 's'} completed; ${failures.length} failed. ${failures.map((failure) => `${failure.route}: ${failure.message}`).join(' | ')}`);
       }
-      await updateCampaign(workspace.campaign.id, { stage: 'letter_review' });
+      if (progressIndex < stageIndex('letter_review')) await updateCampaign(workspace.campaign.id, { stage: 'letter_review' });
+      setViewStage('letter_review');
     } finally {
       setGenerationProgress(null);
     }
   };
   return <div className="space-y-4">
-    <CampaignRail stage={stage} />
+    <CampaignRail lifecycleStage={lifecycleStage} viewStage={stage} canNavigate={canNavigate} onNavigate={navigateTo} />
     {error && <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-[11px] text-red-700">{error}</div>}
-    {stage === 'select_disputes' && <DisputePicker workspace={workspace} busy={busy} onState={(item, state) => run(() => updateCampaignItemState(item.id, state))} onBulkState={(items, state) => run(() => updateCampaignItemStates(items.map((item) => item.id), state))} onContinue={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} />}
+    {stage === 'select_disputes' && <DisputePicker workspace={workspace} busy={busy} readOnly={lifecycleStage !== 'select_disputes'} onState={(item, state) => run(() => updateCampaignItemState(item.id, state))} onBulkState={(items, state) => run(() => updateCampaignItemStates(items.map((item) => item.id), state))} onContinue={lifecycleStage === 'select_disputes' ? () => runAndView('configure_letters', () => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' })) : () => setViewStage('configure_letters')} />}
     {stage === 'configure_letters' && !workspace.campaign.builderMode && <BuilderChoice onChoose={(mode) => run(() => updateCampaign(workspace.campaign.id, { builderMode: mode }))} onStandalone={() => setShowInterim(true)} />}
     {stage === 'configure_letters' && workspace.campaign.builderMode && !workspace.routes.length && <RouteConfigurator workspace={workspace} mode={workspace.campaign.builderMode} busy={busy} onSave={(routes) => run(() => replaceConfiguredRoutes(workspace.campaign, workspace.items, routes))} />}
-    {stage === 'configure_letters' && workspace.routes.length > 0 && <BuildQueue workspace={workspace} busy={busy} generationProgress={generationProgress} onGenerate={(routes, kind) => run(() => generateRoutes(routes, kind))} onReview={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'letter_review' }))} />}
-    {stage === 'letter_review' && <LetterReview workspace={workspace} clientLetters={client.letters || []} selectedLetterId={selectedLetterId} setSelectedLetterId={setSelectedLetterId} busy={busy} onApprove={(route, id, approved) => run(() => approveCampaignLetter(route, id, approved))} onReady={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'mailing' }))} onBuildRemaining={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} />}
-    {['mailing', 'awaiting_responses', 'response_review'].includes(stage) && <MailingAndTracking workspace={workspace} clientLetters={client.letters || []} clientRounds={client.rounds || []} onMail={onMail} onAnalyze={onAnalyze} onAnalyzeBureau={onAnalyzeBureau} onOpenLetters={onOpenLetters} busy={busy} onBackReview={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'letter_review' }))} onBuildRemaining={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' }))} onCloseCampaign={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'closed', closedAt: new Date().toISOString() }))} />}
+    {stage === 'configure_letters' && workspace.routes.length > 0 && <BuildQueue workspace={workspace} busy={busy} generationProgress={generationProgress} onGenerate={(routes, kind) => run(() => generateRoutes(routes, kind))} onReview={progressIndex < stageIndex('letter_review') ? () => runAndView('letter_review', () => updateCampaign(workspace.campaign.id, { stage: 'letter_review' })) : () => setViewStage('letter_review')} />}
+    {stage === 'letter_review' && <LetterReview workspace={workspace} clientLetters={client.letters || []} selectedLetterId={selectedLetterId} setSelectedLetterId={setSelectedLetterId} busy={busy} onApprove={(route, id, approved) => run(() => approveCampaignLetter(route, id, approved))} onReady={progressIndex < stageIndex('mailing') ? () => runAndView('mailing', () => updateCampaign(workspace.campaign.id, { stage: 'mailing' })) : () => setViewStage('mailing')} onBuildRemaining={() => setViewStage('configure_letters')} />}
+    {['mailing', 'awaiting_responses'].includes(stage) && <MailingAndTracking workspace={workspace} viewStage={stage} clientLetters={client.letters || []} clientRounds={client.rounds || []} onMail={onMail} onAnalyze={onAnalyze} onAnalyzeBureau={onAnalyzeBureau} onOpenLetters={onOpenLetters} busy={busy} onBackReview={() => setViewStage('letter_review')} onBuildRemaining={() => setViewStage('configure_letters')} onCloseCampaign={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'closed', closedAt: new Date().toISOString() }))} />}
     {showInterim && <InterimLetterBuilder client={client} audit={latestAudit} onClose={() => setShowInterim(false)} onMail={onMail} onOpenLetters={() => { setShowInterim(false); onOpenLetters?.(); }} />}
   </div>;
 }

@@ -154,6 +154,11 @@ assert.match(workspace, /Continue approved cleanup to Mail/, 'approved cleanup l
 assert.match(workspace, /Mailing section/, 'campaigns expose a durable mailing workspace');
 assert.match(workspace, /Canceled in Lob/, 'the mailing workspace distinguishes canceled Lob jobs from successful mail');
 assert.doesNotMatch(workspace, /Mail approved cleanup/, 'review no longer opens the mailer directly');
+assert.match(workspace, /aria-current=\{current \? 'step'/, 'the campaign rail exposes the workspace currently being viewed');
+assert.match(workspace, /Click an available step to revisit its workspace/, 'the campaign rail explains its navigation behavior');
+assert.match(workspace, /viewStage \|\| normalizedStage\(lifecycleStage\)/, 'workspace navigation is separate from the persisted campaign lifecycle');
+assert.match(workspace, /readOnly=\{lifecycleStage !== 'select_disputes'\}/, 'revisited dispute snapshots cannot silently change generated or mailed packets');
+assert.match(workspace, /awaiting_responses', 'response_review', 'closed'/, 'Track remains locked until the campaign lifecycle reaches response tracking');
 assert.match(workspace, /failures\.push/, 'one failed route does not abort generation of later siblings');
 assert.match(workspace, /generationProgress/, 'the queue exposes route-specific progress instead of one shared spinner label');
 
