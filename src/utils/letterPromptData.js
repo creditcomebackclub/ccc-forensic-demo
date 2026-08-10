@@ -18,3 +18,20 @@ export function clientForLetterPrompt(client) {
     reportDate,
   };
 }
+
+/**
+ * Staff-verified profile data wins over report-derived identity data. Credit
+ * reports commonly mix current and former employers, so a saved current
+ * employer must never be selected for removal just because a later audit
+ * labels it differently.
+ */
+export function buildKeepOnFileIdentity(client, personalInfo = {}) {
+  const existing = personalInfo.keepOnFile || {};
+  return {
+    name: existing.name || client?.name || client?.fullName || null,
+    employer: client?.currentEmployer
+      || client?.current_employer
+      || existing.employer
+      || null,
+  };
+}

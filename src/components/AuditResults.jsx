@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
 import { generateCombinedCleanupLetter } from '../utils/api';
 import { buildAuditPdfDoc, auditPdfFilename, blobToBase64 } from '../utils/auditPdf';
-import { upsertFurnisherAddress } from '../utils/storage';
+import { updateClientProfile, upsertFurnisherAddress } from '../utils/storage';
 import RecoveryBlueprintStudio from './RecoveryBlueprintStudio';
 import ProgressUpdateStudio from './ProgressUpdateStudio';
 import {
@@ -299,9 +299,23 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
     const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
     const match = variants.find((v) => norm(v) === norm(clientName));
     setKeptName(match || variants[0] || clientName || '');
-    setKeptEmployer('');
-    setEmployerIsCustom(false);
+    const profileEmployer = audit.client?.currentEmployer || audit.client?.current_employer || '';
+    setKeptEmployer(profileEmployer);
+    setEmployerIsCustom(!!profileEmployer);
   }, [audit.personalInfo, audit.client?.name]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const clientId = audit.client?.id;
+    if (!clientId) return undefined;
+    supabase.from('clients').select('current_employer').eq('id', clientId).maybeSingle()
+      .then(({ data }) => {
+        if (cancelled || !data?.current_employer) return;
+        setKeptEmployer(data.current_employer);
+        setEmployerIsCustom(true);
+      });
+    return () => { cancelled = true; };
+  }, [audit.client?.id]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -332,6 +346,9 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
       const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
       const keepName = (keptName || '').trim();
       const keepEmployer = (keptEmployer || '').trim();
+      if (keepEmployer && audit.client?.id) {
+        await updateClientProfile(audit.client?.name, { current_employer: keepEmployer }, audit.client.id);
+      }
       const allNames = rawPi.nameVariants || rawPi.names || [];
       const allEmployers = rawPi.formerEmployers || rawPi.employers || [];
       const allAddresses = rawPi.formerAddresses || rawPi.addresses || [];

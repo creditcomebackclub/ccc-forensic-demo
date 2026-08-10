@@ -322,6 +322,10 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
           <Field label="date of birth" value={client.dateOfBirth} placeholder="MM/DD/YYYY"
             onSave={(v) => save({ date_of_birth: v })} />
         </Row>
+        <Row label="Current employer">
+          <Field label="current employer" value={client.currentEmployer} placeholder="Employer name"
+            onSave={(v) => save({ current_employer: v.trim() || null })} />
+        </Row>
         <Row label="SSN last 4">
           <PasswordField clientName={client.name} clientId={client.id} field="ssnLast4" onSaved={onChanged} />
         </Row>

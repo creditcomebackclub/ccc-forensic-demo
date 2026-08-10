@@ -398,7 +398,7 @@ function normalizeClientSummary(row) {
   };
 }
 
-const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at,engagement_status,engagement_status_changed_at,service_agreement_mode,service_agreement_label,service_agreement_amount,service_agreement_fee_text';
+const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,current_employer,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at,engagement_status,engagement_status_changed_at,service_agreement_mode,service_agreement_label,service_agreement_amount,service_agreement_fee_text';
 
 function hydrateClientRecord(row, audits, letters, portal = null) {
   const latestActivity = [
@@ -425,6 +425,7 @@ function hydrateClientRecord(row, audits, letters, portal = null) {
     signToken: row.sign_token || null,
     phone: row.phone || null,
     dateOfBirth: row.date_of_birth || null,
+    currentEmployer: row.current_employer || null,
     monitoringService: row.monitoring_service || 'Privacy Guard',
     monitoringEmail: row.monitoring_email || null,
     monitoringEnrolled: !!row.monitoring_enrolled,
@@ -614,10 +615,10 @@ export async function getClientDetails(clientId) {
     .single();
   // Newer agreement fields are optional during staged deployment — keep the
   // CRM readable while the database migration is being applied.
-  if (clientRes.error && /(service_agreement|engagement_status)/i.test(clientRes.error.message || '')) {
+  if (clientRes.error && /(service_agreement|engagement_status|current_employer)/i.test(clientRes.error.message || '')) {
     const legacyCols = CLIENT_DETAIL_COLUMNS
       .split(',')
-      .filter((c) => !c.startsWith('service_agreement_') && !c.startsWith('engagement_status'))
+      .filter((c) => c !== 'current_employer' && !c.startsWith('service_agreement_') && !c.startsWith('engagement_status'))
       .join(',');
     clientRes = await supabase.from('clients').select(legacyCols).eq('id', clientId).single();
   }

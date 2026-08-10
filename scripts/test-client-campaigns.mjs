@@ -4,7 +4,7 @@ import { buildCampaignItems, buildCleanupRouteGroups } from '../src/utils/campai
 import { isPendingRoundReview } from '../src/utils/roundState.js';
 import { countMailStatuses, deriveNextAction } from '../src/components/client-detail/clientDetailUtils.js';
 import { canMailLetter, generatedLetterValidationError, letterGenerationState } from '../src/utils/letterGeneration.js';
-import { clientForLetterPrompt } from '../src/utils/letterPromptData.js';
+import { buildKeepOnFileIdentity, clientForLetterPrompt } from '../src/utils/letterPromptData.js';
 
 const auditRecord = {
   id: 'audit-1',
@@ -80,7 +80,7 @@ assert.match(generatedLetterValidationError('<!DOCTYPE html><html><body><p>Done<
 assert.equal(generatedLetterValidationError("<!DOCTYPE html><html><body><div class='signature-block'>Name</div><div class='mail-notation'>Certified</div><div class='enclosures'>ID</div></body></html>", { requireSections: true }), null, 'new generator output accepts every required closing section');
 
 const promptClient = clientForLetterPrompt({
-  id: 'client-1', name: 'Robert', address: '1 Main St', dateOfBirth: '1964-05-01', signatureData: 'secret-signature',
+  id: 'client-1', name: 'Robert', address: '1 Main St', dateOfBirth: '1964-05-01', currentEmployer: 'Verified Employer', signatureData: 'secret-signature',
   audits: [{ reportDate: '2026-08-07', audit: { inquiries: [{ furnisher: 'Wrong bureau evidence' }] } }],
   letters: [{ html: 'prior private letter' }], ledger: [{ amount: 99 }],
 });
@@ -88,6 +88,12 @@ assert.deepEqual(Object.keys(promptClient).sort(), ['address', 'dateOfBirth', 'i
 assert.equal(promptClient.reportDate, '2026-08-07', 'the identity snapshot retains the source report date');
 assert.equal(JSON.stringify(promptClient).includes('Wrong bureau evidence'), false, 'another bureau audit cannot leak through the client payload');
 assert.equal(JSON.stringify(promptClient).includes('secret-signature'), false, 'signature bytes never enter the Claude prompt');
+assert.equal(JSON.stringify(promptClient).includes('Verified Employer'), false, 'the employer is sent only to cleanup routes that need it');
+assert.deepEqual(
+  buildKeepOnFileIdentity({ name: 'Robert', currentEmployer: 'Profile Employer' }, { keepOnFile: { name: 'Robert', employer: 'Report Employer' } }),
+  { name: 'Robert', employer: 'Profile Employer' },
+  'the saved profile employer overrides report-derived employer evidence',
+);
 const generationCounts = countMailStatuses([failedDraft, runningDraft, validDraft], []);
 assert.equal(generationCounts.generation_failed, 1, 'failed generation has its own mail-workboard status');
 assert.equal(generationCounts.generating, 1, 'running generation has its own mail-workboard status');
@@ -123,6 +129,9 @@ assert.match(workspace, /generationProgress/, 'the queue exposes route-specific 
 
 const groupedRoutes = fs.readFileSync(new URL('../supabase/migrations/20260809164000_campaign_grouped_cleanup_routes.sql', import.meta.url), 'utf8');
 assert.match(groupedRoutes, /item_ids uuid\[\]/, 'campaign routes persist all findings consolidated into a bureau letter');
+
+const employerMigration = fs.readFileSync(new URL('../supabase/migrations/20260809170000_add_current_employer.sql', import.meta.url), 'utf8');
+assert.match(employerMigration, /add column if not exists current_employer text/, 'current employer has a durable CRM field');
 
 const roundState = fs.readFileSync(new URL('../src/utils/roundState.js', import.meta.url), 'utf8');
 assert.match(roundState, /round\.status === 'open'/, 'closed rounds cannot resurface as pending review');

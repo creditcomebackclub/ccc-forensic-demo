@@ -7,7 +7,7 @@ import { buildPriorRoundLeverageBlock } from './roundEvidence.js';
 import { setRouteResult } from './campaigns.js';
 import { getCampaignItemBureaus } from './campaignItems.js';
 import { letterGenerationState } from './letterGeneration.js';
-import { clientForLetterPrompt } from './letterPromptData.js';
+import { buildKeepOnFileIdentity, clientForLetterPrompt } from './letterPromptData.js';
 export { buildPriorRoundLeverageBlock } from './roundEvidence.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -430,7 +430,7 @@ export async function generateCampaignCleanupRoute({ route, items, campaign, cli
     formerAddresses: valuesFor('former_address'),
     nameVariants: valuesFor('name_variant'),
     formerEmployers: valuesFor('former_employer'),
-    keepOnFile: basePersonal.keepOnFile || { name: client.name, employer: null },
+    keepOnFile: buildKeepOnFileIdentity(client, basePersonal),
   };
   const inquiries = inquiryItems.map((item) => item.snapshot || {});
   try {

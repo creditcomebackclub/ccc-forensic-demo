@@ -1714,6 +1714,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 function CreateClientModal({ onClose, onCreated }) {
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
+  const [currentEmployer, setCurrentEmployer] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [success, setSuccess] = React.useState(false);
@@ -1741,7 +1742,13 @@ function CreateClientModal({ onClose, onCreated }) {
       if (!clientId) {
         const { data: createdClient, error: clientError } = await supabase
           .from('clients')
-          .insert({ user_id: adminUser.id, name: name.trim(), email: normEmail, status: 'active' })
+          .insert({
+            user_id: adminUser.id,
+            name: name.trim(),
+            email: normEmail,
+            current_employer: currentEmployer.trim() || null,
+            status: 'active',
+          })
           .select('id')
           .single();
         if (clientError) throw new Error(clientError.message || 'Could not create client record');
@@ -1800,6 +1807,13 @@ function CreateClientModal({ onClose, onCreated }) {
                 <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Email Address</label>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)}
                   placeholder="client@email.com"
+                  className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                  onKeyDown={e => e.key === 'Enter' && handleCreate()} />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Current Employer <span className="normal-case tracking-normal font-normal">(optional)</span></label>
+                <input type="text" value={currentEmployer} onChange={e => setCurrentEmployer(e.target.value)}
+                  placeholder="Employer name"
                   className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
                   onKeyDown={e => e.key === 'Enter' && handleCreate()} />
               </div>
