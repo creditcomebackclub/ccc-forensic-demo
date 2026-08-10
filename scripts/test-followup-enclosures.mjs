@@ -139,6 +139,13 @@ assert(
   'signature injection is idempotent'
 );
 
+const structuredLetter = '<div class="signature-block"><p>ROBERT KERSTNER</p></div>';
+const injectedStructured = injectSignatureImage(structuredLetter, signatureUrl, 'Robert Kerstner');
+assert(
+  injectedStructured.indexOf('data-ccc-signature') < injectedStructured.indexOf('ROBERT KERSTNER'),
+  'structured signature block injection does not depend on printed-name capitalization'
+);
+
 const legacyLetter = '<p>Thomas Andrew Kilpatrick</p><p>Address</p><p>Sincerely,</p><p>Thomas Andrew Kilpatrick</p>';
 const injectedLegacy = injectSignatureImage(legacyLetter, signatureUrl, 'Thomas Andrew Kilpatrick');
 assert(

@@ -58,15 +58,15 @@ export async function getCampaignWorkspace(clientId) {
   const routes = (routesRes.data || []).map(normalizeRoute);
   const reconciliations = [];
   for (const route of routes) {
-    if (!['generating', 'failed'].includes(route.status) || !route.letterIds.length) continue;
+    if (!route.letterIds.length) continue;
     const routeLetters = route.letterIds.map((id) => letterById.get(id)).filter(Boolean);
     if (routeLetters.length !== route.letterIds.length) continue;
     const states = routeLetters.map(letterGenerationState);
-    if (states.every((state) => state === 'ready')) {
+    if (states.every((state) => state === 'ready') && route.status !== 'generated') {
       route.status = 'generated';
       route.generationError = null;
       reconciliations.push(setRouteResult(route.id, { status: 'generated', generationError: null, generatedAt: new Date().toISOString() }));
-    } else if (!states.includes('generating') && states.includes('failed')) {
+    } else if (!states.includes('generating') && states.includes('failed') && route.status !== 'failed') {
       const failedLetter = routeLetters.find((letter) => letterGenerationState(letter) === 'failed');
       route.status = 'failed';
       route.generationError = generationErrorMessage(failedLetter);

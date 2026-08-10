@@ -1,13 +1,13 @@
 import { saveLetter } from "./storage.js";
 import { supabase } from "./supabase";
 import { runAuditJob } from "./auditJobs.js";
-import { resolveSignatureViewUrl } from "./storagePaths.js";
 import { startRound } from './rounds.js';
 import { BUREAU_LABEL, resolveActiveBureaus } from './roundTargets.js';
 import { buildPriorRoundLeverageBlock } from './roundEvidence.js';
 import { setRouteResult } from './campaigns.js';
 import { getCampaignItemBureaus } from './campaignItems.js';
 import { letterGenerationState } from './letterGeneration.js';
+import { clientForLetterPrompt } from './letterPromptData.js';
 export { buildPriorRoundLeverageBlock } from './roundEvidence.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -180,10 +180,9 @@ export async function generateRoundLetter({
   const t = today();
   const baseData = JSON.stringify({
     account,
-    client,
+    client: clientForLetterPrompt(client),
     roundNumber: started.round_number,
     targetType,
-    clientSignature: client.signatureData || null,
   }, null, 2);
   const jobs = ids.map((id, index) => {
     const spec = letterSpecs[index];
@@ -297,7 +296,7 @@ export async function generateCampaignAccountRoute({ route, item, campaign, clie
     })).join('\n\n---\n\n');
     const styleInstruction = CAMPAIGN_STYLE_INSTRUCTIONS[route.letterStyle] || CAMPAIGN_STYLE_INSTRUCTIONS.forensic;
     const customInstruction = route.customInstructions ? `\nStaff strategy: ${route.customInstructions}` : '';
-    const baseData = JSON.stringify({ account, client, roundNumber: campaign.roundNumber, targetType, clientSignature: client.signatureData || null }, null, 2);
+    const baseData = JSON.stringify({ account, client: clientForLetterPrompt(client), roundNumber: campaign.roundNumber, targetType }, null, 2);
     const jobs = jobIndexes.map(({ id, index }) => {
       const spec = letterSpecs[index];
       const target = targetType === 'bureau' ? BUREAU_LABEL[route.targetBureau] : account.furnisher;
@@ -345,28 +344,16 @@ export async function generateCombinedCleanupLetter(client, inquiries, metadata 
   const bureau = (client && client.bureau) || 'the consumer reporting agency';
   const lpoaSigned = !!(client && client.lpoaSigned);
   
-  let signatureData = null;
   let profileAddress = null;
   try {
-    // client.id preferred — full_name alone can pull another same-named
-    // client's signature into a mailed cleanup letter.
-    const cpQuery = client.id
-      ? supabase.from('client_profiles').select('signature_data').eq('client_id', client.id).limit(1)
-      : supabase.from('client_profiles').select('signature_data').eq('full_name', client.name).limit(1);
-    const { data: cp } = await cpQuery;
-    if (cp && cp.length > 0 && cp[0].signature_data) {
-      signatureData = cp[0].signature_data;
-    }
-    // Always fetch the clients table: it holds the profile-tab address (the
-    // permanent address of record set by staff) AND the fallback LPOA signature.
+    // The profile-tab address is the permanent address of record. Signature
+    // bytes are intentionally resolved only inside the protected server
+    // generator after the complete letter passes validation.
     const clientIdFilter = client.id
-      ? supabase.from('clients').select('lpoa_signature_data,address').eq('id', client.id).limit(1)
-      : supabase.from('clients').select('lpoa_signature_data,address').eq('name', client.name).limit(1);
+      ? supabase.from('clients').select('address').eq('id', client.id).limit(1)
+      : supabase.from('clients').select('address').eq('name', client.name).limit(1);
     const { data: cm } = await clientIdFilter;
     if (cm && cm.length > 0) {
-      if (!signatureData && cm[0].lpoa_signature_data) {
-        signatureData = await resolveSignatureViewUrl(supabase, cm[0].lpoa_signature_data);
-      }
       // Profile-tab address wins over any address extracted from the credit
       // report — this is the permanent address of record for the letter header.
       if (cm[0].address) {
@@ -381,9 +368,9 @@ export async function generateCombinedCleanupLetter(client, inquiries, metadata 
     ? { ...client, address: profileAddress }
     : client;
   
-  const data = JSON.stringify({ client: clientWithAddress, personalInfo: hasPersonalInfo ? personalInfo : undefined, inquiries: hasInquiries ? eligibleInquiries : undefined, bureau, lpoaSigned, clientSignature: signatureData, staffStrategy: metadata.customInstructions || undefined }, null, 2);
+  const data = JSON.stringify({ client: clientForLetterPrompt(clientWithAddress), personalInfo: hasPersonalInfo ? personalInfo : undefined, inquiries: hasInquiries ? eligibleInquiries : undefined, bureau, lpoaSigned, staffStrategy: metadata.customInstructions || undefined }, null, 2);
   
-  const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting a Personal Information & Inquiry Reinvestigation Demand addressed directly to ${bureau}, NOT to any furnisher. This letter disputes both the accuracy of identifying information in the consumer's file AND unverified hard inquiries. It does NOT dispute any tradeline, account balance, or payment history.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department.\n2. Cite 15 U.S.C. §1681e(b) for the maximum possible accuracy standard regarding the personal information (if any is provided).\n3. Cite 15 U.S.C. §1681i for the reinvestigation duty and 15 U.S.C. §1681b for the permissible purpose requirement for each inquiry listed (if any are provided).\n4. For personal info: List each specific former address, name variant, and former employer provided in personalInfo.formerAddresses / personalInfo.nameVariants / personalInfo.formerEmployers, and demand each one be removed. These lists already EXCLUDE the items the consumer wants to keep. If personalInfo.keepOnFile is present, affirm the consumer's correct name as keepOnFile.name (and correct current employer as keepOnFile.employer when non-null) and state that only that identifying information should remain. Do NOT demand removal of keepOnFile.name or keepOnFile.employer.\n5. For inquiries: For each inquiry listed, state the furnisher name and date, and state that the consumer does not recognize or cannot verify a permissible purpose for this specific inquiry. Demand the bureau contact each listed subscriber to verify permissible purpose, and demand deletion of any inquiry the subscriber cannot verify within 30 days per 15 U.S.C. §1681i(a)(5)(A).\n6. Do NOT state or imply fraud or identity theft unless that is explicitly present in the provided data.\n7. Do NOT dispute any account, balance, or payment history in this letter.\n8. Demand written confirmation of the results within 30 days.\n9. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, statements and demands only.\n10. ALWAYS include a signature block at the bottom of the letter. Print the consumer's full name. If \`clientSignature\` is provided in the data, embed it using an <img> tag above the printed name with a style like \`max-height: 60px;\`. If \`clientSignature\` is null, simply leave a few blank lines above the printed name for a physical signature. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n11. ALWAYS include an "Enclosures:" section below the signature block listing ONLY: "Government-Issued Photo ID" and "Proof of Current Address (Bank Statement)". Do NOT include a Limited Power of Attorney — this letter type does not require it.\n12. MANDATORY IDENTITY TABLE: Immediately after the introductory paragraph(s) and before any disputed-information sections, output a 2-column summary table with class='id-table'. This table MUST always be present for every bureau and MUST contain exactly these rows in order: "Consumer Name" (use personalInfo.keepOnFile.name when present, otherwise client.name), "Date of Birth on File" (use client.dateOfBirth if provided, otherwise omit this row only), "Current Verified Address" (use client.address — this is the permanent verified address of record, NOT any former address), "Bureau" (use the bureau name), "Report Date" (use the report date from the audit data if available, otherwise use today's date). Do NOT skip this table for any bureau.\n13. LETTER HEADER ORDER: At the very top of the letter, in this exact order: (1) today's date, (2) the consumer's full name and current verified address (client.address) as the return/sender address block, (3) the bureau's dispute-department address block. Do NOT put the sender address before the date — the date leads. The sender address must match the "Current Verified Address" row in the id-table. Use keepOnFile.name (when present) as the printed consumer name in the sender block.\n14. CRITICAL CONCISENESS RULE: Do NOT generate a separate 'STATUTORY OBLIGATIONS' or 'LEGAL BASIS' table or section. Incorporate all legal citations directly inline in the brief introductory paragraphs. Do NOT generate any CSS, <style> block, or inline style attributes. Output plain HTML using these exact classes: class='id-table', class='list-table', class='demands-table', class='signature-block', class='enclosures', class='mail-notation'. This is required to prevent the API output from truncating.\n\nOutput complete HTML only. No prose. No fences.`;
+  const instructions = `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date at the top of the letter.\n\nYou are drafting a Personal Information & Inquiry Reinvestigation Demand addressed directly to ${bureau}, NOT to any furnisher. This letter disputes inaccurate identifying information and the specifically selected inquiry entries in this bureau's file. It does NOT dispute any tradeline, account balance, or payment history.\n\nData:\n${data}\n\nLETTER REQUIREMENTS:\n1. Address the letter to the bureau's dispute department.\n2. Cite 15 U.S.C. §1681e(b) for the maximum possible accuracy standard regarding the personal information (if any is provided).\n3. Cite 15 U.S.C. §1681i for the reinvestigation duty and 15 U.S.C. §1681b only when requesting verification of permissible purpose for a selected inquiry entry.\n4. For personal info: List each specific former address, name variant, and former employer provided in personalInfo.formerAddresses / personalInfo.nameVariants / personalInfo.formerEmployers, and demand each one be removed. These lists already EXCLUDE the items the consumer wants to keep. If personalInfo.keepOnFile is present, affirm the consumer's correct name as keepOnFile.name (and correct current employer as keepOnFile.employer when non-null) and state that only that identifying information should remain. Do NOT demand removal of keepOnFile.name or keepOnFile.employer.\n5. For inquiries: List ONLY the inquiry objects supplied in the top-level inquiries array; never pull inquiries from the client object or another bureau. Preserve each supplied category and tailor the statement: for no_linked_account, state that the file does not identify a linked application or account and demand verification of permissible purpose; for duplicate, demand verification that each entry reflects a distinct authorized access and correction or deletion of any redundant or unverifiable duplicate without claiming that duplication alone proves no permissible purpose; for stale, demand verification of the date, inquiry type, and continued accuracy without inventing a statutory two-year deletion rule. Do not call an entry a hard inquiry unless its supplied data explicitly identifies it as hard. Entries that appear to be consumer disclosures or monitoring access—such as MyFICO, Credit Karma, ConsumerInfo, IdentityIQ, TransUnion Interactive/Credit Membership, or the consumer's own name—must be framed as a demand to verify their classification and remove them only if they are inaccurately presented as hard inquiries, not as an unsupported claim that the access was unauthorized.\n6. Do NOT state or imply fraud, identity theft, or lack of authorization unless that is explicitly present in the provided data.\n7. Do NOT dispute any account, balance, or payment history in this letter.\n8. Demand written confirmation of the reinvestigation results within the applicable FCRA period.\n9. Tone: forensic and factual, consistent with the firm's standard letter voice — no goodwill language, statements and demands only.\n10. ALWAYS include a class='signature-block' at the bottom of the letter with the consumer's printed full name. Do not create an image or signature URL; the secured server injects the stored client signature after validating the complete document. Do NOT include a "Certified Mail #" or tracking number placeholder — state only "Sent via Certified Mail."\n11. ALWAYS include an "Enclosures:" section below the signature block listing ONLY: "Government-Issued Photo ID" and "Proof of Current Address (Bank Statement)". Do NOT include a Limited Power of Attorney — this letter type does not require it.\n12. MANDATORY IDENTITY TABLE: Immediately after the introductory paragraph(s) and before any disputed-information sections, output a 2-column summary table with class='id-table'. This table MUST always be present for every bureau and MUST contain exactly these rows in order: "Consumer Name" (use personalInfo.keepOnFile.name when present, otherwise client.name), "Date of Birth on File" (use client.dateOfBirth if provided, otherwise omit this row only), "Current Verified Address" (use client.address — this is the permanent verified address of record, NOT any former address), "Bureau" (use the bureau name), "Report Date" (use client.reportDate when available, otherwise use today's date). Do NOT skip this table for any bureau.\n13. LETTER HEADER ORDER: At the very top of the letter, in this exact order: (1) today's date, (2) the consumer's full name and current verified address (client.address) as the return/sender address block, (3) the bureau's dispute-department address block. Do NOT put the sender address before the date — the date leads. The sender address must match the "Current Verified Address" row in the id-table. Use keepOnFile.name (when present) as the printed consumer name in the sender block.\n14. CRITICAL CONCISENESS RULE: Do NOT generate a separate 'STATUTORY OBLIGATIONS' or 'LEGAL BASIS' table or section. Incorporate all legal citations directly inline in the brief introductory paragraphs. Do NOT generate any CSS, <style> block, or inline style attributes. Output plain HTML using these exact classes: class='id-table', class='list-table', class='demands-table', class='signature-block', class='enclosures', class='mail-notation'. This is required to prevent the API output from truncating.\n\nOutput complete HTML only. No prose. No fences.`;
 
   const syntheticAccount = { furnisher: bureau, id: 'personal-info-inquiries', type: null };
   let id = metadata.existingLetterId || null;
@@ -476,7 +463,7 @@ export async function generateInterimLetter({ account, client, targetType, targe
   };
   const id = await saveLetter(account, client, 'GENERATING...', null, 'Interim Letter', `__interim-${Date.now()}`, metadata);
   const styleInstruction = CAMPAIGN_STYLE_INSTRUCTIONS[style] || CAMPAIGN_STYLE_INSTRUCTIONS.procedural_request;
-  const instructions = `LETTER_HTML_MODE\n\nToday is ${today()}. Use this exact date.\n\nDraft a standalone interim letter addressed to ${target}. This is an intentional file-update letter between structured campaign rounds. It must not claim that a new campaign round has started, alter a stored deadline, or describe itself as a response that has not actually been received.\n\nStrategy: ${styleInstruction}${customInstructions ? `\nStaff instructions: ${customInstructions}` : ''}\n\nUse only the supported frozen account data and client information below. Preserve the established forensic voice and recipient-specific FCRA/Metro 2 framing. Never invent a fact, response, investigation, violation, or enclosure.\n\n${JSON.stringify({ account, client, targetType, targetBureau, clientSignature: client.signatureData || null }, null, 2)}\n\nOutput complete HTML only. No prose or fences. Do not include a tracking-number placeholder.`;
+  const instructions = `LETTER_HTML_MODE\n\nToday is ${today()}. Use this exact date.\n\nDraft a standalone interim letter addressed to ${target}. This is an intentional file-update letter between structured campaign rounds. It must not claim that a new campaign round has started, alter a stored deadline, or describe itself as a response that has not actually been received.\n\nStrategy: ${styleInstruction}${customInstructions ? `\nStaff instructions: ${customInstructions}` : ''}\n\nUse only the supported frozen account data and client information below. Preserve the established forensic voice and recipient-specific FCRA/Metro 2 framing. Never invent a fact, response, investigation, violation, or enclosure.\n\n${JSON.stringify({ account, client: clientForLetterPrompt(client), targetType, targetBureau }, null, 2)}\n\nOutput complete HTML only. No prose or fences. Do not include a tracking-number placeholder.`;
   const response = await fetch('/.netlify/functions/generate-letter-background', {
     method: 'POST', headers: await staffJsonHeaders(),
     body: JSON.stringify({ jobs: [{ id, account, targetType, generateSummary: true, instructions }] }),

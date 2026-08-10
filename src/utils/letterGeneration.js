@@ -1,10 +1,47 @@
 export const LETTER_GENERATING_PLACEHOLDER = 'GENERATING...';
 
+const REQUIRED_GENERATED_SECTIONS = [
+  ['signature-block', 'signature block'],
+  ['mail-notation', 'certified-mail notation'],
+  ['enclosures', 'enclosures section'],
+];
+
+function hasClass(html, className) {
+  const escaped = className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`class=["'](?:[^"']*\\s)?${escaped}(?:\\s[^"']*)?["']`, 'i').test(html);
+}
+
+/**
+ * Detect output that stopped mid-document. Legacy fragment letters are left
+ * alone; a value that declares itself to be an HTML document must actually
+ * close, and newly generated letters may opt into the required closing
+ * sections check.
+ */
+export function generatedLetterValidationError(letterOrHtml, { requireSections = false } = {}) {
+  const html = typeof letterOrHtml === 'string' ? letterOrHtml : letterOrHtml?.html;
+  const value = String(html || '').trim();
+  if (!value) return 'The generated letter is empty.';
+  if (value === LETTER_GENERATING_PLACEHOLDER) return 'Letter generation is still running.';
+  if (value.startsWith('ERROR:')) return value.slice('ERROR:'.length).trim() || 'Letter generation failed.';
+
+  const declaresDocument = /^<!doctype\s+html/i.test(value) || /^<html\b/i.test(value);
+  if (declaresDocument && (!/<\/body>\s*<\/html>\s*$/i.test(value) || /<\/?[a-z][^>]*$/i.test(value))) {
+    return 'The generated letter is incomplete and stops before the document closes.';
+  }
+
+  if (requireSections) {
+    for (const [className, label] of REQUIRED_GENERATED_SECTIONS) {
+      if (!hasClass(value, className)) return `The generated letter is missing its ${label}.`;
+    }
+  }
+  return null;
+}
+
 export function letterGenerationState(letterOrHtml) {
   const html = typeof letterOrHtml === 'string' ? letterOrHtml : letterOrHtml?.html;
   const value = String(html || '').trim();
   if (value === LETTER_GENERATING_PLACEHOLDER) return 'generating';
-  if (!value || value.startsWith('ERROR:')) return 'failed';
+  if (generatedLetterValidationError(value)) return 'failed';
   return 'ready';
 }
 
@@ -22,5 +59,5 @@ export function canMailLetter(letter) {
 
 export function generationErrorMessage(letter) {
   const html = String(letter?.html || '').trim();
-  return html.startsWith('ERROR:') ? html.slice('ERROR:'.length).trim() : 'The letter was not generated successfully.';
+  return generatedLetterValidationError(html) || 'The letter was not generated successfully.';
 }

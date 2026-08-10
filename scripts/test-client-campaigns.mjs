@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import { buildCampaignItems, buildCleanupRouteGroups } from '../src/utils/campaignItems.js';
 import { isPendingRoundReview } from '../src/utils/roundState.js';
 import { countMailStatuses, deriveNextAction } from '../src/components/client-detail/clientDetailUtils.js';
-import { canMailLetter, letterGenerationState } from '../src/utils/letterGeneration.js';
+import { canMailLetter, generatedLetterValidationError, letterGenerationState } from '../src/utils/letterGeneration.js';
+import { clientForLetterPrompt } from '../src/utils/letterPromptData.js';
 
 const auditRecord = {
   id: 'audit-1',
@@ -66,11 +67,27 @@ assert.equal(deriveNextAction(detailClient).label, 'Mail 1 letter', 'the client 
 const failedDraft = { id: 'failed', html: 'ERROR: Generated letter is empty or too short' };
 const runningDraft = { id: 'running', html: 'GENERATING...' };
 const validDraft = { id: 'valid', html: '<!DOCTYPE html><html><body><p>Complete reviewed dispute letter content.</p></body></html>' };
+const truncatedDraft = { id: 'truncated', html: '<!DOCTYPE html><html><body><table><tr><td>Ahoy Mit Inc</td><td>2026-07-06</' };
 assert.equal(letterGenerationState(failedDraft), 'failed', 'server generation errors remain explicit letter failures');
 assert.equal(letterGenerationState(runningDraft), 'generating', 'placeholders remain in-progress rather than mail-ready');
+assert.equal(letterGenerationState(truncatedDraft), 'failed', 'a long but unfinished HTML document is still a failed generation');
 assert.equal(canMailLetter(failedDraft), false, 'failed generation placeholders can never enter mailing');
 assert.equal(canMailLetter(runningDraft), false, 'in-progress placeholders can never enter mailing');
+assert.equal(canMailLetter(truncatedDraft), false, 'truncated HTML can never enter mailing');
 assert.equal(canMailLetter(validDraft), true, 'completed HTML remains mail eligible');
+assert.match(generatedLetterValidationError(truncatedDraft), /incomplete/i, 'truncated output explains the structural failure');
+assert.match(generatedLetterValidationError('<!DOCTYPE html><html><body><p>Done</p></body></html>', { requireSections: true }), /signature block/i, 'new generator output requires the signature section');
+assert.equal(generatedLetterValidationError("<!DOCTYPE html><html><body><div class='signature-block'>Name</div><div class='mail-notation'>Certified</div><div class='enclosures'>ID</div></body></html>", { requireSections: true }), null, 'new generator output accepts every required closing section');
+
+const promptClient = clientForLetterPrompt({
+  id: 'client-1', name: 'Robert', address: '1 Main St', dateOfBirth: '1964-05-01', signatureData: 'secret-signature',
+  audits: [{ reportDate: '2026-08-07', audit: { inquiries: [{ furnisher: 'Wrong bureau evidence' }] } }],
+  letters: [{ html: 'prior private letter' }], ledger: [{ amount: 99 }],
+});
+assert.deepEqual(Object.keys(promptClient).sort(), ['address', 'dateOfBirth', 'id', 'name', 'reportDate'], 'letter prompts receive only the minimal client identity snapshot');
+assert.equal(promptClient.reportDate, '2026-08-07', 'the identity snapshot retains the source report date');
+assert.equal(JSON.stringify(promptClient).includes('Wrong bureau evidence'), false, 'another bureau audit cannot leak through the client payload');
+assert.equal(JSON.stringify(promptClient).includes('secret-signature'), false, 'signature bytes never enter the Claude prompt');
 const generationCounts = countMailStatuses([failedDraft, runningDraft, validDraft], []);
 assert.equal(generationCounts.generation_failed, 1, 'failed generation has its own mail-workboard status');
 assert.equal(generationCounts.generating, 1, 'running generation has its own mail-workboard status');
@@ -91,6 +108,10 @@ assert.match(api, /generate-letter-background/, 'campaign letters retain the pro
 assert.match(api, /existingLetterId/, 'failed cleanup retries reuse the existing technical placeholder instead of creating duplicate letters');
 assert.match(api, /jobIndexes/, 'multi-letter account retries regenerate only failed sibling placeholders');
 assert.match(api, /isBackgroundPollTimeout/, 'a browser polling timeout leaves the background route recoverable');
+assert.match(api, /clientForLetterPrompt/, 'signature bytes are removed before prompts are sent to Claude');
+assert.match(api, /List ONLY the inquiry objects supplied in the top-level inquiries array/, 'cleanup letters cannot pull inquiry evidence from another bureau');
+assert.match(api, /Do not call an entry a hard inquiry unless its supplied data explicitly identifies it as hard/, 'cleanup letters cannot invent a hard-inquiry classification');
+assert.match(api, /for duplicate, demand verification that each entry reflects a distinct authorized access/, 'duplicate inquiry findings receive a category-specific and fact-limited dispute basis');
 
 const workspace = fs.readFileSync(new URL('../src/components/client-detail/ClientCampaignWorkspace.jsx', import.meta.url), 'utf8');
 assert.match(workspace, /letter\.targetType === 'bureau' \? onAnalyzeBureau : onAnalyze/, 'bureau and furnisher responses retain their specialized analyzers');
@@ -112,5 +133,12 @@ assert.match(campaignApi, /updateCampaignItemStates[\s\S]*\.in\('id', ids\)/, 'b
 const lobFunction = fs.readFileSync(new URL('../netlify/functions/lob.cjs', import.meta.url), 'utf8');
 assert.match(lobFunction, /storedHtml === 'GENERATING\.\.\.'/i, 'server-side mailing rejects generation placeholders');
 assert.match(lobFunction, /storedHtml\.startsWith\('ERROR:'\)/i, 'server-side mailing rejects failed generation output');
+assert.match(lobFunction, /incompleteDocument/i, 'server-side mailing rejects truncated HTML documents');
+
+const letterGenerator = fs.readFileSync(new URL('../netlify/functions/generate-letter-background.mjs', import.meta.url), 'utf8');
+assert.match(letterGenerator, /MAX_LETTER_TOKENS = 12000/, 'letter generation has enough output budget for large inquiry tables');
+assert.match(letterGenerator, /msg\.stop_reason === 'max_tokens'/, 'output-limit truncation fails closed before saving');
+assert.match(letterGenerator, /loadClientSignature/, 'the protected server injects the canonical client signature');
+assert.match(letterGenerator, /generatedLetterValidationError\(candidateHtml, \{ requireSections: true \}\)/, 'new generated letters require a complete closing structure');
 
 console.log('All client-campaign assertions passed.');

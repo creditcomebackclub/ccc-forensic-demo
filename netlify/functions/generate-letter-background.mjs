@@ -3,6 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { getLetterSystemPrompt } from '../../src/prompts/letterPrompt.js';
 import { validateFieldCitations, autoFixFieldCitations, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
+import { generatedLetterValidationError } from '../../src/utils/letterGeneration.js';
+import { hasInjectedSignature, injectSignatureImage } from '../../src/utils/signatureInjection.js';
 import { requireStaff } from './_requireAuth.cjs';
 
 // Provenance guard (2026-07-24): fails fast at cold start if any Metro 2
@@ -13,6 +15,7 @@ assertMapFullySourced();
 const MODEL = 'claude-sonnet-5';
 const MAX_JOBS_PER_REQUEST = 3;
 const MAX_INSTRUCTION_CHARS = 120000;
+const MAX_LETTER_TOKENS = 12000;
 
 function validLetterJob(job) {
   return !!job
@@ -22,6 +25,40 @@ function validLetterJob(job) {
     && typeof job.instructions === 'string'
     && job.instructions.trim().length > 0
     && job.instructions.length <= MAX_INSTRUCTION_CHARS;
+}
+
+async function loadClientSignature(supabase, letter) {
+  if (!letter?.client_id) throw new Error('The letter has no client identity for signature injection');
+  const { data: clientRow, error: clientError } = await supabase.from('clients')
+    .select('id,user_id,name,lpoa_signature_data')
+    .eq('id', letter.client_id)
+    .maybeSingle();
+  if (clientError) throw clientError;
+  if (!clientRow || clientRow.user_id !== letter.user_id) throw new Error('The letter client could not be verified for signature injection');
+
+  const { data: profileRows, error: profileError } = await supabase.from('client_profiles')
+    .select('signature_data')
+    .eq('client_id', letter.client_id)
+    .limit(1);
+  if (profileError) throw profileError;
+  const profileSignature = String(profileRows?.[0]?.signature_data || '');
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(profileSignature)) {
+    return { dataUrl: profileSignature, printedName: clientRow.name };
+  }
+
+  const signatureRecord = clientRow.lpoa_signature_data || {};
+  if (signatureRecord.signaturePath) {
+    const bucket = signatureRecord.storageBucket || 'documents';
+    const { data: signatureFile, error: signatureError } = await supabase.storage.from(bucket).download(signatureRecord.signaturePath);
+    if (signatureError || !signatureFile) throw signatureError || new Error('Stored client signature could not be downloaded');
+    const bytes = Buffer.from(await signatureFile.arrayBuffer());
+    const mime = signatureFile.type || 'image/png';
+    return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}`, printedName: clientRow.name };
+  }
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(String(signatureRecord.signatureUrl || ''))) {
+    return { dataUrl: signatureRecord.signatureUrl, printedName: clientRow.name };
+  }
+  throw new Error('The client has no stored signature for this letter');
 }
 
 export const handler = async (event) => {
@@ -76,7 +113,7 @@ export const handler = async (event) => {
   // service-role client reads settings or calls Anthropic.
   const { data: letters, error: lettersErr } = await supabase
     .from('letters')
-    .select('id, user_id, html, target_type, target_bureau, dispute_basis, round_id, round_number')
+    .select('id, user_id, client_id, html, target_type, target_bureau, dispute_basis, round_id, round_number')
     .in('id', jobIds);
   if (lettersErr) {
     console.error('generate-letter: could not validate letter ownership', lettersErr);
@@ -136,15 +173,23 @@ export const handler = async (event) => {
       for (let attempt = 1; attempt <= MAX_FIELD_CITATION_ATTEMPTS; attempt++) {
         const msg = await client.messages.create({
           model: MODEL,
-          max_tokens: 4096,
+          max_tokens: MAX_LETTER_TOKENS,
           system: SYSTEM,
           messages: conversation,
         });
+        if (msg.stop_reason === 'max_tokens') {
+          throw new Error('Generated letter exceeded the output limit before it finished. Nothing incomplete was saved.');
+        }
+        if (msg.stop_reason && msg.stop_reason !== 'end_turn') {
+          throw new Error(`Generated letter did not finish cleanly (${msg.stop_reason})`);
+        }
         const rawText = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
         const htmlMatch = rawText.match(/<!DOCTYPE[\s\S]*<\/html>/i) || rawText.match(/<html[\s\S]*<\/html>/i);
-        const candidateHtml = htmlMatch ? htmlMatch[0] : rawText;
+        const candidateHtml = htmlMatch ? htmlMatch[0] : null;
 
         if (!candidateHtml || candidateHtml.trim().length < 100) throw new Error('Generated letter is empty or too short');
+        const structureError = generatedLetterValidationError(candidateHtml, { requireSections: true });
+        if (structureError) throw new Error(structureError);
 
         // Most citation mistakes are a transposed field NUMBER against a
         // correctly-written label ("Field 21 — Amount Past Due") — that's
@@ -241,6 +286,17 @@ export const handler = async (event) => {
         // Fallback for raw text without tags
         html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${baseCss}</style></head><body>${html}</body></html>`;
       }
+
+      // The model never receives or echoes signature bytes. Resolve the
+      // canonical private signature with service-role access and inject it
+      // only after a complete document passes structural validation.
+      const clientSignature = await loadClientSignature(supabase, storedLetter);
+      html = injectSignatureImage(html, clientSignature.dataUrl, clientSignature.printedName);
+      if (!hasInjectedSignature(html, clientSignature.dataUrl)) {
+        throw new Error('The client signature block could not be populated');
+      }
+      const finalStructureError = generatedLetterValidationError(html, { requireSections: true });
+      if (finalStructureError) throw new Error(finalStructureError);
 
       // 2. Generate Summary if needed
       let summary = null;

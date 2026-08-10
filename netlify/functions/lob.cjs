@@ -82,7 +82,7 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_account_id,client_name,phase,round_id,round_number,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id',
+      + '&select=id,user_id,client_id,client_account_id,client_name,phase,round_id,round_number,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,campaign_route_id',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
@@ -415,7 +415,11 @@ exports.handler = async (event) => {
       const letter = await findLetter(letterId, supabaseUrl, serviceKey);
       if (!letter) return { statusCode: 404, body: JSON.stringify({ error: 'Letter not found' }) };
       const storedHtml = String(letter.html || '').trim();
-      if (!storedHtml || storedHtml === 'GENERATING...' || storedHtml.startsWith('ERROR:')) {
+      const declaresDocument = /^<!doctype\s+html/i.test(storedHtml) || /^<html\b/i.test(storedHtml);
+      const incompleteDocument = declaresDocument && !/<\/body>\s*<\/html>\s*$/i.test(storedHtml);
+      const missingCampaignClosingSections = !!letter.campaign_route_id && !['signature-block', 'mail-notation', 'enclosures']
+        .every((className) => new RegExp(`class=["'][^"']*${className}[^"']*["']`, 'i').test(storedHtml));
+      if (!storedHtml || storedHtml === 'GENERATING...' || storedHtml.startsWith('ERROR:') || incompleteDocument || missingCampaignClosingSections) {
         return {
           statusCode: 422,
           body: JSON.stringify({
