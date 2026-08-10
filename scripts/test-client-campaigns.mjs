@@ -7,6 +7,7 @@ import { canMailLetter, generatedLetterValidationError, letterGenerationState } 
 import { buildKeepOnFileIdentity, clientForLetterPrompt } from '../src/utils/letterPromptData.js';
 import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../src/utils/letterMailing.js';
 import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../src/utils/campaignMailing.js';
+import { calculateDeletionShare, summarizeStructuredRoundWorkload } from '../src/utils/dashboardMetrics.js';
 
 const auditRecord = {
   id: 'audit-1',
@@ -126,6 +127,15 @@ assert.equal(campaignReadyForTracking(mailingWorkspace, [mailedLetter, cancelled
 cancelledLetter.tracking_status = 'Mailed';
 assert.equal(campaignReadyForTracking(mailingWorkspace, [mailedLetter, cancelledLetter]), true, 'only a complete generated, approved, mailed batch advances to Track');
 
+assert.deepEqual(summarizeStructuredRoundWorkload([
+  { status: 'active', rounds: [{ status: 'open' }, { status: 'closed' }] },
+  { status: 'active', rounds: [{ status: 'open' }, { status: 'open' }] },
+  { status: 'active', rounds: [] },
+  { status: 'lead', rounds: [{ status: 'open' }] },
+]), { openDisputeRounds: 3, activeRoundClients: 2 }, 'dashboard workload counts structured open rounds and participating clients separately');
+assert.equal(calculateDeletionShare(1, 16), 6, 'deletion share exposes the existing rounded 1-of-16 calculation');
+assert.equal(calculateDeletionShare(0, 0), null, 'deletion share stays empty without a recorded denominator');
+
 const migration = fs.readFileSync(new URL('../supabase/migrations/20260809150000_client_campaign_command_center.sql', import.meta.url), 'utf8');
 assert.match(migration, /dispute_rounds_one_open_per_account_target_idx/, 'direct and bureau tracks have separate open-round protection');
 assert.match(migration, /campaign_letter_routes_bureau_uidx/, 'bureau routes are unique per item and bureau');
@@ -161,6 +171,15 @@ assert.match(workspace, /readOnly=\{lifecycleStage !== 'select_disputes'\}/, 're
 assert.match(workspace, /awaiting_responses', 'response_review', 'closed'/, 'Track remains locked until the campaign lifecycle reaches response tracking');
 assert.match(workspace, /failures\.push/, 'one failed route does not abort generation of later siblings');
 assert.match(workspace, /generationProgress/, 'the queue exposes route-specific progress instead of one shared spinner label');
+
+const dashboard = fs.readFileSync(new URL('../src/components/DashboardPage.jsx', import.meta.url), 'utf8');
+assert.match(dashboard, /Open dispute rounds/, 'dashboard workload is labeled as structured rounds rather than clients or accounts');
+assert.match(dashboard, /Clients in active rounds/, 'dashboard separately identifies clients participating in open rounds');
+assert.match(dashboard, /Deletion share/, 'the recorded-outcome ratio is not overstated as a win rate');
+assert.match(dashboard, /recorded letter outcomes/, 'the deletion-share denominator is visible');
+
+const clientsPage = fs.readFileSync(new URL('../src/components/ClientsPage.jsx', import.meta.url), 'utf8');
+assert.match(clientsPage, /case 'open_rounds':[\s\S]*round\.status === 'open'/, 'the open-round dashboard tile drills into the same five-client population');
 
 const groupedRoutes = fs.readFileSync(new URL('../supabase/migrations/20260809164000_campaign_grouped_cleanup_routes.sql', import.meta.url), 'utf8');
 assert.match(groupedRoutes, /item_ids uuid\[\]/, 'campaign routes persist all findings consolidated into a bureau letter');

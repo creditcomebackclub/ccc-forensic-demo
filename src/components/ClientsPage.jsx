@@ -136,6 +136,8 @@ function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
   const openLetters = (c.letters || []).filter((l) => l.roundId ? isOpenRoundLetter(c, l) : !l.phase?.startsWith('Phase 3'));
   const lifecycle = c.billingStatus || 'Active';
   switch (filter) {
+    case 'open_rounds':
+      return (c.rounds || []).some((round) => round.status === 'open');
     case 'active':
       return ((c.rounds || []).some((round) => round.status === 'open') || openLetters.some((letter) => !letter.roundId))
         && lifecycle !== 'Graduated' && lifecycle !== 'Inactive';
@@ -184,6 +186,7 @@ function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
 }
 
 const FILTER_LABELS = {
+  open_rounds: 'Clients With Open Rounds',
   active: 'Active Campaigns',
   awaiting: 'Awaiting Response',
   escalate: 'Escalation Approved',

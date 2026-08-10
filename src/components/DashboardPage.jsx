@@ -3,6 +3,7 @@ import { AlertCircle, TrendingUp, Clock, Zap, Star, Activity, FileText, Mail, Ch
 import { listClientSummaries, updateLetter } from '../utils/storage';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
+import { calculateDeletionShare, summarizeStructuredRoundWorkload } from '../utils/dashboardMetrics.js';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_HOURS = 24;
@@ -92,7 +93,8 @@ function computeDashboard(clients) {
   const windowCountdown = [];
   const recentActivity = [];
   const vipClients = clients.filter((c) => c.isVip);
-  let awaiting = 0, escalate = 0, phase3 = 0, active = 0, phase4 = 0, readyForPhase4 = 0;
+  let awaiting = 0, escalate = 0, phase3 = 0, phase4 = 0, readyForPhase4 = 0;
+  const { openDisputeRounds, activeRoundClients } = summarizeStructuredRoundWorkload(clients);
 
   // Outcomes — deletions are the product; measure them
   let deletedAll = 0, deletedThisMonth = 0, deletedLastMonth = 0, outcomeCount = 0;
@@ -127,10 +129,6 @@ function computeDashboard(clients) {
     if (c.status === 'lead') continue;
     const letters = c.letters || [];
     const audits = c.audits || [];
-
-    const hasActiveLetters = (c.rounds || []).some((round) => round.status === 'open')
-      || letters.some((l) => !l.roundId && !l.phase?.startsWith('Phase 3'));
-    if (hasActiveLetters) active++;
 
     for (const l of letters) {
       weeklyData.forEach((w) => {
@@ -312,14 +310,14 @@ function computeDashboard(clients) {
   windowCountdown.sort((a, b) => a.remaining - b.remaining);
   recentActivity.sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
 
-  const winRate = outcomeCount > 0 ? Math.round((deletedAll / outcomeCount) * 100) : null;
+  const deletionShare = calculateDeletionShare(deletedAll, outcomeCount);
   const avgDeleteDays = deleteDays.length > 0 ? Math.round(deleteDays.reduce((s, d) => s + d, 0) / deleteDays.length) : null;
 
   return {
     actions: actions.slice(0, 6), actionGroups: actionGroups.slice(0, 6), actionTotal: actions.length, actionClientTotal: actionGroups.length,
-    windowCountdown: windowCountdown.slice(0, 10), weeklyData, awaiting, escalate, phase3, active, phase4, readyForPhase4,
+    windowCountdown: windowCountdown.slice(0, 10), weeklyData, awaiting, escalate, phase3, openDisputeRounds, activeRoundClients, phase4, readyForPhase4,
     recentActivity: recentActivity.slice(0, 10), vipClients,
-    funnel, deletedAll, deletedThisMonth, deletedLastMonth, winRate, avgDeleteDays, outcomeCount, portal,
+    funnel, deletedAll, deletedThisMonth, deletedLastMonth, deletionShare, avgDeleteDays, outcomeCount, portal,
   };
 }
 
@@ -384,9 +382,9 @@ function HeroHeader({ displayName, dash }) {
   const firstName = (displayName || '').split(' ')[0] || 'there';
   const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const heroStats = [
-    { label: 'Active disputes', value: dash.active },
-    { label: 'Deletions', value: dash.deletedAll, gold: true },
-    { label: 'Win rate', value: dash.winRate != null ? dash.winRate + '%' : '—' },
+    { label: 'Open dispute rounds', value: dash.openDisputeRounds },
+    { label: 'Confirmed deletions', value: dash.deletedAll, gold: true },
+    { label: 'Clients in active rounds', value: dash.activeRoundClients },
   ];
   return (
     <div style={{ background: 'linear-gradient(135deg, ' + T.navy + ' 0%, ' + T.navyDark + ' 100%)', borderRadius: 16, padding: '26px 30px', boxShadow: '0 4px 16px rgba(27,42,74,0.25)', borderBottom: '3px solid ' + T.gold }}>
@@ -802,7 +800,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
 
       {/* Pipeline state */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile icon={Activity} label="Active campaigns" value={dash.active} sub="accounts in dispute" tone="navy" clickable={dash.active > 0} onClick={() => handleStatClick('active')} />
+        <StatTile icon={Activity} label="Open dispute rounds" value={dash.openDisputeRounds} sub={`${dash.activeRoundClients} client${dash.activeRoundClients === 1 ? '' : 's'} with open rounds`} tone="navy" clickable={dash.openDisputeRounds > 0} onClick={() => handleStatClick('open_rounds')} />
         <StatTile icon={Clock} label="Awaiting response" value={dash.awaiting} sub={WINDOW_DAYS + '-day windows open'} tone={dash.awaiting > 0 ? 'amber' : 'navy'} clickable={dash.awaiting > 0} onClick={() => handleStatClick('awaiting')} />
         <StatTile icon={Zap} label="Response review due" value={dash.escalate} sub="received or window closed" tone={dash.escalate > 0 ? 'red' : 'navy'} clickable={dash.escalate > 0} onClick={() => handleStatClick('attention')} />
         <StatTile icon={TrendingUp} label="Bureau disputes" value={dash.phase3} sub="structured and legacy letters" tone={dash.phase3 > 0 ? 'green' : 'navy'} clickable={dash.phase3 > 0} onClick={() => handleStatClick('phase3')} />
@@ -812,8 +810,8 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
       {/* Results — what clients pay for */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={Award} label="Deletions this month" value={dash.deletedThisMonth} delta={dash.deletedThisMonth - dash.deletedLastMonth} sub={'vs ' + dash.deletedLastMonth + ' last month'} goldChip />
-        <StatTile icon={CheckCircle} label="All-time deletions" value={dash.deletedAll} sub="accounts removed" goldChip />
-        <StatTile icon={Target} label="Win rate" value={dash.winRate != null ? dash.winRate + '%' : '—'} sub={dash.outcomeCount > 0 ? 'of ' + dash.outcomeCount + ' letters with an outcome' : 'no outcomes recorded yet'} goldChip />
+        <StatTile icon={CheckCircle} label="Confirmed deletions" value={dash.deletedAll} sub="letter outcomes marked deleted" goldChip />
+        <StatTile icon={Target} label="Deletion share" value={dash.deletionShare != null ? dash.deletionShare + '%' : '—'} sub={dash.outcomeCount > 0 ? `${dash.deletedAll} of ${dash.outcomeCount} recorded letter outcomes` : 'no outcomes recorded yet'} goldChip />
         <StatTile icon={Timer} label="Avg days to deletion" value={dash.avgDeleteDays != null ? dash.avgDeleteDays : '—'} sub="mailed → confirmed deleted" goldChip />
       </div>
 
