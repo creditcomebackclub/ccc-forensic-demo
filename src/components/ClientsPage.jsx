@@ -251,6 +251,41 @@ function primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
   return { label: 'On track', tone: 'green' };
 }
 
+const CAMPAIGN_STAGE_LABELS = {
+  select_disputes: 'Select disputes', configure_letters: 'Build letters', letter_review: 'Review letters',
+  mailing: 'Ready to mail', awaiting_responses: 'Awaiting responses', response_review: 'Review responses',
+};
+
+function clientRosterStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
+  const lifecycle = c.billingStatus || 'Active';
+  if (lifecycle !== 'Active') {
+    return { label: lifecycle, tone: lifecycle === 'Paused' ? 'amber' : lifecycle === 'Graduated' ? 'green' : 'neutral' };
+  }
+  if (c.activeCampaign) {
+    return {
+      label: `Active · Round ${c.activeCampaign.round_number} · ${CAMPAIGN_STAGE_LABELS[c.activeCampaign.stage] || 'In progress'}`,
+      tone: c.activeCampaign.stage === 'response_review' ? 'amber' : 'neutral',
+    };
+  }
+
+  const openRounds = (c.rounds || []).filter((round) => round.status === 'open');
+  const roundNumbers = [...new Set(openRounds.map((round) => Number(round.round_number)).filter(Boolean))].sort((a, b) => a - b);
+  const roundLabel = roundNumbers.length === 1
+    ? `Round ${roundNumbers[0]}`
+    : roundNumbers.length > 1 ? `Rounds ${roundNumbers[0]}–${roundNumbers[roundNumbers.length - 1]}` : null;
+  const prefix = roundLabel ? `Active · ${roundLabel} · ` : 'Active · ';
+  const openLetters = (c.letters || []).filter((letter) => !letter.roundId || isOpenRoundLetter(c, letter));
+  const unmailed = openLetters.filter((letter) => letterStatus(letter).code === 'not_mailed').length;
+
+  if (ripe > 0 || needsPhase3 > 0) return { label: `${prefix}Response review`, tone: ripe > 0 ? 'red' : 'amber' };
+  if (unmailed > 0) return { label: `${prefix}Ready to mail`, tone: 'amber' };
+  if (awaiting > 0) return { label: `${prefix}Awaiting response`, tone: 'neutral' };
+  if (inTransit > 0) return { label: `${prefix}In transit`, tone: 'neutral' };
+  if (openRounds.length > 0) return { label: `${prefix}In progress`, tone: 'neutral' };
+  if (c.letters.length === 0) return { label: 'Active · Ready for audit', tone: 'neutral' };
+  return { label: 'Active · On track', tone: 'green' };
+}
+
 function Avatar({ name, isVip, size = 34 }) {
   const initials = (name || '?').split(' ').filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   return (
@@ -616,7 +651,7 @@ function parseFurnisherAddress(furnisher) {
   }
   return null;
 }
-export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, forceTab, unanalyzedNames, unanalyzedClientIds, onLeadsChanged }) {
+export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, navigationKey, forceTab, unanalyzedNames, unanalyzedClientIds, onLeadsChanged }) {
   const [clients, setClients] = useState(null);
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [selectedClient, setSelectedClient] = useState(null);
@@ -653,11 +688,9 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [emailVal, setEmailVal] = useState('');
   const [showCreateClient, setShowCreateClient] = useState(false);
   const [viewTab, setViewTab] = useState(forceTab || 'clients'); // 'clients' | 'leads'
-  // Retention Build 3 — lifecycle status filter. Defaults to the "working
-  // view" (Active + Paused); Graduated/Inactive are one click away rather
-  // than cluttering the default list. Composes with search/dispute-workflow
-  // chips (AND), doesn't replace them.
-  const [lifecycleSelected, setLifecycleSelected] = useState(['Active', 'Paused']);
+  // The roster opens to every client. Lifecycle and work-queue filters are
+  // deliberate drill-downs rather than the default landing state.
+  const [lifecycleFilter, setLifecycleFilter] = useState(null);
   const [showAddLead, setShowAddLead] = useState(false);
   const [convertingLead, setConvertingLead] = useState(null);
   const clientRefs = useRef({});
@@ -799,8 +832,9 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   useEffect(() => {
     if (!jumpTo || !clients) return;
     if (jumpTo.startsWith('lead:')) return;
-    if (jumpResolutionRef.current === jumpTo) return;
-    jumpResolutionRef.current = jumpTo;
+    const resolutionKey = `${navigationKey ?? 'initial'}:${jumpTo}`;
+    if (jumpResolutionRef.current === resolutionKey) return;
+    jumpResolutionRef.current = resolutionKey;
     let cancelled = false;
     findClientIdByLegacyReference(jumpTo).then(({ id, ambiguous }) => {
       if (cancelled) return;
@@ -815,11 +849,20 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       if (!cancelled) toast.error('Could not open client: ' + (e.message || e));
     });
     return () => { cancelled = true; };
-  }, [jumpTo, clients]);
+  }, [jumpTo, clients, navigationKey]);
 
   useEffect(() => {
-    if (initialFilter) setActiveFilter(initialFilter);
-  }, [initialFilter]);
+    setActiveFilter(initialFilter || null);
+    setLifecycleFilter(null);
+    setSearch('');
+    if (!jumpTo) {
+      detailRequestRef.current += 1;
+      setSelectedClientId(null);
+      setSelectedClient(null);
+      setSelectedClientError(null);
+      setLetterMailFilter('all');
+    }
+  }, [initialFilter, jumpTo, navigationKey]);
 
 
 
@@ -1283,7 +1326,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const lifecycleOf = (c) => c.billingStatus || 'Active';
   const LIFECYCLE_STATUSES = ['Active', 'Paused', 'Graduated', 'Inactive'];
   const lifecycleCounts = Object.fromEntries(LIFECYCLE_STATUSES.map((s) => [s, nonLeadClients.filter((c) => lifecycleOf(c) === s).length]));
-  const activeClients = nonLeadClients.filter((c) => lifecycleSelected.includes(lifecycleOf(c)));
+  const activeClients = lifecycleFilter ? nonLeadClients.filter((c) => lifecycleOf(c) === lifecycleFilter) : nonLeadClients;
   const tabClients = viewTab === 'leads' ? leadClients : activeClients;
 
   const stageRank = { ready: 3, audit: 2, contacted: 1, new: 0 };
@@ -1383,37 +1426,46 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         </div>
       </div>
 
-      {/* Lifecycle status filter (Retention Build 3) — multi-select, composes
-          with the dispute-workflow chips and search below rather than
-          replacing them. Graduated/Inactive start deselected. */}
+      {/* The roster defaults to every client. Lifecycle is a single optional
+          lens so the page never opens as an implicit work queue. */}
       {viewTab === 'clients' && (
         <div className="flex items-center gap-1.5 mb-3 flex-wrap">
-          {LIFECYCLE_STATUSES.map((s) => {
-            const isOn = lifecycleSelected.includes(s);
+          {[null, ...LIFECYCLE_STATUSES].map((s) => {
+            const isOn = lifecycleFilter === s;
+            const label = s || 'All clients';
+            const count = s ? lifecycleCounts[s] : nonLeadClients.length;
             const tone = { Active: '#1D4ED8', Paused: '#B45309', Graduated: '#15803D', Inactive: '#B91C1C' }[s];
-            return (
-              <button key={s}
-                onClick={() => setLifecycleSelected((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s])}
+            return <button key={label}
+                onClick={() => setLifecycleFilter(s)}
                 className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] transition-colors"
                 style={{
-                  background: isOn ? tone : '#fff',
-                  color: isOn ? '#fff' : T.muted,
-                  border: '1px solid ' + (isOn ? tone : T.border),
+                  background: isOn ? (tone || T.navy) : '#fff',
+                  color: isOn ? (s ? '#fff' : T.gold) : T.muted,
+                  border: '1px solid ' + (isOn ? (tone || T.navy) : T.border),
                   fontWeight: isOn ? 600 : 400,
                 }}>
-                {s}
-                <span style={{ fontSize: 10, opacity: isOn ? 0.85 : 0.7, fontVariantNumeric: 'tabular-nums' }}>{lifecycleCounts[s]}</span>
-              </button>
-            );
+                {label}
+                <span style={{ fontSize: 10, opacity: isOn ? 0.85 : 0.7, fontVariantNumeric: 'tabular-nums' }}>{count}</span>
+              </button>;
           })}
         </div>
       )}
 
-      {/* Quick-filter chips */}
-      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
-        {filterChips.map((chip) => {
-          const isActive = activeFilter === chip.key || (!activeFilter && chip.key === null);
-          return (
+      {/* Operational queues remain available without taking over the roster. */}
+      {viewTab === 'clients' ? (
+        <div className="flex items-center gap-2 mb-4">
+          <label className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.faint }} htmlFor="client-work-queue">Work queue</label>
+          <select id="client-work-queue" value={activeFilter || ''} onChange={(event) => setActiveFilter(event.target.value || null)} className="bg-white border rounded-lg px-3 py-1.5 text-[11px]" style={{ borderColor: T.border, color: T.navy }}>
+            {filterChips.map((chip) => <option key={chip.label} value={chip.key || ''}>{chip.label === 'All' ? 'All clients' : chip.label} ({chip.count})</option>)}
+            {activeFilter && !filterChips.some((chip) => chip.key === activeFilter) && <option value={activeFilter}>{FILTER_LABELS[activeFilter] || activeFilter}</option>}
+          </select>
+          {activeFilter && <button onClick={() => setActiveFilter(null)} className="text-[10px] uppercase tracking-wider" style={{ color: T.muted }}>Clear queue</button>}
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+          {filterChips.map((chip) => {
+            const isActive = activeFilter === chip.key || (!activeFilter && chip.key === null);
+            return (
             <button key={chip.label}
               onClick={() => setActiveFilter(chip.key)}
               disabled={chip.count === 0 && chip.key !== null && !pageInfo.nextCursor}
@@ -1428,15 +1480,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               {chip.label}
               <span style={{ fontSize: 10, opacity: isActive ? 0.9 : 0.7, fontVariantNumeric: 'tabular-nums' }}>{chip.count}</span>
             </button>
-          );
-        })}
-        {activeFilter && !filterChips.some((ch) => ch.key === activeFilter) && (
-          <span className="flex items-center gap-1.5 text-[11px] rounded-full px-3 py-1" style={{ background: T.navy, color: T.gold }}>
-            {FILTER_LABELS[activeFilter] || activeFilter}
-            <button onClick={() => setActiveFilter(null)}><X size={11} strokeWidth={2.5} /></button>
-          </span>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {filteredClients.length === 0 && (
         <div className="text-center py-12 bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>
@@ -1496,17 +1543,12 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
             ? isPendingRoundReview(c, l)
             : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;
-          const importDue = importDueInfo(c);
           const auditors = isAdmin ? [...new Set([
             ...c.audits.map((a) => a.auditorName),
             ...c.letters.map((l) => l.auditorName),
           ].filter(Boolean))] : [];
 
-          const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
-          const campaignStageLabel = c.activeCampaign ? {
-            select_disputes: 'Select disputes', configure_letters: 'Build letters', letter_review: 'Letter review',
-            mailing: 'Mailing', awaiting_responses: 'Awaiting responses', response_review: 'Response review',
-          }[c.activeCampaign.stage] : null;
+          const rosterStatus = clientRosterStatus(c, { ripe, needsPhase3, awaiting, inTransit });
           const clientMenu = [
             { label: 'Email client…', onClick: () => setEmailingClient(c) },
             { label: togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip, c.id), disabled: togglingVip === c.id },
@@ -1549,18 +1591,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     {c.lpoaSigned && (
                       <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-green-50 text-green-700 shrink-0" title="LPOA signed">✓ LPOA</span>
                     )}
-                    {c.billingStatus === 'Active' && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-blue-50 text-blue-700 shrink-0" title="Billing Active">Active</span>
-                    )}
-                    {c.billingStatus === 'Paused' && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-amber-50 text-amber-700 shrink-0" title={'Billing Paused' + (c.exitReason ? ' — ' + c.exitReason : '')}>Paused</span>
-                    )}
-                    {c.billingStatus === 'Graduated' && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-green-50 text-green-700 shrink-0" title="Graduated — arc complete">Graduated</span>
-                    )}
-                    {c.billingStatus === 'Inactive' && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-red-50 text-red-700 shrink-0" title={'Inactive' + (c.exitReason ? ' — ' + c.exitReason : '')}>Inactive</span>
-                    )}
                   </div>
                   <div className="text-[11px] truncate" style={{ color: T.muted }}>
                     {c.email || <span className="text-amber-600">No email</span>}
@@ -1570,8 +1600,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 </div>
                 <div className="flex items-center gap-2.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                   <StatusBadge
-                    label={c.activeCampaign ? `Round ${c.activeCampaign.round_number} · ${campaignStageLabel}` : primary.label}
-                    tone={c.activeCampaign ? (c.activeCampaign.stage === 'awaiting_responses' ? 'wait' : 'action') : primary.tone}
+                    label={rosterStatus.label}
+                    tone={rosterStatus.tone}
                   />
                   <Menu items={clientMenu} />
                 </div>

@@ -69,6 +69,24 @@ function letterStatus(l) {
   return { ...status, tone: 'neutral' };
 }
 
+function groupDashboardActions(actions) {
+  const groups = new Map();
+  for (const action of actions) {
+    const key = action.clientId || action.client;
+    const group = groups.get(key) || {
+      key, clientId: action.clientId, client: action.client, isVip: action.isVip,
+      priority: action.priority, savedAt: action.savedAt, items: [], furnishers: [], tone: 'amber',
+    };
+    group.items.push(action);
+    if (action.furnisher && !group.furnishers.includes(action.furnisher)) group.furnishers.push(action.furnisher);
+    group.priority = Math.min(group.priority, action.priority);
+    if ((action.savedAt || '') > (group.savedAt || '')) group.savedAt = action.savedAt;
+    if (action.tone === 'red') group.tone = 'red';
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((a, b) => a.priority - b.priority || (b.savedAt || '').localeCompare(a.savedAt || ''));
+}
+
 function computeDashboard(clients) {
   const actions = [];
   const windowCountdown = [];
@@ -290,6 +308,7 @@ function computeDashboard(clients) {
   }
 
   actions.sort((a, b) => a.priority - b.priority || (b.savedAt || '').localeCompare(a.savedAt || ''));
+  const actionGroups = groupDashboardActions(actions);
   windowCountdown.sort((a, b) => a.remaining - b.remaining);
   recentActivity.sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
 
@@ -297,7 +316,7 @@ function computeDashboard(clients) {
   const avgDeleteDays = deleteDays.length > 0 ? Math.round(deleteDays.reduce((s, d) => s + d, 0) / deleteDays.length) : null;
 
   return {
-    actions: actions.slice(0, 6),
+    actions: actions.slice(0, 6), actionGroups: actionGroups.slice(0, 6), actionTotal: actions.length, actionClientTotal: actionGroups.length,
     windowCountdown: windowCountdown.slice(0, 10), weeklyData, awaiting, escalate, phase3, active, phase4, readyForPhase4,
     recentActivity: recentActivity.slice(0, 10), vipClients,
     funnel, deletedAll, deletedThisMonth, deletedLastMonth, winRate, avgDeleteDays, outcomeCount, portal,
@@ -682,6 +701,7 @@ function QuickActionPanel({ action, onDone, onCancel, onNavigate }) {
 export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
   const [dash, setDash] = useState(null);
   const [activeAction, setActiveAction] = useState(null);
+  const [expandedActionClient, setExpandedActionClient] = useState(null);
   const loadInFlightRef = useRef(false);
 
   const load = async () => {
@@ -734,36 +754,48 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
         </div>
       )}
 
-      {dash.actions.length > 0 && (
+      {dash.actionGroups.length > 0 && (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <div style={{ background: '#FEF2F2', borderRadius: 6, padding: '4px 4px', display: 'flex' }}><AlertCircle size={13} strokeWidth={2} style={{ color: '#DC2626' }} /></div>
             <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#374151', fontWeight: 600 }}>Action Required</span>
+            <span className="text-[10px]" style={{ color: T.faint }}>{dash.actionTotal} item{dash.actionTotal === 1 ? '' : 's'} across {dash.actionClientTotal} client{dash.actionClientTotal === 1 ? '' : 's'}</span>
           </div>
-          <div className="space-y-1">
-            {dash.actions.map((a, i) => (
-              <div key={i}>
+          <div className="space-y-2">
+            {dash.actionGroups.map((group) => {
+              const expanded = expandedActionClient === group.key;
+              const furnisherSummary = group.furnishers.slice(0, 3).join(' · ') + (group.furnishers.length > 3 ? ` · +${group.furnishers.length - 3} more` : '');
+              return <div key={group.key}>
                 <div
-                  onClick={() => setActiveAction(activeAction?.letter?.id === a.letter?.id ? null : a)}
-                  className="flex items-center justify-between gap-3 cursor-pointer transition-all group" style={{ background: '#fff', border: '1px solid ' + T.border, borderRadius: 10, padding: '12px 16px', boxShadow: T.cardShadow, borderColor: activeAction?.letter?.id === a.letter?.id ? T.navy : (a.tone === 'red' ? '#FECACA' : '#FDE68A') }}
+                  onClick={() => { setExpandedActionClient(expanded ? null : group.key); setActiveAction(null); }}
+                  className="flex items-center justify-between gap-3 cursor-pointer transition-all group" style={{ background: '#fff', border: '1px solid ' + T.border, borderRadius: expanded ? '10px 10px 0 0' : 10, padding: '13px 16px', boxShadow: T.cardShadow, borderColor: expanded ? T.navy : (group.tone === 'red' ? '#FECACA' : '#FDE68A') }}
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    {a.isVip && <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium shrink-0" style={{ backgroundColor: T.gold, color: T.navy }}><Star size={9} strokeWidth={2.5} /> VIP</span>}
+                    {group.isVip && <span className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium shrink-0" style={{ backgroundColor: T.gold, color: T.navy }}><Star size={9} strokeWidth={2.5} /> VIP</span>}
                     <div className="min-w-0">
-                      <div className="text-[12px] text-ink font-medium truncate group-hover:text-navy">{a.client}</div>
-                      <div className="text-[11px] text-ink-muted">{a.furnisher}</div>
+                      <div className="text-[12px] text-ink font-medium truncate group-hover:text-navy">{group.client}</div>
+                      <div className="text-[11px] text-ink-muted truncate">{furnisherSummary}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    <Pill label={a.label} tone={a.tone} />
-                    <ChevronRight size={14} strokeWidth={2} className={'transition-transform ' + (activeAction?.letter?.id === a.letter?.id ? 'rotate-90 text-navy' : 'text-ink-faint group-hover:text-navy')} />
+                    <Pill label={`${group.items.length} action${group.items.length === 1 ? '' : 's'}`} tone={group.tone} />
+                    <ChevronRight size={14} strokeWidth={2} className={'transition-transform ' + (expanded ? 'rotate-90 text-navy' : 'text-ink-faint group-hover:text-navy')} />
                   </div>
                 </div>
-                {activeAction?.letter?.id === a.letter?.id && (
-                  <QuickActionPanel action={a} onDone={() => { setActiveAction(null); load(); }} onCancel={() => setActiveAction(null)} onNavigate={onNavigate} />
-                )}
-              </div>
-            ))}
+                {expanded && <div className="bg-white px-3 py-2 space-y-1" style={{ border: `1px solid ${T.navy}`, borderTop: 0, borderRadius: '0 0 10px 10px' }}>
+                  {group.items.map((action) => {
+                    const selected = activeAction?.letter?.id === action.letter?.id;
+                    return <div key={action.letter?.id || `${action.type}-${action.furnisher}`}>
+                      <button onClick={() => setActiveAction(selected ? null : action)} className="w-full flex items-center justify-between gap-3 text-left px-3 py-2 rounded-lg hover:bg-gray-50">
+                        <div className="min-w-0"><div className="text-[11px] font-medium truncate" style={{ color: T.ink }}>{action.furnisher}</div><div className="text-[10px] truncate" style={{ color: T.muted }}>{action.label}</div></div>
+                        <ChevronRight size={12} className={'shrink-0 transition-transform ' + (selected ? 'rotate-90 text-navy' : 'text-ink-faint')} />
+                      </button>
+                      {selected && <QuickActionPanel action={action} onDone={() => { setActiveAction(null); load(); }} onCancel={() => setActiveAction(null)} onNavigate={onNavigate} />}
+                    </div>;
+                  })}
+                </div>}
+              </div>;
+            })}
           </div>
         </div>
       )}

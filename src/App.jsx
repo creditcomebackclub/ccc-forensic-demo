@@ -305,6 +305,7 @@ export default function App() {
   const [profileLoadFailed, setProfileLoadFailed] = useState(false);
   const [view, setView] = useState(VIEW.DASHBOARD);
   const [clientsContext, setClientsContext] = useState(null);
+  const [clientsNavigationKey, setClientsNavigationKey] = useState(0);
   const [state, setState] = useState(STATE.IDLE);
   const [auditResult, setAuditResult] = useState(null);
   const [fileName, setFileName] = useState('');
@@ -621,7 +622,10 @@ export default function App() {
     // context whenever there's a pending unanalyzed response). Otherwise
     // that context is unrelated to the stale jump target, which then keeps
     // re-surfacing the same old client indefinitely.
-    if (viewName === 'clients') setAuditClientName(null);
+    if (viewName === 'clients') {
+      setAuditClientName(null);
+      setClientsNavigationKey((current) => current + 1);
+    }
     setView(viewName);
     refreshActionItems();
   };
@@ -695,7 +699,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-bg flex">
       <Toaster position="bottom-right" />
-      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={Math.max(0, actionItemCount - ackedActionItems)} newLeadsCount={newLeadsCount} hasUnanalyzed={unanalyzedClientIds.size > 0 || unanalyzedClientNames.size > 0} />
+      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={Math.max(0, actionItemCount - ackedActionItems)} newLeadsCount={newLeadsCount} />
       <main className="flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
@@ -708,7 +712,7 @@ export default function App() {
               <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} displayName={displayName} />
             )}
             {view === VIEW.CLIENTS && (
-              <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" unanalyzedNames={unanalyzedClientNames} unanalyzedClientIds={unanalyzedClientIds} onLeadsChanged={refreshActionItems} />
+              <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} navigationKey={clientsNavigationKey} forceTab="clients" unanalyzedNames={unanalyzedClientNames} unanalyzedClientIds={unanalyzedClientIds} onLeadsChanged={refreshActionItems} />
             )}
             {view === VIEW.LEADS && (
               <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={null} filter={clientsContext?.filter || null} forceTab="leads" onLeadsChanged={refreshActionItems} />
@@ -752,7 +756,7 @@ export default function App() {
   );
 }
 
-function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, onSettings, actionItemCount, newLeadsCount, hasUnanalyzed }) {
+function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, onSettings, actionItemCount, newLeadsCount }) {
   return (
     <aside className="w-60 flex flex-col border-r border-navy-light bg-navy-dark">
       <div className="px-5 py-5 border-b border-navy-light">
@@ -774,7 +778,7 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
           <NavItem icon={Activity} label="Operations" active={view === 'operations'} onClick={() => onNavigate('operations')} />
         )}
         <NavItem icon={LayoutDashboard} label="New Audit" active={view === 'audit'} onClick={() => onNavigate('audit')} />
-        <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients', hasUnanalyzed ? { filter: 'unanalyzed' } : null)} badge={actionItemCount} badgeTitle="unanalyzed client response(s) — click to open & clear badge" />
+        <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients')} badge={actionItemCount} badgeTitle="unanalyzed client response(s)" />
         <NavItem icon={UserPlus} label="Leads" active={view === 'leads'} onClick={() => onNavigate('leads', newLeadsCount > 0 ? { filter: 'unviewed' } : null)} badge={newLeadsCount} badgeTitle="unviewed lead(s) — click to open & clear badge" />
         <NavItem icon={BookOpen} label="Methodology" active={view === 'methodology'} onClick={() => onNavigate('methodology')} />
         {isAdmin && (
