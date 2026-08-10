@@ -12,6 +12,22 @@ export function summarizeStructuredRoundWorkload(clients = []) {
   return { openDisputeRounds, activeRoundClients };
 }
 
+export function countOngoingDisputeClients(clients = []) {
+  return clients.filter((client) => {
+    if (client?.status === 'lead') return false;
+
+    const lifecycle = client?.billingStatus || 'Active';
+    if (lifecycle === 'Graduated' || lifecycle === 'Inactive') return false;
+
+    return Boolean(
+      client?.activeCampaign ||
+      (client?.rounds || []).length > 0 ||
+      (client?.letters || []).length > 0 ||
+      (client?.audits || []).length > 0
+    );
+  }).length;
+}
+
 export function calculateDeletionShare(deletedOutcomes, recordedOutcomes) {
   if (!recordedOutcomes) return null;
   return Math.round((deletedOutcomes / recordedOutcomes) * 100);

@@ -3,7 +3,7 @@ import { AlertCircle, TrendingUp, Clock, Zap, Star, Activity, FileText, Mail, Ch
 import { listClientSummaries, updateLetter } from '../utils/storage';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
-import { calculateDeletionShare, summarizeStructuredRoundWorkload } from '../utils/dashboardMetrics.js';
+import { calculateDeletionShare, countOngoingDisputeClients, summarizeStructuredRoundWorkload } from '../utils/dashboardMetrics.js';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_HOURS = 24;
@@ -95,6 +95,7 @@ function computeDashboard(clients) {
   const vipClients = clients.filter((c) => c.isVip);
   let awaiting = 0, escalate = 0, phase3 = 0, phase4 = 0, readyForPhase4 = 0;
   const { openDisputeRounds, activeRoundClients } = summarizeStructuredRoundWorkload(clients);
+  const ongoingDisputeClients = countOngoingDisputeClients(clients);
 
   // Outcomes — deletions are the product; measure them
   let deletedAll = 0, deletedThisMonth = 0, deletedLastMonth = 0, outcomeCount = 0;
@@ -315,7 +316,7 @@ function computeDashboard(clients) {
 
   return {
     actions: actions.slice(0, 6), actionGroups: actionGroups.slice(0, 6), actionTotal: actions.length, actionClientTotal: actionGroups.length,
-    windowCountdown: windowCountdown.slice(0, 10), weeklyData, awaiting, escalate, phase3, openDisputeRounds, activeRoundClients, phase4, readyForPhase4,
+    windowCountdown: windowCountdown.slice(0, 10), weeklyData, awaiting, escalate, phase3, openDisputeRounds, activeRoundClients, ongoingDisputeClients, phase4, readyForPhase4,
     recentActivity: recentActivity.slice(0, 10), vipClients,
     funnel, deletedAll, deletedThisMonth, deletedLastMonth, deletionShare, avgDeleteDays, outcomeCount, portal,
   };
@@ -382,9 +383,9 @@ function HeroHeader({ displayName, dash }) {
   const firstName = (displayName || '').split(' ')[0] || 'there';
   const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   const heroStats = [
-    { label: 'Open dispute rounds', value: dash.openDisputeRounds },
+    { label: 'Open structured rounds', value: dash.openDisputeRounds },
     { label: 'Confirmed deletions', value: dash.deletedAll, gold: true },
-    { label: 'Clients in active rounds', value: dash.activeRoundClients },
+    { label: 'Ongoing dispute clients', value: dash.ongoingDisputeClients },
   ];
   return (
     <div style={{ background: 'linear-gradient(135deg, ' + T.navy + ' 0%, ' + T.navyDark + ' 100%)', borderRadius: 16, padding: '26px 30px', boxShadow: '0 4px 16px rgba(27,42,74,0.25)', borderBottom: '3px solid ' + T.gold }}>
@@ -800,7 +801,7 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
 
       {/* Pipeline state */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile icon={Activity} label="Open dispute rounds" value={dash.openDisputeRounds} sub={`${dash.activeRoundClients} client${dash.activeRoundClients === 1 ? '' : 's'} with open rounds`} tone="navy" clickable={dash.openDisputeRounds > 0} onClick={() => handleStatClick('open_rounds')} />
+        <StatTile icon={Activity} label="Open structured rounds" value={dash.openDisputeRounds} sub={`tracked across ${dash.activeRoundClients} client${dash.activeRoundClients === 1 ? '' : 's'}`} tone="navy" clickable={dash.openDisputeRounds > 0} onClick={() => handleStatClick('open_rounds')} />
         <StatTile icon={Clock} label="Awaiting response" value={dash.awaiting} sub={WINDOW_DAYS + '-day windows open'} tone={dash.awaiting > 0 ? 'amber' : 'navy'} clickable={dash.awaiting > 0} onClick={() => handleStatClick('awaiting')} />
         <StatTile icon={Zap} label="Response review due" value={dash.escalate} sub="received or window closed" tone={dash.escalate > 0 ? 'red' : 'navy'} clickable={dash.escalate > 0} onClick={() => handleStatClick('attention')} />
         <StatTile icon={TrendingUp} label="Bureau disputes" value={dash.phase3} sub="structured and legacy letters" tone={dash.phase3 > 0 ? 'green' : 'navy'} clickable={dash.phase3 > 0} onClick={() => handleStatClick('phase3')} />

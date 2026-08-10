@@ -7,7 +7,7 @@ import { canMailLetter, generatedLetterValidationError, letterGenerationState } 
 import { buildKeepOnFileIdentity, clientForLetterPrompt } from '../src/utils/letterPromptData.js';
 import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../src/utils/letterMailing.js';
 import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../src/utils/campaignMailing.js';
-import { calculateDeletionShare, summarizeStructuredRoundWorkload } from '../src/utils/dashboardMetrics.js';
+import { calculateDeletionShare, countOngoingDisputeClients, summarizeStructuredRoundWorkload } from '../src/utils/dashboardMetrics.js';
 
 const auditRecord = {
   id: 'audit-1',
@@ -133,6 +133,15 @@ assert.deepEqual(summarizeStructuredRoundWorkload([
   { status: 'active', rounds: [] },
   { status: 'lead', rounds: [{ status: 'open' }] },
 ]), { openDisputeRounds: 3, activeRoundClients: 2 }, 'dashboard workload counts structured open rounds and participating clients separately');
+assert.equal(countOngoingDisputeClients([
+  { status: 'active', billingStatus: 'Active', letters: [{}] },
+  { status: 'active', billingStatus: 'Paused', audits: [{}] },
+  { status: 'active', billingStatus: 'Active', activeCampaign: { id: 'campaign-1' } },
+  { status: 'active', billingStatus: 'Graduated', letters: [{}] },
+  { status: 'active', billingStatus: 'Inactive', rounds: [{}] },
+  { status: 'lead', billingStatus: 'Active', letters: [{}] },
+  { status: 'active', billingStatus: 'Active' },
+]), 3, 'ongoing client count includes active and paused dispute work without counting inactive, graduated, leads, or empty files');
 assert.equal(calculateDeletionShare(1, 16), 6, 'deletion share exposes the existing rounded 1-of-16 calculation');
 assert.equal(calculateDeletionShare(0, 0), null, 'deletion share stays empty without a recorded denominator');
 
@@ -173,8 +182,8 @@ assert.match(workspace, /failures\.push/, 'one failed route does not abort gener
 assert.match(workspace, /generationProgress/, 'the queue exposes route-specific progress instead of one shared spinner label');
 
 const dashboard = fs.readFileSync(new URL('../src/components/DashboardPage.jsx', import.meta.url), 'utf8');
-assert.match(dashboard, /Open dispute rounds/, 'dashboard workload is labeled as structured rounds rather than clients or accounts');
-assert.match(dashboard, /Clients in active rounds/, 'dashboard separately identifies clients participating in open rounds');
+assert.match(dashboard, /Open structured rounds/, 'dashboard distinguishes migrated structured rounds from the full ongoing caseload');
+assert.match(dashboard, /Ongoing dispute clients/, 'dashboard reports the full active and paused dispute caseload');
 assert.match(dashboard, /Deletion share/, 'the recorded-outcome ratio is not overstated as a win rate');
 assert.match(dashboard, /recorded letter outcomes/, 'the deletion-share denominator is visible');
 
