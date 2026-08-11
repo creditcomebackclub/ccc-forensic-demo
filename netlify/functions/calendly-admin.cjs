@@ -43,6 +43,7 @@ exports.handler = async (event) => {
         configured: true,
         connected: Boolean(status.active),
         subscription: publicSubscription(status.active),
+        subscriptions: status.subscriptions.map(publicSubscription),
       }),
     };
   } catch (error) {
