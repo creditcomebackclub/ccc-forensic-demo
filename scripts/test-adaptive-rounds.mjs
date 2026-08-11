@@ -86,7 +86,8 @@ ok('standalone adaptive rounds expose a safe failed-draft retry path', () => {
   const workboard = readFileSync(new URL('../src/components/client-detail/LetterWorkboard.jsx', import.meta.url), 'utf8');
   const api = readFileSync(new URL('../src/utils/api.js', import.meta.url), 'utf8');
   assert.match(panel, /Retry \$\{failedOpenLetters\.length\} failed draft/);
-  assert.match(workboard, />Open round<\/button>/);
+  assert.match(workboard, /Open \$\{label\}/);
+  assert.match(workboard, /aria-label=\{`Open \$\{label\}`\}/);
   assert.match(api, /export async function retryFailedRoundLetters/);
   assert.match(api, /reset_unmailed_round_drafts/);
   assert.match(api, /export async function regenerateUnmailedRoundLetters/);

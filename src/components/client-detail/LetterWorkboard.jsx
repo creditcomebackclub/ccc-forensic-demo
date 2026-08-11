@@ -81,7 +81,6 @@ export default function LetterWorkboard({
             ? groupLetters.find((letter) => letter.clientAccountId === latestRound.client_account_id)
             : groupLetters.find((letter) => letter.clientAccountId);
           const mayStart = !!startLetter && (!latestRound || (latestRound.status === 'closed' && latestRound.final_disposition === 'next_round'));
-          const mayOpenRound = !!startLetter && latestRound?.status === 'open';
           return (
           <div
             key={furnisher}
@@ -108,13 +107,28 @@ export default function LetterWorkboard({
             </div>
             {!!groupRounds.length && (
               <div className="px-4 py-2.5 flex flex-wrap items-center gap-2" style={{ borderBottom: '1px solid ' + T.grid }}>
-                {groupRounds.map((round) => (
-                  <span key={round.round_id} className="text-[10px] px-2 py-1 rounded-full" style={{ border: '1px solid ' + T.border, color: T.muted, background: round.status === 'open' ? '#FFFBEB' : '#F8FAFC' }}>
-                    Round {round.round_number} · {round.target_type === 'bureau' ? 'Credit Bureau' : 'Direct Furnisher'} · {round.status}
-                  </span>
-                ))}
+                {groupRounds.map((round) => {
+                  const isOpenRound = !!startLetter && round.round_id === latestRound?.round_id && round.status === 'open';
+                  const label = `Round ${round.round_number} · ${round.target_type === 'bureau' ? 'Credit Bureau' : 'Direct Furnisher'}`;
+                  return isOpenRound ? (
+                    <button
+                      key={round.round_id}
+                      type="button"
+                      onClick={() => onStartRound?.(startLetter)}
+                      aria-label={`Open ${label}`}
+                      title="Open this round"
+                      className="text-[10px] px-3 py-1.5 rounded-full font-semibold transition-colors hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                      style={{ border: '1px solid ' + T.gold, color: T.navy, background: '#FFFBEB', cursor: 'pointer' }}
+                    >
+                      Open {label}
+                    </button>
+                  ) : (
+                    <span key={round.round_id} className="text-[10px] px-2 py-1 rounded-full" style={{ border: '1px solid ' + T.border, color: T.muted, background: '#F8FAFC' }}>
+                      {label} · {round.status}
+                    </span>
+                  );
+                })}
                 {mayStart && <button type="button" onClick={() => onStartRound?.(startLetter)} className="text-[10px] uppercase tracking-wider font-medium ml-auto" style={{ color: T.navy }}>Start next round</button>}
-                {mayOpenRound && <button type="button" onClick={() => onStartRound?.(startLetter)} className="text-[10px] uppercase tracking-wider font-medium ml-auto" style={{ color: T.navy }}>Open round</button>}
               </div>
             )}
             <div className="px-4 py-1">
