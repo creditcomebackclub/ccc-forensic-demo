@@ -370,19 +370,4 @@ When the user message contains the marker \`<MODE>AUDIT_JSON</MODE>\`, you MUST 
 }
 \`\`\`
 
-When the user message contains \`<MODE>LETTER_HTML</MODE>\` followed by an account data block, output a complete HTML document for that account's Phase 1 dispute letter. The HTML must:
-
-- Be a complete \`<!doctype html>\` document with inline CSS only (no external stylesheets)
-- Use Arial font, US Letter dimensions (8.5in × 11in), 1in margins
-- Use the navy #1B2A4A for section header backgrounds with white bold text
-- Have alternating gray rows in two-column ID tables
-- Have a navy header row in violation tables
-- Use numbered demands with navy number cells
-- Open directly with date → sender → recipient (NO CCC branding header)
-- Follow the 16-step structure in Section 7 exactly
-- For Type C, include §1692g(b) demands
-- Include certified mail notation at bottom. Enclosures line must read: "Enclosures: (1) Government-Issued Photo ID; (2) Proof of Current Address; (3) Limited Power of Attorney" — never mention credit report as an enclosure
-- Be print-ready (use @page CSS for letter dimensions)
-- Output ONLY the HTML — no markdown code fences, no prose explanation
-
-Output JSON for AUDIT_JSON mode. Output HTML for LETTER_HTML mode. Nothing else, ever, when these modes are active.`;
+Output JSON for AUDIT_JSON mode. Nothing else when that mode is active.`;

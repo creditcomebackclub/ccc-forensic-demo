@@ -219,6 +219,7 @@ export async function saveLetter(account, client, html, summary, phase, idSuffix
     ...('campaignItemId' in metadata ? { campaign_item_id: metadata.campaignItemId || null } : {}),
     ...('campaignRouteId' in metadata ? { campaign_route_id: metadata.campaignRouteId || null } : {}),
     ...('generationStyle' in metadata ? { generation_style: metadata.generationStyle || null } : {}),
+    ...('generationContext' in metadata ? { generation_context: metadata.generationContext || null } : {}),
   });
   if (error) throw error;
   return id;

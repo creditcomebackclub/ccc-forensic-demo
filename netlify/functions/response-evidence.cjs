@@ -16,7 +16,8 @@ const { queueRoundEvent } = require('./_roundEmail.cjs');
 // Canonical path: responses/{firmUid}/{clientId}/response-evidence/{evidenceId}/…
 
 const MAX_FILES = 12;
-const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const MAX_FILE_SIZE = 12 * 1024 * 1024;
+const MAX_TOTAL_FILE_SIZE = 18 * 1024 * 1024;
 const ALLOWED_TYPES = new Set([
   'application/pdf',
   'image/jpeg',
@@ -73,7 +74,7 @@ function parseFiles(files) {
   if (!Array.isArray(files) || files.length === 0) throw new Error('At least one response file is required.');
   if (files.length > MAX_FILES) throw new Error(`A response can contain at most ${MAX_FILES} files.`);
 
-  return files.map((file, index) => {
+  const parsed = files.map((file, index) => {
     const name = cleanName(file && file.name);
     const contentType = String(file && file.contentType || '').toLowerCase();
     const size = Number(file && file.size || 0);
@@ -85,6 +86,11 @@ function parseFiles(files) {
     }
     return { name, contentType, size, index };
   });
+  const total = parsed.reduce((sum, file) => sum + file.size, 0);
+  if (total > MAX_TOTAL_FILE_SIZE) {
+    throw new Error(`All response files together must be ${Math.floor(MAX_TOTAL_FILE_SIZE / 1024 / 1024)} MB or less.`);
+  }
+  return parsed;
 }
 
 async function loadLetter(db, letterId) {
@@ -216,6 +222,12 @@ async function completeUpload(db, userId, body) {
   const presentNames = new Set((storedFiles || []).map((file) => file.name));
   if ([...expectedNames].some((name) => !presentNames.has(name))) {
     return response(409, { error: 'One or more response files have not finished uploading. Please try again.' });
+  }
+  const actualTotal = (storedFiles || [])
+    .filter((file) => expectedNames.has(file.name))
+    .reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
+  if (actualTotal > MAX_TOTAL_FILE_SIZE) {
+    return response(413, { error: `The uploaded response exceeds the ${Math.floor(MAX_TOTAL_FILE_SIZE / 1024 / 1024)} MB total limit.` });
   }
 
   const now = new Date().toISOString();

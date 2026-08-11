@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { CheckCircle, ChevronLeft, ChevronRight, Download, Mail, Printer, Trash2, X } from 'lucide-react';
+import { CheckCircle, ChevronLeft, ChevronRight, Download, Mail, Printer, RefreshCw, Trash2, X } from 'lucide-react';
 
 const bureauLabel = (value) => ({
   equifax: 'Equifax',
@@ -11,7 +11,7 @@ const bureauLabel = (value) => ({
  * Display-only letter viewer. Generation belongs to StartRoundPanel so simply
  * opening a saved letter can never create a new paid AI job or campaign row.
  */
-export default function LetterViewer({ letters = [], account, client, roundNumber, targetType, onClose, onCancelRound, onCloseRound, cancelling = false }) {
+export default function LetterViewer({ letters = [], account, client, roundNumber, targetType, onClose, onCancelRound, onCloseRound, onRegenerate, cancelling = false }) {
   const available = useMemo(() => letters.filter((letter) => letter?.html), [letters]);
   const [index, setIndex] = useState(0);
   const letter = available[index] || null;
@@ -68,6 +68,7 @@ export default function LetterViewer({ letters = [], account, client, roundNumbe
               </div>
             )}
             <button onClick={handleDownload} className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-border text-ink-muted hover:bg-gray-50 flex items-center gap-1.5"><Download size={11} /> HTML</button>
+            {onRegenerate && <button onClick={onRegenerate} disabled={cancelling} className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-amber-300 text-amber-800 hover:bg-amber-50 disabled:opacity-40 flex items-center gap-1.5"><RefreshCw size={11} className={cancelling ? 'animate-spin' : ''} />{cancelling ? 'Regenerating…' : 'Regenerate drafts'}</button>}
             {onCloseRound && <button onClick={onCloseRound} className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-green-200 text-green-700 hover:bg-green-50 flex items-center gap-1.5"><CheckCircle size={11} /> Close reviewed round</button>}
             {onCancelRound && <button onClick={onCancelRound} disabled={cancelling} className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-40 flex items-center gap-1.5"><Trash2 size={11} />{cancelling ? 'Cancelling…' : 'Cancel round'}</button>}
             <button onClick={handlePrint} className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-sm bg-navy text-white hover:bg-navy-dark flex items-center gap-1.5"><Printer size={11} /> Print / Save as PDF</button>

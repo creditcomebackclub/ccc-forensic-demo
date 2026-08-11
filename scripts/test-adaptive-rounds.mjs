@@ -88,11 +88,11 @@ ok('standalone adaptive rounds expose a safe failed-draft retry path', () => {
   assert.match(panel, /Retry \$\{failedOpenLetters\.length\} failed draft/);
   assert.match(workboard, />Open round<\/button>/);
   assert.match(api, /export async function retryFailedRoundLetters/);
-  assert.match(api, /\.is\('mailed_date', null\)/);
-  assert.match(api, /\.is\('lob_id', null\)/);
-  assert.match(api, /\.like\('html', 'ERROR:%'\)/);
-  assert.match(api, /later-round retry requires its reviewed prior-letter evidence link/);
-  assert.match(api, /below 8,000 output tokens/);
+  assert.match(api, /reset_unmailed_round_drafts/);
+  assert.match(api, /export async function regenerateUnmailedRoundLetters/);
+  const migration = readFileSync(new URL('../supabase/migrations/20260811020000_claude_generation_hardening.sql', import.meta.url), 'utf8');
+  assert.match(migration, /mailed_date is not null or lob_id is not null or tracking_number is not null/);
+  assert.match(migration, /v_evidence|letter_source_links|open round/i);
 });
 
 ok('known email merge fields render', () => {

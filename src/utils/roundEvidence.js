@@ -9,3 +9,51 @@ export function buildPriorRoundLeverageBlock({ priorTargetType, nextTargetType, 
   if (!framing) throw new Error(`Unsupported dispute-round transition: ${transition}`);
   return `PRIOR-ROUND LEVERAGE (${transition}):\n${framing}\n\nPrior letter summary:\n${priorLetterSummary || 'No separate summary stored.'}\n\nPrior response classification: ${priorResponseClassification || 'No document response; use only the reviewed non-response record.'}\nPrior response summary: ${priorResponseSummary || 'No additional response summary stored.'}\n\nPRIOR LETTER HTML (evidence; correct unsupported premises rather than copying them):\n${priorLetterHtml || ''}`;
 }
+
+export function priorLetterPlainText(html, maxChars = 12000) {
+  return String(html || '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<img\b[^>]*>/gi, ' ')
+    .replace(/<div\b[^>]*class=["'][^"']*(?:signature-block|mail-notation|enclosures)[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxChars);
+}
+
+export function buildPriorRoundEvidenceDigest({ priorTargetType, nextTargetType, priorLetterHtml, priorLetterSummary, analysis, evidenceKind }) {
+  const transition = `${priorTargetType || 'furnisher'}->${nextTargetType}`;
+  const framing = {
+    'furnisher->bureau': 'Use the furnisher outcome as evidence for an independent CRA reinvestigation; keep duties separate.',
+    'bureau->bureau': 'Identify what the prior CRA reinvestigation left unresolved without repeating unsupported premises.',
+    'bureau->furnisher': 'Center the documented CRA outcome while stating direct-dispute duties accurately.',
+    'furnisher->furnisher': 'State the new evidence or unresolved response defect that makes this a renewed, non-duplicative direct dispute.',
+  }[transition];
+  if (!framing) throw new Error(`Unsupported dispute-round transition: ${transition}`);
+  const safeAnalysis = analysis && typeof analysis === 'object' ? {
+    classification: analysis.classification || null,
+    summary: analysis.summary || null,
+    responseSummary: analysis.responseSummary || null,
+    demandAnalysis: analysis.demandAnalysis || null,
+    issueAnalysis: analysis.issueAnalysis || null,
+    keyFindings: analysis.keyFindings || null,
+    reportedChanges: analysis.reportedChanges || null,
+    admissions: analysis.admissions || null,
+    phase3Leverage: analysis.phase3Leverage || null,
+  } : null;
+  return {
+    transition,
+    framing,
+    evidenceKind: evidenceKind || 'response',
+    priorLetterSummary: priorLetterSummary || null,
+    priorLetterText: priorLetterPlainText(priorLetterHtml),
+    analysis: safeAnalysis,
+  };
+}

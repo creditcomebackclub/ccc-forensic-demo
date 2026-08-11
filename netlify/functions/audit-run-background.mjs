@@ -22,6 +22,7 @@ import {
 } from '../../src/utils/auditPrompts.js';
 import { describePdfChunk, splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
 import { mergeAuditParseResults, mergeBureauParseResults } from '../../src/utils/mergePdfAuditChunks.js';
+import { logClaudeCall, preflightTokenCount, usageFromMessage } from './_claudeRuntime.mjs';
 
 // This is deliberately a pinned application choice, not an environment
 // fallback. A future model change must be reviewed in code and will be
@@ -423,16 +424,18 @@ export const handler = async (event) => {
   const progress = (stage, pct) => (tokens) =>
     updateJob({ stage, pct, tokens: tokens || 0 }, tokens === 0);
 
-  async function claudeCall(userContent, { maxTokens = 64000, schema = null, onTokens = null } = {}) {
+  async function claudeCall(userContent, { maxTokens = 64000, schema = null, onTokens = null, effort = AUDIT_EFFORT, operation = 'audit.analysis' } = {}) {
     const params = {
       model: AUDIT_MODEL,
       max_tokens: maxTokens,
       system: SYSTEM,
       messages: [{ role: 'user', content: userContent }],
-      output_config: { effort: AUDIT_EFFORT },
+      output_config: { effort },
     };
     if (schema) params.output_config.format = { type: 'json_schema', schema };
+    await preflightTokenCount(anthropic, params, { operation: 'Credit report analysis' });
 
+    const startedAt = new Date();
     const stream = anthropic.messages.stream(params);
     if (onTokens) {
       let chars = 0;
@@ -448,10 +451,16 @@ export const handler = async (event) => {
     const msg = await stream.finalMessage();
     const text = textFromVerifiedModelMessage(msg, 'Audit analysis');
 
-    const u = msg.usage || {};
+    const u = usageFromMessage(msg);
+    await logClaudeCall(db, {
+      userId: caller.userId, operation, entityType: 'audit_job', entityId: jobId,
+      model: AUDIT_MODEL, effort, promptVersion: 'audit-v2', attempt: usageLog.length + 1,
+      status: 'completed', startedAt, requestId: msg._request_id, usage: u,
+      stopReason: msg.stop_reason,
+    });
     usageLog.push({
       model: msg.model,
-      effort: AUDIT_EFFORT,
+      effort,
       input: u.input_tokens || 0,
       output: u.output_tokens || 0,
       cache_read: u.cache_read_input_tokens || 0,
@@ -718,7 +727,11 @@ export const handler = async (event) => {
         enrichmentContent.push({ type: 'text', text: accountEnrichmentPrompt(today, audit.accounts) });
 
         const enrichRaw = await claudeCall(enrichmentContent, {
-          schema: ACCOUNT_ENRICHMENT_SCHEMA, maxTokens: 4000, onTokens: progress('Enriching account details', 90),
+          schema: ACCOUNT_ENRICHMENT_SCHEMA,
+          maxTokens: 8000,
+          effort: 'medium',
+          operation: 'audit.account_enrichment',
+          onTokens: progress('Enriching account details', 90),
         });
         const enrichment = assertEnrichmentOutput(parseAuditJSON(enrichRaw));
         const byId = new Map((enrichment?.accounts || []).map((e) => [e.id, e]));
@@ -1158,6 +1171,11 @@ export const handler = async (event) => {
     }, true);
   } catch (e) {
     console.error('audit-run failed:', e);
+    await logClaudeCall(db, {
+      userId: caller.userId, operation: 'audit.pipeline', entityType: 'audit_job', entityId: jobId,
+      model: AUDIT_MODEL, effort: AUDIT_EFFORT, promptVersion: 'audit-v2', status: 'error',
+      startedAt: new Date(), errorType: e.name, errorMessage: e.message,
+    });
     try {
       await updateJob({
         status: 'error', error: e.message || 'Audit failed',

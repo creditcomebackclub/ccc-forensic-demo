@@ -160,15 +160,16 @@ assert.match(migration, /client_campaigns_round_uidx[\s\S]*where stage <> 'legac
 
 const api = fs.readFileSync(new URL('../src/utils/api.js', import.meta.url), 'utf8');
 assert.match(api, /generateCampaignAccountRoute/, 'campaign routes use the server-side Claude generator');
-assert.match(api, /validate|citation|frozen audit/i, 'campaign generation preserves forensic validation framing');
 assert.match(api, /generate-letter-background/, 'campaign letters retain the protected background generation endpoint');
 assert.match(api, /existingLetterId/, 'failed cleanup retries reuse the existing technical placeholder instead of creating duplicate letters');
 assert.match(api, /jobIndexes/, 'multi-letter account retries regenerate only failed sibling placeholders');
 assert.match(api, /isBackgroundPollTimeout/, 'a browser polling timeout leaves the background route recoverable');
-assert.match(api, /clientForLetterPrompt/, 'signature bytes are removed before prompts are sent to Claude');
-assert.match(api, /List ONLY the inquiry objects supplied in the top-level inquiries array/, 'cleanup letters cannot pull inquiry evidence from another bureau');
-assert.match(api, /Do not call an entry a hard inquiry unless its supplied data explicitly identifies it as hard/, 'cleanup letters cannot invent a hard-inquiry classification');
-assert.match(api, /for duplicate, demand verification that each entry reflects a distinct authorized access/, 'duplicate inquiry findings receive a category-specific and fact-limited dispute basis');
+assert.match(api, /generationContext/, 'the browser persists only selected generation facts');
+assert.match(api, /body: JSON\.stringify\(\{ letterId \}\)/, 'each background request contains one stored letter id and no browser-authored prompt');
+const letterContext = fs.readFileSync(new URL('../netlify/functions/_letterContext.mjs', import.meta.url), 'utf8');
+assert.match(letterContext, /Authoritative server-loaded evidence/, 'campaign generation preserves server-owned frozen forensic evidence');
+assert.match(letterContext, /no-linked-account category means the file shows no linked tradeline/i, 'cleanup letters cannot overstate no-linked-account evidence');
+assert.match(letterContext, /duplication alone does not prove lack of permissible purpose/i, 'duplicate inquiry findings receive a fact-limited dispute basis');
 
 const workspace = fs.readFileSync(new URL('../src/components/client-detail/ClientCampaignWorkspace.jsx', import.meta.url), 'utf8');
 assert.match(workspace, /letter\.targetType === 'bureau' \? onAnalyzeBureau : onAnalyze/, 'bureau and furnisher responses retain their specialized analyzers');
@@ -228,9 +229,10 @@ const cancellationMigration = fs.readFileSync(new URL('../supabase/migrations/20
 assert.match(cancellationMigration, /accepted_unreconciled', 'cancelled'/, 'mail submissions permit the durable canceled state');
 
 const letterGenerator = fs.readFileSync(new URL('../netlify/functions/generate-letter-background.mjs', import.meta.url), 'utf8');
-assert.match(letterGenerator, /MAX_LETTER_TOKENS = 12000/, 'letter generation has enough output budget for large inquiry tables');
-assert.match(letterGenerator, /msg\.stop_reason === 'max_tokens'/, 'output-limit truncation fails closed before saving');
-assert.match(letterGenerator, /loadClientSignature/, 'the protected server injects the canonical client signature');
-assert.match(letterGenerator, /generatedLetterValidationError\(candidateHtml, \{ requireSections: true \}\)/, 'new generated letters require a complete closing structure');
+assert.match(letterGenerator, /LETTER_MAX_TOKENS = 24000/, 'letter generation has a bounded output and thinking budget');
+assert.match(letterGenerator, /assertCompletedMessage/, 'output-limit truncation and abnormal stops fail closed before saving');
+assert.match(letterGenerator, /loadCanonicalClientSignature/, 'the protected server injects the canonical client signature');
+assert.match(letterGenerator, /renderStructuredLetter/, 'the server renders structured legal content with deterministic formatting');
+assert.match(letterGenerator, /generatedLetterValidationError\(html, \{ requireSections: true \}\)/, 'new generated letters require a complete closing structure');
 
 console.log('All client-campaign assertions passed.');

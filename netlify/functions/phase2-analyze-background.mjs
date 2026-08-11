@@ -18,6 +18,10 @@ import { BUREAU_RESPONSE_SYSTEM_PROMPT } from '../../src/prompts/bureauResponseP
 import { BUREAU_FOLLOW_UP_SYSTEM_PROMPT } from '../../src/prompts/bureauFollowUpPrompt.js';
 import { BUREAU_FOLLOW_UP_SCHEMA, BUREAU_RESPONSE_SCHEMA, PHASE2_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { inferMediaType, isAnalyzable } from '../../src/utils/responseFiles.js';
+import { splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
+import { priorLetterPlainText } from '../../src/utils/roundEvidence.js';
+import { renderStructuredLetter } from '../../src/utils/structuredLetter.js';
+import { hasInjectedSignature, injectSignatureImage } from '../../src/utils/signatureInjection.js';
 import {
   assertMapFullySourced,
   autoFixFieldCitations,
@@ -26,12 +30,23 @@ import {
 } from '../../src/constants/metro2Fields.js';
 import { requireStaff } from './_requireAuth.cjs';
 import storagePaths from './_storagePaths.cjs';
+import { loadCanonicalClientSignature } from './_letterSignature.mjs';
+import {
+  assertCompletedMessage,
+  CLAUDE_CLIENT_OPTIONS,
+  CLAUDE_MODEL,
+  logClaudeCall,
+  preflightTokenCount,
+  usageFromMessage,
+} from './_claudeRuntime.mjs';
 
 assertMapFullySourced();
 
 const { responseEvidencePrefixes } = storagePaths;
 
-const MODEL = 'claude-sonnet-5';
+const MODEL = CLAUDE_MODEL;
+const MAX_TOTAL_RESPONSE_BYTES = 18 * 1024 * 1024;
+const RESPONSE_PDF_CHUNK_PAGES = 40;
 const FURNISHER_SYSTEM = [{ type: 'text', text: PHASE2_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 const BUREAU_SYSTEM = [{ type: 'text', text: BUREAU_RESPONSE_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 const BUREAU_FOLLOW_UP_SYSTEM = [{ type: 'text', text: BUREAU_FOLLOW_UP_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
@@ -44,20 +59,6 @@ function bureauFromPhase(phase) {
   if (p.includes('experian')) return 'experian';
   if (p.includes('transunion') || p.includes('trans union')) return 'transunion';
   return null;
-}
-
-function injectLetterCss(html, baseCss) {
-  if (!html) return html;
-  if (html.includes('</head>')) {
-    return html.replace('</head>', `<meta charset="UTF-8"><style>${baseCss}</style></head>`);
-  }
-  if (html.includes('<head>')) {
-    return html.replace('<head>', `<head><meta charset="UTF-8"><style>${baseCss}</style>`);
-  }
-  if (html.includes('<body>')) {
-    return html.replace('<body>', `<head><meta charset="UTF-8"><style>${baseCss}</style></head><body>`);
-  }
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${baseCss}</style></head><body>${html}</body></html>`;
 }
 
 const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -160,7 +161,7 @@ export const handler = async (event) => {
   if (queuedJob.response_evidence_id) {
     const { data: evidenceRow, error: evidenceErr } = await db
       .from('response_evidence')
-      .select('id,firm_user_id,client_id,letter_id,response_kind,storage_bucket,storage_paths,upload_status,analysis,analysis_status')
+      .select('id,firm_user_id,client_id,letter_id,response_kind,storage_bucket,storage_paths,upload_status,received_at,analysis,analysis_status')
       .eq('id', queuedJob.response_evidence_id)
       .maybeSingle();
     if (evidenceErr || !evidenceRow) return { statusCode: 400, body: 'response evidence not found' };
@@ -205,7 +206,7 @@ export const handler = async (event) => {
   }
   const job = claimed[0];
 
-  const anthropic = new Anthropic({ apiKey: anthropicKey, maxRetries: 5 });
+  const anthropic = new Anthropic({ apiKey: anthropicKey, ...CLAUDE_CLIENT_OPTIONS });
   let lastWrite = 0;
   const updateJob = async (patch, force = false) => {
     const now = Date.now();
@@ -218,6 +219,51 @@ export const handler = async (event) => {
   try {
     const { data: letter, error: letterErr } = await db.from('letters').select('*').eq('id', job.letter_id).single();
     if (letterErr || !letter) throw new Error('Could not find the Phase 1 letter for this job.');
+    const priorLetterText = priorLetterPlainText(letter.html, 16000);
+    let followUpRenderData = null;
+    const renderFollowUpLetter = async (draft) => {
+      if (!draft?.letterContent) throw new Error('Follow-up generation omitted its structured letter content.');
+      const bureau = draft.bureau || bureauFromPhase(letter.phase);
+      if (!bureau) throw new Error('Could not determine the bureau for follow-up rendering.');
+      if (!followUpRenderData) {
+        const [{ data: clientRow, error: clientRowError }, { data: auditRows, error: auditRowsError }] = await Promise.all([
+          db.from('clients').select('id,user_id,name,address,date_of_birth,lpoa_signature_data').eq('id', letter.client_id).maybeSingle(),
+          db.from('audits').select('audit').eq('user_id', letter.user_id).eq('client_id', letter.client_id).order('saved_at', { ascending: false }).limit(1),
+        ]);
+        if (clientRowError || auditRowsError) throw clientRowError || auditRowsError;
+        if (!clientRow || clientRow.user_id !== letter.user_id) throw new Error('The follow-up client could not be verified.');
+        const auditedAccount = auditRows?.[0]?.audit?.accounts?.find((item) => item.clientAccountId === letter.client_account_id) || {
+          furnisher: letter.furnisher,
+          accountNumberMasked: letter.account_id,
+        };
+        const signature = await loadCanonicalClientSignature(db, letter, clientRow);
+        const fmt = (value) => value
+          ? new Date(value).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+          : 'date on file';
+        followUpRenderData = {
+          client: clientRow,
+          account: auditedAccount,
+          signature,
+          enclosures: [
+            `Exhibit A: Prior Phase 3 CRA Dispute Letter (dated ${fmt(letter.date || letter.saved_at)})`,
+            `Exhibit B: ${bureau.charAt(0).toUpperCase() + bureau.slice(1)} Investigation Results (dated ${fmt(evidence?.received_at)})`,
+            'Exhibit C: Limited Power of Attorney',
+          ],
+        };
+      }
+      let rendered = renderStructuredLetter({
+        content: draft.letterContent,
+        client: followUpRenderData.client,
+        account: followUpRenderData.account,
+        letter: { ...letter, target_type: 'bureau', target_bureau: bureau },
+        enclosures: followUpRenderData.enclosures,
+      });
+      rendered = injectSignatureImage(rendered, followUpRenderData.signature.dataUrl, followUpRenderData.signature.printedName);
+      if (!hasInjectedSignature(rendered, followUpRenderData.signature.dataUrl)) {
+        throw new Error('The follow-up signature block could not be populated.');
+      }
+      return { ...draft, letterHtml: rendered };
+    };
 
     // Silence is evidence too. Persist an explicit nonresponse record so a
     // later round links the reviewed pair rather than inferring an absence.
@@ -265,21 +311,31 @@ export const handler = async (event) => {
         role: 'user',
         content: [{
           type: 'text',
-          text: `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\nLetter mailed: ${mailed}\n\nPRIOR DIRECT DISPUTE LETTER (no response was received within the recorded response window):\n${letter.html}\n\nClassify this as NON_RESPONSE and perform the same forensic demand-by-demand analysis. Do not call silence an automatic §1681s-2(b) violation; §1681s-2(b) attaches only after CRA notice under §1681i(a)(2). Analyze only. Do not draft a follow-up letter.`,
+          text: `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\nLetter mailed: ${mailed}\n\nPRIOR DIRECT DISPUTE LETTER (normalized text; no response was received within the recorded response window):\n${priorLetterText}\n\nClassify this as NON_RESPONSE and perform the same forensic demand-by-demand analysis. Do not call silence an automatic §1681s-2(b) violation; §1681s-2(b) attaches only after CRA notice under §1681i(a)(2). Analyze only. Do not draft a follow-up letter.`,
         }],
       }];
     } else {
       const files = filesForAnalysis || [];
       if (!files.length) throw new Error('No response file attached to this job.');
       const pageBlocks = [];
+      let totalResponseBytes = 0;
       for (const f of files) {
         const { data: blob, error: dlErr } = await db.storage.from(evidence?.storage_bucket || 'responses').download(f.path);
         if (dlErr || !blob) throw new Error('Could not read uploaded response (' + (dlErr?.message || 'missing file') + ')');
         const buf = Buffer.from(await blob.arrayBuffer());
+        totalResponseBytes += buf.byteLength;
+        if (totalResponseBytes > MAX_TOTAL_RESPONSE_BYTES) {
+          throw new Error('The response files exceed the 18 MB aggregate analysis limit. Split the response into a smaller upload.');
+        }
         const fileName = f.path.split('/').pop();
         const mediaType = inferMediaType(fileName, blob.type);
         if (!isAnalyzable(mediaType)) throw new Error(fileName + ' is not a supported format (PDF, JPG, PNG, WEBP only).');
-        pageBlocks.push(responseFileBlock(buf.toString('base64'), mediaType));
+        if (mediaType === 'application/pdf') {
+          const chunks = await splitPdfByPages(buf, { maxPages: RESPONSE_PDF_CHUNK_PAGES, overlap: 1 });
+          for (const chunk of chunks) pageBlocks.push(responseFileBlock(chunk.base64, mediaType));
+        } else {
+          pageBlocks.push(responseFileBlock(buf.toString('base64'), mediaType));
+        }
       }
       const pageNote = pageBlocks.length > 1
         ? ` — ${pageBlocks.length} pages/photos of the same response, attached in order. Read them as one continuous document.`
@@ -293,12 +349,12 @@ export const handler = async (event) => {
           content: [
             {
               type: 'text',
-              text: `Today: ${today()}\nClient: ${letter.client_name}\nBureau target (must match output.bureau): ${expectedBureau}\nPhase label: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nPRIOR BUREAU-RESPONSE ANALYSIS (JSON — staff already reviewed; continue bureau path):\n${JSON.stringify(prior, null, 2)}\n\nEXHIBIT A — ORIGINAL PHASE 3 BUREAU DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`,
+              text: `Today: ${today()}\nClient: ${letter.client_name}\nBureau target (must match output.bureau): ${expectedBureau}\nPhase label: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nPRIOR BUREAU-RESPONSE ANALYSIS (JSON — staff already reviewed; continue bureau path):\n${JSON.stringify(prior, null, 2)}\n\nEXHIBIT A — ORIGINAL PHASE 3 BUREAU DISPUTE LETTER (normalized text):\n${priorLetterText}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`,
             },
             ...pageBlocks,
             {
               type: 'text',
-              text: `Draft the supplemental Phase 3 follow-up letter to ${expectedBureau}. Output bureau must be "${expectedBureau}". Correct unsupported premises from the prior letter/analysis instead of copying them. HARD RULES for letterHtml: no "1681s-2(a)"; Johnson governs the furnisher's §1681s-2(b) investigation, not the CRA; Seamans is limited to supported dispute-status issues; Field 19 is Special Comment and Field 20 is Compliance Condition Code; Field 23 is Original Charge-off Amount and Field 27 is Date of Last Payment; Field 18 is a rolling 24-month profile; Status 97 may carry a balance/past due; balance equaling past due is not a violation by itself; post-closure C/O entries are not wrong solely because the account is closed; a returned payment date alone is not DOFD; do not state that a CRA must produce UDF/source documents or confirm transaction-level records reviewed — request only the §1681i(a)(6)(B)(iii)/(a)(7) procedure description. Enclosures must be exactly Exhibit A prior Phase 3, Exhibit B bureau response, Exhibit C LPOA.`,
+              text: `Draft the supplemental Phase 3 follow-up content for ${expectedBureau}. Output bureau must be "${expectedBureau}". Correct unsupported premises from the prior letter/analysis instead of copying them. HARD RULES for letterContent: no "1681s-2(a)"; Johnson governs the furnisher's §1681s-2(b) investigation, not the CRA; Seamans is limited to supported dispute-status issues; Field 19 is Special Comment and Field 20 is Compliance Condition Code; Field 23 is Original Charge-off Amount and Field 27 is Date of Last Payment; Field 18 is a rolling 24-month profile; Status 97 may carry a balance/past due; balance equaling past due is not a violation by itself; post-closure C/O entries are not wrong solely because the account is closed; a returned payment date alone is not DOFD; do not state that a CRA must produce UDF/source documents or confirm transaction-level records reviewed — request only the §1681i(a)(6)(B)(iii)/(a)(7) procedure description. Return structured content only; the server owns formatting and enclosures.`,
             },
           ],
         }];
@@ -310,8 +366,8 @@ export const handler = async (event) => {
             {
               type: 'text',
               text: bureauResponse
-                ? `Today: ${today()}\nClient: ${letter.client_name}\nBureau target: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 3 BUREAU DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`
-                : `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER:\n${letter.html}\n\nEXHIBIT B — FURNISHER RESPONSE${pageNote}`,
+                ? `Today: ${today()}\nClient: ${letter.client_name}\nBureau target: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 3 BUREAU DISPUTE LETTER (normalized text):\n${priorLetterText}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`
+                : `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER (normalized text):\n${priorLetterText}\n\nEXHIBIT B — FURNISHER RESPONSE${pageNote}`,
             },
             ...pageBlocks,
             { type: 'text', text: bureauResponse ? 'Perform the bureau-response staff review analysis.' : 'Perform forensic furnisher-response analysis only. Do not draft a follow-up letter.' },
@@ -331,14 +387,18 @@ export const handler = async (event) => {
     // Response review remains detailed. Letter drafting now occurs only after
     // staff disposition and explicit target selection.
     let streamedTokenTotal = 0;
+    let modelAttempt = 0;
     const runModel = async (modelMessages, stageLabel) => {
       if (stageLabel) await updateJob({ stage: stageLabel }, true);
-      const stream = anthropic.messages.stream({
+      modelAttempt += 1;
+      const effort = isBureauFollowUp ? 'medium' : 'high';
+      const params = {
         model: MODEL,
         max_tokens: isBureauFollowUp ? 24000 : (isBureauResponse ? 12000 : 16000),
         system: isBureauFollowUp ? BUREAU_FOLLOW_UP_SYSTEM : (isBureauResponse ? BUREAU_SYSTEM : FURNISHER_SYSTEM),
         messages: modelMessages,
         output_config: {
+          effort,
           format: {
             type: 'json_schema',
             schema: isBureauFollowUp
@@ -346,7 +406,10 @@ export const handler = async (event) => {
               : (isBureauResponse ? BUREAU_RESPONSE_SCHEMA : PHASE2_SCHEMA),
           },
         },
-      });
+      };
+      await preflightTokenCount(anthropic, params, { operation: 'Response analysis' });
+      const startedAt = new Date();
+      const stream = anthropic.messages.stream(params);
       let chars = 0;
       stream.on('text', (delta) => {
         chars += delta.length;
@@ -367,24 +430,35 @@ export const handler = async (event) => {
       } finally {
         clearInterval(heartbeat);
       }
+      assertCompletedMessage(msg, 'Response analysis', MODEL);
       streamedTokenTotal += Math.round(chars / 4);
-      const usage = msg.usage || {};
+      const usage = usageFromMessage(msg);
+      await logClaudeCall(db, {
+        userId: letter.user_id,
+        operation: isBureauFollowUp ? 'response.follow_up' : (isBureauResponse ? 'response.bureau_analysis' : 'response.furnisher_analysis'),
+        entityType: 'phase2_job',
+        entityId: jobId,
+        model: MODEL,
+        effort,
+        promptVersion: 'phase2-v2',
+        attempt: modelAttempt,
+        status: 'completed',
+        startedAt,
+        requestId: msg._request_id,
+        usage,
+        stopReason: msg.stop_reason,
+      });
       console.log('[phase2-usage]', JSON.stringify({
         input: usage.input_tokens || 0, output: usage.output_tokens || 0,
         cache_read: usage.cache_read_input_tokens || 0, cache_write: usage.cache_creation_input_tokens || 0,
         stop_reason: msg.stop_reason,
       }));
-      if (msg.stop_reason === 'max_tokens') {
-        throw new Error('The analysis hit the output limit before finishing. Try again.');
-      }
-      if (msg.stop_reason === 'refusal') {
-        throw new Error('The model declined this request. Check the response content and try again.');
-      }
       const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
       return { parsed: JSON.parse(text), usage };
     };
 
     let { parsed: analysis, usage: u } = await runModel(messages);
+    if (isBureauFollowUp) analysis = await renderFollowUpLetter(analysis);
     const MAX_LINT_ATTEMPTS = 3;
 
     const mergeUsage = (next) => {
@@ -417,12 +491,12 @@ export const handler = async (event) => {
             role: 'user',
             content: [{
               type: 'text',
-              text: `CRITICAL CORRECTION: The draft letterHtml failed production-safety lint. Return a complete corrected JSON object for this follow-up. Fix EVERY issue below — do not leave any of them in letterHtml. Keep only supported focus issues. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)"; use CRA duties under §1681i and describe the furnisher's separate §1681s-2(b) duty accurately.\n- Field 19 = Special Comment; Field 20 = Compliance Condition Code; Field 23 = Original Charge-off Amount; Field 27 = Date of Last Payment.\n- Status 97 may carry a balance/past due; equality of those figures is not a violation by itself.\n- Field 18 is rolling 24 months. Do not challenge C/O after closure solely because it follows closure.\n- A returned payment date alone is not DOFD.\n- Request the §1681i(a)(6)(B)(iii)/(a)(7) procedure description; do not claim a right to UDF/source documents or transaction-level-record review confirmation.\n- Enclosures: Exhibit A prior Phase 3; Exhibit B bureau response; Exhibit C LPOA. No Phase 1/furnisher response/ID/address.\n- Do not use "Dear Sir or Madam" or "Sincerely".\n\nBAD DRAFT letterHtml:\n${analysis.letterHtml}`,
+              text: `CRITICAL CORRECTION: The rendered draft failed production-safety lint. Return a complete corrected structured JSON object for this follow-up. Fix EVERY issue below in letterContent. Keep only supported focus issues. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)"; use CRA duties under §1681i and describe the furnisher's separate §1681s-2(b) duty accurately.\n- Field 19 = Special Comment; Field 20 = Compliance Condition Code; Field 23 = Original Charge-off Amount; Field 27 = Date of Last Payment.\n- Status 97 may carry a balance/past due; equality of those figures is not a violation by itself.\n- Field 18 is rolling 24 months. Do not challenge C/O after closure solely because it follows closure.\n- A returned payment date alone is not DOFD.\n- Request the §1681i(a)(6)(B)(iii)/(a)(7) procedure description; do not claim a right to UDF/source documents or transaction-level-record review confirmation.\n- Do not use "Dear Sir or Madam" or "Sincerely".\n\nBAD RENDERED DRAFT (reference only; return structured content, not HTML):\n${priorLetterPlainText(analysis.letterHtml, 12000)}`,
             }],
           },
         ];
         const rebuilt = await runModel(rewriteMessages, `Rewriting follow-up to fix production lint (attempt ${attempt + 1})`);
-        analysis = rebuilt.parsed;
+        analysis = await renderFollowUpLetter(rebuilt.parsed);
         if (analysis?.letterHtml) {
           analysis.letterHtml = normalizeFollowUpPresentation(
             autoFixFieldCitations(analysis.letterHtml).html
@@ -432,38 +506,9 @@ export const handler = async (event) => {
       }
     }
 
-    // Standard CSS remains only for the legacy bureau-follow-up drafting job.
-    const baseCss = `
-      body { font-family: Arial, sans-serif; line-height: 1.5; margin: 1in; color: #333333; }
-      .date-line { margin-bottom: 20px; }
-      .sender-block { margin-bottom: 20px; line-height: 1.3; }
-      .recipient-block { margin-bottom: 20px; line-height: 1.3; }
-      .re-line { font-weight: bold; margin-bottom: 20px; }
-      .section-header { background-color: #1B2A4A; color: #ffffff; font-weight: bold; padding: 6px 10px; margin-top: 20px; margin-bottom: 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
-      .id-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-      .id-table td { padding: 8px 12px; border: 1px solid #E5E7EB; font-size: 13px; }
-      .id-table td.label { font-weight: bold; background-color: #F9FAFB; width: 30%; }
-      .list-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-      .list-table th, .list-table td { padding: 8px 12px; border: 1px solid #E5E7EB; font-size: 13px; text-align: left; }
-      .list-table th { background-color: #1B2A4A; color: #ffffff; font-weight: bold; }
-      .demands-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-      .demands-table td { padding: 8px 12px; border: 1px solid #E5E7EB; font-size: 13px; vertical-align: top; }
-      .demands-table td.demand-num { background-color: #1B2A4A; color: #ffffff; font-weight: bold; text-align: center; width: 30px; border-radius: 3px; }
-      .closing-statement { font-weight: bold; margin-top: 20px; margin-bottom: 20px; }
-      .signature-block { margin-top: 50px; }
-      .signature-block img { max-height: 60px; display: block; margin-bottom: 6px; }
-      .sig-line { margin-top: 40px; border-top: 1px solid #000; width: 250px; }
-      .printed-name { margin-top: 6px; font-weight: bold; }
-      .mail-notation { margin-top: 30px; font-style: italic; }
-      .enclosures { margin-top: 14px; }
-    `;
-
-    if (isBureauFollowUp && analysis?.letterHtml) {
-      analysis.letterHtml = injectLetterCss(analysis.letterHtml, baseCss);
+    if (isBureauFollowUp) {
       const expectedBureau = bureauFromPhase(letter.phase);
-      if (expectedBureau && analysis.bureau && analysis.bureau !== expectedBureau) {
-        analysis.bureau = expectedBureau;
-      }
+      if (expectedBureau && analysis.bureau !== expectedBureau) analysis.bureau = expectedBureau;
     }
 
     // Parse-confidence gate (2026-07-23 defect report, P0-1): if the model's
@@ -549,6 +594,11 @@ export const handler = async (event) => {
     }, true);
   } catch (e) {
     console.error('phase2-analyze failed:', e);
+    await logClaudeCall(db, {
+      userId: caller.userId, operation: 'response.pipeline', entityType: 'phase2_job', entityId: jobId,
+      model: MODEL, effort: job.kind === 'bureau_follow_up' ? 'medium' : 'high', promptVersion: 'phase2-v2',
+      status: 'error', startedAt: new Date(), errorType: e.name, errorMessage: e.message,
+    });
     if (evidence && job.kind !== 'bureau_follow_up') {
       await db.from('response_evidence').update({
         analysis_status: 'error',

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, FileText, Loader2, ShieldAlert, X } from 'lucide-react';
-import { generateRoundLetter, retryFailedRoundLetters } from '../utils/api.js';
+import { generateRoundLetter, regenerateUnmailedRoundLetters, retryFailedRoundLetters } from '../utils/api.js';
 import { letterGenerationState } from '../utils/letterGeneration.js';
 import { BUREAU_LABEL, resolveActiveBureaus } from '../utils/roundTargets.js';
 import { cancelRound, getLatestRound, reopenRound } from '../utils/rounds.js';
@@ -186,6 +186,21 @@ export default function StartRoundPanel({ account, client, onClose }) {
     }
   }
 
+  async function handleRegenerateRound() {
+    if (!window.confirm(`Regenerate every unmailed draft in Round ${latestRound.round_number}? The current draft text will be replaced, but no mailed letter can be changed.`)) return;
+    setChangingRound(true);
+    setError(null);
+    try {
+      await regenerateUnmailedRoundLetters({ roundId: latestRound.round_id });
+      await refreshOpenRound();
+    } catch (regenerateError) {
+      setError(regenerateError.message || 'The round drafts could not be regenerated.');
+      await refreshOpenRound().catch(() => {});
+    } finally {
+      setChangingRound(false);
+    }
+  }
+
   async function handleCancelRound() {
     const reason = window.prompt('Why is this entire unmailed round being cancelled?');
     if (!reason?.trim()) return;
@@ -228,6 +243,7 @@ export default function StartRoundPanel({ account, client, onClose }) {
       onClose={onClose}
       onCancelRound={latestRound.mailed_count > 0 ? null : handleCancelRound}
       onCloseRound={latestRound.ready_to_close ? () => setShowCloseModal(true) : null}
+      onRegenerate={latestRound.mailed_count > 0 ? null : handleRegenerateRound}
       cancelling={changingRound}
     />
     {showCloseModal && <RoundCloseModal

@@ -16,8 +16,17 @@ import ws from 'ws';
 import { PHASE4_SYSTEM_PROMPT } from '../../src/prompts/phase4Prompt.js';
 import { PHASE4_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { requireStaff } from './_requireAuth.cjs';
+import {
+  assertCompletedMessage,
+  CLAUDE_CLIENT_OPTIONS,
+  CLAUDE_MODEL,
+  logClaudeCall,
+  preflightTokenCount,
+  usageFromMessage,
+} from './_claudeRuntime.mjs';
 
-const MODEL = 'claude-sonnet-5';
+const MODEL = CLAUDE_MODEL;
+const EFFORT = 'high';
 const SYSTEM = [{ type: 'text', text: PHASE4_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
 const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -99,7 +108,7 @@ export const handler = async (event) => {
   }
   const job = claimed[0];
 
-  const anthropic = new Anthropic({ apiKey: anthropicKey, maxRetries: 5 });
+  const anthropic = new Anthropic({ apiKey: anthropicKey, ...CLAUDE_CLIENT_OPTIONS });
   let lastWrite = 0;
   const updateJob = async (patch, force = false) => {
     const now = Date.now();
@@ -194,30 +203,40 @@ export const handler = async (event) => {
 
     await updateJob({ stage: 'Drafting CFPB/AG narrative' }, true);
 
-    const stream = anthropic.messages.stream({
+    const params = {
       model: MODEL,
-      max_tokens: 8000,
+      max_tokens: 16000,
       system: SYSTEM,
       messages: [{ role: 'user', content: [{ type: 'text', text: contextText }] }],
-      output_config: { format: { type: 'json_schema', schema: PHASE4_SCHEMA } },
-    });
+      output_config: { effort: EFFORT, format: { type: 'json_schema', schema: PHASE4_SCHEMA } },
+    };
+    await preflightTokenCount(anthropic, params, { operation: 'Escalation narrative generation' });
+    const startedAt = new Date();
+    const stream = anthropic.messages.stream(params);
     let chars = 0;
     stream.on('text', (delta) => { chars += delta.length; onTokens(Math.round(chars / 4)); });
-    const msg = await stream.finalMessage();
+    const msg = assertCompletedMessage(await stream.finalMessage(), 'Escalation narrative generation', MODEL);
 
-    const u = msg.usage || {};
+    const u = usageFromMessage(msg);
+    await logClaudeCall(db, {
+      userId: targetEscalation.user_id,
+      operation: 'escalation.generate',
+      entityType: 'phase4_job',
+      entityId: jobId,
+      model: MODEL,
+      effort: EFFORT,
+      promptVersion: 'phase4-v2',
+      status: 'completed',
+      startedAt,
+      requestId: msg._request_id,
+      usage: u,
+      stopReason: msg.stop_reason,
+    });
     console.log('[phase4-usage]', JSON.stringify({
       input: u.input_tokens || 0, output: u.output_tokens || 0,
       cache_read: u.cache_read_input_tokens || 0, cache_write: u.cache_creation_input_tokens || 0,
       stop_reason: msg.stop_reason,
     }));
-    if (msg.stop_reason === 'max_tokens') {
-      throw new Error('The narrative hit the output limit before finishing. Try again.');
-    }
-    if (msg.stop_reason === 'refusal') {
-      throw new Error('The model declined this request. Check the input content and try again.');
-    }
-
     const text = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     const result = JSON.parse(text);
 
@@ -237,6 +256,11 @@ export const handler = async (event) => {
     await updateJob({ status: 'done', stage: 'Complete', result, usage: u, finished_at: new Date().toISOString() }, true);
   } catch (e) {
     console.error('phase4-generate failed:', e);
+    await logClaudeCall(db, {
+      userId: caller.userId, operation: 'escalation.pipeline', entityType: 'phase4_job', entityId: jobId,
+      model: MODEL, effort: EFFORT, promptVersion: 'phase4-v2', status: 'error',
+      startedAt: new Date(), errorType: e.name, errorMessage: e.message,
+    });
     await updateJob({ status: 'error', error: e.message || 'Generation failed', finished_at: new Date().toISOString() }, true);
   }
 

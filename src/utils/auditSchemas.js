@@ -1,3 +1,5 @@
+import { LETTER_CONTENT_SCHEMA } from './structuredLetter.js';
+
 // JSON Schemas for structured outputs — mirror the output contracts documented
 // in masterPrompt.js §10. With output_config.format the API guarantees the
 // response parses and matches these shapes, eliminating the old
@@ -361,10 +363,7 @@ export const BUREAU_FOLLOW_UP_SCHEMA = {
     bureau: { type: 'string', enum: ['equifax', 'experian', 'transunion'] },
     summary: { type: 'string' },
     focusIssues: { type: 'array', items: { type: 'string' } },
-    letterHtml: {
-      type: 'string',
-      description: 'Complete HTML document (<!DOCTYPE html>...) for the supplemental Phase 3 CRA letter.',
-    },
+    letterContent: LETTER_CONTENT_SCHEMA,
     documentQuality: {
       type: 'object',
       additionalProperties: false,
@@ -375,7 +374,7 @@ export const BUREAU_FOLLOW_UP_SCHEMA = {
       required: ['enclosureLegible', 'issues'],
     },
   },
-  required: ['bureau', 'summary', 'focusIssues', 'letterHtml', 'documentQuality'],
+  required: ['bureau', 'summary', 'focusIssues', 'letterContent', 'documentQuality'],
 };
 
 // Phase 4 (CFPB / state-AG escalation) narrative — mirrors the JSON contract
