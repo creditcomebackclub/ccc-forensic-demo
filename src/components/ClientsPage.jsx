@@ -538,7 +538,9 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
       },
     },
     'divider',
-    { label: 'Delete letter…', danger: true, onClick: handleDelete },
+    l.campaignRouteId
+      ? { label: 'Managed in Campaign workspace', disabled: true, title: 'Campaign letters must be retried or managed from the client campaign so route history stays intact.' }
+      : { label: 'Delete letter…', danger: true, onClick: handleDelete },
   ];
 
   const metaBits = [

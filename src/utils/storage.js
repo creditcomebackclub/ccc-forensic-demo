@@ -271,12 +271,9 @@ export async function updateLetter(id, patch) {
 }
 
 export async function deleteLetter(id) {
-  const userId = await getUserId();
-  const { error } = await supabase
-    .from('letters')
-    .delete()
-    .eq('id', id)
-    .eq('user_id', userId);
+  const { error } = await supabase.rpc('delete_standalone_letter', {
+    p_letter_id: id,
+  });
   if (error) throw error;
   return true;
 }

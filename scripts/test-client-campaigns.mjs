@@ -167,6 +167,7 @@ const api = fs.readFileSync(new URL('../src/utils/api.js', import.meta.url), 'ut
 assert.match(api, /generateCampaignAccountRoute/, 'campaign routes use the server-side Claude generator');
 assert.match(api, /generate-letter-background/, 'campaign letters retain the protected background generation endpoint');
 assert.match(api, /existingLetterId/, 'failed cleanup retries reuse the existing technical placeholder instead of creating duplicate letters');
+assert.match(api, /reset_orphaned_campaign_cleanup_route/, 'missing cleanup placeholders use the guarded route recovery RPC');
 assert.match(api, /jobIndexes/, 'multi-letter account retries regenerate only failed sibling placeholders');
 assert.match(api, /isBackgroundPollTimeout/, 'a browser polling timeout leaves the background route recoverable');
 assert.match(api, /generationContext/, 'the browser persists only selected generation facts');
@@ -219,6 +220,19 @@ const selectionMigration = fs.readFileSync(new URL('../supabase/migrations/20260
 assert.match(selectionMigration, /exists \(select 1 from public\.letters letter where letter\.campaign_id = p_campaign_id\)/, 'the server locks selection as soon as a downstream letter exists');
 assert.match(selectionMigration, /delete from public\.campaign_letter_routes where campaign_id = p_campaign_id/, 'a selection change clears only replaceable route configuration');
 assert.match(selectionMigration, /prior_item\.selection_state = 'later'/, 'Later items carry into the next campaign when their deterministic source key still exists');
+
+const orphanRecovery = fs.readFileSync(new URL('../supabase/migrations/20260811193000_cleanup_route_orphan_recovery.sql', import.meta.url), 'utf8');
+assert.match(orphanRecovery, /reset_orphaned_campaign_cleanup_route/, 'orphan cleanup recovery is a server-owned operation');
+assert.match(orphanRecovery, /public\.mail_submissions[\s\S]*public\.mail_artifacts[\s\S]*public\.lob_webhook_events/, 'orphan recovery fails closed around durable mail evidence');
+assert.match(orphanRecovery, /public\.response_evidence[\s\S]*public\.phase2_jobs/, 'orphan recovery fails closed around response evidence and jobs');
+assert.match(orphanRecovery, /delete_standalone_letter[\s\S]*campaign_route_id is not null/, 'ordinary letter deletion rejects campaign-owned drafts');
+assert.match(orphanRecovery, /with repairable as[\s\S]*letter_ids = '\{\}'/, 'the migration repairs only proven orphaned cleanup routes');
+
+const storage = fs.readFileSync(new URL('../src/utils/storage.js', import.meta.url), 'utf8');
+assert.match(storage, /deleteLetter[\s\S]*delete_standalone_letter/, 'the Letters workboard uses guarded standalone deletion');
+
+const clientsPageSource = fs.readFileSync(new URL('../src/components/ClientsPage.jsx', import.meta.url), 'utf8');
+assert.match(clientsPageSource, /campaignRouteId[\s\S]*Managed in Campaign workspace/, 'campaign letter menus do not offer destructive standalone deletion');
 
 const lobFunction = fs.readFileSync(new URL('../netlify/functions/lob.cjs', import.meta.url), 'utf8');
 assert.match(lobFunction, /storedHtml === 'GENERATING\.\.\.'/i, 'server-side mailing rejects generation placeholders');

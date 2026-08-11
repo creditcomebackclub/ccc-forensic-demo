@@ -365,6 +365,21 @@ export async function generateCombinedCleanupLetter(client, inquiries, metadata 
   return id;
 }
 
+async function repairMissingCleanupPlaceholder(route) {
+  if (route.status !== 'failed' || route.letterIds?.length !== 1) return route;
+  const { data: existing, error: existingError } = await supabase.from('letters')
+    .select('id')
+    .eq('id', route.letterIds[0])
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing) return route;
+  const { error: resetError } = await supabase.rpc('reset_orphaned_campaign_cleanup_route', {
+    p_route_id: route.id,
+  });
+  if (resetError) throw resetError;
+  return { ...route, status: 'configured', letterIds: [], approvedLetterIds: [], generationError: null };
+}
+
 export async function generateCampaignCleanupRoute({ route, items, campaign, client }) {
   if (route.targetType !== 'bureau' || !route.targetBureau) throw new Error('Personal information and inquiry routes require a bureau recipient.');
   const bureau = BUREAU_LABEL[route.targetBureau];
@@ -392,13 +407,14 @@ export async function generateCampaignCleanupRoute({ route, items, campaign, cli
   };
   const inquiries = inquiryItems.map((item) => item.snapshot || {});
   try {
+    const retryRoute = await repairMissingCleanupPlaceholder(route);
     const id = await generateCombinedCleanupLetter({
       ...client, bureau, personalInfo, lpoaSigned: client.lpoaSigned,
     }, inquiries, {
       campaignId: campaign.id, campaignItemId: groupedItems[0].id, campaignRouteId: route.id,
       generationStyle: route.letterStyle, targetType: 'bureau', targetBureau: route.targetBureau,
       letterKind: 'file_update', customInstructions: route.customInstructions,
-      existingLetterId: route.status === 'failed' && route.letterIds?.length === 1 ? route.letterIds[0] : null,
+      existingLetterId: retryRoute.status === 'failed' && retryRoute.letterIds?.length === 1 ? retryRoute.letterIds[0] : null,
     });
     await setRouteResult(route.id, { status: 'generating', letterIds: [id], generationError: null });
     const result = await pollForLetter(id);
