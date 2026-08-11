@@ -173,7 +173,7 @@
         if (!window.Calendly || !window.Calendly.initInlineWidget) return;
         mount.innerHTML = '';
         window.Calendly.initInlineWidget({
-          url: 'https://calendly.com/creditcomebackclub/30min?hide_event_type_details=1&hide_gdpr_banner=1',
+          url: 'https://calendly.com/creditcomebackclub/consultation',
           parentElement: mount
         });
       };

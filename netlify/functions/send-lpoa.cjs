@@ -97,7 +97,7 @@ exports.handler = async (event) => {
       + `<p style="margin:0 0 14px;">${intro}</p>`
       + `<p style="margin:0;font-size:12px;color:#6B7280;">No portal account, authorization, or payment is created from this request. We'll send secure onboarding steps only if you choose to move forward after the consultation.</p>`
       + `<p style="margin:14px 0 0;font-size:12px;color:#6B7280;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
-      { href: 'https://calendly.com/creditcomebackclub/30min', label: 'Choose Your Time →' });
+      { href: 'https://calendly.com/creditcomebackclub/consultation', label: 'Choose Your Time →' });
 
     try {
       await sendMail(clientEmail, subject, html);
@@ -275,7 +275,7 @@ exports.handler = async (event) => {
     const scanned = hasAudit ? auditSummary.accountsScanned : null;
 
     const bookBtn = (label) => `<div style="text-align:center;margin:32px 0;">
-        <a href="https://calendly.com/creditcomebackclub/30min" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">${label} &#8594;</a>
+        <a href="https://calendly.com/creditcomebackclub/consultation" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">${label} &#8594;</a>
       </div>`;
 
     const testimonial = (quote, name, result) => `<div style="background:#F5F9FD;border-left:3px solid #C9A84C;padding:16px 20px;margin:20px 0;border-radius:0 4px 4px 0;">
