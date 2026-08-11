@@ -93,17 +93,20 @@ export async function createCampaignFromAudit(client, auditRecord) {
   return normalizeCampaign(data);
 }
 
-export async function updateCampaignItemState(itemId, selectionState) {
-  return updateCampaignItemStates([itemId], selectionState);
+export async function updateCampaignItemState(campaignId, itemId, selectionState) {
+  return updateCampaignItemStates(campaignId, [itemId], selectionState);
 }
 
-export async function updateCampaignItemStates(itemIds, selectionState) {
+export async function updateCampaignItemStates(campaignId, itemIds, selectionState) {
   if (!['candidate', 'selected', 'later'].includes(selectionState)) throw new Error('Invalid dispute selection state.');
+  if (!campaignId) throw new Error('A campaign is required to revise dispute selections.');
   const ids = [...new Set((itemIds || []).filter(Boolean))];
   if (!ids.length) return;
-  const { error } = await supabase.from('campaign_items')
-    .update({ selection_state: selectionState, updated_at: new Date().toISOString() })
-    .in('id', ids);
+  const { error } = await supabase.rpc('revise_client_campaign_selection', {
+    p_campaign_id: campaignId,
+    p_item_ids: ids,
+    p_selection_state: selectionState,
+  });
   if (error) throw error;
 }
 

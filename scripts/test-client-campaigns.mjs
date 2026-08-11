@@ -7,6 +7,7 @@ import { canMailLetter, generatedLetterValidationError, letterGenerationState } 
 import { buildKeepOnFileIdentity, clientForLetterPrompt } from '../src/utils/letterPromptData.js';
 import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../src/utils/letterMailing.js';
 import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../src/utils/campaignMailing.js';
+import { isCampaignSelectionLocked } from '../src/utils/campaignSelection.js';
 import { calculateDeletionShare, countOngoingDisputeClients, selectVipClients, summarizeStructuredRoundWorkload } from '../src/utils/dashboardMetrics.js';
 
 const auditRecord = {
@@ -127,6 +128,10 @@ assert.equal(campaignReadyForTracking(mailingWorkspace, [mailedLetter, cancelled
 cancelledLetter.tracking_status = 'Mailed';
 assert.equal(campaignReadyForTracking(mailingWorkspace, [mailedLetter, cancelledLetter]), true, 'only a complete generated, approved, mailed batch advances to Track');
 
+assert.equal(isCampaignSelectionLocked({ routes: [{ letterIds: [] }], letters: [] }), false, 'ungenerated route configuration can be replaced when dispute targets change');
+assert.equal(isCampaignSelectionLocked({ routes: [{ letterIds: ['draft-1'] }], letters: [] }), true, 'a generated letter id locks the frozen dispute selection');
+assert.equal(isCampaignSelectionLocked({ routes: [], letters: [{ id: 'draft-1' }] }), true, 'a persisted campaign letter locks the frozen dispute selection');
+
 assert.deepEqual(summarizeStructuredRoundWorkload([
   { status: 'active', rounds: [{ status: 'open' }, { status: 'closed' }] },
   { status: 'active', rounds: [{ status: 'open' }, { status: 'open' }] },
@@ -182,7 +187,9 @@ assert.doesNotMatch(workspace, /Mail approved cleanup/, 'review no longer opens 
 assert.match(workspace, /aria-current=\{current \? 'step'/, 'the campaign rail exposes the workspace currently being viewed');
 assert.match(workspace, /Click an available step to revisit its workspace/, 'the campaign rail explains its navigation behavior');
 assert.match(workspace, /viewStage \|\| normalizedStage\(lifecycleStage\)/, 'workspace navigation is separate from the persisted campaign lifecycle');
-assert.match(workspace, /readOnly=\{lifecycleStage !== 'select_disputes'\}/, 'revisited dispute snapshots cannot silently change generated or mailed packets');
+assert.match(workspace, /readOnly=\{selectionLocked\}/, 'revisited dispute selections lock only after downstream letters exist');
+assert.match(workspace, /clear its saved, ungenerated letter routes/, 'editing a configured round explicitly warns that derived routes will be rebuilt');
+assert.match(workspace, /Later round[\s\S]*carry-forward queue/, 'the picker explains that Later is durable across eligible rounds');
 assert.match(workspace, /awaiting_responses', 'response_review', 'closed'/, 'Track remains locked until the campaign lifecycle reaches response tracking');
 assert.match(workspace, /failures\.push/, 'one failed route does not abort generation of later siblings');
 assert.match(workspace, /generationProgress/, 'the queue exposes route-specific progress instead of one shared spinner label');
@@ -206,7 +213,12 @@ const roundState = fs.readFileSync(new URL('../src/utils/roundState.js', import.
 assert.match(roundState, /round\.status === 'open'/, 'closed rounds cannot resurface as pending review');
 
 const campaignApi = fs.readFileSync(new URL('../src/utils/campaigns.js', import.meta.url), 'utf8');
-assert.match(campaignApi, /updateCampaignItemStates[\s\S]*\.in\('id', ids\)/, 'bulk selection uses one scoped database update');
+assert.match(campaignApi, /updateCampaignItemStates[\s\S]*revise_client_campaign_selection/, 'single and bulk selection changes use the guarded campaign RPC');
+
+const selectionMigration = fs.readFileSync(new URL('../supabase/migrations/20260811160000_campaign_selection_revisions.sql', import.meta.url), 'utf8');
+assert.match(selectionMigration, /exists \(select 1 from public\.letters letter where letter\.campaign_id = p_campaign_id\)/, 'the server locks selection as soon as a downstream letter exists');
+assert.match(selectionMigration, /delete from public\.campaign_letter_routes where campaign_id = p_campaign_id/, 'a selection change clears only replaceable route configuration');
+assert.match(selectionMigration, /prior_item\.selection_state = 'later'/, 'Later items carry into the next campaign when their deterministic source key still exists');
 
 const lobFunction = fs.readFileSync(new URL('../netlify/functions/lob.cjs', import.meta.url), 'utf8');
 assert.match(lobFunction, /storedHtml === 'GENERATING\.\.\.'/i, 'server-side mailing rejects generation placeholders');

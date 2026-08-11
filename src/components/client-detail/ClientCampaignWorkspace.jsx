@@ -3,10 +3,11 @@ import { AlertTriangle, Check, ChevronRight, Circle, FileText, Loader2, Mail, Sh
 import toast from 'react-hot-toast';
 import {
   approveCampaignLetter, createCampaignFromAudit, getCampaignWorkspace, getReviewedPriorSources,
-  replaceConfiguredRoutes, updateCampaign, updateCampaignItemState, updateCampaignItemStates,
+  replaceConfiguredRoutes, updateCampaign, updateCampaignItemStates,
 } from '../../utils/campaigns.js';
 import { generateCampaignAccountRoute, generateCampaignCleanupRoute, generateInterimLetter } from '../../utils/api.js';
 import { buildCleanupRouteGroups, getCampaignItemBureaus } from '../../utils/campaignItems.js';
+import { isCampaignSelectionLocked } from '../../utils/campaignSelection.js';
 import { canMailLetter } from '../../utils/letterGeneration.js';
 import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../../utils/campaignMailing.js';
 
@@ -105,7 +106,7 @@ function EmptyCampaign({ client, latestAudit, onStart, busy, onOpenAudit }) {
   );
 }
 
-function DisputePicker({ workspace, onState, onBulkState, onContinue, busy, readOnly = false }) {
+function DisputePicker({ workspace, onState, onBulkState, onContinue, busy, readOnly = false, hasDraftRoutes = false }) {
   const groups = [
     ['account', 'Accounts'], ['personal_info', 'Personal Information'], ['inquiry', 'Hard Inquiries'],
   ];
@@ -114,7 +115,7 @@ function DisputePicker({ workspace, onState, onBulkState, onContinue, busy, read
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-2xl px-5 py-4 flex items-center justify-between gap-4" style={{ border: `1px solid ${T.border}` }}>
-        <div><div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>Round {workspace.campaign.roundNumber}</div><h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>{readOnly ? 'Review this round’s saved disputes' : 'Choose this round’s disputes'}</h2><p className="text-[11px] mt-1" style={{ color: T.muted }}>{readOnly ? 'This selection snapshot is locked because downstream letters already exist. Existing generated or mailed packets will not be silently changed.' : 'Selected items move to letter strategy. “Later” stays attached to this frozen audit for a future round.'}</p></div>
+        <div><div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>Round {workspace.campaign.roundNumber}</div><h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>{readOnly ? 'Review this round’s saved disputes' : 'Choose this round’s disputes'}</h2><p className="text-[11px] mt-1" style={{ color: T.muted }}>{readOnly ? 'This selection is locked because a downstream letter already exists. Existing generated or mailed packets will not be silently changed.' : hasDraftRoutes ? 'You can still edit this round. The first change clears its saved, ungenerated routes so Build can be configured from the revised selection.' : 'Selected items move to letter strategy. “Later round” stays in the carry-forward queue.'}</p></div>
         <div className="text-right shrink-0"><div className="text-[20px] font-semibold" style={{ color: T.navy }}>{selected}</div><div className="text-[9px] uppercase tracking-wider" style={{ color: T.faint }}>selected · {later} later</div></div>
       </div>
       {groups.map(([kind, title]) => {
@@ -136,12 +137,13 @@ function DisputePicker({ workspace, onState, onBulkState, onContinue, busy, read
               <span className="text-[9px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0" style={{ background: bg, color }}>{tag}</span>
               <div className="flex-1 min-w-0"><div className="text-[12px] font-medium truncate" style={{ color: T.ink }}>{item.label}</div>{item.kind === 'account' && <div className="text-[10px] mt-0.5 truncate" style={{ color: T.muted }}>{(item.snapshot.violations || []).length} supported finding{(item.snapshot.violations || []).length === 1 ? '' : 's'} · {(item.snapshot.bureaus || []).join('/') || 'bureau reporting unavailable'}</div>}</div>
               <div className="flex gap-1.5 shrink-0">
-                {[['selected', 'This round'], ['later', 'Later'], ['candidate', 'Skip']].map(([state, label]) => <button key={state} onClick={() => onState(item, state)} disabled={busy || readOnly} className="px-2.5 py-1.5 rounded-md text-[10px] font-medium disabled:cursor-not-allowed" style={{ background: item.selectionState === state ? T.navy : '#F7F8FA', color: item.selectionState === state ? '#fff' : T.muted, border: `1px solid ${item.selectionState === state ? T.navy : T.border}` }}>{label}</button>)}
+                {[['selected', 'This round'], ['later', 'Later round'], ['candidate', 'Skip round']].map(([state, label]) => <button key={state} onClick={() => onState(item, state)} disabled={busy || readOnly || item.selectionState === state} className="px-2.5 py-1.5 rounded-md text-[10px] font-medium disabled:cursor-not-allowed" style={{ background: item.selectionState === state ? T.navy : '#F7F8FA', color: item.selectionState === state ? '#fff' : T.muted, border: `1px solid ${item.selectionState === state ? T.navy : T.border}` }}>{label}</button>)}
               </div>
             </div>;
           })}
         </div>;
       })}
+      {!readOnly && <div className="rounded-xl px-4 py-3 text-[10px] leading-relaxed" style={{ color: T.muted, background: '#FBF9F2', border: `1px solid ${T.border}` }}><span className="font-semibold" style={{ color: T.navy }}>Later round</span> carries the item into the next campaign when the same deterministic finding still exists in that round’s audit. <span className="font-semibold" style={{ color: T.navy }}>Skip round</span> excludes it from the carry-forward queue; a future audit can still surface it again as a new candidate.</div>}
       <div className="flex justify-end"><button onClick={onContinue} disabled={!selected || busy} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40 flex items-center gap-2" style={{ background: T.navy, color: T.gold }}>{readOnly ? 'Open Build' : 'Choose letter builder'} <ChevronRight size={13} /></button></div>
     </div>
   );
@@ -463,6 +465,8 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
   const progressIndex = stageIndex(lifecycleStage);
   const hasGeneratedLetters = workspace.routes.some((route) => route.status === 'generated' && route.letterIds.length > 0);
   const hasApprovedLetters = workspace.routes.some((route) => route.approvedLetterIds.length > 0);
+  const selectionLocked = isCampaignSelectionLocked(workspace);
+  const hasDraftRoutes = !selectionLocked && workspace.routes.length > 0;
   const canNavigate = (target) => {
     if (target === 'audit' || target === 'select_disputes') return true;
     if (target === 'configure_letters') return progressIndex >= stageIndex('configure_letters');
@@ -477,6 +481,11 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
     setViewStage(target);
   };
   const runAndView = (target, fn) => run(async () => { await fn(); setViewStage(target); });
+  const reviseSelection = (items, selectionState) => {
+    const ids = items.map((item) => item.id);
+    if (hasDraftRoutes && !window.confirm('Changing this round’s dispute targets will clear its saved, ungenerated letter routes. Continue?')) return;
+    run(() => updateCampaignItemStates(workspace.campaign.id, ids, selectionState));
+  };
   const generateRoutes = async (routes, kind = 'all') => {
     const itemById = new Map(workspace.items.map((item) => [item.id, item]));
     const failures = [];
@@ -510,7 +519,7 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
   return <div className="space-y-4">
     <CampaignRail lifecycleStage={lifecycleStage} viewStage={stage} canNavigate={canNavigate} onNavigate={navigateTo} />
     {error && <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-[11px] text-red-700">{error}</div>}
-    {stage === 'select_disputes' && <DisputePicker workspace={workspace} busy={busy} readOnly={lifecycleStage !== 'select_disputes'} onState={(item, state) => run(() => updateCampaignItemState(item.id, state))} onBulkState={(items, state) => run(() => updateCampaignItemStates(items.map((item) => item.id), state))} onContinue={lifecycleStage === 'select_disputes' ? () => runAndView('configure_letters', () => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' })) : () => setViewStage('configure_letters')} />}
+    {stage === 'select_disputes' && <DisputePicker workspace={workspace} busy={busy} readOnly={selectionLocked} hasDraftRoutes={hasDraftRoutes} onState={(item, state) => reviseSelection([item], state)} onBulkState={reviseSelection} onContinue={lifecycleStage === 'select_disputes' ? () => runAndView('configure_letters', () => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' })) : () => setViewStage('configure_letters')} />}
     {stage === 'configure_letters' && !workspace.campaign.builderMode && <BuilderChoice onChoose={(mode) => run(() => updateCampaign(workspace.campaign.id, { builderMode: mode }))} onStandalone={() => setShowInterim(true)} />}
     {stage === 'configure_letters' && workspace.campaign.builderMode && !workspace.routes.length && <RouteConfigurator workspace={workspace} mode={workspace.campaign.builderMode} busy={busy} onSave={(routes) => run(() => replaceConfiguredRoutes(workspace.campaign, workspace.items, routes))} />}
     {stage === 'configure_letters' && workspace.routes.length > 0 && <BuildQueue workspace={workspace} busy={busy} generationProgress={generationProgress} onGenerate={(routes, kind) => run(() => generateRoutes(routes, kind))} onReview={progressIndex < stageIndex('letter_review') ? () => runAndView('letter_review', () => updateCampaign(workspace.campaign.id, { stage: 'letter_review' })) : () => setViewStage('letter_review')} />}
