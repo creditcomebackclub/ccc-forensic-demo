@@ -165,6 +165,7 @@
     var submitBtn = container.querySelector('[data-ccc-submit]');
     var errorMsg = container.querySelector('[data-ccc-error]');
     var intakeLeadId = null;
+    var calendlyPrefill = null;
 
     function showCalendly() {
       var mount = container.querySelector('[data-ccc-calendly]');
@@ -174,7 +175,8 @@
         mount.innerHTML = '';
         window.Calendly.initInlineWidget({
           url: 'https://calendly.com/creditcomebackclub/consultation',
-          parentElement: mount
+          parentElement: mount,
+          prefill: calendlyPrefill || undefined
         });
       };
       if (window.Calendly && window.Calendly.initInlineWidget) {
@@ -215,6 +217,10 @@
         return res.json();
       }).then(function (intake) {
         intakeLeadId = intake && intake.leadId || null;
+        calendlyPrefill = {
+          name: String(payload.name || '').trim(),
+          email: String(payload.email || '').trim().toLowerCase()
+        };
         formStep.style.display = 'none';
         successStep.style.display = 'block';
         showCalendly();

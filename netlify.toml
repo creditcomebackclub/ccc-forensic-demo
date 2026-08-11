@@ -41,6 +41,14 @@
     window = "1m"
     limit = 30
 
+# Calendly can retry legitimate events, while every request also requires an
+# authenticated API verification. Cap anonymous noise without interfering
+# with normal booking/cancellation bursts.
+[functions."calendly-webhook"]
+  [functions."calendly-webhook".rate_limit]
+    window = "1m"
+    limit = 60
+
 [[headers]]
   for = "/*"
   [headers.values]

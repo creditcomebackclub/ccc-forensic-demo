@@ -19,7 +19,8 @@
     "test:operations": "node scripts/test-operations-control-center.mjs",
     "test:adaptive-rounds": "node scripts/test-adaptive-rounds.mjs",
     "test:service-agreements": "node scripts/test-service-agreements.mjs",
-    "test:client-campaigns": "node scripts/test-client-campaigns.mjs"
+    "test:client-campaigns": "node scripts/test-client-campaigns.mjs",
+    "test:calendly": "node scripts/test-calendly-integration.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

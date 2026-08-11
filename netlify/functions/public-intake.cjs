@@ -136,6 +136,7 @@ exports.handler = async (event) => {
         lead_source: affiliateLabel ? `Affiliate: ${affiliateLabel}` : 'Website Intake',
         lead_notes: tier ? `Selected Tier: ${tier}` : null,
         lead_created_at: new Date().toISOString(),
+        consultation_status: 'requested',
         ...(affiliate ? { referred_by: affiliate.id, referral_fee: null } : {})
       })
     });

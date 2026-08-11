@@ -103,9 +103,12 @@ LOB_LIVE_KEY=
 LOB_WEBHOOK_SECRET=
 RESEND_API_KEY=
 RESEND_WEBHOOK_SECRET=
+CALENDLY_ACCESS_TOKEN= # production Functions scope only
+# CALENDLY_WEBHOOK_URL= # optional; defaults to $URL/api/calendly-webhook
+# CALENDLY_EVENT_NAME_PREFIX= # optional; defaults to Credit Repair Consultation
 ```
 
-Never expose `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, Resend, or Lob keys in client code or public build variables. In particular, remove any legacy `VITE_LOB_*` variables from Netlify and local environment files: only browser-safe values may use the `VITE_` prefix.
+Never expose `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, Calendly, Resend, or Lob keys in client code or public build variables. In particular, remove any legacy `VITE_LOB_*` variables from Netlify and local environment files: only browser-safe values may use the `VITE_` prefix.
 
 ## Database and security
 

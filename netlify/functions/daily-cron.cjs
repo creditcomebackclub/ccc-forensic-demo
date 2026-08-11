@@ -1,5 +1,6 @@
 const https = require('https');
 const { sendQueuedClientEmails } = require('./_roundEmail.cjs');
+const { shouldSuppressGenericNurture } = require('./_leadNurture.cjs');
 
 function supabaseRequest(path, method, body, url, key, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
@@ -607,7 +608,7 @@ exports.handler = async () => {
   let nurtureDripsCount = 0;
   if (mailReady) {
     const leads = await listAllRows(
-      '/rest/v1/clients?select=id,user_id,name,email,lead_created_at,lead_drips_sent,tags&status=eq.lead&order=lead_created_at.asc,id.asc',
+      '/rest/v1/clients?select=id,user_id,name,email,lead_created_at,lead_drips_sent,tags,consultation_status&status=eq.lead&order=lead_created_at.asc,id.asc',
       supabaseUrl,
       supabaseKey
     );
@@ -679,13 +680,10 @@ exports.handler = async () => {
             break;
           }
         }
-      } else if ((lead.tags || []).includes('lead-stage:ready')) {
-        // "Ready to convert" is staff manually flagging that a human has
-        // taken over this lead personally — automated nurture stops so a
-        // generic drip email never lands mid-conversation with someone
-        // Chris (or Alex) is actively closing. Track B is untouched by
-        // stage on purpose: it's a concrete pending action (sign the LPOA),
-        // not persuasion, so it should keep reminding regardless.
+      } else if (shouldSuppressGenericNurture(lead)) {
+        // A Calendly booking or any staff-owned pipeline stage stops generic
+        // acquisition nurture. Track B is untouched: it is a concrete pending
+        // onboarding action, not persuasion.
       } else {
         for (const d of nurtureSchedule) {
           if (daysSince >= d.day && !sentDrips.includes(d.key)) {
