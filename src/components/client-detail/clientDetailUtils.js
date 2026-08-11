@@ -104,12 +104,12 @@ export function deriveNextAction(client) {
   const campaign = client?.activeCampaign;
   if (campaign) {
     const copy = {
-      select_disputes: ['Select Round ' + campaign.round_number + ' disputes', 'Choose audit findings for this round', 'action'],
-      configure_letters: ['Build Round ' + campaign.round_number + ' letters', 'Configure recipients and forensic strategy', 'action'],
-      letter_review: ['Review Round ' + campaign.round_number + ' letters', 'Approve every generated letter before mailing', 'action'],
-      mailing: ['Mail Round ' + campaign.round_number, 'Send the approved batch and preserve tracking', 'action'],
-      awaiting_responses: ['Round ' + campaign.round_number + ' awaiting responses', 'Deadlines and delivery tracking remain active', 'wait'],
-      response_review: ['Review Round ' + campaign.round_number + ' responses', 'Compare responses against the exact disputes and evidence', 'urgent'],
+      select_disputes: ['Client Campaign ' + campaign.round_number + ': Select disputes', 'Choose audit findings; each account keeps its own round number', 'action'],
+      configure_letters: ['Client Campaign ' + campaign.round_number + ': Build letters', 'Configure remaining account recipients and strategy', 'action'],
+      letter_review: ['Client Campaign ' + campaign.round_number + ': Review letters', 'Approve every generated letter before mailing', 'action'],
+      mailing: ['Client Campaign ' + campaign.round_number + ': Mail letters', 'Send the approved batch and preserve tracking', 'action'],
+      awaiting_responses: ['Client Campaign ' + campaign.round_number + ': Awaiting responses', 'Deadlines and delivery tracking remain active', 'wait'],
+      response_review: ['Client Campaign ' + campaign.round_number + ': Review responses', 'Compare responses against the exact disputes and evidence', 'urgent'],
     }[campaign.stage];
     if (copy) return { label: copy[0], detail: copy[1], letterFilter: 'all', tone: copy[2] };
   }

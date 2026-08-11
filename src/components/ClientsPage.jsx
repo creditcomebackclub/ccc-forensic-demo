@@ -270,7 +270,7 @@ function clientRosterStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
   }
   if (c.activeCampaign) {
     return {
-      label: `Active · Round ${c.activeCampaign.round_number} · ${CAMPAIGN_STAGE_LABELS[c.activeCampaign.stage] || 'In progress'}`,
+      label: `Active · Campaign ${c.activeCampaign.round_number} · ${CAMPAIGN_STAGE_LABELS[c.activeCampaign.stage] || 'In progress'}`,
       tone: c.activeCampaign.stage === 'response_review' ? 'amber' : 'neutral',
     };
   }
@@ -1245,6 +1245,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             onOpenAccount={openAccount}
             rounds={c.rounds || []}
             onStartRound={startRoundFromLetter}
+            activeCampaign={c.activeCampaign || null}
           />
         )}
 

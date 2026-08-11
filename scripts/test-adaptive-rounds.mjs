@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildPriorRoundLeverageBlock } from '../src/utils/roundEvidence.js';
 import { plainTextToSafeHtml, resolveEmailMergeFields } from '../src/utils/emailMergeFields.js';
+import { deriveNextAction } from '../src/components/client-detail/clientDetailUtils.js';
 import { letterStatus, responseDeadline, responseWindowDays } from '../src/utils/responseWindow.js';
 import { PHASE2_SCHEMA } from '../src/utils/auditSchemas.js';
 import { getLetterSystemPrompt } from '../src/prompts/letterPrompt.js';
@@ -88,12 +89,21 @@ ok('standalone adaptive rounds expose a safe failed-draft retry path', () => {
   assert.match(panel, /Retry \$\{failedOpenLetters\.length\} failed draft/);
   assert.match(workboard, /Open \$\{label\}/);
   assert.match(workboard, /aria-label=\{`Open \$\{label\}`\}/);
+  assert.match(workboard, /Active account rounds/);
+  assert.match(workboard, /Pre-campaign account round/);
+  assert.match(workboard, /Open drafts/);
   assert.match(api, /export async function retryFailedRoundLetters/);
   assert.match(api, /reset_unmailed_round_drafts/);
   assert.match(api, /export async function regenerateUnmailedRoundLetters/);
   const migration = readFileSync(new URL('../supabase/migrations/20260811020000_claude_generation_hardening.sql', import.meta.url), 'utf8');
   assert.match(migration, /mailed_date is not null or lob_id is not null or tracking_number is not null/);
   assert.match(migration, /v_evidence|letter_source_links|open round/i);
+});
+
+ok('client campaigns are labeled separately from account rounds', () => {
+  const action = deriveNextAction({ activeCampaign: { round_number: 2, stage: 'configure_letters' } });
+  assert.equal(action.label, 'Client Campaign 2: Build letters');
+  assert.match(action.detail, /remaining account recipients/i);
 });
 
 ok('known email merge fields render', () => {
