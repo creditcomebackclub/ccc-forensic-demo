@@ -56,6 +56,7 @@ exports.handler = async (event) => {
         error: error.statusCode === 403
           ? 'Calendly rejected the token permissions. Confirm users:read, scheduled_events:read, and webhooks:write.'
           : 'Could not connect to Calendly. Check the token and try again.',
+        detail: String(error.message || error).slice(0, 300),
       }),
     };
   }

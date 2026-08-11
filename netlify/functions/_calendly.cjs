@@ -22,8 +22,10 @@ function calendlyApiPath(input) {
 
 async function calendlyRequest(input, options = {}) {
   const token = requireCalendlyToken();
-  const response = await fetch(CALENDLY_API_ORIGIN + calendlyApiPath(input), {
-    method: options.method || 'GET',
+  const apiPath = calendlyApiPath(input);
+  const method = options.method || 'GET';
+  const response = await fetch(CALENDLY_API_ORIGIN + apiPath, {
+    method,
     headers: {
       Authorization: 'Bearer ' + token,
       'Content-Type': 'application/json',
@@ -35,7 +37,8 @@ async function calendlyRequest(input, options = {}) {
   try { body = raw ? JSON.parse(raw) : null; } catch { body = null; }
   if (!response.ok) {
     const providerMessage = body && (body.message || body.title);
-    const error = new Error('Calendly API request failed (' + response.status + ')' + (providerMessage ? ': ' + providerMessage : '.'));
+    const endpoint = apiPath.split('?')[0];
+    const error = new Error(`Calendly ${method} ${endpoint} failed (${response.status})` + (providerMessage ? ': ' + providerMessage : '.'));
     error.statusCode = response.status;
     throw error;
   }
