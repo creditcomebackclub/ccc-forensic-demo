@@ -164,8 +164,9 @@ function webhookUrl() {
 
 function isActiveSubscription(subscription, callbackUrl) {
   const events = Array.isArray(subscription?.events) ? subscription.events : [];
+  const providerCallbackUrl = subscription?.callback_url || subscription?.url;
   return subscription?.state === 'active'
-    && subscription?.url === callbackUrl
+    && providerCallbackUrl === callbackUrl
     && CONSULTATION_EVENTS.every((event) => events.includes(event));
 }
 

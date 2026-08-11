@@ -7,7 +7,7 @@ function publicSubscription(subscription) {
     uri: subscription.uri || null,
     state: subscription.state || null,
     events: Array.isArray(subscription.events) ? subscription.events : [],
-    callbackUrl: subscription.url || null,
+    callbackUrl: subscription.callback_url || subscription.url || null,
     createdAt: subscription.created_at || null,
   };
 }

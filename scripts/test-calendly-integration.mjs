@@ -205,7 +205,7 @@ globalThis.fetch = async (url, options = {}) => {
     return response({ resource: {
       uri: 'https://api.calendly.com/webhook_subscriptions/sub-1',
       state: 'active',
-      url: request.url,
+      callback_url: request.url,
       events: request.events,
     } }, 201);
   }
