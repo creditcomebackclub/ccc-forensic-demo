@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Archives exact Lob PDFs for already-mailed letters whose stored HTML preview
-// references a retired signature image. Letter evidence rows are never edited.
+// cannot render a durable signature. Letter evidence rows are never edited.
 // Dry-run by default; pass --apply to download and archive eligible PDFs.
 
 import { createRequire } from 'node:module';
@@ -45,7 +45,7 @@ async function main() {
     };
     return letter.lob_id
       && hasMailedDeliveryEvidence(mapped)
-      && letterSignatureState(letter.html) === 'remote'
+      && letterSignatureState(letter.html) !== 'embedded'
       && !archived.has(letter.id)
       && !archived.has(letter.lob_id);
   });
