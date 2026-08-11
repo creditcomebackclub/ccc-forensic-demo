@@ -4,22 +4,21 @@ export const LETTER_CONTENT_SCHEMA = {
   properties: {
     subject: { type: 'string' },
     summary: { type: 'string' },
-    opening: { type: 'array', items: { type: 'string' }, maxItems: 4 },
+    opening: { type: 'array', items: { type: 'string' } },
     sections: {
       type: 'array',
-      maxItems: 12,
       items: {
         type: 'object',
         additionalProperties: false,
         properties: {
           heading: { type: 'string' },
-          paragraphs: { type: 'array', items: { type: 'string' }, maxItems: 5 },
-          bullets: { type: 'array', items: { type: 'string' }, maxItems: 12 },
+          paragraphs: { type: 'array', items: { type: 'string' } },
+          bullets: { type: 'array', items: { type: 'string' } },
         },
         required: ['heading', 'paragraphs', 'bullets'],
       },
     },
-    demands: { type: 'array', items: { type: 'string' }, maxItems: 16 },
+    demands: { type: 'array', items: { type: 'string' } },
     closing: { type: 'string' },
   },
   required: ['subject', 'summary', 'opening', 'sections', 'demands', 'closing'],

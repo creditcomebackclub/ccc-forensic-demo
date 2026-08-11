@@ -168,8 +168,8 @@ Return legal letter CONTENT only in the supplied JSON schema. Never output HTML,
 - subject: the concise RE-line text only, without the literal "RE:" prefix.
 - summary: 2–3 plain-English sentences for the consumer explaining the supported dispute and requested outcome; no legal jargon.
 - opening: 1–4 concise opening paragraphs.
-- sections: supported factual/legal sections only. Each section has a heading, paragraphs, and optional numbered factual bullets. Preserve exact, supported Metro 2 field names and statute citations.
-- demands: precise corrections or recipient actions supported by the record.
+- sections: at most 12 supported factual/legal sections. Each section has a heading, no more than 5 paragraphs, and no more than 12 optional numbered factual bullets. Preserve exact, supported Metro 2 field names and statute citations.
+- demands: no more than 16 precise corrections or recipient actions supported by the record.
 - closing: one concise final compliance statement. Do not include a sign-off or consumer name.
 
 Do not repeat identity data merely to make the letter longer. Never invent a fact, mailing address, source document, investigation result, violation, date, amount, or account number. Correct unsupported premises in prior material instead of copying them.`;

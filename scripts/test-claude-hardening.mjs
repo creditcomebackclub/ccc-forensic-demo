@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { generatedLetterValidationError } from '../src/utils/letterGeneration.js';
 import { buildPriorRoundEvidenceDigest, priorLetterPlainText } from '../src/utils/roundEvidence.js';
-import { renderStructuredLetter } from '../src/utils/structuredLetter.js';
+import { LETTER_CONTENT_SCHEMA, renderStructuredLetter } from '../src/utils/structuredLetter.js';
 
 const content = {
   subject: 'Direct Furnisher Dispute | Account No. XXXX1234',
@@ -96,5 +96,6 @@ assert.match(migration, /generation_context jsonb/);
 assert.doesNotMatch(migration, /prompt text|response text|document_content/);
 assert.doesNotMatch(letterPrompt, /complete HTML dispute letters|OUTPUT HTML REQUIREMENTS/);
 assert.doesNotMatch(masterPrompt, /<MODE>LETTER_HTML<\/MODE>/);
+assert.doesNotMatch(JSON.stringify(LETTER_CONTENT_SCHEMA), /maxItems|minItems|maxLength|minLength/);
 
 console.log('All Claude hardening assertions passed.');
