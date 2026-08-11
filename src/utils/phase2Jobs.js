@@ -1,7 +1,7 @@
 // Client half of the server-side Phase 2 pipeline: create a phase2_jobs row,
 // kick the background function, then poll the row for progress until it
 // lands on done/error. Mirrors auditJobs.js — same shape, tuned for Phase 2's
-// much shorter typical runtime (one Claude call vs. a full audit).
+// much shorter typical runtime (one extraction call plus deterministic rules).
 import { supabase } from './supabase';
 
 const POLL_MS = 1500;

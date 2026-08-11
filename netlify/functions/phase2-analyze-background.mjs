@@ -13,14 +13,22 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { PHASE2_SYSTEM_PROMPT } from '../../src/prompts/phase2Prompt.js';
-import { BUREAU_RESPONSE_SYSTEM_PROMPT } from '../../src/prompts/bureauResponsePrompt.js';
 import { BUREAU_FOLLOW_UP_SYSTEM_PROMPT } from '../../src/prompts/bureauFollowUpPrompt.js';
-import { BUREAU_FOLLOW_UP_SCHEMA, BUREAU_RESPONSE_SCHEMA, PHASE2_SCHEMA } from '../../src/utils/auditSchemas.js';
+import { BUREAU_FOLLOW_UP_SCHEMA } from '../../src/utils/auditSchemas.js';
+import { RESPONSE_EXTRACTION_SCHEMA } from '../../src/utils/creditExtractionSchemas.js';
+import { RESPONSE_EXTRACTION_SYSTEM_PROMPT } from '../../src/prompts/extractionPrompts.js';
+import {
+  buildNonResponseAnalysis,
+  evaluateBureauResponse,
+  evaluateFurnisherResponse,
+  extractDemandsFromLetterHtml,
+} from '../../src/utils/deterministicResponse.js';
 import { inferMediaType, isAnalyzable } from '../../src/utils/responseFiles.js';
 import { splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
 import { priorLetterPlainText } from '../../src/utils/roundEvidence.js';
+import { responseWindowDays } from '../../src/utils/responseWindow.js';
 import { renderStructuredLetter } from '../../src/utils/structuredLetter.js';
+import { unauthorizedFieldCitations } from '../../src/utils/letterGeneration.js';
 import { hasInjectedSignature, injectSignatureImage } from '../../src/utils/signatureInjection.js';
 import {
   assertMapFullySourced,
@@ -47,8 +55,7 @@ const { responseEvidencePrefixes } = storagePaths;
 const MODEL = CLAUDE_MODEL;
 const MAX_TOTAL_RESPONSE_BYTES = 18 * 1024 * 1024;
 const RESPONSE_PDF_CHUNK_PAGES = 40;
-const FURNISHER_SYSTEM = [{ type: 'text', text: PHASE2_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
-const BUREAU_SYSTEM = [{ type: 'text', text: BUREAU_RESPONSE_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
+const RESPONSE_EXTRACTION_SYSTEM = [{ type: 'text', text: RESPONSE_EXTRACTION_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 const BUREAU_FOLLOW_UP_SYSTEM = [{ type: 'text', text: BUREAU_FOLLOW_UP_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
 const PHASE2_KINDS = ['response', 'non_response', 'bureau_response', 'bureau_follow_up'];
@@ -220,6 +227,20 @@ export const handler = async (event) => {
     const { data: letter, error: letterErr } = await db.from('letters').select('*').eq('id', job.letter_id).single();
     if (letterErr || !letter) throw new Error('Could not find the Phase 1 letter for this job.');
     const priorLetterText = priorLetterPlainText(letter.html, 16000);
+    const priorDemands = extractDemandsFromLetterHtml(letter.html);
+    if (job.kind === 'non_response') {
+      const clockStart = letter.delivered_at || mailedDateOverride || letter.mailed_date;
+      const computedDue = clockStart
+        ? new Date(new Date(clockStart).getTime() + responseWindowDays(letter) * 86400000)
+        : null;
+      const due = letter.response_due_at ? new Date(letter.response_due_at) : computedDue;
+      if (!due || Number.isNaN(due.getTime())) {
+        throw new Error('A non-response finding requires a recorded delivery or mailing date and response window.');
+      }
+      if (Date.now() < due.getTime()) {
+        throw new Error(`The recorded response window remains open until ${due.toLocaleDateString('en-US')}.`);
+      }
+    }
     let followUpRenderData = null;
     const renderFollowUpLetter = async (draft) => {
       if (!draft?.letterContent) throw new Error('Follow-up generation omitted its structured letter content.');
@@ -302,6 +323,7 @@ export const handler = async (event) => {
     }
 
     let messages;
+    let authorizedFollowUpFindings = null;
     if (job.kind === 'non_response') {
       const mailedDate = mailedDateOverride || letter.mailed_date;
       const mailed = mailedDate
@@ -344,17 +366,29 @@ export const handler = async (event) => {
         const expectedBureau = bureauFromPhase(letter.phase);
         if (!expectedBureau) throw new Error('Could not determine bureau from Phase 3 letter phase.');
         const prior = evidence?.analysis || {};
+        const authorizedFindings = (prior.issueAnalysis || [])
+          .filter((item) => item && ['IGNORED', 'PARTIALLY_ADDRESSED', 'UNCLEAR'].includes(item.outcome))
+          .map((item) => ({
+            issueId: item.issueId || null,
+            issue: item.issue,
+            field: item.field || null,
+            outcome: item.outcome,
+            notes: item.notes,
+            ruleId: item.ruleId || null,
+            evidenceRefs: item.evidenceRefs || [],
+          }));
+        authorizedFollowUpFindings = authorizedFindings;
         messages = [{
           role: 'user',
           content: [
             {
               type: 'text',
-              text: `Today: ${today()}\nClient: ${letter.client_name}\nBureau target (must match output.bureau): ${expectedBureau}\nPhase label: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nPRIOR BUREAU-RESPONSE ANALYSIS (JSON — staff already reviewed; continue bureau path):\n${JSON.stringify(prior, null, 2)}\n\nEXHIBIT A — ORIGINAL PHASE 3 BUREAU DISPUTE LETTER (normalized text):\n${priorLetterText}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`,
+              text: `Today: ${today()}\nClient: ${letter.client_name}\nBureau target (must match output.bureau): ${expectedBureau}\nPhase label: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nAUTHORIZED REVIEWED FINDINGS (JSON — the only issues the narrative may use):\n${JSON.stringify(authorizedFindings, null, 2)}\n\nEXHIBIT A — ORIGINAL PHASE 3 BUREAU DISPUTE LETTER (background and formatting evidence only; it does not authorize additional issues):\n${priorLetterText}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`,
             },
             ...pageBlocks,
             {
               type: 'text',
-              text: `Draft the supplemental Phase 3 follow-up content for ${expectedBureau}. Output bureau must be "${expectedBureau}". Correct unsupported premises from the prior letter/analysis instead of copying them. HARD RULES for letterContent: no "1681s-2(a)"; Johnson governs the furnisher's §1681s-2(b) investigation, not the CRA; Seamans is limited to supported dispute-status issues; Field 19 is Special Comment and Field 20 is Compliance Condition Code; Field 23 is Original Charge-off Amount and Field 27 is Date of Last Payment; Field 18 is a rolling 24-month profile; Status 97 may carry a balance/past due; balance equaling past due is not a violation by itself; post-closure C/O entries are not wrong solely because the account is closed; a returned payment date alone is not DOFD; do not state that a CRA must produce UDF/source documents or confirm transaction-level records reviewed — request only the §1681i(a)(6)(B)(iii)/(a)(7) procedure description. Return structured content only; the server owns formatting and enclosures.`,
+              text: `Draft the supplemental Phase 3 follow-up content for ${expectedBureau}. Output bureau must be "${expectedBureau}". Use every applicable AUTHORIZED REVIEWED FINDING above and no other factual issue. Do not create, remove, reclassify, prioritize, or correct a finding. If the authorized list is empty, do not invent a dispute issue. HARD RULES for letterContent: no "1681s-2(a)"; Johnson governs the furnisher's §1681s-2(b) investigation, not the CRA; Seamans is limited to supported dispute-status issues; Field 19 is Special Comment and Field 20 is Compliance Condition Code; Field 23 is Original Charge-off Amount and Field 27 is Date of Last Payment; Field 18 is a rolling 24-month profile; Status 97 may carry a balance/past due; balance equaling past due is not a violation by itself; post-closure C/O entries are not wrong solely because the account is closed; a returned payment date alone is not DOFD; do not state that a CRA must produce UDF/source documents or confirm transaction-level records reviewed — request only the §1681i(a)(6)(B)(iii)/(a)(7) procedure description. Return structured content only; the server owns formatting and enclosures.`,
             },
           ],
         }];
@@ -366,11 +400,11 @@ export const handler = async (event) => {
             {
               type: 'text',
               text: bureauResponse
-                ? `Today: ${today()}\nClient: ${letter.client_name}\nBureau target: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 3 BUREAU DISPUTE LETTER (normalized text):\n${priorLetterText}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`
-                : `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nEXHIBIT A — PHASE 1 DISPUTE LETTER (normalized text):\n${priorLetterText}\n\nEXHIBIT B — FURNISHER RESPONSE${pageNote}`,
+                ? `Today: ${today()}\nExpected sender: ${letter.phase || ''}\nRelated account suffix: ${letter.account_id || ''}\n\nBUREAU RESPONSE DOCUMENT${pageNote}`
+                : `Today: ${today()}\nExpected sender: ${letter.furnisher}\nRelated account suffix: ${letter.account_id || ''}\n\nFURNISHER RESPONSE DOCUMENT${pageNote}`,
             },
             ...pageBlocks,
-            { type: 'text', text: bureauResponse ? 'Perform the bureau-response staff review analysis.' : 'Perform forensic furnisher-response analysis only. Do not draft a follow-up letter.' },
+            { type: 'text', text: 'Extract only the response statements and document-quality facts into the extraction schema. Do not compare them with Exhibit A and do not classify or evaluate the response.' },
           ],
         }];
       }
@@ -381,7 +415,7 @@ export const handler = async (event) => {
     await updateJob({
       stage: isBureauFollowUp
         ? 'Drafting bureau follow-up letter'
-        : (isBureauResponse ? 'Analyzing bureau response against prior dispute' : 'Analyzing response against prior demands'),
+        : (isBureauResponse ? 'Extracting bureau response evidence' : 'Extracting furnisher response evidence'),
     }, true);
 
     // Response review remains detailed. Letter drafting now occurs only after
@@ -395,15 +429,13 @@ export const handler = async (event) => {
       const params = {
         model: MODEL,
         max_tokens: isBureauFollowUp ? 24000 : (isBureauResponse ? 12000 : 16000),
-        system: isBureauFollowUp ? BUREAU_FOLLOW_UP_SYSTEM : (isBureauResponse ? BUREAU_SYSTEM : FURNISHER_SYSTEM),
+        system: isBureauFollowUp ? BUREAU_FOLLOW_UP_SYSTEM : RESPONSE_EXTRACTION_SYSTEM,
         messages: modelMessages,
         output_config: {
           effort,
           format: {
             type: 'json_schema',
-            schema: isBureauFollowUp
-              ? BUREAU_FOLLOW_UP_SCHEMA
-              : (isBureauResponse ? BUREAU_RESPONSE_SCHEMA : PHASE2_SCHEMA),
+            schema: isBureauFollowUp ? BUREAU_FOLLOW_UP_SCHEMA : RESPONSE_EXTRACTION_SCHEMA,
           },
         },
       };
@@ -457,8 +489,25 @@ export const handler = async (event) => {
       return { parsed: JSON.parse(text), usage };
     };
 
-    let { parsed: analysis, usage: u } = await runModel(messages);
-    if (isBureauFollowUp) analysis = await renderFollowUpLetter(analysis);
+    let analysis;
+    let u = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+    if (job.kind === 'non_response') {
+      analysis = buildNonResponseAnalysis(priorDemands, {
+        mailedDate: mailedDateOverride || letter.mailed_date || null,
+        responseDueAt: letter.response_due_at || null,
+      });
+    } else {
+      const extracted = await runModel(messages);
+      u = extracted.usage;
+      if (isBureauFollowUp) {
+        analysis = await renderFollowUpLetter(extracted.parsed);
+      } else {
+        await updateJob({ stage: 'Applying deterministic response rules' }, true);
+        analysis = isBureauResponse
+          ? evaluateBureauResponse(priorDemands, extracted.parsed)
+          : evaluateFurnisherResponse(priorDemands, extracted.parsed);
+      }
+    }
     const MAX_LINT_ATTEMPTS = 3;
 
     const mergeUsage = (next) => {
@@ -482,7 +531,12 @@ export const handler = async (event) => {
       );
       // Up to 2 conversational rewrites (3 total attempts) — matches Phase 1.
       for (let attempt = 1; attempt < MAX_LINT_ATTEMPTS; attempt++) {
-        const citationProblems = collectBureauFollowUpProblems(analysis.letterHtml);
+        const citationProblems = [
+          ...collectBureauFollowUpProblems(analysis.letterHtml),
+          ...unauthorizedFieldCitations(analysis.letterHtml, {
+            findings: (authorizedFollowUpFindings || []).map((item) => ({ ...item, field: item.field || item.issue, outcome: 'FLAG' })),
+          }),
+        ];
         if (!citationProblems.length) break;
         console.warn(`[phase2] bureau_follow_up production lint failed (attempt ${attempt}); requesting rewrite`, citationProblems);
         const rewriteMessages = [
@@ -527,7 +581,13 @@ export const handler = async (event) => {
     if (isBureauFollowUp) {
       const html = analysis && analysis.letterHtml;
       const bureau = (analysis && analysis.bureau) || bureauFromPhase(letter.phase) || 'bureau';
-      for (const p of collectBureauFollowUpProblems(html)) {
+      const productionProblems = [
+        ...collectBureauFollowUpProblems(html),
+        ...unauthorizedFieldCitations(html, {
+          findings: (authorizedFollowUpFindings || []).map((item) => ({ ...item, field: item.field || item.issue, outcome: 'FLAG' })),
+        }),
+      ];
+      for (const p of productionProblems) {
         blockIssues.push(`The generated ${bureau} follow-up letter failed production-safety lint: ${p}`);
       }
     }

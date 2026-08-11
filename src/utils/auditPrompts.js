@@ -3,6 +3,7 @@
 // reportText.js (also dependency-free) so Netlify's bundler and the browser
 // both consume it unchanged.
 import { MAX_REPORT_CHARS, decodeBase64Utf8, htmlToText } from './reportText.js';
+import { bureauExtractionPrompt, combinedExtractionPrompt } from '../prompts/extractionPrompts.js';
 
 export const todayLong = () =>
   new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -44,18 +45,15 @@ function chunkNoteForAudit(chunkMeta) {
 }
 
 export function combinedAuditPrompt(t, chunkMeta = null) {
-  return `AUDIT_JSON_MODE\n\nToday is ${t}. Perform a full forensic Metro 2 and FCRA audit of the attached three-bureau credit report. Return the complete JSON object per the schema in your instructions. Identify every violation. Classify accounts A, B, or C. Rank into Batch 1 top 5 and Batch 2 remaining.${chunkNoteForAudit(chunkMeta)}\n\nFor personalInfo: extract every former/alternate address, every name variant, every former employer, the client's date of birth (dateOfBirth, format MM/DD/YYYY if shown), their primary phone number (phone), and their current/primary address (currentAddress) as shown in the personal information section of the report. If a field is not present, return null.\n\nOutput JSON only. No prose. No code fences.\n\nIMPORTANT — MyFICO TEXT FORMAT PARSING RULES: If this report is in MyFICO plain text format, account data is presented in three columns (Equifax, TransUnion, Experian) separated by spaces. Dashes (–) mean the bureau does not report that field. For Balance fields formatted as "Balance – – $1,234" extract $1,234 as the balance. For fields showing three values like "Balance $1,200 $1,200 $1,234" extract the highest or most recent non-zero value. Never report $0 balance unless ALL three columns explicitly show $0. Account names are often split across multiple lines — reconstruct the full furnisher name from context.`;
+  return combinedExtractionPrompt(chunkMeta);
 }
 
 export function singleBureauAuditPrompt(t, bureau, chunkMeta = null) {
-  return `AUDIT_JSON_MODE\n\nToday is ${t}. Bureau: ${bureau} only. Perform a forensic Metro 2 and FCRA audit. No cross-bureau comparisons possible. Return complete JSON per standard schema.${chunkNoteForAudit(chunkMeta)} JSON only.`;
+  return bureauExtractionPrompt(bureau, chunkMeta);
 }
 
 export function bureauParsePrompt(t, bureau, chunkMeta = null) {
-  const chunkNote = chunkMeta && chunkMeta.chunkCount > 1
-    ? `\n\nCHUNK NOTE: This PDF is pages ${chunkMeta.startPage}–${chunkMeta.endPage} of ${chunkMeta.totalPages} (part ${chunkMeta.index + 1}/${chunkMeta.chunkCount}). Extract every account, inquiry, public record, and personal-info item visible in THESE pages only. Do not invent content from missing pages. Accounts may be incomplete at chunk boundaries — extract what is present; later chunks will be merged.`
-    : '';
-  return `BUREAU_AUDIT_JSON_MODE\n\nToday is ${t}. Bureau: ${bureau}.${chunkNote}\n\nParse this single-bureau credit report. Extract client info, score, every account, every public record (like bankruptcies/judgments), every hard inquiry, and every personal information variant (former addresses, name variants, former employers) shown in the report.\n\nFor accounts and public records, extract: furnisher, account number (masked), type, status, balance, pastDue, lastPaymentDate, dofd, paymentHistory, remarks, Metro 2 violations (field, currentValue, expectedValue, reason), accountClassification (A/B/C).\n\nFor inquiries, extract every hard inquiry listed: furnisher name, date of inquiry, and type if stated (e.g. 'Individual', 'Joint', 'Promotional'). Do not omit any inquiry regardless of age.\n\nFor personalInfo, extract: every former/alternate address (formerAddresses), every name variant (nameVariants), every former employer (formerEmployers), the client's date of birth shown in the personal information section (dateOfBirth, format MM/DD/YYYY), their primary phone number (phone), and their current/primary address as listed in personal information (currentAddress). Return null for any field not found.\n\nOutput JSON only:\n{"bureau":"${bureau}","client":{"name":"","address":"","score":0},"accounts":[{"furnisher":"","accountNumber":"","type":"","status":"","balance":0,"pastDue":0,"lastPaymentDate":"","dofd":"","paymentHistory":"","accountClassification":"A","violations":[{"field":"","currentValue":"","expectedValue":"","reason":""}]}],"inquiries":[{"furnisher":"","date":"","type":""}],"personalInfo":{"formerAddresses":[""],"nameVariants":[""],"formerEmployers":[""],"dateOfBirth":null,"phone":null,"currentAddress":null}}`;
+  return bureauExtractionPrompt(bureau, chunkMeta);
 }
 
 export function trimBureau(data) {
@@ -92,5 +90,5 @@ export function accountEnrichmentPrompt(t, accounts) {
 }
 
 export function mergeAuditPrompt(t, eqData, expData, tuData) {
-  return `MERGE_AUDIT_JSON_MODE\n\nToday is ${t}.\n\nMerge these three bureau reports into a unified forensic audit. Match accounts across bureaus. Identify cross-bureau violations. Classify each account A/B/C. Rank top 5 as Batch 1, rest as Batch 2. For the PDF Battle Plan, you MUST populate 'primaryViolation', 'strategy', 'addressStatus' and 'furnisherAddress' for EVERY account. Also merge all hard inquiries and personalInfo data across the bureaus.\n\nData:\n${JSON.stringify({ equifax: trimBureau(eqData), experian: trimBureau(expData), transunion: trimBureau(tuData) }, null, 2)}\n\nJSON only.`;
+  return `MODEL MERGE DISABLED. Preserve these bureau extractions as data only; deterministicAudit.js must perform matching and evaluation.\n${JSON.stringify({ equifax: trimBureau(eqData), experian: trimBureau(expData), transunion: trimBureau(tuData) })}`;
 }

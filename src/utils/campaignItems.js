@@ -39,6 +39,11 @@ export function buildCampaignItems(auditRecord) {
   let sort = 0;
   for (const account of audit.accounts || []) {
     if (!account.clientAccountId) continue;
+    // New deterministic audits retain all extracted accounts for provenance,
+    // including accounts with review-only observations. Those are not valid
+    // dispute targets until a rule emits at least one authorized FLAG. Legacy
+    // audit snapshots remain unchanged for backward compatibility.
+    if (Array.isArray(account.findings) && !(account.violations || []).length) continue;
     items.push({
       item_kind: 'account',
       source_key: `account:${account.clientAccountId}`,

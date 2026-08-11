@@ -182,7 +182,18 @@ export async function buildStoredLetterContext(db, letter) {
         balance: account.balance ?? null,
         bureaus: account.bureaus || [],
         primaryViolation: account.primaryViolation || null,
-        violations: account.violations || [],
+        violations: (account.violations || []).filter((finding) => !finding.outcome || finding.outcome === 'FLAG'),
+        deterministicFindings: (account.findings || [])
+          .filter((finding) => finding.outcome === 'FLAG')
+          .map((finding) => ({
+            ruleId: finding.ruleId,
+            field: finding.field,
+            issue: finding.issue,
+            currentlyReports: finding.currentlyReports,
+            shouldReport: finding.shouldReport,
+            source: finding.source,
+            evidenceRefs: finding.evidenceRefs || [],
+          })),
         strategy: account.strategy || null,
       },
       priorEvidence,
@@ -205,7 +216,7 @@ Strategy: ${STYLE[style] || STYLE.forensic}${staffInstructions ? `\nStored staff
 Authoritative server-loaded evidence:
 ${JSON.stringify(evidence, null, 2)}
 
-Use only the authoritative evidence above. Produce the structured content object now.`;
+Use only the authoritative evidence above. When deterministicFindings is present, it is the complete authorized issue set: do not create, delete, reclassify, prioritize, or correct a finding. Produce the structured content object now.`;
 
   return {
     client,

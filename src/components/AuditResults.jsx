@@ -1167,7 +1167,10 @@ function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = n
               {account.violations?.map((v, i) => (
                 <div key={i} className="border border-border rounded p-3">
                   <div className="flex items-start justify-between mb-1">
-                    <div className="ccc-mono text-[11px] text-navy font-medium">{v.field}</div>
+                    <div>
+                      <div className="ccc-mono text-[11px] text-navy font-medium">{v.field}</div>
+                      {v.ruleId && <div className="ccc-mono text-[9px] text-ink-faint mt-0.5">{v.ruleId}</div>}
+                    </div>
                     <SeverityBar severity={v.severity} />
                   </div>
                   <div className="text-[12px] text-ink mt-1">{v.issue}</div>
@@ -1188,6 +1191,23 @@ function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = n
               ))}
             </div>
           </div>
+
+          {(account.findings || []).some((finding) => finding.outcome === 'REVIEW_REQUIRED') && (
+            <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: 16 }}>
+              <div className="text-[10px] uppercase tracking-wider font-medium mb-2" style={{ color: '#B45309' }}>
+                Staff Review Required
+              </div>
+              <div className="space-y-2">
+                {(account.findings || []).filter((finding) => finding.outcome === 'REVIEW_REQUIRED').map((finding, index) => (
+                  <div key={`${finding.ruleId || 'review'}-${index}`} className="text-[11px] text-ink">
+                    <div className="ccc-mono font-medium">{finding.ruleId}</div>
+                    <div className="text-ink-muted mt-0.5">{finding.issue}</div>
+                    <div className="text-[10px] text-ink-faint mt-0.5">This item is not authorized for letter generation unless staff supplies the missing context and a deterministic rule promotes it.</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: 16 }}>
             <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#15803D', fontWeight: 600, marginBottom: 6 }}>The Game Plan — In Plain English</div>

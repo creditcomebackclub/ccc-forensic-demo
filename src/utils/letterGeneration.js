@@ -1,5 +1,36 @@
 export const LETTER_GENERATING_PLACEHOLDER = 'GENERATING...';
 
+const FIELD_NUMBER_PATTERN = /\b(?:field|fields)\s*(17A|17B|\d{1,2})(?:\s*\/\s*(17A|17B|\d{1,2}))?/gi;
+
+function citedFieldNumbers(value) {
+  const out = new Set();
+  for (const match of String(value || '').matchAll(FIELD_NUMBER_PATTERN)) {
+    if (match[1]) out.add(match[1].toUpperCase());
+    if (match[2]) out.add(match[2].toUpperCase());
+  }
+  return out;
+}
+
+/**
+ * Deterministic finding authorization guard. Legacy accounts without a
+ * findings array are intentionally exempt so historical letters retain their
+ * existing generation contract.
+ */
+export function unauthorizedFieldCitations(html, account, { additionalAllowed = [] } = {}) {
+  if (!Array.isArray(account?.findings)) return [];
+  const authorized = account.findings.filter((finding) => finding?.outcome === 'FLAG');
+  const allowed = new Set();
+  for (const finding of authorized) {
+    for (const number of citedFieldNumbers(finding.field)) allowed.add(number);
+  }
+  for (const number of additionalAllowed) allowed.add(String(number).toUpperCase());
+  const problems = [];
+  for (const number of citedFieldNumbers(html)) {
+    if (!allowed.has(number)) problems.push(`Cites Metro 2 Field ${number}, which is not present in the authorized deterministic findings.`);
+  }
+  return problems;
+}
+
 const REQUIRED_GENERATED_SECTIONS = [
   ['signature-block', 'signature block'],
   ['mail-notation', 'certified-mail notation'],

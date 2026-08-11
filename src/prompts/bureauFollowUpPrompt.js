@@ -33,9 +33,10 @@ ${PHASE3_XB_DEMAND_RULES}
 ${BUREAU_FOLLOW_UP_ENCLOSURE_RULES}
 
 SCOPE RULES:
-- Target ONLY the unresolved material issues from issueAnalysis (outcome IGNORED, PARTIALLY_ADDRESSED, or UNCLEAR with a concrete gap).
-- Do NOT re-litigate issues marked ADDRESSED unless the bureau's claimed correction is contradicted by the response itself.
-- Do NOT re-litigate an issue whose analysis notes identify the prior premise as legally or technically unsupported. Correct or omit bad premises from the prior letter.
+- The user message supplies an AUTHORIZED REVIEWED FINDINGS array produced before narrative generation. It is authoritative.
+- Target ONLY those authorized findings. Do not create, delete, reclassify, correct, rank, or substitute a finding.
+- The original letter and response are exhibits and drafting context; they do not authorize an additional issue.
+- If the authorized array is empty, return neutral follow-up content requesting the statutory procedure description without inventing an accuracy issue.
 - If classification is PARTIAL_CORRECTION, acknowledge what was addressed briefly, then focus demands on what remains.
 - If classification is VERIFIED_WITHOUT_SUBSTANCE, challenge the lack of substantive investigation / failure to address the specific Phase 3 issues.
 - Do not draft CFPB/AG complaints. Do not invent enclosures the client has not provided.

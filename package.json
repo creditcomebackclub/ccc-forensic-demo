@@ -21,7 +21,8 @@
     "test:service-agreements": "node scripts/test-service-agreements.mjs",
     "test:client-campaigns": "node scripts/test-client-campaigns.mjs",
     "test:calendly": "node scripts/test-calendly-integration.mjs",
-    "test:claude-hardening": "node scripts/test-claude-hardening.mjs"
+    "test:claude-hardening": "node scripts/test-claude-hardening.mjs",
+    "test:deterministic-pipeline": "node scripts/test-deterministic-pipeline.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

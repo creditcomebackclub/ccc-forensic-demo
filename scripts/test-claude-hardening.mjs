@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { generatedLetterValidationError } from '../src/utils/letterGeneration.js';
+import { generatedLetterValidationError, unauthorizedFieldCitations } from '../src/utils/letterGeneration.js';
 import { buildPriorRoundEvidenceDigest, priorLetterPlainText } from '../src/utils/roundEvidence.js';
 import { LETTER_CONTENT_SCHEMA, renderStructuredLetter } from '../src/utils/structuredLetter.js';
 
@@ -30,6 +30,13 @@ const html = renderStructuredLetter({
 });
 
 assert.equal(generatedLetterValidationError(html, { requireSections: true }), null);
+assert.deepEqual(unauthorizedFieldCitations('Field 25 is disputed. Field 21 is also disputed.', {
+  findings: [{ outcome: 'FLAG', field: 'Field 25 (Date of First Delinquency)' }],
+}), ['Cites Metro 2 Field 21, which is not present in the authorized deterministic findings.']);
+assert.deepEqual(unauthorizedFieldCitations('Field 25 is disputed.', { violations: [] }), [], 'legacy accounts remain compatible');
+assert.deepEqual(unauthorizedFieldCitations('Field 20 must be reported.', {
+  findings: [{ outcome: 'FLAG', field: 'Field 25 (Date of First Delinquency)' }],
+}, { additionalAllowed: ['20'] }), []);
 assert.match(html, /<div class="date-line">/);
 assert.match(html, /<div class="sender-block">Alex Example<br>100 Main Street/);
 assert.match(html, /<div class="recipient-block">Example Bank<br>200 Bank Way/);

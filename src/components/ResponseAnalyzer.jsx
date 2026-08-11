@@ -9,12 +9,13 @@ import { updateResponseEvidenceReview } from '../utils/responseEvidence.js';
 import RoundCloseModal from './RoundCloseModal.jsx';
 
 const CLASSIFICATION_CONFIG = {
-  FORM_LETTER: { label: 'Form Letter — Inadequate Investigation', tone: 'red' },
-  STATEMENT_COPY: { label: 'Statement Copies Only — No Source Substantiation', tone: 'red' },
-  PARTIAL_FIX: { label: 'Partial Fix — Remaining Violations Actionable', tone: 'amber' },
+  FORM_LETTER: { label: 'No Demand-Specific Statement Matched', tone: 'red' },
+  STATEMENT_COPY: { label: 'Documents Supplied — No Substantive Match Found', tone: 'red' },
+  PARTIAL_FIX: { label: 'Some Demands Matched — Others Need Review', tone: 'amber' },
   WRONG_FRAMEWORK: { label: 'Wrong Framework — Treated as e-OSCAR Dispute', tone: 'red' },
   NON_RESPONSE: { label: 'Non-Response — Window Closed', tone: 'red' },
-  ADEQUATE: { label: 'Adequate Response — Violations Corrected', tone: 'green' },
+  ADEQUATE: { label: 'All Demands Matched — Verify Claimed Results', tone: 'green' },
+  INSUFFICIENT_EVIDENCE: { label: 'Insufficient Evidence — Staff Review Required', tone: 'amber' },
 };
 
 const OUTCOME_CONFIG = {
@@ -226,7 +227,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               <div className="rounded p-4 border mb-5" style={{ backgroundColor: '#FEF2F2', borderColor: '#FECACA' }}>
                 <div className="text-[11px] uppercase tracking-wider font-medium text-red-600 mb-1">Non-Response Confirmed</div>
                 <div className="text-[13px] text-ink font-medium">{letter.furnisher} failed to respond within the 30-day statutory window</div>
-                <div className="text-[12px] text-ink-muted mt-1">Claude will create a durable nonresponse analysis without inventing an automatic §1681s-2(b) violation. Staff review determines the next action.</div>
+                <div className="text-[12px] text-ink-muted mt-1">The recorded dates and response window will create a deterministic nonresponse record. Staff review determines the next action.</div>
               </div>
               {letter.mailedDate && (
                 <div className="text-[12px] text-ink-muted mb-4">
@@ -248,7 +249,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               <p className="text-[13px] text-ink-muted mb-5 max-w-xl">
                 Upload the furnisher response. If it's multiple pages or photos, add them all —
                 they'll be analyzed together as one document. The original Phase 1 letter is Exhibit A — attached automatically.
-                Claude will perform the forensic response analysis. Any later letter requires a reviewed disposition and explicit round target.
+                AI extracts only the response&apos;s visible statements. Deterministic rules compare them with the original demands, and any later letter requires a reviewed disposition and explicit round target.
               </p>
               <div
                 onDrop={handleDrop}
@@ -281,7 +282,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               {error && <div className="mt-4 text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
               {analyzing && (
                 <div className="mt-6 text-center">
-                  <div className="text-[13px] text-ink-muted mb-1">Analyzing response against Phase 1 demands…</div>
+                  <div className="text-[13px] text-ink-muted mb-1">Extracting response evidence, then applying deterministic demand rules…</div>
                   <div className="text-[11px] text-ink-faint">Applying the response and document-quality standards{progressTokens > 0 ? ` · ~${progressTokens.toLocaleString()} tokens` : ''}</div>
                 </div>
               )}
@@ -317,7 +318,10 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
                   </div>
                   {(analysis.demandAnalysis || []).map((d, i) => (
                     <div key={i} className="grid grid-cols-12 px-4 py-2 border-t border-border" style={{ backgroundColor: i % 2 === 0 ? '#FFFFFF' : '#F9FAFB' }}>
-                      <div className="col-span-6 text-[12px] text-ink pr-3">{d.demand}</div>
+                      <div className="col-span-6 text-[12px] text-ink pr-3">
+                        <div>{d.demand}</div>
+                        {d.ruleId && <div className="ccc-mono text-[9px] text-ink-faint mt-0.5">{d.demandId || 'Demand'} · {d.ruleId}</div>}
+                      </div>
                       <div className="col-span-2">
                         <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium"
                           style={{ backgroundColor: (OUTCOME_CONFIG[d.outcome]?.color || '#666') + '20', color: OUTCOME_CONFIG[d.outcome]?.color || '#666' }}>
