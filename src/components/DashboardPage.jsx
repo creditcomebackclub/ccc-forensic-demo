@@ -3,7 +3,7 @@ import { AlertCircle, TrendingUp, Clock, Zap, Star, Activity, FileText, Mail, Ch
 import { listClientSummaries, updateLetter } from '../utils/storage';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
-import { calculateDeletionShare, countOngoingDisputeClients, summarizeStructuredRoundWorkload } from '../utils/dashboardMetrics.js';
+import { calculateDeletionShare, countOngoingDisputeClients, selectVipClients, summarizeStructuredRoundWorkload } from '../utils/dashboardMetrics.js';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_HOURS = 24;
@@ -92,7 +92,7 @@ function computeDashboard(clients) {
   const actions = [];
   const windowCountdown = [];
   const recentActivity = [];
-  const vipClients = clients.filter((c) => c.isVip);
+  const vipClients = selectVipClients(clients);
   let awaiting = 0, escalate = 0, phase3 = 0, phase4 = 0, readyForPhase4 = 0;
   const { openDisputeRounds, activeRoundClients } = summarizeStructuredRoundWorkload(clients);
   const ongoingDisputeClients = countOngoingDisputeClients(clients);

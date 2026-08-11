@@ -28,6 +28,10 @@ export function countOngoingDisputeClients(clients = []) {
   }).length;
 }
 
+export function selectVipClients(clients = []) {
+  return clients.filter((client) => client?.status !== 'lead' && client?.isVip === true);
+}
+
 export function calculateDeletionShare(deletedOutcomes, recordedOutcomes) {
   if (!recordedOutcomes) return null;
   return Math.round((deletedOutcomes / recordedOutcomes) * 100);

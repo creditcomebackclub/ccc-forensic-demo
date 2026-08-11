@@ -7,7 +7,7 @@ import { canMailLetter, generatedLetterValidationError, letterGenerationState } 
 import { buildKeepOnFileIdentity, clientForLetterPrompt } from '../src/utils/letterPromptData.js';
 import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../src/utils/letterMailing.js';
 import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../src/utils/campaignMailing.js';
-import { calculateDeletionShare, countOngoingDisputeClients, summarizeStructuredRoundWorkload } from '../src/utils/dashboardMetrics.js';
+import { calculateDeletionShare, countOngoingDisputeClients, selectVipClients, summarizeStructuredRoundWorkload } from '../src/utils/dashboardMetrics.js';
 
 const auditRecord = {
   id: 'audit-1',
@@ -142,6 +142,11 @@ assert.equal(countOngoingDisputeClients([
   { status: 'lead', billingStatus: 'Active', letters: [{}] },
   { status: 'active', billingStatus: 'Active' },
 ]), 3, 'ongoing client count includes active and paused dispute work without counting inactive, graduated, leads, or empty files');
+assert.deepEqual(selectVipClients([
+  { id: 'client-vip', status: 'active', isVip: true },
+  { id: 'lead-vip', status: 'lead', isVip: true },
+  { id: 'client-standard', status: 'active', isVip: false },
+]).map((client) => client.id), ['client-vip'], 'VIP dashboard list excludes records converted back to leads');
 assert.equal(calculateDeletionShare(1, 16), 6, 'deletion share exposes the existing rounded 1-of-16 calculation');
 assert.equal(calculateDeletionShare(0, 0), null, 'deletion share stays empty without a recorded denominator');
 
