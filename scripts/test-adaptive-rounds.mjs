@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { buildPriorRoundLeverageBlock } from '../src/utils/roundEvidence.js';
 import { plainTextToSafeHtml, resolveEmailMergeFields } from '../src/utils/emailMergeFields.js';
 import { letterStatus, responseDeadline, responseWindowDays } from '../src/utils/responseWindow.js';
 import { PHASE2_SCHEMA } from '../src/utils/auditSchemas.js';
 import { getLetterSystemPrompt } from '../src/prompts/letterPrompt.js';
+import { ensureCertifiedMailNotation, generatedLetterValidationError } from '../src/utils/letterGeneration.js';
 
 function ok(name, fn) {
   fn();
@@ -59,6 +61,38 @@ ok('Type-C sibling prompts keep FDCPA and FCRA duties separate', () => {
 ok('bureau prompt excludes FDCPA validation', () => {
   const bureau = getLetterSystemPrompt('Aggressive', 'bureau', null);
   assert.match(bureau, /Never include an FDCPA validation letter addressed to a CRA/i);
+});
+
+ok('bureau round picker exposes only audit-confirmed bureaus with dated context', () => {
+  const picker = readFileSync(new URL('../src/components/StartRoundPanel.jsx', import.meta.url), 'utf8');
+  const resolver = readFileSync(new URL('../src/utils/roundTargets.js', import.meta.url), 'utf8');
+  assert.match(picker, /Only those confirmed bureaus are available below/);
+  assert.match(picker, /activeBureaus\.map\(\(bureau\)/);
+  assert.match(picker, /Checking this account against the latest audit/);
+  assert.match(resolver, /select\('id,report_date,saved_at,audit'\)/);
+  assert.match(resolver, /auditReportDate: auditRecord\?\.report_date/);
+});
+
+ok('missing certified-mail notation is repaired deterministically and idempotently', () => {
+  const input = '<!DOCTYPE html><html><body><div class="signature-block">Alex</div><div class="enclosures">Prior letter</div></body></html>';
+  const repaired = ensureCertifiedMailNotation(input);
+  assert.match(repaired, /class="mail-notation">Sent via Certified Mail\.<\/div>/);
+  assert.equal(generatedLetterValidationError(repaired, { requireSections: true }), null);
+  assert.equal(ensureCertifiedMailNotation(repaired), repaired);
+});
+
+ok('standalone adaptive rounds expose a safe failed-draft retry path', () => {
+  const panel = readFileSync(new URL('../src/components/StartRoundPanel.jsx', import.meta.url), 'utf8');
+  const workboard = readFileSync(new URL('../src/components/client-detail/LetterWorkboard.jsx', import.meta.url), 'utf8');
+  const api = readFileSync(new URL('../src/utils/api.js', import.meta.url), 'utf8');
+  assert.match(panel, /Retry \$\{failedOpenLetters\.length\} failed draft/);
+  assert.match(workboard, />Open round<\/button>/);
+  assert.match(api, /export async function retryFailedRoundLetters/);
+  assert.match(api, /\.is\('mailed_date', null\)/);
+  assert.match(api, /\.is\('lob_id', null\)/);
+  assert.match(api, /\.like\('html', 'ERROR:%'\)/);
+  assert.match(api, /later-round retry requires its reviewed prior-letter evidence link/);
+  assert.match(api, /below 8,000 output tokens/);
 });
 
 ok('known email merge fields render', () => {

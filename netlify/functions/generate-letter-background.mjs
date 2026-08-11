@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { getLetterSystemPrompt } from '../../src/prompts/letterPrompt.js';
 import { validateFieldCitations, autoFixFieldCitations, assertMapFullySourced } from '../../src/constants/metro2Fields.js';
-import { generatedLetterValidationError } from '../../src/utils/letterGeneration.js';
+import { ensureCertifiedMailNotation, generatedLetterValidationError } from '../../src/utils/letterGeneration.js';
 import { hasInjectedSignature, injectSignatureImage } from '../../src/utils/signatureInjection.js';
 import { requireStaff } from './_requireAuth.cjs';
 
@@ -185,7 +185,7 @@ export const handler = async (event) => {
         }
         const rawText = msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
         const htmlMatch = rawText.match(/<!DOCTYPE[\s\S]*<\/html>/i) || rawText.match(/<html[\s\S]*<\/html>/i);
-        const candidateHtml = htmlMatch ? htmlMatch[0] : null;
+        const candidateHtml = htmlMatch ? ensureCertifiedMailNotation(htmlMatch[0]) : null;
 
         if (!candidateHtml || candidateHtml.trim().length < 100) throw new Error('Generated letter is empty or too short');
         const structureError = generatedLetterValidationError(candidateHtml, { requireSections: true });

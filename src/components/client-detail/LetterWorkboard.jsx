@@ -81,6 +81,7 @@ export default function LetterWorkboard({
             ? groupLetters.find((letter) => letter.clientAccountId === latestRound.client_account_id)
             : groupLetters.find((letter) => letter.clientAccountId);
           const mayStart = !!startLetter && (!latestRound || (latestRound.status === 'closed' && latestRound.final_disposition === 'next_round'));
+          const mayOpenRound = !!startLetter && latestRound?.status === 'open';
           return (
           <div
             key={furnisher}
@@ -113,6 +114,7 @@ export default function LetterWorkboard({
                   </span>
                 ))}
                 {mayStart && <button type="button" onClick={() => onStartRound?.(startLetter)} className="text-[10px] uppercase tracking-wider font-medium ml-auto" style={{ color: T.navy }}>Start next round</button>}
+                {mayOpenRound && <button type="button" onClick={() => onStartRound?.(startLetter)} className="text-[10px] uppercase tracking-wider font-medium ml-auto" style={{ color: T.navy }}>Open round</button>}
               </div>
             )}
             <div className="px-4 py-1">

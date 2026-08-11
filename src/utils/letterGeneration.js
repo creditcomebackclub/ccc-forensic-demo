@@ -12,6 +12,21 @@ function hasClass(html, className) {
 }
 
 /**
+ * Certified-mail notation is fixed product copy, not model-authored legal
+ * analysis. Repairing this mechanical omission is safer than discarding an
+ * otherwise valid letter and asking the model to regenerate it.
+ */
+export function ensureCertifiedMailNotation(letterOrHtml) {
+  const html = typeof letterOrHtml === 'string' ? letterOrHtml : letterOrHtml?.html;
+  const value = String(html || '');
+  if (!value || hasClass(value, 'mail-notation')) return value;
+  const notation = '<div class="mail-notation">Sent via Certified Mail.</div>';
+  if (/<\/body>/i.test(value)) return value.replace(/<\/body>/i, `${notation}</body>`);
+  if (/<\/html>/i.test(value)) return value.replace(/<\/html>/i, `${notation}</html>`);
+  return value + notation;
+}
+
+/**
  * Detect output that stopped mid-document. Legacy fragment letters are left
  * alone; a value that declares itself to be an HTML document must actually
  * close, and newly generated letters may opt into the required closing

@@ -573,7 +573,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
 
       {generation !== 'ready' && (
         <div className="mt-2 text-[10px] rounded-lg px-3 py-2" style={{ color: generation === 'failed' ? '#B91C1C' : T.muted, background: generation === 'failed' ? '#FEF2F2' : '#F3F4F6', border: `1px solid ${generation === 'failed' ? '#FECACA' : T.border}` }}>
-          {generation === 'failed' ? `${generationErrorMessage(l)} Retry this route from the Campaign tab.` : 'Claude is still generating this letter. Mailing remains blocked until the final draft is saved.'}
+          {generation === 'failed' ? `${generationErrorMessage(l)} ${l.campaignRouteId ? 'Retry this route from the Campaign tab.' : 'Open this account round to retry only the failed draft.'}` : 'Claude is still generating this letter. Mailing remains blocked until the final draft is saved.'}
         </div>
       )}
 

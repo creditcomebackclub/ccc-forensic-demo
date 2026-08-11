@@ -38,6 +38,26 @@ const isBackgroundPollTimeout = (error) => /timed out.*background/i.test(String(
 
 const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
+function adaptiveRoundJob({ id, account, client, targetType, targetBureau = null, disputeBasis = null, roundNumber, priorBlocks }) {
+  const target = targetType === 'bureau' ? BUREAU_LABEL[targetBureau] : account.furnisher;
+  let purpose;
+  if (disputeBasis === 'FDCPA') {
+    purpose = 'Generate ONLY the standalone FDCPA §1692g(b) Debt Validation Demand. Do not include an FCRA direct dispute in this sibling letter.';
+  } else if (targetType === 'bureau') {
+    purpose = `Generate ONLY one CRA dispute addressed to ${target}. Apply §1681i framing and never generate an FDCPA validation letter.`;
+  } else {
+    purpose = 'Generate ONLY the FCRA/Regulation V direct furnisher dispute. Use the established 16-step structure.';
+  }
+  const baseData = JSON.stringify({ account, client: clientForLetterPrompt(client), roundNumber, targetType }, null, 2);
+  return {
+    id,
+    account,
+    targetType,
+    generateSummary: true,
+    instructions: `LETTER_HTML_MODE\n\nToday is ${today()}. Use this exact date.\nRound: ${roundNumber}\nExplicit recipient: ${target}\n\n${purpose}\n\nData:\n${baseData}\n\n${priorBlocks || 'This is Round 1; there is no prior-round evidence.'}\n\nKeep the complete document concise and comfortably below 8,000 output tokens. Prioritize a finished closing, signature, certified-mail notation, and enclosures over repetition. Output complete HTML only. No prose or fences. Do not include a tracking-number placeholder.`,
+  };
+}
+
 // Letter generation is a staff-only, paid server operation. The endpoint
 // verifies the role itself; this only forwards the current Supabase session
 // so the established staff UI can authenticate that request.
@@ -177,32 +197,16 @@ export async function generateRoundLetter({
     priorResponseClassification: source.evidence?.analysis?.classification,
     priorResponseSummary: source.evidence?.analysis?.summary,
   })).join('\n\n---\n\n');
-  const t = today();
-  const baseData = JSON.stringify({
+  const jobs = ids.map((id, index) => adaptiveRoundJob({
+    id,
     account,
-    client: clientForLetterPrompt(client),
-    roundNumber: started.round_number,
+    client,
     targetType,
-  }, null, 2);
-  const jobs = ids.map((id, index) => {
-    const spec = letterSpecs[index];
-    const target = targetType === 'bureau' ? BUREAU_LABEL[spec.target_bureau] : account.furnisher;
-    let purpose;
-    if (spec.dispute_basis === 'FDCPA') {
-      purpose = 'Generate ONLY the standalone FDCPA §1692g(b) Debt Validation Demand. Do not include an FCRA direct dispute in this sibling letter.';
-    } else if (targetType === 'bureau') {
-      purpose = `Generate ONLY one CRA dispute addressed to ${target}. Apply §1681i framing and never generate an FDCPA validation letter.`;
-    } else {
-      purpose = 'Generate ONLY the FCRA/Regulation V direct furnisher dispute. Use the established 16-step structure.';
-    }
-    return {
-      id,
-      account,
-      targetType,
-      generateSummary: true,
-      instructions: `LETTER_HTML_MODE\n\nToday is ${t}. Use this exact date.\nRound: ${started.round_number}\nExplicit recipient: ${target}\n\n${purpose}\n\nData:\n${baseData}\n\n${priorBlocks || 'This is Round 1; there is no prior-round evidence.'}\n\nOutput complete HTML only. No prose or fences. Do not include a tracking-number placeholder.`,
-    };
-  });
+    targetBureau: letterSpecs[index].target_bureau || null,
+    disputeBasis: letterSpecs[index].dispute_basis || null,
+    roundNumber: started.round_number,
+    priorBlocks,
+  }));
 
   const response = await fetch('/.netlify/functions/generate-letter-background', {
     method: 'POST',
@@ -223,6 +227,92 @@ export async function generateRoundLetter({
       roundNumber: started.round_number,
     })),
   };
+}
+
+export async function retryFailedRoundLetters({ account, client, roundId }) {
+  if (!account?.clientAccountId || !client?.id || !roundId) throw new Error('The open round is missing its stable account identity.');
+  const { data: roundLetters, error: lettersError } = await supabase.from('letters')
+    .select('id,html,target_type,target_bureau,dispute_basis,round_number,mailed_date,lob_id,client_account_id')
+    .eq('round_id', roundId)
+    .eq('client_account_id', account.clientAccountId);
+  if (lettersError) throw lettersError;
+  const failed = (roundLetters || []).filter((letter) => letterGenerationState(letter) === 'failed' && !letter.mailed_date && !letter.lob_id);
+  if (!failed.length) throw new Error('This round has no failed unmailed drafts to retry.');
+
+  const failedIds = failed.map((letter) => letter.id);
+  const { data: links, error: linksError } = await supabase.from('letter_source_links')
+    .select('letter_id,source_letter_id,response_evidence_id,source_order')
+    .in('letter_id', failedIds)
+    .order('source_order');
+  if (linksError) throw linksError;
+  const linksByLetter = new Map(failedIds.map((id) => [id, []]));
+  for (const link of links || []) linksByLetter.get(link.letter_id)?.push(link);
+
+  const jobs = [];
+  for (const letter of failed) {
+    const sourceInputs = (linksByLetter.get(letter.id) || []).map((link) => ({
+      sourceLetterId: link.source_letter_id,
+      responseEvidenceId: link.response_evidence_id,
+      sourceOrder: link.source_order,
+    }));
+    if (Number(letter.round_number) > 1 && !sourceInputs.length) {
+      throw new Error('A later-round retry requires its reviewed prior-letter evidence link. Nothing was changed.');
+    }
+    const loadedSources = await loadPriorSources(sourceInputs);
+    const priorBlocks = loadedSources.map((source) => buildPriorRoundLeverageBlock({
+      priorTargetType: source.letter.target_type || 'furnisher',
+      nextTargetType: letter.target_type,
+      priorLetterHtml: source.letter.html,
+      priorLetterSummary: source.letter.summary,
+      priorResponseClassification: source.evidence?.analysis?.classification,
+      priorResponseSummary: source.evidence?.analysis?.summary,
+    })).join('\n\n---\n\n');
+    jobs.push(adaptiveRoundJob({
+      id: letter.id,
+      account,
+      client,
+      targetType: letter.target_type,
+      targetBureau: letter.target_bureau,
+      disputeBasis: letter.dispute_basis,
+      roundNumber: letter.round_number,
+      priorBlocks,
+    }));
+  }
+
+  const { data: resetRows, error: resetError } = await supabase.from('letters')
+    .update({ html: 'GENERATING...', summary: null })
+    .in('id', failedIds)
+    .like('html', 'ERROR:%')
+    .is('mailed_date', null)
+    .is('lob_id', null)
+    .select('id');
+  if (resetError) throw resetError;
+  if ((resetRows || []).length !== failedIds.length) throw new Error('One or more failed drafts changed before the retry started. Refresh and try again.');
+
+  let accepted = false;
+  try {
+    const response = await fetch('/.netlify/functions/generate-letter-background', {
+      method: 'POST',
+      headers: await staffJsonHeaders(),
+      body: JSON.stringify({ jobs }),
+    });
+    if (!response.ok) throw new Error('The failed drafts were reset, but regeneration could not start.');
+    accepted = true;
+    const settled = await Promise.allSettled(failedIds.map((id) => pollForLetter(id)));
+    const failures = settled.filter((result) => result.status === 'rejected');
+    if (failures.length) throw new Error(`${failures.length} of ${failedIds.length} retried drafts still failed validation. Refresh the round to review them.`);
+    return settled.map((result, index) => ({ id: failedIds[index], ...result.value }));
+  } catch (error) {
+    if (!accepted) {
+      try {
+        await supabase.from('letters')
+          .update({ html: `ERROR: ${String(error.message || error).slice(0, 900)}` })
+          .in('id', failedIds)
+          .eq('html', 'GENERATING...');
+      } catch (_) {}
+    }
+    throw error;
+  }
 }
 
 const CAMPAIGN_STYLE_INSTRUCTIONS = {

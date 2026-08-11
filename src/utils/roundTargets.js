@@ -10,12 +10,13 @@ export const BUREAU_LABEL = { equifax: 'Equifax', experian: 'Experian', transuni
  */
 export async function resolveActiveBureaus({ clientId, clientName, clientAccountId, accountId, furnisher }) {
   if (!clientId && !clientName) throw new Error('A client identity is required to resolve reporting bureaus.');
-  const query = supabase.from('audits').select('audit').order('saved_at', { ascending: false }).limit(1);
+  const query = supabase.from('audits').select('id,report_date,saved_at,audit').order('saved_at', { ascending: false }).limit(1);
   const { data, error } = clientId
     ? await query.eq('client_id', clientId)
     : await query.eq('client_name', clientName);
   if (error) throw new Error('Could not load the latest audit: ' + error.message);
-  const accounts = data?.[0]?.audit?.accounts || [];
+  const auditRecord = data?.[0] || null;
+  const accounts = auditRecord?.audit?.accounts || [];
   if (!accounts.length) throw new Error('No audit is available for this client.');
 
   let account = null;
@@ -44,5 +45,11 @@ export async function resolveActiveBureaus({ clientId, clientName, clientAccount
 
   const active = [...new Set((account.bureaus || []).map((code) => BUREAU_CODE[code]).filter(Boolean))];
   if (!active.length) throw new Error('The matched account has no positively identified reporting bureau. Nothing was generated.');
-  return { account, activeBureaus: active };
+  return {
+    account,
+    activeBureaus: active,
+    auditId: auditRecord?.id || null,
+    auditReportDate: auditRecord?.report_date || null,
+    auditSavedAt: auditRecord?.saved_at || null,
+  };
 }

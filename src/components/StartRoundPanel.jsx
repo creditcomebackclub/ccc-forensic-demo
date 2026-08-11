@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, FileText, Loader2, ShieldAlert, X } from 'lucide-react';
-import { generateRoundLetter } from '../utils/api.js';
+import { generateRoundLetter, retryFailedRoundLetters } from '../utils/api.js';
+import { letterGenerationState } from '../utils/letterGeneration.js';
 import { BUREAU_LABEL, resolveActiveBureaus } from '../utils/roundTargets.js';
 import { cancelRound, getLatestRound, reopenRound } from '../utils/rounds.js';
 import { resolveSignatureViewUrl } from '../utils/storagePaths.js';
@@ -16,6 +17,13 @@ const reviewLabel = {
   escalated: 'Escalation approved',
 };
 
+function auditDateLabel(value) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return 'the latest saved audit';
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
 export default function StartRoundPanel({ account, client, onClose }) {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -24,6 +32,8 @@ export default function StartRoundPanel({ account, client, onClose }) {
   const [latestRound, setLatestRound] = useState(null);
   const [targetType, setTargetType] = useState(null);
   const [activeBureaus, setActiveBureaus] = useState([]);
+  const [bureauAudit, setBureauAudit] = useState(null);
+  const [bureausLoading, setBureausLoading] = useState(false);
   const [selectedBureaus, setSelectedBureaus] = useState([]);
   const [sources, setSources] = useState([]);
   const [selectedSources, setSelectedSources] = useState([]);
@@ -37,6 +47,22 @@ export default function StartRoundPanel({ account, client, onClose }) {
   const roundAllowsNext = !latestRound || latestRound.status === 'cancelled' || (latestRound.status === 'closed' && latestRound.final_disposition === 'next_round');
   const mayStart = roundAllowsNext && engagementStatus === 'active';
   const needsSources = nextRoundNumber > 1;
+
+  async function refreshOpenRound() {
+    const round = await getLatestRound(account.clientAccountId);
+    setLatestRound(round);
+    if (round?.status !== 'open') {
+      setOpenLetters([]);
+      return round;
+    }
+    const { data, error: letterError } = await supabase.from('letters')
+      .select('id,html,summary,target_type,target_bureau,dispute_basis,round_number,mailed_date,lob_id')
+      .eq('round_id', round.round_id)
+      .order('target_bureau');
+    if (letterError) throw letterError;
+    setOpenLetters(data || []);
+    return round;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -63,7 +89,7 @@ export default function StartRoundPanel({ account, client, onClose }) {
         }
 
         if (round?.status === 'open') {
-          const { data, error: letterError } = await supabase.from('letters').select('id,html,summary,target_type,target_bureau,round_number').eq('round_id', round.round_id).order('target_bureau');
+          const { data, error: letterError } = await supabase.from('letters').select('id,html,summary,target_type,target_bureau,dispute_basis,round_number,mailed_date,lob_id').eq('round_id', round.round_id).order('target_bureau');
           if (letterError) throw letterError;
           if (!cancelled) setOpenLetters(data || []);
         } else if (round?.status === 'closed' && round.final_disposition === 'next_round') {
@@ -94,12 +120,14 @@ export default function StartRoundPanel({ account, client, onClose }) {
   }, [account, client]);
 
   const usableOpenLetters = useMemo(() => openLetters.filter((letter) => letter.html && letter.html !== 'GENERATING...' && !letter.html.startsWith('ERROR:')), [openLetters]);
+  const failedOpenLetters = useMemo(() => openLetters.filter((letter) => letterGenerationState(letter) === 'failed' && !letter.mailed_date && !letter.lob_id), [openLetters]);
 
   async function chooseTarget(value) {
     setTargetType(value);
     setError(null);
     setSelectedBureaus([]);
     if (value !== 'bureau' || activeBureaus.length) return;
+    setBureausLoading(true);
     try {
       const resolved = await resolveActiveBureaus({
         clientId: client.id,
@@ -109,8 +137,15 @@ export default function StartRoundPanel({ account, client, onClose }) {
         furnisher: account.furnisher,
       });
       setActiveBureaus(resolved.activeBureaus);
+      setBureauAudit({
+        id: resolved.auditId,
+        reportDate: resolved.auditReportDate,
+        savedAt: resolved.auditSavedAt,
+      });
     } catch (resolveError) {
       setError(resolveError.message);
+    } finally {
+      setBureausLoading(false);
     }
   }
 
@@ -131,6 +166,21 @@ export default function StartRoundPanel({ account, client, onClose }) {
       setCompleted({ ...result, targetType });
     } catch (generationError) {
       setError(generationError.message || 'Round generation failed.');
+      await refreshOpenRound().catch(() => {});
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleRetryGeneration() {
+    setGenerating(true);
+    setError(null);
+    try {
+      await retryFailedRoundLetters({ account, client: enrichedClient, roundId: latestRound.round_id });
+      await refreshOpenRound();
+    } catch (retryError) {
+      setError(retryError.message || 'The failed drafts could not be retried.');
+      await refreshOpenRound().catch(() => {});
     } finally {
       setGenerating(false);
     }
@@ -205,7 +255,8 @@ export default function StartRoundPanel({ account, client, onClose }) {
           {!loading && latestRound?.status === 'open' && usableOpenLetters.length !== latestRound.letter_count && (
             <div className="bg-amber-50 border border-amber-200 rounded p-4 text-[12px] text-amber-900">
               <div className="font-medium">Round {latestRound.round_number} is already open.</div>
-              <div className="mt-1">Its {latestRound.generated_count}/{latestRound.letter_count} letter drafts are complete. Retry failed generation from the round record; a duplicate round was not created.</div>
+              <div className="mt-1">Its {latestRound.generated_count}/{latestRound.letter_count} letter drafts are complete. A duplicate round was not created.</div>
+              {!!failedOpenLetters.length && <button type="button" onClick={handleRetryGeneration} disabled={generating} className="mt-3 px-3 py-2 rounded bg-navy text-gold text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40 flex items-center gap-2">{generating && <Loader2 size={12} className="animate-spin" />}{generating ? 'Retrying failed drafts…' : `Retry ${failedOpenLetters.length} failed draft${failedOpenLetters.length === 1 ? '' : 's'}`}</button>}
               <button type="button" onClick={handleCancelRound} disabled={changingRound} className="mt-3 text-[10px] uppercase tracking-wider font-medium underline disabled:opacity-40">Cancel entire unmailed round</button>
             </div>
           )}
@@ -227,14 +278,26 @@ export default function StartRoundPanel({ account, client, onClose }) {
 
               {targetType === 'bureau' && (
                 <section>
-                  <div className="text-[11px] uppercase tracking-wider text-ink-muted mb-2">2. Confirm active bureaus</div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {activeBureaus.map((bureau) => {
-                      const selected = selectedBureaus.includes(bureau);
-                      return <button key={bureau} type="button" onClick={() => setSelectedBureaus((current) => selected ? current.filter((item) => item !== bureau) : [...current, bureau])} className={`p-3 rounded border text-[12px] flex items-center justify-between ${selected ? 'border-gold bg-amber-50 text-ink' : 'border-border text-ink-muted'}`}><span>{BUREAU_LABEL[bureau]}</span>{selected && <Check size={13} />}</button>;
-                    })}
-                  </div>
-                  {!!activeBureaus.length && <div className="text-[10px] text-ink-faint mt-2">No bureau is selected automatically. Each checked bureau receives its own letter in this round.</div>}
+                  <div className="text-[11px] uppercase tracking-wider text-ink-muted mb-2">2. Choose confirmed reporting bureaus</div>
+                  {bureausLoading ? (
+                    <div className="border border-border bg-gray-50 rounded p-3 text-[11px] text-ink-muted flex items-center gap-2"><Loader2 size={13} className="animate-spin" />Checking this account against the latest audit…</div>
+                  ) : (
+                    <>
+                      {!!activeBureaus.length && (
+                        <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-2 text-[11px] text-blue-900 leading-relaxed">
+                          <span className="font-medium">{account.furnisher} is confirmed on {activeBureaus.length === 1 ? 'one bureau' : `${activeBureaus.length} bureaus`} in {auditDateLabel(bureauAudit?.reportDate || bureauAudit?.savedAt)}.</span>
+                          <span className="block mt-0.5">Only those confirmed bureaus are available below.</span>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-3 gap-2">
+                        {activeBureaus.map((bureau) => {
+                          const selected = selectedBureaus.includes(bureau);
+                          return <button key={bureau} type="button" onClick={() => setSelectedBureaus((current) => selected ? current.filter((item) => item !== bureau) : [...current, bureau])} className={`p-3 rounded border text-[12px] flex items-center justify-between ${selected ? 'border-gold bg-amber-50 text-ink' : 'border-border text-ink-muted'}`}><span>{BUREAU_LABEL[bureau]}</span>{selected && <Check size={13} />}</button>;
+                        })}
+                      </div>
+                      {!!activeBureaus.length && <div className="text-[10px] text-ink-faint mt-2">No bureau is selected automatically. Each checked bureau receives its own letter in this round.</div>}
+                    </>
+                  )}
                 </section>
               )}
 
