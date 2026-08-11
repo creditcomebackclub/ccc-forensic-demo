@@ -2,7 +2,7 @@
 // Letter status codes mirror ClientsPage.letterStatus — keep in sync.
 import { letterStatus as responseWindowStatus } from '../../utils/responseWindow.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../../utils/roundState.js';
-import { letterGenerationState } from '../../utils/letterGeneration.js';
+import { hasMailedContentWarning, letterGenerationState } from '../../utils/letterGeneration.js';
 
 export const WINDOW_DAYS = 30;
 
@@ -11,6 +11,7 @@ export const LETTER_STAGES = ['Generated', 'Mailed', 'Delivered', 'Outcome'];
 export const MAIL_FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'generation_failed', label: 'Failed' },
+  { key: 'content_warning', label: 'Content warnings' },
   { key: 'generating', label: 'Generating' },
   { key: 'not_mailed', label: 'Not mailed' },
   { key: 'in_transit', label: 'In transit' },
@@ -31,7 +32,7 @@ export const LIST_FILTER_TO_LETTER = {
 
 export function letterStatusCode(l) {
   const generation = letterGenerationState(l);
-  if (generation === 'failed') return 'generation_failed';
+  if (generation === 'failed' && !hasMailedContentWarning(l)) return 'generation_failed';
   if (generation === 'generating') return 'generating';
   const code = responseWindowStatus(l).code;
   if (code === 'draft') return 'not_mailed';
@@ -48,6 +49,7 @@ export function letterStageIndex(l) {
 
 export function letterMatchesMailFilter(l, filterKey, client = null) {
   if (!filterKey || filterKey === 'all') return true;
+  if (filterKey === 'content_warning') return hasMailedContentWarning(l);
   const code = letterStatusCode(l);
   if (filterKey === 'outcome') return code === 'received' || code === 'no_response';
   if (filterKey === 'received') {
@@ -63,6 +65,7 @@ export function countMailStatuses(letters = [], rounds = []) {
   const counts = {
     all: letters.length,
     generation_failed: 0,
+    content_warning: 0,
     generating: 0,
     not_mailed: 0,
     in_transit: 0,
@@ -73,6 +76,7 @@ export function countMailStatuses(letters = [], rounds = []) {
     no_response: 0,
   };
   for (const l of letters) {
+    if (hasMailedContentWarning(l)) counts.content_warning += 1;
     const code = letterStatusCode(l);
     if (counts[code] != null) counts[code] += 1;
     if (code === 'received' || code === 'no_response') counts.outcome += 1;

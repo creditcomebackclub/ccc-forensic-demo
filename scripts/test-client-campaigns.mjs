@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildCampaignItems, buildCleanupRouteGroups } from '../src/utils/campaignItems.js';
 import { isPendingRoundReview } from '../src/utils/roundState.js';
-import { countMailStatuses, deriveNextAction } from '../src/components/client-detail/clientDetailUtils.js';
-import { canMailLetter, generatedLetterValidationError, letterGenerationState } from '../src/utils/letterGeneration.js';
+import { countMailStatuses, deriveNextAction, letterMatchesMailFilter, letterStatusCode } from '../src/components/client-detail/clientDetailUtils.js';
+import { canMailLetter, generatedLetterValidationError, hasMailedContentWarning, letterGenerationState } from '../src/utils/letterGeneration.js';
 import { buildKeepOnFileIdentity, clientForLetterPrompt } from '../src/utils/letterPromptData.js';
 import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../src/utils/letterMailing.js';
 import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../src/utils/campaignMailing.js';
@@ -72,13 +72,21 @@ const failedDraft = { id: 'failed', html: 'ERROR: Generated letter is empty or t
 const runningDraft = { id: 'running', html: 'GENERATING...' };
 const validDraft = { id: 'valid', html: '<!DOCTYPE html><html><body><p>Complete reviewed dispute letter content.</p></body></html>' };
 const truncatedDraft = { id: 'truncated', html: '<!DOCTYPE html><html><body><table><tr><td>Ahoy Mit Inc</td><td>2026-07-06</' };
+const deliveredTruncatedLetter = { ...truncatedDraft, id: 'delivered-truncated', mailedDate: '2026-07-15', trackingStatus: 'Delivered' };
+const cancelledTruncatedLetter = { ...truncatedDraft, id: 'cancelled-truncated', trackingStatus: 'Cancelled' };
 assert.equal(letterGenerationState(failedDraft), 'failed', 'server generation errors remain explicit letter failures');
 assert.equal(letterGenerationState(runningDraft), 'generating', 'placeholders remain in-progress rather than mail-ready');
 assert.equal(letterGenerationState(truncatedDraft), 'failed', 'a long but unfinished HTML document is still a failed generation');
 assert.equal(canMailLetter(failedDraft), false, 'failed generation placeholders can never enter mailing');
 assert.equal(canMailLetter(runningDraft), false, 'in-progress placeholders can never enter mailing');
 assert.equal(canMailLetter(truncatedDraft), false, 'truncated HTML can never enter mailing');
+assert.equal(canMailLetter(deliveredTruncatedLetter), false, 'historical delivery evidence never makes incomplete HTML mail-safe again');
 assert.equal(canMailLetter(validDraft), true, 'completed HTML remains mail eligible');
+assert.equal(hasMailedContentWarning(deliveredTruncatedLetter), true, 'an incomplete delivered record becomes a historical content warning');
+assert.equal(hasMailedContentWarning(cancelledTruncatedLetter), false, 'a cancelled submission remains a failed draft rather than pretending it was mailed');
+assert.equal(letterStatusCode(deliveredTruncatedLetter), 'in_transit', 'an already-mailed content warning follows its real response lifecycle');
+assert.equal(letterMatchesMailFilter(deliveredTruncatedLetter, 'content_warning'), true, 'historical defects remain discoverable in a dedicated filter');
+assert.equal(letterMatchesMailFilter(deliveredTruncatedLetter, 'generation_failed'), false, 'a delivered record is never presented as a retryable generation failure');
 assert.match(generatedLetterValidationError(truncatedDraft), /incomplete/i, 'truncated output explains the structural failure');
 assert.match(generatedLetterValidationError('<!DOCTYPE html><html><body><p>Done</p></body></html>', { requireSections: true }), /signature block/i, 'new generator output requires the signature section');
 assert.equal(generatedLetterValidationError("<!DOCTYPE html><html><body><div class='signature-block'>Name</div><div class='mail-notation'>Certified</div><div class='enclosures'>ID</div></body></html>", { requireSections: true }), null, 'new generator output accepts every required closing section');
@@ -109,6 +117,15 @@ const generationCounts = countMailStatuses([failedDraft, runningDraft, validDraf
 assert.equal(generationCounts.generation_failed, 1, 'failed generation has its own mail-workboard status');
 assert.equal(generationCounts.generating, 1, 'running generation has its own mail-workboard status');
 assert.equal(generationCounts.not_mailed, 1, 'only valid completed HTML counts as not mailed');
+const historicalWarningCounts = countMailStatuses([deliveredTruncatedLetter], []);
+assert.equal(historicalWarningCounts.content_warning, 1, 'mailed content warnings have their own truthful workboard count');
+assert.equal(historicalWarningCounts.generation_failed, 0, 'mailed content warnings do not inflate failed generation');
+assert.equal(historicalWarningCounts.in_transit, 1, 'mailed content warnings retain their delivery/response lifecycle count');
+
+const letterHistorySource = fs.readFileSync(new URL('../src/components/ClientsPage.jsx', import.meta.url), 'utf8');
+assert.match(letterHistorySource, /Delivered letter.*content warning/si, 'letter history identifies delivered historical defects as content warnings');
+assert.match(letterHistorySource, /cannot be retried or overwritten/, 'letter history does not tell staff to retry immutable mailed evidence');
+assert.match(letterHistorySource, /ArchiveMailpieceButton/, 'letter history offers exact mailed-PDF verification for historical warnings');
 
 const mailingWorkspace = {
   routes: [

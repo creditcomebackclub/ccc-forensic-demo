@@ -1,6 +1,6 @@
 import React from 'react';
 import { LETTER_STAGES, letterStageIndex } from './clientDetailUtils';
-import { letterGenerationState } from '../../utils/letterGeneration.js';
+import { hasMailedContentWarning, letterGenerationState } from '../../utils/letterGeneration.js';
 
 const T = {
   navy: '#1B2A4A',
@@ -12,7 +12,8 @@ const T = {
 /** Labeled mail lifecycle rail — never mystery dots alone. */
 export default function MailStageRail({ letter }) {
   const generation = letterGenerationState(letter);
-  if (generation !== 'ready') {
+  const mailedContentWarning = hasMailedContentWarning(letter);
+  if (generation !== 'ready' && !mailedContentWarning) {
     const failed = generation === 'failed';
     return (
       <div
@@ -26,9 +27,12 @@ export default function MailStageRail({ letter }) {
   }
   const idx = letterStageIndex(letter);
   const current = LETTER_STAGES[idx];
+  const title = mailedContentWarning
+    ? `Mail stage: ${current}. The historical letter has a content warning and cannot be retried or overwritten.`
+    : 'Mail stage: ' + current;
 
   return (
-    <div className="flex flex-col gap-1 shrink-0" title={'Mail stage: ' + current}>
+    <div className="flex flex-col gap-1 shrink-0" title={title}>
       <div className="flex items-center">
         {LETTER_STAGES.map((s, i) => (
           <React.Fragment key={s}>

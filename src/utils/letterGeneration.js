@@ -91,6 +91,29 @@ export function letterGenerationState(letterOrHtml) {
   return 'ready';
 }
 
+/**
+ * Durable delivery facts outrank a later presentation-time validation result.
+ * This does not make an incomplete document mail-safe; it only distinguishes
+ * an already-mailed historical record from a draft that is still retryable.
+ */
+export function hasMailedDeliveryEvidence(letter) {
+  if (!letter || typeof letter === 'string') return false;
+  const trackingStatus = String(letter.trackingStatus || letter.tracking_status || '').toLowerCase();
+  return !!(
+    letter.mailedDate
+    || letter.mailed_date
+    || letter.deliveredAt
+    || letter.delivered_at
+    || letter.trackingNumber
+    || letter.tracking_number
+    || ['mailed', 'in transit', 'in_transit', 'delivered', 'returned'].includes(trackingStatus)
+  );
+}
+
+export function hasMailedContentWarning(letter) {
+  return hasMailedDeliveryEvidence(letter) && letterGenerationState(letter) === 'failed';
+}
+
 export function isGenerationFailed(letter) {
   return letterGenerationState(letter) === 'failed';
 }

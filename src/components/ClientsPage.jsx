@@ -15,7 +15,7 @@ import { resolveLpoaViewUrl } from '../utils/storagePaths';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
 import { extendLetterDeadline } from '../utils/rounds.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
-import { canMailLetter, generationErrorMessage, letterGenerationState } from '../utils/letterGeneration.js';
+import { canMailLetter, generationErrorMessage, hasMailedContentWarning, letterGenerationState } from '../utils/letterGeneration.js';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
 import BureauResponseAnalyzer from './BureauResponseAnalyzer';
@@ -105,7 +105,7 @@ function hoursBetween(aIso, bIso) {
 
 function letterStatus(l) {
   const generation = letterGenerationState(l);
-  if (generation === 'failed') return { code: 'generation_failed', label: 'Generation failed', tone: 'red' };
+  if (generation === 'failed' && !hasMailedContentWarning(l)) return { code: 'generation_failed', label: 'Generation failed', tone: 'red' };
   if (generation === 'generating') return { code: 'generating', label: 'Generating', tone: 'neutral' };
   const status = responseWindowStatus(l);
   if (status.code === 'received') return { ...status, label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
@@ -387,7 +387,9 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
   const generation = letterGenerationState(l);
+  const mailedContentWarning = hasMailedContentWarning(l);
   const mailReady = canMailLetter(l);
+  const archivedMailpiece = (l.mailArtifacts || []).find((artifact) => artifact.artifact_type === 'mailpiece_pdf');
   const isPhase3 = l.targetType === 'bureau' || (l.phase && l.phase.startsWith('Phase 3'));
   // Phase 3's own escalation-readiness uses the 45-day CRA clock, not the
   // 30-day one — same reasoning as DashboardPage.jsx's identical gate.
@@ -440,14 +442,14 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
 
   // One visible action per letter; the rest live in the ⋯ menu
   const primaryAction = (() => {
-    if (!mailReady) return null;
-    if (!l.mailedDate) return (
+    if (!mailReady && !mailedContentWarning) return null;
+    if (!l.mailedDate) return mailReady ? (
       <button onClick={() => onLobMail(l)}
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border transition-colors shrink-0"
         style={{ borderColor: T.navy, color: T.navy }}>
         <Send size={10} strokeWidth={2} /> Send
       </button>
-    );
+    ) : null;
     if (canAnalyze) return (
       <button onClick={() => onAnalyze(l)}
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0"
@@ -473,7 +475,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   })();
 
   const menuItems = [
-    mailReady && { label: 'View letter', onClick: () => onView(l) },
+    (mailReady || mailedContentWarning) && { label: mailedContentWarning ? 'View stored letter' : 'View letter', onClick: () => onView(l) },
     mailReady && onEdit && { label: 'Edit letter', onClick: () => onEdit(l) },
     { label: 'Account history', onClick: () => onOpenAccount(l) },
     'divider',
@@ -567,13 +569,26 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
         </div>
         <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
           <MailStageRail letter={l} />
+          {mailedContentWarning && <StatusBadge label="Content warning" tone="amber" />}
           {urgency && <StatusBadge label={urgency.label} tone={urgency.tone} />}
           {primaryAction}
           <Menu items={menuItems} />
         </div>
       </div>
 
-      {generation !== 'ready' && (
+      {mailedContentWarning ? (
+        <div className="mt-2 text-[10px] rounded-lg px-3 py-2 flex items-center justify-between gap-3 flex-wrap" style={{ color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+          <span className="leading-relaxed">
+            <strong>{l.deliveredAt || l.trackingStatus === 'Delivered' ? 'Delivered letter' : 'Mailed letter'} · content warning.</strong>{' '}
+            {generationErrorMessage(l)} This historical mailing remains immutable and stays in delivery and response tracking. It cannot be retried or overwritten; review the exact mailed PDF before deciding whether a new reviewed revision is needed.
+          </span>
+          <span className="shrink-0">
+            {archivedMailpiece
+              ? <MailpieceLink artifact={archivedMailpiece} />
+              : <ArchiveMailpieceButton letter={l} onArchived={onChange} />}
+          </span>
+        </div>
+      ) : generation !== 'ready' && (
         <div className="mt-2 text-[10px] rounded-lg px-3 py-2" style={{ color: generation === 'failed' ? '#B91C1C' : T.muted, background: generation === 'failed' ? '#FEF2F2' : '#F3F4F6', border: `1px solid ${generation === 'failed' ? '#FECACA' : T.border}` }}>
           {generation === 'failed' ? `${generationErrorMessage(l)} ${l.campaignRouteId ? 'Retry this route from the Campaign tab.' : 'Open this account round to retry only the failed draft.'}` : 'Claude is still generating this letter. Mailing remains blocked until the final draft is saved.'}
         </div>
