@@ -507,6 +507,19 @@ exports.handler = async (event) => {
           }),
         };
       }
+      const { letterSignatureState } = await import('../../src/utils/letterGeneration.js');
+      const signatureState = letterSignatureState(storedHtml);
+      if (signatureState !== 'embedded') {
+        const signatureError = signatureState === 'missing'
+          ? 'CLIENT SIGNATURE REQUIRED — wait for the signed LPOA/signature capture, then regenerate or repair the draft. Nothing was sent.'
+          : signatureState === 'remote'
+            ? 'CLIENT SIGNATURE LINK IS NOT DURABLE — embed the canonical signature before mailing. Nothing was sent.'
+            : 'CLIENT SIGNATURE IS INVALID — rebuild it from the canonical stored signature before mailing. Nothing was sent.';
+        return {
+          statusCode: 422,
+          body: JSON.stringify({ error: signatureError, blocked: true, signature_state: signatureState }),
+        };
+      }
       await validateStructuredRoundPreflight(letter, supabaseUrl, serviceKey);
       await validatePersonalInfoCleanupPreflight(letter, supabaseUrl, serviceKey);
       const validatedAttachments = await validateOptionalAttachments(letter, attachmentManifest, supabaseUrl, serviceKey);

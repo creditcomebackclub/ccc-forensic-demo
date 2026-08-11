@@ -15,7 +15,14 @@ import { resolveLpoaViewUrl } from '../utils/storagePaths';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
 import { extendLetterDeadline } from '../utils/rounds.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
-import { canMailLetter, generationErrorMessage, hasMailedContentWarning, letterGenerationState } from '../utils/letterGeneration.js';
+import {
+  canMailLetter,
+  generationErrorMessage,
+  hasMailedContentWarning,
+  hasMailedDeliveryEvidence,
+  letterGenerationState,
+  letterSignatureState,
+} from '../utils/letterGeneration.js';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
 import BureauResponseAnalyzer from './BureauResponseAnalyzer';
@@ -107,6 +114,9 @@ function letterStatus(l) {
   const generation = letterGenerationState(l);
   if (generation === 'failed' && !hasMailedContentWarning(l)) return { code: 'generation_failed', label: 'Generation failed', tone: 'red' };
   if (generation === 'generating') return { code: 'generating', label: 'Generating', tone: 'neutral' };
+  if (letterSignatureState(l) !== 'embedded' && !hasMailedDeliveryEvidence(l)) {
+    return { code: 'signature_required', label: 'Signature required', tone: 'red' };
+  }
   const status = responseWindowStatus(l);
   if (status.code === 'received') return { ...status, label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
   if (status.code === 'no_response') return { ...status, label: 'No response confirmed', tone: 'red' };
@@ -388,6 +398,10 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   const status = letterStatus(l);
   const generation = letterGenerationState(l);
   const mailedContentWarning = hasMailedContentWarning(l);
+  const mailEvidence = hasMailedDeliveryEvidence(l);
+  const signatureState = generation === 'ready' ? letterSignatureState(l) : null;
+  const signatureRequired = !!signatureState && signatureState !== 'embedded' && !mailEvidence;
+  const historicalSignatureWarning = !!signatureState && signatureState !== 'embedded' && mailEvidence;
   const mailReady = canMailLetter(l);
   const archivedMailpiece = (l.mailArtifacts || []).find((artifact) => artifact.artifact_type === 'mailpiece_pdf');
   const isPhase3 = l.targetType === 'bureau' || (l.phase && l.phase.startsWith('Phase 3'));
@@ -442,7 +456,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
 
   // One visible action per letter; the rest live in the ⋯ menu
   const primaryAction = (() => {
-    if (!mailReady && !mailedContentWarning) return null;
+    if (!mailReady && !mailedContentWarning && !historicalSignatureWarning) return null;
     if (!l.mailedDate) return mailReady ? (
       <button onClick={() => onLobMail(l)}
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border transition-colors shrink-0"
@@ -475,7 +489,10 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   })();
 
   const menuItems = [
-    (mailReady || mailedContentWarning) && { label: mailedContentWarning ? 'View stored letter' : 'View letter', onClick: () => onView(l) },
+    (mailReady || mailedContentWarning || signatureRequired || historicalSignatureWarning) && {
+      label: mailReady ? 'View letter' : 'View stored letter',
+      onClick: () => onView(l),
+    },
     mailReady && onEdit && { label: 'Edit letter', onClick: () => onEdit(l) },
     { label: 'Account history', onClick: () => onOpenAccount(l) },
     'divider',
@@ -570,6 +587,8 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
         <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
           <MailStageRail letter={l} />
           {mailedContentWarning && <StatusBadge label="Content warning" tone="amber" />}
+          {signatureRequired && <StatusBadge label="Signature required" tone="red" />}
+          {historicalSignatureWarning && <StatusBadge label="Historical preview" tone="amber" />}
           {urgency && <StatusBadge label={urgency.label} tone={urgency.tone} />}
           {primaryAction}
           <Menu items={menuItems} />
@@ -581,6 +600,27 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
           <span className="leading-relaxed">
             <strong>{l.deliveredAt || l.trackingStatus === 'Delivered' ? 'Delivered letter' : 'Mailed letter'} · content warning.</strong>{' '}
             {generationErrorMessage(l)} This historical mailing remains immutable and stays in delivery and response tracking. It cannot be retried or overwritten; review the exact mailed PDF before deciding whether a new reviewed revision is needed.
+          </span>
+          <span className="shrink-0">
+            {archivedMailpiece
+              ? <MailpieceLink artifact={archivedMailpiece} />
+              : <ArchiveMailpieceButton letter={l} onArchived={onChange} />}
+          </span>
+        </div>
+      ) : signatureRequired ? (
+        <div className="mt-2 text-[10px] rounded-lg px-3 py-2" style={{ color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA' }}>
+          <strong>Signature required · mailing blocked.</strong>{' '}
+          {signatureState === 'missing'
+            ? 'No client signature is stored in this letter. Wait for the signed LPOA/signature capture, then regenerate or save a reviewed draft with the canonical signature embedded.'
+            : signatureState === 'remote'
+              ? 'This draft uses a remote or expiring signature URL. Rebuild it with the canonical signature embedded before mailing.'
+              : 'The embedded signature is invalid. Rebuild it from the canonical signature before mailing.'}
+        </div>
+      ) : historicalSignatureWarning ? (
+        <div className="mt-2 text-[10px] rounded-lg px-3 py-2 flex items-center justify-between gap-3 flex-wrap" style={{ color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+          <span className="leading-relaxed">
+            <strong>Historical signature preview unavailable.</strong>{' '}
+            This already-mailed record uses a retired or expiring image link in its stored HTML. Do not rewrite the evidence record; use the exact Lob PDF to verify what was mailed.
           </span>
           <span className="shrink-0">
             {archivedMailpiece
@@ -909,7 +949,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
 
   const openLetter = (letter) => {
-    if (!canMailLetter(letter)) {
+    if (letterGenerationState(letter) !== 'ready') {
       toast.error(letterGenerationState(letter) === 'generating'
         ? 'This letter is still generating.'
         : `This letter failed generation: ${generationErrorMessage(letter)}`);

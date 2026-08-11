@@ -42,6 +42,38 @@ function hasClass(html, className) {
   return new RegExp(`class=["'](?:[^"']*\\s)?${escaped}(?:\\s[^"']*)?["']`, 'i').test(html);
 }
 
+function signatureImageTag(html) {
+  const value = String(html || '');
+  const tags = [...value.matchAll(/<img\b[^>]*>/gi)];
+  let match = tags.find((candidate) => /data-ccc-signature=["']true["']|alt=["']Client signature["']/i.test(candidate[0]));
+  if (!match) {
+    const block = /class=["'][^"']*\bsignature-block\b/i.exec(value);
+    if (block) match = tags.find((candidate) => candidate.index > block.index && candidate.index < block.index + 1800);
+  }
+  if (!match && tags.length === 1 && /Consumer\s*[—-]\s*All Rights Reserved/i.test(value)) match = tags[0];
+  return match?.[0] || null;
+}
+
+export function letterSignatureSource(letterOrHtml) {
+  const html = typeof letterOrHtml === 'string' ? letterOrHtml : letterOrHtml?.html;
+  const tag = signatureImageTag(html);
+  return tag ? (tag.match(/\bsrc=["']([^"']+)["']/i) || [])[1] || null : null;
+}
+
+/**
+ * Remote and signed Storage URLs are intentionally not mail-safe: they can
+ * expire or become private between review and Lob rendering. Only an embedded
+ * PNG/JPEG with a real image header is durable enough for physical mail.
+ */
+export function letterSignatureState(letterOrHtml) {
+  const source = String(letterSignatureSource(letterOrHtml) || '');
+  if (!source) return 'missing';
+  if (/^https?:/i.test(source)) return 'remote';
+  if (/^data:image\/png;base64,iVBORw0KGgo[A-Za-z0-9+/=]+$/i.test(source)) return 'embedded';
+  if (/^data:image\/(?:jpeg|jpg);base64,\/9j\/[A-Za-z0-9+/=]+$/i.test(source)) return 'embedded';
+  return 'invalid';
+}
+
 /**
  * Certified-mail notation is fixed product copy, not model-authored legal
  * analysis. Repairing this mechanical omission is safer than discarding an
@@ -123,7 +155,7 @@ export function isGenerationRunning(letter) {
 }
 
 export function canMailLetter(letter) {
-  return letterGenerationState(letter) === 'ready';
+  return letterGenerationState(letter) === 'ready' && letterSignatureState(letter) === 'embedded';
 }
 
 export function generationErrorMessage(letter) {

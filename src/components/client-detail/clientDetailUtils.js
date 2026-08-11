@@ -2,7 +2,12 @@
 // Letter status codes mirror ClientsPage.letterStatus — keep in sync.
 import { letterStatus as responseWindowStatus } from '../../utils/responseWindow.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../../utils/roundState.js';
-import { hasMailedContentWarning, letterGenerationState } from '../../utils/letterGeneration.js';
+import {
+  hasMailedContentWarning,
+  hasMailedDeliveryEvidence,
+  letterGenerationState,
+  letterSignatureState,
+} from '../../utils/letterGeneration.js';
 
 export const WINDOW_DAYS = 30;
 
@@ -12,6 +17,8 @@ export const MAIL_FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'generation_failed', label: 'Failed' },
   { key: 'content_warning', label: 'Content warnings' },
+  { key: 'signature_required', label: 'Signature required' },
+  { key: 'historical_signature', label: 'Historical previews' },
   { key: 'generating', label: 'Generating' },
   { key: 'not_mailed', label: 'Not mailed' },
   { key: 'in_transit', label: 'In transit' },
@@ -34,6 +41,7 @@ export function letterStatusCode(l) {
   const generation = letterGenerationState(l);
   if (generation === 'failed' && !hasMailedContentWarning(l)) return 'generation_failed';
   if (generation === 'generating') return 'generating';
+  if (letterSignatureState(l) !== 'embedded' && !hasMailedDeliveryEvidence(l)) return 'signature_required';
   const code = responseWindowStatus(l).code;
   if (code === 'draft') return 'not_mailed';
   if (code === 'due_soon') return 'awaiting';
@@ -50,6 +58,10 @@ export function letterStageIndex(l) {
 export function letterMatchesMailFilter(l, filterKey, client = null) {
   if (!filterKey || filterKey === 'all') return true;
   if (filterKey === 'content_warning') return hasMailedContentWarning(l);
+  if (filterKey === 'signature_required') return letterStatusCode(l) === 'signature_required';
+  if (filterKey === 'historical_signature') {
+    return hasMailedDeliveryEvidence(l) && letterGenerationState(l) === 'ready' && letterSignatureState(l) !== 'embedded';
+  }
   const code = letterStatusCode(l);
   if (filterKey === 'outcome') return code === 'received' || code === 'no_response';
   if (filterKey === 'received') {
@@ -66,6 +78,8 @@ export function countMailStatuses(letters = [], rounds = []) {
     all: letters.length,
     generation_failed: 0,
     content_warning: 0,
+    signature_required: 0,
+    historical_signature: 0,
     generating: 0,
     not_mailed: 0,
     in_transit: 0,
@@ -77,6 +91,9 @@ export function countMailStatuses(letters = [], rounds = []) {
   };
   for (const l of letters) {
     if (hasMailedContentWarning(l)) counts.content_warning += 1;
+    if (hasMailedDeliveryEvidence(l) && letterGenerationState(l) === 'ready' && letterSignatureState(l) !== 'embedded') {
+      counts.historical_signature += 1;
+    }
     const code = letterStatusCode(l);
     if (counts[code] != null) counts[code] += 1;
     if (code === 'received' || code === 'no_response') counts.outcome += 1;
@@ -122,6 +139,7 @@ export function deriveNextAction(client) {
 
   const notMailed = open.filter((l) => letterStatusCode(l) === 'not_mailed');
   const failedGeneration = open.filter((l) => letterStatusCode(l) === 'generation_failed');
+  const signatureRequired = open.filter((l) => letterStatusCode(l) === 'signature_required');
   const reviewDue = open.filter((l) => {
     const code = letterStatusCode(l);
     return (code === 'window_closed' || code === 'no_response')
@@ -166,6 +184,14 @@ export function deriveNextAction(client) {
       label: failedGeneration.length === 1 ? 'Retry 1 failed letter' : `Retry ${failedGeneration.length} failed letters`,
       detail: 'Generation failed — the draft is blocked from mailing',
       letterFilter: 'generation_failed',
+      tone: 'urgent',
+    };
+  }
+  if (signatureRequired.length > 0) {
+    return {
+      label: signatureRequired.length === 1 ? '1 signature required' : `${signatureRequired.length} signatures required`,
+      detail: 'Mailing is blocked until a valid client signature is embedded',
+      letterFilter: 'signature_required',
       tone: 'urgent',
     };
   }

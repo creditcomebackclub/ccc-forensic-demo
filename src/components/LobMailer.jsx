@@ -12,7 +12,7 @@ import {
 import { listMailArtifacts } from '../utils/mailArtifacts';
 import { inferMediaType } from '../utils/responseFiles';
 import { supabase } from '../utils/supabase';
-import { canMailLetter, generationErrorMessage, isGenerationRunning } from '../utils/letterGeneration.js';
+import { canMailLetter, generationErrorMessage, isGenerationRunning, letterSignatureState } from '../utils/letterGeneration.js';
 import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../utils/letterMailing.js';
 import {
   fetchLpoaHtmlForPrint,
@@ -164,9 +164,16 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
     // just avoids a wasted round-trip and gives an immediate, specific
     // error instead of a generic Lob failure.
     if (!canMailLetter(letter)) {
+      const signatureState = letterSignatureState(letter);
       setError(isGenerationRunning(letter)
         ? 'LETTER GENERATION IS STILL RUNNING — nothing was sent.'
-        : `LETTER GENERATION FAILED — ${generationErrorMessage(letter)} Nothing was sent.`);
+        : signatureState === 'missing'
+          ? 'CLIENT SIGNATURE REQUIRED — wait for the signed LPOA/signature capture before mailing. Nothing was sent.'
+          : signatureState === 'remote'
+            ? 'CLIENT SIGNATURE LINK IS NOT DURABLE — embed the canonical signature before mailing. Nothing was sent.'
+            : signatureState === 'invalid'
+              ? 'CLIENT SIGNATURE IS INVALID — rebuild it from the canonical stored signature before mailing. Nothing was sent.'
+              : `LETTER GENERATION FAILED — ${generationErrorMessage(letter)} Nothing was sent.`);
       return;
     }
     if (letter.enclosureParseBlocked) {

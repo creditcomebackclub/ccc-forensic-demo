@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { buildCampaignItems, buildCleanupRouteGroups } from '../src/utils/campaignItems.js';
 import { isPendingRoundReview } from '../src/utils/roundState.js';
 import { countMailStatuses, deriveNextAction, letterMatchesMailFilter, letterStatusCode } from '../src/components/client-detail/clientDetailUtils.js';
-import { canMailLetter, generatedLetterValidationError, hasMailedContentWarning, letterGenerationState } from '../src/utils/letterGeneration.js';
+import { canMailLetter, generatedLetterValidationError, hasMailedContentWarning, letterGenerationState, letterSignatureState } from '../src/utils/letterGeneration.js';
 import { buildKeepOnFileIdentity, clientForLetterPrompt } from '../src/utils/letterPromptData.js';
 import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../src/utils/letterMailing.js';
 import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../src/utils/campaignMailing.js';
@@ -60,7 +60,9 @@ assert.equal(isPendingRoundReview({
 assert.equal(isPendingRoundReview({ rounds: [{ round_id: 'round-1', status: 'open' }], letters: [legacySource] }, legacySource), true, 'an unresolved open round remains actionable');
 
 const closedStale = { id: 'closed-source', roundId: 'round-closed', furnisher: 'Closed Bank', mailedDate: '2026-01-01', responseOutcome: 'received', roundReviewStatus: 'not_reviewed' };
-const openDraft = { id: 'open-draft', roundId: 'round-open', furnisher: 'Open Bank', roundReviewStatus: 'not_reviewed', html: '<!DOCTYPE html><html><body><p>Complete reviewed dispute letter content.</p></body></html>' };
+const testSignature = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';
+const completeSignedHtml = `<html><body><p>Complete reviewed dispute letter content.</p><div class="signature-block"><img data-ccc-signature="true" alt="Client signature" src="${testSignature}" /></div></body></html>`;
+const openDraft = { id: 'open-draft', roundId: 'round-open', furnisher: 'Open Bank', roundReviewStatus: 'not_reviewed', html: completeSignedHtml };
 const detailClient = {
   rounds: [{ round_id: 'round-closed', status: 'closed' }, { round_id: 'round-open', status: 'open' }],
   letters: [closedStale, openDraft],
@@ -70,7 +72,10 @@ assert.equal(deriveNextAction(detailClient).label, 'Mail 1 letter', 'the client 
 
 const failedDraft = { id: 'failed', html: 'ERROR: Generated letter is empty or too short' };
 const runningDraft = { id: 'running', html: 'GENERATING...' };
-const validDraft = { id: 'valid', html: '<!DOCTYPE html><html><body><p>Complete reviewed dispute letter content.</p></body></html>' };
+const validDraft = { id: 'valid', html: completeSignedHtml };
+const missingSignatureDraft = { id: 'missing-signature', html: '<html><body><p>Complete letter.</p><div class="signature-block"><span>Client Name</span></div></body></html>' };
+const remoteSignatureDraft = { id: 'remote-signature', html: '<html><body><p>Complete letter.</p><div class="signature-block"><img alt="Client signature" src="https://example.com/expiring-signature.png" /></div></body></html>' };
+const invalidSignatureDraft = { id: 'invalid-signature', html: '<html><body><p>Complete letter.</p><div class="signature-block"><img alt="Client signature" src="data:image/png;base64,NOT_A_PNG" /></div></body></html>' };
 const truncatedDraft = { id: 'truncated', html: '<!DOCTYPE html><html><body><table><tr><td>Ahoy Mit Inc</td><td>2026-07-06</' };
 const deliveredTruncatedLetter = { ...truncatedDraft, id: 'delivered-truncated', mailedDate: '2026-07-15', trackingStatus: 'Delivered' };
 const cancelledTruncatedLetter = { ...truncatedDraft, id: 'cancelled-truncated', trackingStatus: 'Cancelled' };
@@ -82,11 +87,23 @@ assert.equal(canMailLetter(runningDraft), false, 'in-progress placeholders can n
 assert.equal(canMailLetter(truncatedDraft), false, 'truncated HTML can never enter mailing');
 assert.equal(canMailLetter(deliveredTruncatedLetter), false, 'historical delivery evidence never makes incomplete HTML mail-safe again');
 assert.equal(canMailLetter(validDraft), true, 'completed HTML remains mail eligible');
+assert.equal(letterSignatureState(validDraft), 'embedded', 'a real embedded PNG signature is durable for mailing');
+assert.equal(letterSignatureState(missingSignatureDraft), 'missing', 'a printed signature block without an image is not signed');
+assert.equal(letterSignatureState(remoteSignatureDraft), 'remote', 'remote and expiring signature links are identified deterministically');
+assert.equal(letterSignatureState(invalidSignatureDraft), 'invalid', 'a data URL without a real image header is rejected');
+assert.equal(canMailLetter(missingSignatureDraft), false, 'an unsigned letter cannot enter mailing');
+assert.equal(canMailLetter(remoteSignatureDraft), false, 'a remote signature cannot enter mailing');
+assert.equal(canMailLetter(invalidSignatureDraft), false, 'an invalid embedded signature cannot enter mailing');
 assert.equal(hasMailedContentWarning(deliveredTruncatedLetter), true, 'an incomplete delivered record becomes a historical content warning');
 assert.equal(hasMailedContentWarning(cancelledTruncatedLetter), false, 'a cancelled submission remains a failed draft rather than pretending it was mailed');
 assert.equal(letterStatusCode(deliveredTruncatedLetter), 'in_transit', 'an already-mailed content warning follows its real response lifecycle');
 assert.equal(letterMatchesMailFilter(deliveredTruncatedLetter, 'content_warning'), true, 'historical defects remain discoverable in a dedicated filter');
 assert.equal(letterMatchesMailFilter(deliveredTruncatedLetter, 'generation_failed'), false, 'a delivered record is never presented as a retryable generation failure');
+assert.equal(letterStatusCode(missingSignatureDraft), 'signature_required', 'unsigned drafts receive an explicit blocking status');
+assert.equal(letterMatchesMailFilter(missingSignatureDraft, 'signature_required'), true, 'unsigned drafts are discoverable in the health filter');
+const mailedRemoteSignature = { ...remoteSignatureDraft, id: 'mailed-remote-signature', mailedDate: '2026-07-01' };
+assert.equal(letterStatusCode(mailedRemoteSignature), 'in_transit', 'historical signature previews retain their real mail lifecycle');
+assert.equal(letterMatchesMailFilter(mailedRemoteSignature, 'historical_signature'), true, 'retired mailed signature links are discoverable without rewriting evidence');
 assert.match(generatedLetterValidationError(truncatedDraft), /incomplete/i, 'truncated output explains the structural failure');
 assert.match(generatedLetterValidationError('<!DOCTYPE html><html><body><p>Done</p></body></html>', { requireSections: true }), /signature block/i, 'new generator output requires the signature section');
 assert.equal(generatedLetterValidationError("<!DOCTYPE html><html><body><div class='signature-block'>Name</div><div class='mail-notation'>Certified</div><div class='enclosures'>ID</div></body></html>", { requireSections: true }), null, 'new generator output accepts every required closing section');
@@ -121,11 +138,16 @@ const historicalWarningCounts = countMailStatuses([deliveredTruncatedLetter], []
 assert.equal(historicalWarningCounts.content_warning, 1, 'mailed content warnings have their own truthful workboard count');
 assert.equal(historicalWarningCounts.generation_failed, 0, 'mailed content warnings do not inflate failed generation');
 assert.equal(historicalWarningCounts.in_transit, 1, 'mailed content warnings retain their delivery/response lifecycle count');
+const signatureHealthCounts = countMailStatuses([missingSignatureDraft, mailedRemoteSignature], []);
+assert.equal(signatureHealthCounts.signature_required, 1, 'unsigned drafts have a dedicated health count');
+assert.equal(signatureHealthCounts.historical_signature, 1, 'mailed remote signatures have a separate historical-preview count');
 
 const letterHistorySource = fs.readFileSync(new URL('../src/components/ClientsPage.jsx', import.meta.url), 'utf8');
 assert.match(letterHistorySource, /Delivered letter.*content warning/si, 'letter history identifies delivered historical defects as content warnings');
 assert.match(letterHistorySource, /cannot be retried or overwritten/, 'letter history does not tell staff to retry immutable mailed evidence');
 assert.match(letterHistorySource, /ArchiveMailpieceButton/, 'letter history offers exact mailed-PDF verification for historical warnings');
+assert.match(letterHistorySource, /Signature required · mailing blocked/, 'letter history explains why unsigned drafts cannot be sent');
+assert.match(letterHistorySource, /Historical signature preview unavailable/, 'letter history distinguishes immutable preview problems from active drafts');
 
 const mailingWorkspace = {
   routes: [
@@ -255,6 +277,9 @@ const lobFunction = fs.readFileSync(new URL('../netlify/functions/lob.cjs', impo
 assert.match(lobFunction, /storedHtml === 'GENERATING\.\.\.'/i, 'server-side mailing rejects generation placeholders');
 assert.match(lobFunction, /storedHtml\.startsWith\('ERROR:'\)/i, 'server-side mailing rejects failed generation output');
 assert.match(lobFunction, /incompleteDocument/i, 'server-side mailing rejects truncated HTML documents');
+assert.match(lobFunction, /letterSignatureState\(storedHtml\)/, 'server validates the signature from authoritative stored HTML');
+assert.match(lobFunction, /signatureState !== 'embedded'/, 'server rejects missing, remote, and malformed signatures');
+assert.match(lobFunction, /CLIENT SIGNATURE REQUIRED/, 'server explains unsigned-letter blocks without calling them generation failures');
 assert.match(lobFunction, /isBureauAccountDisputeLetter\(letter\)[\s\S]*PHASE 3 COVERAGE MISSING/, 'server applies covered-furnisher requirements only to account disputes');
 assert.match(lobFunction, /select=id[^'\n]*letter_kind[^'\n]*target_type/, 'server loads the durable letter classification before mailing');
 assert.match(lobFunction, /validatePersonalInfoCleanupPreflight\(letter/, 'server verifies PI/inquiry identity enclosures independently of the browser');

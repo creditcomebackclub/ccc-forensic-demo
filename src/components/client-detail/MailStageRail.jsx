@@ -1,6 +1,11 @@
 import React from 'react';
 import { LETTER_STAGES, letterStageIndex } from './clientDetailUtils';
-import { hasMailedContentWarning, letterGenerationState } from '../../utils/letterGeneration.js';
+import {
+  hasMailedContentWarning,
+  hasMailedDeliveryEvidence,
+  letterGenerationState,
+  letterSignatureState,
+} from '../../utils/letterGeneration.js';
 
 const T = {
   navy: '#1B2A4A',
@@ -13,6 +18,8 @@ const T = {
 export default function MailStageRail({ letter }) {
   const generation = letterGenerationState(letter);
   const mailedContentWarning = hasMailedContentWarning(letter);
+  const signatureState = generation === 'ready' ? letterSignatureState(letter) : null;
+  const signatureRequired = signatureState && signatureState !== 'embedded' && !hasMailedDeliveryEvidence(letter);
   if (generation !== 'ready' && !mailedContentWarning) {
     const failed = generation === 'failed';
     return (
@@ -25,10 +32,24 @@ export default function MailStageRail({ letter }) {
       </div>
     );
   }
+  if (signatureRequired) {
+    return (
+      <div
+        className="text-[9px] uppercase tracking-wider font-semibold px-2 py-1 rounded-md"
+        style={{ color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA' }}
+        title="A valid embedded client signature is required before mailing"
+      >
+        Signature required
+      </div>
+    );
+  }
   const idx = letterStageIndex(letter);
   const current = LETTER_STAGES[idx];
+  const historicalSignatureWarning = signatureState && signatureState !== 'embedded' && hasMailedDeliveryEvidence(letter);
   const title = mailedContentWarning
     ? `Mail stage: ${current}. The historical letter has a content warning and cannot be retried or overwritten.`
+    : historicalSignatureWarning
+      ? `Mail stage: ${current}. The stored HTML preview uses an unavailable historical signature image; the mailed PDF is authoritative.`
     : 'Mail stage: ' + current;
 
   return (
