@@ -9,6 +9,10 @@ import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanup
 import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../src/utils/campaignMailing.js';
 import { isCampaignSelectionLocked } from '../src/utils/campaignSelection.js';
 import { calculateDeletionShare, countOngoingDisputeClients, selectVipClients, summarizeStructuredRoundWorkload } from '../src/utils/dashboardMetrics.js';
+import { buildPortalCampaignJourneys, isPortalBureauDispute, isPortalFileUpdate, portalLetterGroup } from '../src/utils/portalCampaigns.js';
+import roundEmailModule from '../netlify/functions/_roundEmail.cjs';
+
+const { preparedEventKey, roundEventKey, campaignReadyForPreparedEmail, campaignReadyForMailedEmail, campaignCleanupReadyForEmail } = roundEmailModule;
 
 const auditRecord = {
   id: 'audit-1',
@@ -194,6 +198,62 @@ assert.deepEqual(selectVipClients([
 assert.equal(calculateDeletionShare(1, 16), 6, 'deletion share exposes the existing rounded 1-of-16 calculation');
 assert.equal(calculateDeletionShare(0, 0), null, 'deletion share stays empty without a recorded denominator');
 
+assert.equal(
+  preparedEventKey({ id: 'account-round-a', campaign_id: 'campaign-1' }),
+  'campaign:campaign-1:next_round_prepared',
+  'prepared notices dedupe at the client-campaign boundary rather than one account route',
+);
+assert.equal(
+  preparedEventKey({ id: 'legacy-round-a', campaign_id: null }),
+  'legacy-round-a:next_round_prepared',
+  'legacy account rounds retain their original independent milestone identity',
+);
+assert.equal(roundEventKey({ id: 'account-round-a', campaign_id: 'campaign-1' }, 'round_mailed'), 'campaign:campaign-1:round_mailed', 'mailed notices dedupe across sibling account routes');
+assert.equal(roundEventKey({ id: 'legacy-round-a', campaign_id: null }, 'round_mailed'), 'legacy-round-a:round_mailed', 'legacy mailed notices retain their round boundary');
+assert.equal(
+  campaignReadyForPreparedEmail([{ status: 'generated' }, { status: 'generated' }]),
+  true,
+  'a campaign is ready only after every route generated its drafts',
+);
+assert.equal(
+  campaignReadyForPreparedEmail([{ status: 'generated' }, { status: 'failed' }]),
+  false,
+  'a failed sibling prevents a premature campaign prepared notice',
+);
+assert.equal(
+  campaignReadyForPreparedEmail([]),
+  false,
+  'an empty route list cannot trigger a prepared notice',
+);
+assert.equal(campaignReadyForMailedEmail([{ mailed_date: '2026-08-13' }, { mailed_date: '2026-08-13' }]), true, 'the campaign mailed milestone waits for every letter');
+assert.equal(campaignReadyForMailedEmail([{ mailed_date: '2026-08-13' }, { mailed_date: null }]), false, 'a partial mailing cannot notify the client');
+const cleanupMilestone = {
+  items: [{ id: 'pi', item_kind: 'personal_info', selection_state: 'selected' }, { id: 'account', item_kind: 'account', selection_state: 'selected' }],
+  routes: [{ item_id: 'pi', item_ids: ['pi'], status: 'generated', letter_ids: ['cleanup-1'] }, { item_id: 'account', item_ids: ['account'], status: 'configured', letter_ids: [] }],
+  letters: [{ id: 'cleanup-1', mailed_date: '2026-08-13' }],
+};
+assert.equal(campaignCleanupReadyForEmail(cleanupMilestone), true, 'account routes do not delay the distinct cleanup milestone');
+assert.equal(campaignCleanupReadyForEmail({ ...cleanupMilestone, letters: [{ id: 'cleanup-1', mailed_date: null }] }), false, 'cleanup email waits for the complete cleanup mailing batch');
+
+const portalCleanupLetter = { id: 'cleanup-1', campaign_id: 'campaign-1', letter_kind: 'file_update', target_type: 'bureau', phase: 'Personal Info & Inquiries', mailed_date: '2026-08-13' };
+const portalAccountLetter = { id: 'account-1', campaign_id: 'campaign-1', round_id: 'round-1', round_number: 1, letter_kind: 'dispute', target_type: 'bureau' };
+assert.equal(isPortalFileUpdate(portalCleanupLetter), true, 'portal metadata recognizes cleanup before bureau recipient classification');
+assert.equal(isPortalBureauDispute(portalCleanupLetter), false, 'cleanup is never shown as an account bureau dispute');
+assert.equal(isPortalBureauDispute(portalAccountLetter), true, 'real bureau account disputes retain bureau classification');
+assert.deepEqual(portalLetterGroup(portalCleanupLetter), { key: 'campaign:campaign-1:cleanup', label: 'Step 1 · Credit-file cleanup' }, 'campaign cleanup receives its own ordered portal lane');
+assert.deepEqual(portalLetterGroup(portalAccountLetter), { key: 'campaign:campaign-1:account', label: 'Round 1 · Account disputes' }, 'sibling account routes share one portal round lane');
+const [portalJourney] = buildPortalCampaignJourneys(
+  [{ campaign_id: 'campaign-1', round_number: 1, stage: 'mailing', selected_cleanup_count: 1, selected_account_count: 1 }],
+  [portalCleanupLetter],
+  [],
+);
+assert.equal(portalJourney.cleanup.status, 'Mailed · delivery tracking active', 'portal reports the cleanup milestone accurately');
+assert.equal(portalJourney.account.status, 'Coming next', 'portal tells the client the selected adaptive account round follows cleanup');
+
+const cleanupPortalMigration = fs.readFileSync(new URL('../supabase/migrations/20260813163000_campaign_cleanup_email_and_portal.sql', import.meta.url), 'utf8');
+assert.match(cleanupPortalMigration, /file_cleanup_mailed/, 'migration seeds the cleanup milestone template');
+assert.match(cleanupPortalMigration, /client_campaign_status/, 'migration exposes a client-safe campaign journey view');
+
 const migration = fs.readFileSync(new URL('../supabase/migrations/20260809150000_client_campaign_command_center.sql', import.meta.url), 'utf8');
 assert.match(migration, /dispute_rounds_one_open_per_account_target_idx/, 'direct and bureau tracks have separate open-round protection');
 assert.match(migration, /campaign_letter_routes_bureau_uidx/, 'bureau routes are unique per item and bureau');
@@ -302,5 +362,10 @@ assert.match(letterGenerator, /assertCompletedMessage/, 'output-limit truncation
 assert.match(letterGenerator, /loadCanonicalClientSignature/, 'the protected server injects the canonical client signature');
 assert.match(letterGenerator, /renderStructuredLetter/, 'the server renders structured legal content with deterministic formatting');
 assert.match(letterGenerator, /generatedLetterValidationError\(html, \{ requireSections: true \}\)/, 'new generated letters require a complete closing structure');
+
+const roundEmail = fs.readFileSync(new URL('../netlify/functions/_roundEmail.cjs', import.meta.url), 'utf8');
+assert.match(roundEmail, /campaign_letter_routes[\s\S]*campaign_id/, 'prepared notices verify every route in a client campaign');
+assert.match(roundEmail, /campaign_not_generated/, 'unfinished campaign routes suppress the prepared notice');
+assert.match(roundEmail, /campaign:\$\{round\.campaign_id\}:next_round_prepared/, 'the durable event key is shared by every account route in one campaign');
 
 console.log('All client-campaign assertions passed.');

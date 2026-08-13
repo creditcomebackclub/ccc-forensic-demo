@@ -1,6 +1,6 @@
 import React from 'react';
 import TimelineEvent from './TimelineEvent';
-import { clientCampaignLabel } from '../../utils/clientCampaignCopy';
+import { portalLetterGroup } from '../../utils/portalCampaigns';
 
 // Client-facing lifecycle. The last state deliberately describes what the
 // team does next — a response or a closed window is not automatically a
@@ -16,15 +16,13 @@ function letterPhaseStep(l) {
   return 0; // Prepared
 }
 
-function PhaseProgressBar({ letters }) {
+function PhaseProgressBar({ letters, campaigns = [] }) {
   if (!letters || letters.length === 0) return null;
 
   const groups = {};
+  const campaignById = new Map(campaigns.map((campaign) => [campaign.campaign_id, campaign]));
   letters.forEach(l => {
-    const label = l.round_number
-      ? `Round ${l.round_number} · ${l.target_type === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`
-      : clientCampaignLabel(l.phase);
-    const key = l.round_id || `legacy:${label}`;
+    const { key, label } = portalLetterGroup(l, campaignById);
     if (!groups[key]) groups[key] = { label, letters: [] };
     groups[key].letters.push(l);
   });
@@ -101,7 +99,7 @@ function PhaseProgressBar({ letters }) {
   );
 }
 
-export default function TimelineTab({ timeline, letters, accessToken }) {
+export default function TimelineTab({ timeline, letters, campaigns = [], accessToken }) {
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div>
@@ -111,7 +109,7 @@ export default function TimelineTab({ timeline, letters, accessToken }) {
 
       {/* Phase Progress */}
       {letters && letters.length > 0 && (
-        <PhaseProgressBar letters={letters} />
+        <PhaseProgressBar letters={letters} campaigns={campaigns} />
       )}
 
       {timeline.length === 0 ? (

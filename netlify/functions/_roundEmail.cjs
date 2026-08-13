@@ -4,6 +4,10 @@ const ws = require('ws');
 const { escapeHtml, sendEmail, wrapClientEmail } = require('./_email.cjs');
 
 const EVENT_COPY = {
+  file_cleanup_mailed: {
+    subject: () => 'Your credit-file cleanup is underway',
+    body: ({ firstName, round, letters }) => `Hi ${firstName},\n\nYour personal-information and inquiry cleanup letters have been mailed by certified mail (${letters.length} ${letters.length === 1 ? 'letter' : 'letters'}). This is the first step in your campaign.\n\nOur team will now prepare Round ${round.round_number} of your account disputes. We will monitor delivery and the response window for the cleanup letters while that work continues.\n\nYou do not need to take action unless a response arrives at your home. If one does, please upload every page through your portal.`,
+  },
   next_round_prepared: {
     subject: ({ round }) => `Round ${round.round_number} is prepared for review`,
     body: ({ firstName, round }) => `Hi ${firstName},\n\nWe prepared Round ${round.round_number} of your dispute campaign. Our team will review the letters and mailing packet before anything is sent.\n\nYou do not need to take action right now.`,
@@ -59,6 +63,42 @@ function renderTemplate(value, context) {
   });
 }
 
+// A client campaign may open one account-level dispute_round per route.  The
+// "prepared" notice is a campaign milestone, however: clients should hear
+// once only after every selected route in that campaign has a completed draft.
+function preparedEventKey(round) {
+  return round?.campaign_id
+    ? `campaign:${round.campaign_id}:next_round_prepared`
+    : `${round?.id}:next_round_prepared`;
+}
+
+function roundEventKey(round, eventType) {
+  return round?.campaign_id && ['next_round_prepared', 'round_mailed'].includes(eventType)
+    ? `campaign:${round.campaign_id}:${eventType}`
+    : `${round?.id}:${eventType}`;
+}
+
+function campaignReadyForPreparedEmail(routes) {
+  return Array.isArray(routes) && routes.length > 0
+    && routes.every((route) => route.status === 'generated');
+}
+
+function campaignReadyForMailedEmail(letters) {
+  return Array.isArray(letters) && letters.length > 0
+    && letters.every((letter) => !!letter.mailed_date);
+}
+
+function campaignCleanupReadyForEmail({ items, routes, letters }) {
+  const cleanupIds = new Set((items || [])
+    .filter((item) => item.selection_state === 'selected' && ['personal_info', 'inquiry'].includes(item.item_kind))
+    .map((item) => item.id));
+  const cleanupRoutes = (routes || []).filter((route) => cleanupIds.has(route.item_id)
+    || (route.item_ids || []).some((id) => cleanupIds.has(id)));
+  return cleanupIds.size > 0 && cleanupRoutes.length > 0
+    && cleanupRoutes.every((route) => route.status === 'generated' && (route.letter_ids || []).length > 0)
+    && campaignReadyForMailedEmail(letters);
+}
+
 async function loadContext(db, roundId) {
   const { data: round, error: roundError } = await db.from('dispute_rounds').select('*').eq('id', roundId).single();
   if (roundError || !round) throw new Error('Round email could not resolve the dispute round.');
@@ -71,23 +111,13 @@ async function loadContext(db, roundId) {
   return { round, client, letters };
 }
 
-async function queueRoundEvent({ roundId, eventType, requireAllGenerated = false, requireAllMailed = false }) {
+async function sendMilestoneEmail({ db, context, eventType, eventKey, roundId = null, templateEvent = eventType }) {
   const copy = EVENT_COPY[eventType];
-  if (!copy) throw new Error('Unsupported round email event.');
-  const db = dbClient();
-  const context = await loadContext(db, roundId);
-  if ((requireAllGenerated || eventType === 'next_round_prepared') && context.letters.some((letter) => !letter.html || letter.html === 'GENERATING...' || letter.html.startsWith('ERROR:'))) return { skipped: 'round_not_generated' };
-  if ((requireAllMailed || eventType === 'round_mailed') && context.letters.some((letter) => !letter.mailed_date)) return { skipped: 'round_not_fully_mailed' };
-  if (eventType === 'first_response_received' && !context.letters.some((letter) => letter.response_outcome === 'received')) return { skipped: 'no_response_received' };
-  if (eventType === 'documents_needed' && !context.letters.some((letter) => letter.round_next_action === 'needs_documents')) return { skipped: 'documents_not_requested' };
-  if (eventType === 'round_resolved' && (context.round.status !== 'closed' || context.round.final_disposition !== 'resolved')) return { skipped: 'round_not_resolved' };
-  if (eventType === 'escalation_ready' && (context.round.status !== 'closed' || context.round.final_disposition !== 'escalate')) return { skipped: 'round_not_escalated' };
-  const eventKey = `${roundId}:${eventType}`;
   const firstName = String(context.client.name || 'there').trim().split(/\s+/)[0];
   const vars = { ...context, firstName };
-  const templateEvent = eventType === 'round_mailed' ? `round_mailed:${context.round.target_type}` : eventType;
+  const templateEvents = [...new Set([templateEvent, eventType])];
   const { data: templates, error: templateError } = await db.from('client_email_templates').select('id,event_type,subject_template,body_template')
-    .eq('user_id', context.round.user_id).eq('is_active', true).in('event_type', [templateEvent, eventType]);
+    .eq('user_id', context.round.user_id).eq('is_active', true).in('event_type', templateEvents);
   if (templateError) throw new Error('Could not load the client email template: ' + templateError.message);
   const template = (templates || []).find((item) => item.event_type === templateEvent) || (templates || []).find((item) => item.event_type === eventType) || null;
   const subject = template ? renderTemplate(template.subject_template, context) : copy.subject(vars);
@@ -97,7 +127,7 @@ async function queueRoundEvent({ roundId, eventType, requireAllGenerated = false
   const { data: queued, error: queueError } = await db.from('client_emails').insert({
     user_id: context.round.user_id,
     client_id: context.client.id,
-    round_id: context.round.id,
+    round_id: roundId,
     template_id: template?.id || null,
     event_type: eventType,
     event_key: eventKey,
@@ -117,6 +147,68 @@ async function queueRoundEvent({ roundId, eventType, requireAllGenerated = false
     await db.from('client_emails').update({ send_status: 'failed', delivery_error: String(error.message || error).slice(0, 1000), updated_at: new Date().toISOString() }).eq('id', queued.id);
     throw error;
   }
+}
+
+async function queueRoundEvent({ roundId, eventType, requireAllGenerated = false, requireAllMailed = false }) {
+  const copy = EVENT_COPY[eventType];
+  if (!copy) throw new Error('Unsupported round email event.');
+  const db = dbClient();
+  const context = await loadContext(db, roundId);
+  if ((requireAllGenerated || eventType === 'next_round_prepared') && context.letters.some((letter) => !letter.html || letter.html === 'GENERATING...' || letter.html.startsWith('ERROR:'))) return { skipped: 'round_not_generated' };
+  if (eventType === 'next_round_prepared' && context.round.campaign_id) {
+    const { data: routes, error: routesError } = await db.from('campaign_letter_routes')
+      .select('status')
+      .eq('campaign_id', context.round.campaign_id);
+    if (routesError) throw new Error('Could not check campaign letter generation status.');
+    if (!campaignReadyForPreparedEmail(routes)) return { skipped: 'campaign_not_generated' };
+  }
+  if (eventType === 'round_mailed' && context.round.campaign_id) {
+    const { data: campaignLetters, error: campaignLettersError } = await db.from('letters')
+      .select('id,html,mailed_date,response_outcome,round_next_action,target_type,target_bureau,furnisher')
+      .eq('campaign_id', context.round.campaign_id)
+      .eq('letter_kind', 'dispute');
+    if (campaignLettersError) throw new Error('Could not check campaign mailing status.');
+    context.letters = campaignLetters || [];
+  }
+  if ((requireAllMailed || eventType === 'round_mailed') && context.letters.some((letter) => !letter.mailed_date)) return { skipped: 'round_not_fully_mailed' };
+  if ((requireAllMailed || eventType === 'round_mailed') && !context.letters.length) return { skipped: 'round_has_no_letters' };
+  if (eventType === 'first_response_received' && !context.letters.some((letter) => letter.response_outcome === 'received')) return { skipped: 'no_response_received' };
+  if (eventType === 'documents_needed' && !context.letters.some((letter) => letter.round_next_action === 'needs_documents')) return { skipped: 'documents_not_requested' };
+  if (eventType === 'round_resolved' && (context.round.status !== 'closed' || context.round.final_disposition !== 'resolved')) return { skipped: 'round_not_resolved' };
+  if (eventType === 'escalation_ready' && (context.round.status !== 'closed' || context.round.final_disposition !== 'escalate')) return { skipped: 'round_not_escalated' };
+  const targetTypes = [...new Set(context.letters.map((letter) => letter.target_type).filter(Boolean))];
+  const templateEvent = eventType === 'round_mailed' && targetTypes.length === 1 ? `round_mailed:${targetTypes[0]}` : eventType;
+  return sendMilestoneEmail({
+    db,
+    context,
+    eventType,
+    eventKey: roundEventKey(context.round, eventType),
+    roundId: context.round.id,
+    templateEvent,
+  });
+}
+
+async function queueCampaignCleanupMailed({ campaignId }) {
+  if (!campaignId) return { skipped: 'campaign_missing' };
+  const db = dbClient();
+  const { data: campaign, error: campaignError } = await db.from('client_campaigns').select('id,user_id,client_id,round_number,stage').eq('id', campaignId).single();
+  if (campaignError || !campaign) throw new Error('Cleanup email could not resolve the client campaign.');
+  const [{ data: client, error: clientError }, { data: items, error: itemsError }, { data: routes, error: routesError }, { data: letters, error: lettersError }] = await Promise.all([
+    db.from('clients').select('id,name,email,address').eq('id', campaign.client_id).single(),
+    db.from('campaign_items').select('id,item_kind,selection_state').eq('campaign_id', campaign.id),
+    db.from('campaign_letter_routes').select('id,item_id,item_ids,status,letter_ids').eq('campaign_id', campaign.id),
+    db.from('letters').select('id,mailed_date,target_type,target_bureau,furnisher').eq('campaign_id', campaign.id).eq('letter_kind', 'file_update'),
+  ]);
+  if (clientError || !client?.email) throw new Error('The client has no deliverable email address.');
+  if (itemsError || routesError || lettersError) throw new Error('Could not check the cleanup mailing milestone.');
+  if (!campaignCleanupReadyForEmail({ items, routes, letters })) return { skipped: 'cleanup_not_fully_mailed' };
+  const context = { round: campaign, client, letters };
+  return sendMilestoneEmail({
+    db,
+    context,
+    eventType: 'file_cleanup_mailed',
+    eventKey: `campaign:${campaign.id}:file_cleanup_mailed`,
+  });
 }
 
 async function sendCustomClientEmail({ staffUserId, clientId, roundId = null, templateId = null, subject, bodyText }) {
@@ -185,4 +277,4 @@ async function sendQueuedClientEmails(limit = 25) {
   return { processed: rows.length, sent };
 }
 
-module.exports = { EVENT_COPY, plainTextHtml, queueRoundEvent, sendCustomClientEmail, sendQueuedClientEmails };
+module.exports = { EVENT_COPY, plainTextHtml, preparedEventKey, roundEventKey, campaignReadyForPreparedEmail, campaignReadyForMailedEmail, campaignCleanupReadyForEmail, queueRoundEvent, queueCampaignCleanupMailed, sendCustomClientEmail, sendQueuedClientEmails };

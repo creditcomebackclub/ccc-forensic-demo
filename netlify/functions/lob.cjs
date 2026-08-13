@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const { PDFDocument } = require('pdf-lib');
 const { archiveLobArtifact } = require('./_lobArtifacts.cjs');
 const { responseEvidencePrefixes } = require('./_storagePaths.cjs');
-const { queueRoundEvent } = require('./_roundEmail.cjs');
+const { queueCampaignCleanupMailed, queueRoundEvent } = require('./_roundEmail.cjs');
 
 function lobRequest(path, method, body, apiKey, extraHeaders) {
   return new Promise((resolve, reject) => {
@@ -82,7 +82,7 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_account_id,client_name,phase,round_id,round_number,letter_kind,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,campaign_route_id',
+      + '&select=id,user_id,client_id,client_account_id,client_name,phase,round_id,round_number,letter_kind,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,campaign_id,campaign_route_id',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
@@ -782,6 +782,13 @@ exports.handler = async (event) => {
           await queueRoundEvent({ roundId: letter.round_id, eventType: 'round_mailed', requireAllMailed: true });
         } catch (emailError) {
           console.error('Round mailed milestone email failed (mail was still accepted):', emailError.message);
+        }
+      }
+      if (letterWasSaved && letter.campaign_id && isPersonalInfoCleanupLetter(letter)) {
+        try {
+          await queueCampaignCleanupMailed({ campaignId: letter.campaign_id });
+        } catch (emailError) {
+          console.error('Cleanup mailed milestone email failed (mail was still accepted):', emailError.message);
         }
       }
       return {

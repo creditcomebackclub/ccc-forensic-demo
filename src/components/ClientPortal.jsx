@@ -19,15 +19,16 @@ import {
   clientCampaignLabel,
   isAccountDisputeCampaign,
   isBureauCampaign,
-  isFileUpdateCampaign,
 } from '../utils/clientCampaignCopy';
 import { notifyStaff } from '../utils/notifyStaff';
+import { isPortalBureauDispute, isPortalFileUpdate } from '../utils/portalCampaigns';
 
 export default function ClientPortal({ session, onSignOut }) {
   const [profile, setProfile] = useState(null);
   const [clientMeta, setClientMeta] = useState(null);
   const [letters, setLetters] = useState([]);
   const [rounds, setRounds] = useState([]);
+  const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [auditHistory, setAuditHistory] = useState([]);
   const [progressUpdates, setProgressUpdates] = useState([]);
@@ -80,12 +81,15 @@ export default function ClientPortal({ session, onSignOut }) {
         // The client portal needs campaign state, not staff-only model output
         // or response-review notes. Keep the browser query intentionally
         // narrow; raw response evidence remains private to the staff UI.
-        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,round_id,round_number,letter_kind,target_type,target_bureau,response_due_at,response_window_extension_days,round_review_status';
+        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,round_id,round_number,letter_kind,target_type,target_bureau,response_due_at,response_window_extension_days,round_review_status,campaign_id';
         const lettersQuery = cp.client_id
           ? supabase.from('letters').select(portalLetterColumns).eq('client_id', cp.client_id).order('saved_at', { ascending: true })
           : supabase.from('letters').select(portalLetterColumns).eq('client_name', cp.full_name).order('saved_at', { ascending: true });
         const roundsQuery = cp.client_id
-          ? supabase.from('client_dispute_round_status').select('round_id,client_id,client_account_id,round_number,target_type,status,final_disposition,opened_at,closed_at,cancelled_at,letter_count,mailed_count,reviewed_count').eq('client_id', cp.client_id).order('round_number', { ascending: false })
+          ? supabase.from('client_dispute_round_status').select('round_id,client_id,client_account_id,round_number,target_type,status,final_disposition,opened_at,closed_at,cancelled_at,letter_count,mailed_count,reviewed_count,campaign_id').eq('client_id', cp.client_id).order('round_number', { ascending: false })
+          : Promise.resolve({ data: [], error: null });
+        const campaignsQuery = cp.client_id
+          ? supabase.from('client_campaign_status').select('campaign_id,client_id,round_number,stage,opened_at,closed_at,selected_cleanup_count,selected_account_count').eq('client_id', cp.client_id).order('round_number', { ascending: false })
           : Promise.resolve({ data: [], error: null });
         const auditsQuery = cp.client_id
           ? supabase.from('audits').select('audit,saved_at').eq('client_id', cp.client_id).order('saved_at', { ascending: false }).limit(5)
@@ -96,9 +100,10 @@ export default function ClientPortal({ session, onSignOut }) {
           ? supabase.from('progress_updates').select('*').eq('client_id', cp.client_id).or('status.eq.sent,emailed_at.not.is.null').order('to_report_date', { ascending: false })
           : supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).or('status.eq.sent,emailed_at.not.is.null').order('to_report_date', { ascending: false });
 
-        const [lettersRes, roundsRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
+        const [lettersRes, roundsRes, campaignsRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
           lettersQuery,
           roundsQuery,
+          campaignsQuery,
           clientsQuery,
           auditsQuery,
           progressQuery,
@@ -107,6 +112,8 @@ export default function ClientPortal({ session, onSignOut }) {
         setLetters(lettersRes.data || []);
         if (roundsRes.error) console.warn('Client round status unavailable:', roundsRes.error.message);
         else setRounds(roundsRes.data || []);
+        if (campaignsRes.error) console.warn('Client campaign status unavailable:', campaignsRes.error.message);
+        else setCampaigns(campaignsRes.data || []);
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
         setProgressUpdates(progressRes.data || []);
@@ -286,15 +293,15 @@ export default function ClientPortal({ session, onSignOut }) {
   // Onboarding timeline (Overview tab) — stage from earliest account-dispute mail.
   // File-update letters (PI / inquiries) do not start the dispute journey clock.
   const phase1Mailed = letters
-    .filter(l => (l.target_type || isAccountDisputeCampaign(l.phase)) && l.mailed_date)
+    .filter(l => !isPortalFileUpdate(l) && (l.target_type || isAccountDisputeCampaign(l.phase)) && l.mailed_date)
     .sort((a, b) => new Date(a.mailed_date) - new Date(b.mailed_date));
   const earliestPhase1MailDate = phase1Mailed[0]?.mailed_date || null;
-  const accountDisputeLetters = letters.filter(l => l.target_type || isAccountDisputeCampaign(l.phase) || isBureauCampaign(l.phase));
-  const fileUpdateLetters = letters.filter(l => isFileUpdateCampaign(l.phase));
+  const accountDisputeLetters = letters.filter(l => !isPortalFileUpdate(l) && (l.target_type || isAccountDisputeCampaign(l.phase) || isBureauCampaign(l.phase)));
+  const fileUpdateLetters = letters.filter(isPortalFileUpdate);
   const windowCloseDate = earliestPhase1MailDate
     ? new Date(new Date(earliestPhase1MailDate).getTime() + 30 * 86400000).toISOString()
     : null;
-  const phase3Mailed = letters.some(l => (l.target_type === 'bureau' || l.phase?.startsWith('Phase 3')) && l.mailed_date);
+  const phase3Mailed = letters.some(l => isPortalBureauDispute(l) && l.mailed_date);
   const firstDeletionDate = deletions
     .map(d => d.response_date)
     .filter(Boolean)
@@ -313,7 +320,7 @@ export default function ClientPortal({ session, onSignOut }) {
 
   const timeline = [];
   letters.forEach(l => {
-    const fileUpdate = isFileUpdateCampaign(l.phase);
+    const fileUpdate = isPortalFileUpdate(l);
     const preparedTitle = fileUpdate
       ? 'File update prepared — ' + l.furnisher
       : 'Dispute letter prepared — ' + l.furnisher;
@@ -330,14 +337,14 @@ export default function ClientPortal({ session, onSignOut }) {
       timeline.push({ date: l.mailed_date, icon: '📬', title: 'Out for Delivery — ' + l.furnisher, subtitle: 'Expected delivery today', tone: 'gold' });
 
     if (l.tracking_status === 'Delivered') {
-      const responseWindow = l.target_type ? '30-day response' : (isBureauCampaign(l.phase) ? '45-day bureau review' : '30-day response');
+      const responseWindow = fileUpdate ? '30-day file update' : (isPortalBureauDispute(l) ? '45-day bureau review' : '30-day response');
       timeline.push({ date: l.delivered_at || l.mailed_date, icon: '✅', title: 'Delivered — ' + l.furnisher, subtitle: responseWindow + ' response window started', tone: 'green', lobId: l.lob_id, trackingNumber: l.tracking_number });
     }
     if (l.tracking_status === 'Returned to Sender') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '↩️', title: 'Returned to Sender — ' + l.furnisher, subtitle: 'Letter returned — address may need to be verified', tone: 'red' });
     if (l.tracking_status === 'Available for Pickup') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '🏢', title: 'Available for Pickup — ' + l.furnisher, subtitle: 'Awaiting pickup at post office', tone: 'gold' });
 
     if (l.response_outcome === 'received') {
-      const bureauUpdate = l.target_type === 'bureau' || isBureauCampaign(l.phase);
+      const bureauUpdate = isPortalBureauDispute(l);
       const bureauStatus = l.bureau_response_status;
       const subtitle = bureauUpdate
         ? (bureauStatus === 'analyzing' ? 'Staff is reviewing the bureau response' : bureauStatus === 'review_ready' ? 'Staff review is ready for the next decision' : bureauStatus === 'reviewed' ? 'Next campaign step recorded' : 'Response received and queued for staff review')
@@ -495,6 +502,7 @@ export default function ClientPortal({ session, onSignOut }) {
               <DisputesTab 
                 letters={letters}
                 rounds={rounds}
+                campaigns={campaigns}
                 manualUploadUnlocked={manualUploadUnlocked}
                 setManualUploadUnlocked={setManualUploadUnlocked}
                 uploadSuccess={uploadSuccess}
@@ -510,7 +518,7 @@ export default function ClientPortal({ session, onSignOut }) {
             )}
             
             {activeTab === 'timeline' && (
-              <TimelineTab timeline={timeline} letters={letters} accessToken={session?.access_token} />
+              <TimelineTab timeline={timeline} letters={letters} campaigns={campaigns} accessToken={session?.access_token} />
             )}
             
             {activeTab === 'billing' && (
