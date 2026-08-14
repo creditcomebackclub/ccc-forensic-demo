@@ -701,6 +701,27 @@ export default function ClientBillingPanel({ client, onChanged }) {
             onSave={(v) => save({ billing_type: v })} 
           />
         </Row>
+        {client.billingType === 'Automated Recurring' && (
+          <Row label="Custom Monthly Fee">
+            <Field
+              label="custom monthly fee"
+              value={client.billingRecurringAmount != null ? String(client.billingRecurringAmount) : ''}
+              type="number"
+              placeholder="Uses tier price"
+              onSave={(value) => {
+                const amount = value === '' ? null : Number(value);
+                if (amount != null && (!Number.isFinite(amount) || amount <= 0)) {
+                  toast.error('Custom monthly fee must be greater than $0.');
+                  return;
+                }
+                return save({ billing_recurring_amount: amount });
+              }}
+            />
+            <div className="text-[10px] mt-1 text-right" style={{ color: T.faint }}>
+              Optional override for recurring invoices and MRR; does not affect balances or payments.
+            </div>
+          </Row>
+        )}
         
         {client.billingStatus === 'Active' && (
           <div className="mt-2 bg-green-50 text-green-800 text-[11px] px-3 py-2 rounded-md border border-green-200 flex items-start gap-2">

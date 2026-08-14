@@ -853,7 +853,7 @@ exports.handler = async () => {
   let billingAlerts = [];
   try {
     const activeClients = await listAllRows(
-      '/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date,billing_tier,referred_by&order=id.asc',
+      '/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date,billing_tier,billing_recurring_amount,referred_by&order=id.asc',
       supabaseUrl,
       supabaseKey
     );
@@ -919,8 +919,12 @@ exports.handler = async () => {
         if (isDue) {
           let amount = 99.00;
           let description = 'Monthly Service Fee';
+          const customRecurringAmount = Number(c.billing_recurring_amount);
 
-          if (!hasPriorBilling) {
+          if (Number.isFinite(customRecurringAmount) && customRecurringAmount > 0) {
+            amount = customRecurringAmount;
+            description = 'Custom Monthly Service Fee';
+          } else if (!hasPriorBilling) {
             if (c.billing_tier === 'Standard') { amount = 154.00; description = 'Initial Month & First Work Fee'; }
             else if (c.billing_tier === 'VIP') { amount = 248.00; description = 'VIP Initial Month & First Work Fee'; }
             else if (c.billing_tier === 'Paid In Full') { amount = 499.00; description = 'Paid In Full Service'; }

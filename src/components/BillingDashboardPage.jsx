@@ -3,7 +3,7 @@ import { DollarSign, TrendingUp, TrendingDown, AlertCircle, Clock, CheckCircle, 
 import { listExpenses, addExpense, updateExpense, deleteExpense } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { computeClientCommission, commissionRate } from '../utils/affiliateCommission';
-import { DEFAULT_TIER_PRICING } from '../utils/pricing';
+import { calculateActiveRecurringMrr, resolveRecurringMonthlyFee } from '../utils/pricing';
 
 const T = {
   navy: '#1B2A4A',
@@ -18,13 +18,6 @@ const T = {
   red: '#DC2626',
   slate: '#64748B',
 };
-
-// Shared with the LPOA/Settings pricing (utils/pricing.js) so this MRR
-// forecast can't silently drift from the real advertised tier prices.
-// Reads only the hardcoded defaults, not Settings' live per-tier overrides
-// — if those are ever changed, update here too or wire this page to fetch
-// settings.json the same way ClientSetupFlow does.
-const TIER_PRICE = { VIP: DEFAULT_TIER_PRICING.VIP.monthlyFee, Standard: DEFAULT_TIER_PRICING.Standard.monthlyFee };
 
 const money = (n) => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const money0 = (n) => `$${Math.round(Number(n || 0)).toLocaleString()}`;
@@ -49,7 +42,8 @@ const isFwf = (tx) => /first\s*work|fwf|setup\s*fee|initial\s*fee/i.test(tx.desc
 // cap cannot silently omit ledger rows.
 const BILLING_CLIENT_COLUMNS = [
   'id', 'name', 'billing_status', 'billing_type', 'billing_start_date',
-  'billing_tier', 'referred_by', 'referral_fee', 'ledger', 'status_changed_at',
+  'billing_tier', 'billing_recurring_amount', 'referred_by', 'referral_fee',
+  'ledger', 'status_changed_at',
 ].join(',');
 
 async function loadBillingClients() {
@@ -72,6 +66,9 @@ async function loadBillingClients() {
         billingType: row.billing_type || null,
         billingStartDate: row.billing_start_date || null,
         billingTier: row.billing_tier || null,
+        billingRecurringAmount: row.billing_recurring_amount == null
+          ? null
+          : Number(row.billing_recurring_amount),
         referredBy: row.referred_by || null,
         referralFee: row.referral_fee || null,
         ledger: Array.isArray(row.ledger) ? row.ledger : [],
@@ -358,7 +355,8 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   const monthIdx = Object.fromEntries(months.map((m, i) => [m.ym, i]));
 
   // Accumulators
-  let totalOutstanding = 0, collected30Days = 0, mrr = 0, lifetimeRevenue = 0;
+  let totalOutstanding = 0, collected30Days = 0, lifetimeRevenue = 0;
+  const mrr = calculateActiveRecurringMrr(clients);
   let activeClientsCount = 0, pausedCount = 0, graduatedCount = 0, inactiveCount = 0;
   let newMrr = 0, pausedMrr = 0, lostMrr = 0;
   let commissionEarned = 0, commissionPaidOut = 0;
@@ -383,11 +381,13 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
   }
 
   clients.forEach(c => {
-    const recurringTierValue = c.billingType === 'Automated Recurring' ? (TIER_PRICE[c.billingTier] || 0) : 0;
+    // MRR describes the active recurring agreement, not whether today's
+    // invoice is open or paid. Legacy no-tier accounts resolve from their
+    // latest recurring ledger charge; balance/collections remain below.
+    const recurringTierValue = resolveRecurringMonthlyFee(c);
 
     if (c.billingStatus === 'Active') {
       activeClientsCount++;
-      mrr += recurringTierValue;
       if (recurringTierValue > 0 && ym(c.billingStartDate) === thisMonth) newMrr += recurringTierValue;
       if (c.billingTier && tierMix[c.billingTier] !== undefined) tierMix[c.billingTier]++;
       if (c.billingStartDate) {

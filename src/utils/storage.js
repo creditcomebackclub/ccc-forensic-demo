@@ -396,7 +396,7 @@ function normalizeClientSummary(row) {
   };
 }
 
-const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,current_employer,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at,engagement_status,engagement_status_changed_at,service_agreement_mode,service_agreement_label,service_agreement_amount,service_agreement_fee_text';
+const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,current_employer,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,billing_recurring_amount,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at,engagement_status,engagement_status_changed_at,service_agreement_mode,service_agreement_label,service_agreement_amount,service_agreement_fee_text';
 
 function hydrateClientRecord(row, audits, letters, portal = null) {
   const latestActivity = [
@@ -448,6 +448,7 @@ function hydrateClientRecord(row, audits, letters, portal = null) {
     billingType: row.billing_type || null,
     billingStartDate: row.billing_start_date || null,
     billingTier: row.billing_tier || null,
+    billingRecurringAmount: row.billing_recurring_amount != null ? Number(row.billing_recurring_amount) : null,
     exitReason: row.exit_reason || null,
     statusChangedAt: row.status_changed_at || null,
     referredBy: row.referred_by || null,

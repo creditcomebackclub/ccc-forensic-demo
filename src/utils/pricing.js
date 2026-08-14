@@ -13,6 +13,52 @@ export const DEFAULT_TIER_PRICING = {
   'Paid In Full': { flatFee: 499, flatMonths: 6, firstWorkFee: 0 },
 };
 
+const RECURRING_CHARGE_PATTERN = /monthly|membership/i;
+const NON_REVENUE_LEDGER_STATUSES = new Set(['cancelled', 'canceled', 'void', 'voided', 'refunded']);
+
+/**
+ * Resolve the monthly fee for a recurring client without coupling MRR to the
+ * current invoice balance. Configured agreement/tier pricing wins; legacy
+ * accounts without either fall back to their latest monthly ledger charge.
+ * Paid and outstanding charges intentionally resolve to the same amount.
+ */
+export function resolveRecurringMonthlyFee(client, pricing = DEFAULT_TIER_PRICING) {
+  if (!client) return 0;
+  const billingType = client.billingType || client.billing_type;
+  if (billingType !== 'Automated Recurring') return 0;
+
+  const recurringAmount = Number(client.billingRecurringAmount ?? client.billing_recurring_amount);
+  if (Number.isFinite(recurringAmount) && recurringAmount > 0) return recurringAmount;
+
+  const tier = client.billingTier || client.billing_tier;
+  const tierAmount = Number(pricing?.[tier]?.monthlyFee);
+  if (Number.isFinite(tierAmount) && tierAmount > 0) return tierAmount;
+
+  const ledger = Array.isArray(client.ledger) ? client.ledger : [];
+  const recurringCharges = ledger
+    .filter((entry) => {
+      const amount = Number(entry?.amount);
+      const status = String(entry?.status || '').toLowerCase();
+      return Number.isFinite(amount)
+        && amount > 0
+        && RECURRING_CHARGE_PATTERN.test(String(entry?.description || ''))
+        && !NON_REVENUE_LEDGER_STATUSES.has(status);
+    })
+    .sort((a, b) => new Date(b?.date || b?.paid_at || 0) - new Date(a?.date || a?.paid_at || 0));
+
+  return recurringCharges.length ? Number(recurringCharges[0].amount) : 0;
+}
+
+/** Sum active recurring agreements; ledger balance state never gates inclusion. */
+export function calculateActiveRecurringMrr(clients, pricing = DEFAULT_TIER_PRICING) {
+  return (Array.isArray(clients) ? clients : []).reduce((total, client) => {
+    const status = client?.billingStatus || client?.billing_status;
+    return status === 'Active'
+      ? total + resolveRecurringMonthlyFee(client, pricing)
+      : total;
+  }, 0);
+}
+
 // Merges any admin-configured overrides (settings.pricing.tiers) over the
 // defaults above — same shape, so a partial override (e.g. just Standard's
 // monthly fee) doesn't lose the rest.

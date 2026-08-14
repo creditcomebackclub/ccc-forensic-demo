@@ -21,6 +21,7 @@
     "test:operations": "node scripts/test-operations-control-center.mjs",
     "test:adaptive-rounds": "node scripts/test-adaptive-rounds.mjs",
     "test:service-agreements": "node scripts/test-service-agreements.mjs",
+    "test:billing-metrics": "node scripts/test-billing-metrics.mjs",
     "test:client-campaigns": "node scripts/test-client-campaigns.mjs",
     "test:calendly": "node scripts/test-calendly-integration.mjs",
     "test:claude-hardening": "node scripts/test-claude-hardening.mjs",
