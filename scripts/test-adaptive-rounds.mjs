@@ -100,6 +100,14 @@ ok('standalone adaptive rounds expose a safe failed-draft retry path', () => {
   assert.match(migration, /v_evidence|letter_source_links|open round/i);
 });
 
+ok('later-round packets use archived mailpieces without duplicating identity documents', () => {
+  const mailer = readFileSync(new URL('../src/components/LobMailer.jsx', import.meta.url), 'utf8');
+  assert.match(mailer, /listMailArtifacts\(sourceLetterIds\)/);
+  assert.match(mailer, /sourceArtifact\.storage_path, sourceHeading \+ ' — Exact Lob Mailpiece'/);
+  assert.match(mailer, /optionalDocs = docs\.filter\(\(doc\) => !isPersonalInfoCleanup && doc\.doc_type\?\.startsWith\('other-'\)\)/);
+  assert.doesNotMatch(mailer, /optionalDocs[\s\S]{0,300}\['id', 'address'\]/);
+});
+
 ok('client campaigns are labeled separately from account rounds', () => {
   const action = deriveNextAction({ activeCampaign: { round_number: 2, stage: 'configure_letters' } });
   assert.equal(action.label, 'Client Campaign 2: Build letters');

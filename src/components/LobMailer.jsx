@@ -108,11 +108,9 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
   const isBureauFollowUp = isPhase3FollowUpLetter(letter);
   const isFileUpdate = isFileUpdateLetter(letter);
   const isPersonalInfoCleanup = isPersonalInfoCleanupLetter(letter);
-  // Staff may add supporting records to any round. ID/address remain automatic
-  // in Round 1 and direct-furnisher packets, so they are offered here only
-  // when a later structured bureau round would not already include them.
-  const optionalDocs = docs.filter((doc) => !isPersonalInfoCleanup && (doc.doc_type?.startsWith('other-')
-    || (letter.roundId && letter.targetType === 'bureau' && Number(letter.roundNumber) > 1 && ['id', 'address'].includes(doc.doc_type))));
+  // Identity documents are managed by the required-enclosure rules. Showing
+  // them again as optional made the same files appear twice in later rounds.
+  const optionalDocs = docs.filter((doc) => !isPersonalInfoCleanup && doc.doc_type?.startsWith('other-'));
   const toggleOtherDoc = (id) => {
     setSelectedOtherDocIds((prev) => {
       const next = new Set(prev);
@@ -450,15 +448,28 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         if (evidenceError) throw evidenceError;
         const sourceById = new Map((sourceLetters || []).map((source) => [source.id, source]));
         const evidenceById = new Map((evidenceRows || []).map((record) => [record.id, record]));
+        let sourceArtifactsByLetter = new Map();
+        try {
+          const sourceArtifacts = await listMailArtifacts(sourceLetterIds);
+          sourceArtifactsByLetter = new Map(sourceArtifacts
+            .filter((artifact) => artifact.artifact_type === 'mailpiece_pdf')
+            .map((artifact) => [artifact.letter_id, artifact]));
+        } catch (e) { console.warn('Could not load archived adaptive-round mailpieces:', e); }
         for (const [index, link] of (links || []).entries()) {
           const source = sourceById.get(link.source_letter_id);
           const evidence = evidenceById.get(link.response_evidence_id);
-          if (!source?.html || !evidence || evidence.analysis_status !== 'analyzed' || evidence.review_status === 'not_reviewed') {
+          const sourceArtifact = sourceArtifactsByLetter.get(link.source_letter_id);
+          if ((!source?.html && !sourceArtifact) || !evidence || evidence.analysis_status !== 'analyzed' || evidence.review_status === 'not_reviewed') {
             throw new Error('A selected prior letter/evidence pair is incomplete or no longer reviewed. Nothing was sent.');
           }
-          enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
-            + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">EXHIBIT ' + String.fromCharCode(65 + index) + ' — Prior Reviewed Dispute (' + (source.furnisher || 'Account') + ')</div>'
-            + extractHtmlStyles(source.html) + extractHtmlBody(source.html) + '</div>';
+          const sourceHeading = 'EXHIBIT ' + String.fromCharCode(65 + index) + ' — Prior Reviewed Dispute (' + (source?.furnisher || 'Account') + ')';
+          if (sourceArtifact) {
+            enclosurePages += await renderPdfPages(sourceArtifact.storage_path, sourceHeading + ' — Exact Lob Mailpiece');
+          } else {
+            enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
+              + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">' + sourceHeading + '</div>'
+              + extractHtmlStyles(source.html) + extractHtmlBody(source.html) + '</div>';
+          }
           const paths = Array.isArray(evidence.storage_paths) ? evidence.storage_paths : [];
           const names = Array.isArray(evidence.file_names) ? evidence.file_names : [];
           for (let fileIndex = 0; fileIndex < paths.length; fileIndex += 1) {
