@@ -56,7 +56,7 @@ const evidence = {
   response_kind: 'bureau',
   storage_bucket: 'responses',
   storage_paths: [
-    'firm-1/response-evidence/11111111-1111-4111-8111-111111111111/response_01_results.pdf',
+    'firm-1/client-1/response-evidence/11111111-1111-4111-8111-111111111111/response_01_results.pdf',
   ],
   file_names: ['results.pdf'],
   upload_status: 'received',
@@ -78,7 +78,16 @@ throwsMessage(
 );
 
 const valid = validateFollowUpSourceRelationships({ followUp, priorLetter, evidence });
-assert(valid.paths.length === 1 && valid.names[0] === 'results.pdf', 'valid exact source relationships pass');
+assert(valid.paths.length === 1 && valid.names[0] === 'results.pdf', 'canonical client-scoped response path passes');
+const legacyValid = validateFollowUpSourceRelationships({
+  followUp,
+  priorLetter,
+  evidence: {
+    ...evidence,
+    storage_paths: ['firm-1/response-evidence/11111111-1111-4111-8111-111111111111/response_01_results.pdf'],
+  },
+});
+assert(legacyValid.paths.length === 1, 'legacy response path remains readable');
 
 throwsMessage(
   () => validateFollowUpSourceRelationships({
