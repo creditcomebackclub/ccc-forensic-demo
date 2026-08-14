@@ -1,4 +1,5 @@
 const { sendEmail, isConfigured, wrapClientEmail, escapeHtml, BRAND } = require('./_email.cjs');
+const { sourceAwareNurtureBody } = require('./_leadNurture.cjs');
 
 async function sendMail(to, subject, htmlBody, attachments) {
   return sendEmail({ to, subject, html: htmlBody, attachments });
@@ -264,7 +265,7 @@ exports.handler = async (event) => {
   // Unlike send_onboarding_reminder (Track B), this never tells someone to
   // "log in" or "finish signing" — they have nothing to log into yet.
   if (action === 'send_lead_nurture') {
-    const { clientName, clientEmail, day, auditSummary } = payload;
+    const { clientName, clientEmail, day, auditSummary, leadContext } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
     if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
@@ -291,14 +292,11 @@ exports.handler = async (event) => {
         body: hasAudit
           ? `<p>Good news — our team has already started reviewing the credit report you shared. So far we've flagged ${v} potential furnisher-level issue${v === 1 ? '' : 's'} worth a closer look.</p>
              <p>Before we go further, we'd like to walk you through exactly what we found and what your options are — no cost, no obligation.</p>`
-          : `<p>Thanks for downloading our free dispute guide and reaching out. Here's exactly what happens next: we'll review your credit report for furnisher-level reporting errors — the kind that can be legally challenged directly with the company that reported them, not just the credit bureau.</p>
-             <p>The fastest way to find out what's on your file is a free 15-minute call. No pressure, no cost.</p>`,
+          : sourceAwareNurtureBody(1, leadContext),
       },
       3: {
         subject: 'Why We Go After the Furnisher, Not the Bureau',
-        body: `<p>Most people think disputing a credit report means arguing with Equifax, Experian, or TransUnion. That's rarely where the real leverage is.</p>
-             <p>Every account on your report is reported by a furnisher — a bank, collector, or lender — who is legally required to report it accurately under the Fair Credit Reporting Act. When they don't (wrong balance, wrong status, mismatched dates between bureaus), that's a direct violation we can challenge at the source.</p>
-             <p>That's the entire strategy behind our free guide, and it's what we look for on every report we review.</p>`,
+        body: sourceAwareNurtureBody(3, leadContext),
       },
       6: {
         subject: `${firstName}, Here's What Results Actually Look Like`,

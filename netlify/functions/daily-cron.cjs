@@ -1,6 +1,6 @@
 const https = require('https');
 const { sendQueuedClientEmails } = require('./_roundEmail.cjs');
-const { shouldSuppressGenericNurture } = require('./_leadNurture.cjs');
+const { leadNurtureContext, shouldSuppressGenericNurture } = require('./_leadNurture.cjs');
 
 function supabaseRequest(path, method, body, url, key, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
@@ -700,7 +700,13 @@ exports.handler = async () => {
             }
 
             try {
-              await fetch_send('send_lead_nurture', { clientName: lead.name, clientEmail: lead.email, day: d.day, auditSummary });
+              await fetch_send('send_lead_nurture', {
+                clientName: lead.name,
+                clientEmail: lead.email,
+                day: d.day,
+                auditSummary,
+                leadContext: leadNurtureContext(lead),
+              });
               newDrips.push(d.key);
               touched = true;
               nurtureDripsCount++;

@@ -12,7 +12,10 @@ const {
   normalizeWebhookEvent,
   webhookEventKey,
 } = require('../netlify/functions/_calendly.cjs');
-const { shouldSuppressGenericNurture } = require('../netlify/functions/_leadNurture.cjs');
+const { leadNurtureContext, shouldSuppressGenericNurture, sourceAwareNurtureBody } = require('../netlify/functions/_leadNurture.cjs');
+const { createGuideDownloadToken, verifyGuideDownloadToken } = require('../netlify/functions/_guideDownloadToken.cjs');
+const { _test: { intakeLeadFields, normalizeIntent } } = require('../netlify/functions/public-intake.cjs');
+const { handler: guideDownloadHandler } = require('../netlify/functions/guide-download.cjs');
 const { bookedEmail } = require('../netlify/functions/_consultationBooking.cjs');
 const { handler: calendlyWebhookHandler, _test: { bookingPatch } } = require('../netlify/functions/calendly-webhook.cjs');
 
@@ -61,6 +64,27 @@ assert(shouldSuppressGenericNurture({ consultation_status: 'scheduled', tags: []
 assert(shouldSuppressGenericNurture({ consultation_status: 'canceled', tags: [] }), 'a canceled consultation stays suppressed');
 assert(shouldSuppressGenericNurture({ consultation_status: 'requested', tags: ['lead-stage:contacted'] }), 'staff contact suppresses generic nurture');
 assert(shouldSuppressGenericNurture({ consultation_status: null, tags: ['lead-stage:audit'] }), 'audit stage suppresses generic nurture');
+assert(leadNurtureContext({ consultation_status: 'requested', tags: [] }).consultationRequested, 'requested consultation carries abandonment context');
+assert(leadNurtureContext({ tags: ['guide:downloaded'] }).guideDownloaded, 'recorded guide click carries download context');
+
+const consultationDay1 = sourceAwareNurtureBody(1, { consultationRequested: true });
+assert(/haven't selected a time/i.test(consultationDay1), 'unbooked consultation gets completion-specific day-one copy');
+assert(!/download/i.test(consultationDay1), 'unbooked consultation copy never claims a guide download');
+const guideDay1 = sourceAwareNurtureBody(1, { guideDownloaded: true });
+assert(/downloading our free dispute guide/i.test(guideDay1), 'recorded guide download gets guide-specific day-one copy');
+assert(!/guide you downloaded/i.test(sourceAwareNurtureBody(3, {})), 'generic day-three copy never claims a guide download');
+
+assert(normalizeIntent() === 'consultation' && normalizeIntent('guide_download') === 'guide_download', 'public intake recognizes consultation and guide intents');
+assert(normalizeIntent('unknown') === null, 'public intake rejects unknown intent');
+const guideFields = intakeLeadFields('guide_download', null, 'Guide Download');
+assert(guideFields.consultation_status === null && guideFields.tags.includes('source:freeguide'), 'guide capture does not masquerade as a consultation request');
+const consultationFields = intakeLeadFields('consultation', null, 'Consultation');
+assert(consultationFields.consultation_status === 'requested', 'consultation capture remains a requested consultation');
+
+const guideToken = createGuideDownloadToken('lead-1', 'secret', 1000);
+assert(verifyGuideDownloadToken(guideToken, 'secret', 1001) === 'lead-1', 'guide download token verifies for its captured lead');
+assert(verifyGuideDownloadToken(guideToken + 'x', 'secret', 1001) === null, 'guide download token rejects tampering');
+assert(verifyGuideDownloadToken(guideToken, 'secret', 1000 + (31 * 24 * 60 * 60)) === null, 'guide download token expires');
 
 assert(isStaleBookingEvent({ calendly_booking_updated_at: '2026-08-11T02:00:00Z' }, '2026-08-11T01:00:00Z'), 'detects an out-of-order booking event');
 assert(!isStaleBookingEvent({ calendly_booking_updated_at: '2026-08-11T01:00:00Z' }, '2026-08-11T02:00:00Z'), 'accepts a newer booking event');
@@ -98,6 +122,11 @@ for (const file of ['public/home.html', 'public/freeguide.html', 'public/join.ht
 }
 const guideSource = readFileSync(new URL('../public/freeguide.html', import.meta.url), 'utf8');
 assert(!/no[ -]?email required/i.test(guideSource), 'guide page no longer claims that email is unnecessary');
+assert((guideSource.match(/openIntake\('Guide Download'\)/g) || []).length === 2, 'both guide download buttons open email capture');
+assert(!/href="downloads\/7-Metro2-Dispute-Templates\.pdf"/i.test(guideSource), 'guide PDF is no longer exposed through a direct untracked link');
+assert(guideSource.includes("intent: intakeIntent") && guideSource.includes('intake.downloadUrl'), 'guide capture requests a tracked download link');
+const guideEndpoint = readFileSync(new URL('../netlify/functions/guide-download.cjs', import.meta.url), 'utf8');
+assert(guideEndpoint.includes("'guide:downloaded'") && /statusCode:\s*302/.test(guideEndpoint), 'tracked guide endpoint records the click and redirects to the PDF');
 
 function response(body, status = 200) {
   return new Response(body == null || status === 204 ? null : JSON.stringify(body), {
@@ -218,6 +247,22 @@ const subscriptionBody = subscriptionPost ? JSON.parse(subscriptionPost.options.
 assert(subscriptionBody?.scope === 'user', 'registers a least-privilege user-scoped webhook');
 assert(subscriptionBody?.url === 'https://ccc-example.netlify.app/api/calendly-webhook', 'registers the stable production callback URL');
 assert(subscriptionBody?.events?.join(',') === 'invitee.created,invitee.canceled', 'subscribes only to booking and cancellation events');
+
+calls.length = 0;
+globalThis.fetch = async (url, options = {}) => {
+  const target = String(url);
+  calls.push({ url: target, options });
+  if (target.includes('/rest/v1/clients?id=eq.lead-1&select=id,tags')) {
+    return response([{ id: 'lead-1', tags: ['source:freeguide'] }]);
+  }
+  if (target.includes('/rest/v1/clients?id=eq.lead-1') && options.method === 'PATCH') return response(null, 204);
+  throw new Error('Unexpected guide tracking request: ' + target);
+};
+const trackedGuideToken = createGuideDownloadToken('lead-1', 'test-service-key');
+const guideDownloadResult = await guideDownloadHandler({ httpMethod: 'GET', queryStringParameters: { token: trackedGuideToken } });
+assert(guideDownloadResult.statusCode === 302 && /7-Metro2-Dispute-Templates\.pdf$/.test(guideDownloadResult.headers.Location), 'valid guide token redirects to the PDF');
+const guideTrackingPatch = calls.find((call) => call.options.method === 'PATCH');
+assert(JSON.parse(guideTrackingPatch?.options.body || '{}').tags?.includes('guide:downloaded'), 'guide redirect records the actual download click');
 
 globalThis.fetch = originalFetch;
 

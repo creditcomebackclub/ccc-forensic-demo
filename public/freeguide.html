@@ -307,7 +307,7 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
     <h1>The Metro 2 Dispute Guide That Actually <em>Works</em></h1>
     <p>7 furnisher-level dispute strategies grounded in FCRA §623 and Metro 2 compliance standards. These aren't generic templates — they're the same violation categories we use with real clients.</p>
     <div class="hero-cta">
-      <a href="downloads/7-Metro2-Dispute-Templates.pdf" class="btn-primary" download>
+      <a href="#" onclick="openIntake('Guide Download'); return false;" class="btn-primary">
         <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
         Download Your Free Guide
       </a>
@@ -448,7 +448,7 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
       <p class="section-sub" style="margin-left:auto;margin-right:auto;">Download the guide, review your reports, and schedule a free consultation. We'll tell you exactly which violations exist in your file and what we can do about them.</p>
       
       <div style="display:flex; justify-content:center; flex-wrap:wrap;">
-        <a href="downloads/7-Metro2-Dispute-Templates.pdf" class="btn-cta-ghost" download>Download Free Guide</a>
+        <a href="#" onclick="openIntake('Guide Download'); return false;" class="btn-cta-ghost">Download Free Guide</a>
         <a href="#" onclick="openIntake('Consultation'); return false;" class="btn-cta-main">Schedule Free Consultation →</a>
       </div>
     </div>
@@ -493,14 +493,14 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
   <div class="modal-box">
     <button class="modal-close" onclick="closeIntake()">×</button>
     <div id="intakeFormStep">
-      <div class="modal-title">Get Started</div>
-      <div class="modal-sub">Request your free consultation, then choose a time that works for you. Secure onboarding begins only if you decide to move forward.</div>
+      <div class="modal-title" id="intakeModalTitle">Get Started</div>
+      <div class="modal-sub" id="intakeModalSub">Request your free consultation, then choose a time that works for you. Secure onboarding begins only if you decide to move forward.</div>
       <form id="intakeForm">
         <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
           <label for="intakeWebsite">Leave this field blank</label>
           <input type="text" id="intakeWebsite" name="website" tabindex="-1" autocomplete="off">
         </div>
-        <div class="form-group">
+        <div class="form-group" id="intakeTierGroup">
           <label>Selected Tier</label>
           <input type="text" id="intakeTier" name="tier" readonly>
         </div>
@@ -512,11 +512,12 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
           <label>Email Address</label>
           <input type="email" id="intakeEmail" name="email" required placeholder="john@example.com">
         </div>
-        <div class="form-group">
+        <div class="form-group" id="intakePhoneGroup">
           <label>Phone Number</label>
           <input type="tel" id="intakePhone" name="phone" placeholder="(555) 555-5555">
         </div>
         <button type="submit" class="btn-submit" id="intakeSubmitBtn">Continue to Scheduling →</button>
+        <p id="intakeEmailDisclosure" style="margin:12px 0 0;font-size:11px;line-height:1.5;color:#6B7280;">We may email you about your consultation request. Unsubscribe anytime.</p>
       </form>
     </div>
     <div id="intakeSuccessStep" class="modal-success">
@@ -527,6 +528,13 @@ footer{background:var(--black);padding:52px 28px 36px;color:rgba(255,255,255,.5)
       <div class="calendly-inline-widget" data-url="https://calendly.com/creditcomebackclub/consultation" style="min-width:320px;height:400px;"></div>
       <script type="text/javascript" src="https://assets.calendly.com/assets/external/widget.js" async></script>
       <!-- Calendly inline widget end -->
+    </div>
+    <div id="guideSuccessStep" class="modal-success">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+      <div class="modal-title">Your Guide Is Ready</div>
+      <div class="modal-sub">Use the button below to download the Metro 2 dispute guide.</div>
+      <a id="guideDownloadLink" href="#" class="btn-submit" download>Download the PDF Now</a>
+      <div style="margin-top:20px;"><a href="#" onclick="openIntake('Consultation'); return false;" style="color:#1B2A4A;font-weight:700;">Schedule a Free Consultation →</a></div>
     </div>
   </div>
 </div>
@@ -557,10 +565,18 @@ document.addEventListener('click', (e) => {
 const modalOverlay = document.getElementById('intakeModal');
 const intakeFormStep = document.getElementById('intakeFormStep');
 const intakeSuccessStep = document.getElementById('intakeSuccessStep');
+const guideSuccessStep = document.getElementById('guideSuccessStep');
 const intakeForm = document.getElementById('intakeForm');
 const intakeSubmitBtn = document.getElementById('intakeSubmitBtn');
 const intakeTier = document.getElementById('intakeTier');
+const intakeModalTitle = document.getElementById('intakeModalTitle');
+const intakeModalSub = document.getElementById('intakeModalSub');
+const intakeTierGroup = document.getElementById('intakeTierGroup');
+const intakePhoneGroup = document.getElementById('intakePhoneGroup');
+const intakeEmailDisclosure = document.getElementById('intakeEmailDisclosure');
+const guideDownloadLink = document.getElementById('guideDownloadLink');
 let intakeLeadId = null;
+let intakeIntent = 'consultation';
 
 function initializeIntakeCalendly(name, email) {
   const mount = intakeSuccessStep.querySelector('.calendly-inline-widget');
@@ -583,11 +599,26 @@ function initializeIntakeCalendly(name, email) {
 }
 
 function openIntake(tier) {
+  const isGuide = tier === 'Guide Download';
+  intakeIntent = isGuide ? 'guide_download' : 'consultation';
   intakeTier.value = tier || 'Consultation';
   intakeFormStep.style.display = 'block';
   intakeSuccessStep.style.display = 'none';
+  guideSuccessStep.style.display = 'none';
   intakeForm.reset();
   intakeTier.value = tier || 'Consultation'; // Reset clears it, so set again
+  intakeModalTitle.textContent = isGuide ? 'Get the Free Guide' : 'Get Started';
+  intakeModalSub.textContent = isGuide
+    ? 'Enter your name and email to unlock the Metro 2 dispute guide.'
+    : 'Request your free consultation, then choose a time that works for you. Secure onboarding begins only if you decide to move forward.';
+  intakeTierGroup.style.display = isGuide ? 'none' : 'block';
+  intakePhoneGroup.style.display = isGuide ? 'none' : 'block';
+  intakeSubmitBtn.disabled = false;
+  intakeSubmitBtn.textContent = isGuide ? 'Unlock My Free Guide →' : 'Continue to Scheduling →';
+  intakeEmailDisclosure.textContent = isGuide
+    ? 'We may email you educational information and an invitation to schedule a consultation. Unsubscribe anytime.'
+    : 'We may email you about your consultation request. Unsubscribe anytime.';
+  guideDownloadLink.href = '#';
   modalOverlay.classList.add('active');
 }
 
@@ -605,6 +636,7 @@ intakeForm.addEventListener('submit', async (e) => {
     email: document.getElementById('intakeEmail').value,
     phone: document.getElementById('intakePhone').value,
     tier: document.getElementById('intakeTier').value,
+    intent: intakeIntent,
     website: document.getElementById('intakeWebsite').value
   };
 
@@ -618,15 +650,19 @@ intakeForm.addEventListener('submit', async (e) => {
     if (!res.ok) throw new Error('Failed to submit');
     const intake = await res.json();
     intakeLeadId = intake.leadId || null;
-    initializeIntakeCalendly(payload.name, payload.email);
-
-    // Show success / Calendly
     intakeFormStep.style.display = 'none';
-    intakeSuccessStep.style.display = 'block';
+    if (intakeIntent === 'guide_download') {
+      if (!intake.downloadUrl) throw new Error('Guide link missing');
+      guideDownloadLink.href = intake.downloadUrl;
+      guideSuccessStep.style.display = 'block';
+    } else {
+      initializeIntakeCalendly(payload.name, payload.email);
+      intakeSuccessStep.style.display = 'block';
+    }
   } catch (err) {
     alert('Sorry, there was an error submitting your request. Please try again.');
     intakeSubmitBtn.disabled = false;
-    intakeSubmitBtn.textContent = 'Continue to Scheduling →';
+    intakeSubmitBtn.textContent = intakeIntent === 'guide_download' ? 'Unlock My Free Guide →' : 'Continue to Scheduling →';
   }
 });
 
