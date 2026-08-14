@@ -13,6 +13,7 @@ import { listMailArtifacts } from '../utils/mailArtifacts';
 import { inferMediaType } from '../utils/responseFiles';
 import { supabase } from '../utils/supabase';
 import { canMailLetter, generationErrorMessage, isGenerationRunning, letterSignatureState } from '../utils/letterGeneration.js';
+import { embedCanonicalSignatureInHistoricalHtml, embeddedSignatureSource } from '../utils/signatureInjection.js';
 import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../utils/letterMailing.js';
 import {
   fetchLpoaHtmlForPrint,
@@ -360,6 +361,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       let enclosurePages = '';
       const isPhase3 = isBureauAccountDisputeLetter(letter);
       let followUpEnclosureManifest = null;
+      const canonicalSignature = embeddedSignatureSource(letter.html);
 
       if (isBureauFollowUp) {
         const sources = assertFollowUpEnclosureContract(letter);
@@ -382,11 +384,12 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
         const relationship = validateFollowUpSourceRelationships({ followUp: letter, priorLetter, evidence });
         const priorDate = priorLetter.date || (priorLetter.saved_at ? String(priorLetter.saved_at).slice(0, 10) : '');
+        const priorHtmlForPrint = embedCanonicalSignatureInHistoricalHtml(priorLetter.html, canonicalSignature);
         enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
           + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">'
           + 'EXHIBIT A — Prior Phase 3 CRA Dispute Letter' + (priorDate ? ' (' + priorDate + ')' : '') + '</div>'
-          + extractHtmlStyles(priorLetter.html)
-          + extractHtmlBody(priorLetter.html)
+          + extractHtmlStyles(priorHtmlForPrint)
+          + extractHtmlBody(priorHtmlForPrint)
           + '</div>';
 
         const bureauName = priorLetter.furnisher || letter.furnisher || 'Bureau';
@@ -466,9 +469,10 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           if (sourceArtifact) {
             enclosurePages += await renderPdfPages(sourceArtifact.storage_path, sourceHeading + ' — Exact Lob Mailpiece');
           } else {
+            const sourceHtmlForPrint = embedCanonicalSignatureInHistoricalHtml(source.html, canonicalSignature);
             enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
               + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">' + sourceHeading + '</div>'
-              + extractHtmlStyles(source.html) + extractHtmlBody(source.html) + '</div>';
+              + extractHtmlStyles(sourceHtmlForPrint) + extractHtmlBody(sourceHtmlForPrint) + '</div>';
           }
           const paths = Array.isArray(evidence.storage_paths) ? evidence.storage_paths : [];
           const names = Array.isArray(evidence.file_names) ? evidence.file_names : [];
@@ -546,8 +550,9 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             } catch (e) { console.warn('Could not render archived Phase 1 mailpiece:', p1.id, e); }
           }
           if (!p1.html) continue;
-          const p1Body = p1.html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-          const p1Content = p1Body ? p1Body[1] : p1.html;
+          const p1HtmlForPrint = embedCanonicalSignatureInHistoricalHtml(p1.html, canonicalSignature);
+          const p1Body = p1HtmlForPrint.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+          const p1Content = p1Body ? p1Body[1] : p1HtmlForPrint;
           enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
             + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">EXHIBIT A — Phase 1 Direct Furnisher Dispute Letter (' + (p1.furnisher || 'Furnisher') + ')</div>'
             + p1Content + '</div>';

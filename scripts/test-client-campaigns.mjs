@@ -262,6 +262,17 @@ assert.match(migration, /v_evidence\.analysis_status<>'analyzed'/, 'later routes
 assert.match(migration, /greatest\(v_campaign_max, v_dispute_max\) \+ 1/, 'campaign numbering continues existing adaptive-round history');
 assert.match(migration, /client_campaigns_round_uidx[\s\S]*where stage <> 'legacy'/, 'legacy reference rows cannot collide with real campaign round numbers');
 
+const accountRoundMigration = fs.readFileSync(new URL('../supabase/migrations/20260814103000_campaign_account_round_numbering.sql', import.meta.url), 'utf8');
+assert.match(accountRoundMigration, /where user_id=v_campaign\.user_id and client_account_id=v_account\.id/, 'campaign routes calculate round numbers from the linked account history');
+assert.match(accountRoundMigration, /values \(v_campaign\.user_id,v_campaign\.client_id,v_account\.id,v_account_round_number/, 'new dispute rounds use the account-scoped number');
+assert.match(accountRoundMigration, /v_round\.id,v_round\.round_number,'dispute'/, 'campaign letters inherit the account round number');
+assert.doesNotMatch(accountRoundMigration, /v_round\.id,v_campaign\.round_number,'dispute'/, 'campaign sequence numbers are not copied into account letters');
+
+const firstRoundRepair = fs.readFileSync(new URL('../supabase/migrations/20260814104000_repair_campaign_first_account_rounds.sql', import.meta.url), 'utf8');
+assert.match(firstRoundRepair, /failed\.mailed_date is null[\s\S]*failed\.lob_id is null/, 'first-round repair excludes mailed or submitted evidence');
+assert.match(firstRoundRepair, /prior\.client_account_id = r\.client_account_id[\s\S]*prior\.id <> r\.id/, 'first-round repair requires an account with no other round history');
+assert.match(firstRoundRepair, /ERROR: A later-round letter requires reviewed prior-letter evidence\./, 'first-round repair is limited to the retired failure signature');
+
 const api = fs.readFileSync(new URL('../src/utils/api.js', import.meta.url), 'utf8');
 assert.match(api, /generateCampaignAccountRoute/, 'campaign routes use the server-side Claude generator');
 assert.match(api, /generate-letter-background/, 'campaign letters retain the protected background generation endpoint');

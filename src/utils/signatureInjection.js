@@ -37,3 +37,19 @@ export function hasInjectedSignature(html, signatureUrl) {
   return /data-ccc-signature\s*=\s*["']true["']/i.test(source)
     || (!!signatureUrl && source.includes(String(signatureUrl)));
 }
+
+export function embeddedSignatureSource(html) {
+  const tag = String(html || '').match(/<img\b[^>]*data-ccc-signature\s*=\s*["']true["'][^>]*>/i)?.[0] || '';
+  return tag.match(/\bsrc\s*=\s*["'](data:image\/[a-z0-9.+-]+;base64,[^"']+)["']/i)?.[1] || null;
+}
+
+export function embedCanonicalSignatureInHistoricalHtml(html, signatureDataUrl) {
+  const source = String(html || '');
+  const remoteSignature = /(<img\b[^>]*\bsrc\s*=\s*["'])https?:\/\/[^"']*\/signature\.png(?:\?[^"']*)?(["'][^>]*>)/gi;
+  if (!remoteSignature.test(source)) return source;
+  if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(String(signatureDataUrl || ''))) {
+    throw new Error('A historical enclosure uses a retired signature link and no canonical embedded signature is available. Nothing was sent.');
+  }
+  remoteSignature.lastIndex = 0;
+  return source.replace(remoteSignature, `$1${escapeHtmlAttribute(signatureDataUrl)}$2`);
+}

@@ -8,6 +8,8 @@ import {
   validateFollowUpSourceRelationships,
 } from '../src/utils/followUpEnclosures.js';
 import {
+  embedCanonicalSignatureInHistoricalHtml,
+  embeddedSignatureSource,
   hasInjectedSignature,
   injectSignatureImage,
 } from '../src/utils/signatureInjection.js';
@@ -164,6 +166,19 @@ assert(
 assert(
   injectedLegacy.indexOf('Thomas Andrew Kilpatrick') < injectedLegacy.indexOf('data-ccc-signature'),
   'legacy address name remains before injected signature'
+);
+
+const durableSignature = 'data:image/png;base64,Y2Fub25pY2FsLXNpZ25hdHVyZQ==';
+const embeddedSignature = embeddedSignatureSource(injectSignatureImage(structuredLetter, durableSignature, 'Robert Kerstner'));
+assert(embeddedSignature === durableSignature, 'embedded signature source is available to packet assembly');
+const historicalRemoteSignature = '<p>Prior letter</p><img src="https://archive.example/Client/signature.png" style="max-height:60px" />';
+const repairedHistoricalSignature = embedCanonicalSignatureInHistoricalHtml(historicalRemoteSignature, durableSignature);
+assert(repairedHistoricalSignature.includes(durableSignature), 'historical enclosure uses the canonical embedded signature');
+assert(!repairedHistoricalSignature.includes('https://archive.example/Client/signature.png'), 'retired historical signature URL is removed from the packet');
+throwsMessage(
+  () => embedCanonicalSignatureInHistoricalHtml(historicalRemoteSignature, null),
+  'no canonical embedded signature',
+  'historical enclosure fails closed when its retired signature cannot be replaced'
 );
 
 if (failed) {
