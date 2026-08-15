@@ -52,4 +52,8 @@ const netlify = readFileSync(new URL('../netlify.toml', import.meta.url), 'utf8'
 assert.match(netlify, /from = "\/affiliate\/apply"[\s\S]*to = "\/affiliate-apply\.html"/);
 assert.match(netlify, /functions\."public-affiliate-application"/);
 
+const vite = readFileSync(new URL('../vite.config.js', import.meta.url), 'utf8');
+assert.match(vite, /affiliate\(\?:\\\/apply\|-apply\\\.html\)/);
+assert.match(vite, /\*\*\/affiliate-apply\.html/);
+
 console.log('All affiliate application assertions passed.');
