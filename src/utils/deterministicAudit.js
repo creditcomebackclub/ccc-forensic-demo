@@ -224,15 +224,37 @@ function finding(ruleId, data) {
   return { ruleId, outcome: 'FLAG', ...data };
 }
 
+// Every field the extraction schema actually captures per account (see
+// FIELD_NAME in creditExtractionSchemas.js) gets a cross-bureau comparison
+// here, EXCEPT two deliberately excluded as not meaningfully comparable by
+// raw equality:
+//   - paymentHistory (Field 18): a 24-month grid whose window/format varies
+//     legitimately by bureau pull date — an exact-string check would flag
+//     almost every account and drown real findings in noise.
+//   - complianceConditionCode (Field 20): already has a dedicated,
+//     timing-aware rule (validateXbRetention) — CCC codes are asynchronous
+//     bureau-specific state (one bureau gets a direct dispute, another
+//     doesn't), not something expected to match across bureaus at all.
+// Field 7 (Consumer Account Number) is also excluded: it's the last-4 match
+// ANCHOR these variants were grouped by, so comparing it here would either
+// be a tautology (matched) or contradict the matcher itself (shouldn't
+// happen) — not an independent signal.
 function crossBureauFindings(variants) {
   const out = [];
   const specs = [
     ['dofd', '25', METRO2_FIELDS.DATE_FIRST_DELINQUENCY.name, normalizedDate, 'high'],
     ['accountStatus', '17A', METRO2_FIELDS.ACCOUNT_STATUS.name, upper, 'high'],
     ['accountType', METRO2_FIELDS.ACCOUNT_TYPE.num, METRO2_FIELDS.ACCOUNT_TYPE.name, upper, 'med'],
+    ['portfolioType', METRO2_FIELDS.PORTFOLIO_TYPE.num, METRO2_FIELDS.PORTFOLIO_TYPE.name, upper, 'med'],
     ['balance', '21', METRO2_FIELDS.CURRENT_BALANCE.name, (v) => Number(v), 'med'],
+    ['pastDue', METRO2_FIELDS.AMOUNT_PAST_DUE.num, METRO2_FIELDS.AMOUNT_PAST_DUE.name, (v) => Number(v), 'med'],
+    ['dateOpened', METRO2_FIELDS.DATE_OPENED.num, METRO2_FIELDS.DATE_OPENED.name, normalizedDate, 'med'],
     ['lastPaymentDate', '27', METRO2_FIELDS.DATE_OF_LAST_PAYMENT.name, normalizedDate, 'med'],
     ['billingDate', '24', METRO2_FIELDS.BILLING_DATE.name, normalizedDate, 'low'],
+    ['dateClosed', METRO2_FIELDS.DATE_CLOSED.num, METRO2_FIELDS.DATE_CLOSED.name, normalizedDate, 'low'],
+    ['originalLoanAmount', METRO2_FIELDS.HIGHEST_CREDIT.num, METRO2_FIELDS.HIGHEST_CREDIT.name, (v) => Number(v), 'low'],
+    ['specialComment', METRO2_FIELDS.SPECIAL_COMMENT.num, METRO2_FIELDS.SPECIAL_COMMENT.name, upper, 'low'],
+    ['scheduledMonthlyPayment', METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.num, METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.name, (v) => Number(v), 'low'],
   ];
   for (const [property, number, label, normalize, severity] of specs) {
     const observed = [];
@@ -259,14 +281,24 @@ function crossBureauFindings(variants) {
   return out;
 }
 
+// Mirrors crossBureauFindings' spec list exactly (same fields, same
+// exclusions) so every field that can generate a finding also has a row in
+// the staff-facing side-by-side table it points to via evidenceRefs.
 function buildForensicComparison(variants) {
   const specs = [
     ['dofd', '25', METRO2_FIELDS.DATE_FIRST_DELINQUENCY.name, normalizedDate],
     ['accountStatus', '17A', METRO2_FIELDS.ACCOUNT_STATUS.name, upper],
+    ['accountType', METRO2_FIELDS.ACCOUNT_TYPE.num, METRO2_FIELDS.ACCOUNT_TYPE.name, upper],
+    ['portfolioType', METRO2_FIELDS.PORTFOLIO_TYPE.num, METRO2_FIELDS.PORTFOLIO_TYPE.name, upper],
     ['balance', '21', METRO2_FIELDS.CURRENT_BALANCE.name, (value) => Number(value)],
     ['pastDue', '22', METRO2_FIELDS.AMOUNT_PAST_DUE.name, (value) => Number(value)],
+    ['dateOpened', METRO2_FIELDS.DATE_OPENED.num, METRO2_FIELDS.DATE_OPENED.name, normalizedDate],
     ['lastPaymentDate', '27', METRO2_FIELDS.DATE_OF_LAST_PAYMENT.name, normalizedDate],
     ['billingDate', '24', METRO2_FIELDS.BILLING_DATE.name, normalizedDate],
+    ['dateClosed', METRO2_FIELDS.DATE_CLOSED.num, METRO2_FIELDS.DATE_CLOSED.name, normalizedDate],
+    ['originalLoanAmount', METRO2_FIELDS.HIGHEST_CREDIT.num, METRO2_FIELDS.HIGHEST_CREDIT.name, (value) => Number(value)],
+    ['specialComment', METRO2_FIELDS.SPECIAL_COMMENT.num, METRO2_FIELDS.SPECIAL_COMMENT.name, upper],
+    ['scheduledMonthlyPayment', METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.num, METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.name, (value) => Number(value)],
   ];
   return specs.map(([property, fieldNumber, label, normalize]) => {
     const observations = Object.entries(variants).map(([bureau, account]) => {
