@@ -229,6 +229,7 @@ function crossBureauFindings(variants) {
   const specs = [
     ['dofd', '25', METRO2_FIELDS.DATE_FIRST_DELINQUENCY.name, normalizedDate, 'high'],
     ['accountStatus', '17A', METRO2_FIELDS.ACCOUNT_STATUS.name, upper, 'high'],
+    ['accountType', METRO2_FIELDS.ACCOUNT_TYPE.num, METRO2_FIELDS.ACCOUNT_TYPE.name, upper, 'med'],
     ['balance', '21', METRO2_FIELDS.CURRENT_BALANCE.name, (v) => Number(v), 'med'],
     ['lastPaymentDate', '27', METRO2_FIELDS.DATE_OF_LAST_PAYMENT.name, normalizedDate, 'med'],
     ['billingDate', '24', METRO2_FIELDS.BILLING_DATE.name, normalizedDate, 'low'],
