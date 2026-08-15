@@ -1,4 +1,15 @@
-import { lastFour, normalizeFurnisher } from './diffEngine.js';
+import { lastFour, nameSimilarity, normalizeFurnisher } from './diffEngine.js';
+
+// Bureaus routinely truncate or reformat the same furnisher's name
+// differently (e.g. Equifax "JEFFERSON CAPITAL LL" vs Experian "JEFFERSON
+// CAPITAL SYST" for the identical tradeline, same account suffix, same
+// original creditor, same open date). accountKey()'s exact-string furnisher
+// match then mints two half-blind accounts instead of one — each missing
+// the other bureau's evidence, and neither flagged as ambiguous since
+// within-bureau dedup never sees the mismatch. This mirrors
+// accountIdentity.js's anchor: last-4 is the strong signal across bureaus,
+// furnisher name only disambiguates a genuine last-4 collision.
+const CROSS_BUREAU_NAME_MATCH_THRESHOLD = 0.5;
 import {
   METRO2_FIELDS,
   validateDateOfLastPayment,
@@ -401,13 +412,35 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
     report.accounts.forEach((account, index) => {
       const base = baseKeys[index];
       const key = counts.get(base) > 1 ? `${base}::ambiguous::${report.bureau}::${index}` : base;
-      if (!grouped.has(key)) grouped.set(key, {});
-      grouped.get(key)[report.bureau] = preferAccount(grouped.get(key)[report.bureau], account);
+      const four = lastFour(account?.accountNumber || account?.accountNumberMasked || '');
+      const norm = normalizeFurnisher(account?.furnisher || account?.originalCreditor || '');
+
+      // Only attempt a cross-bureau fold for a clean (non-collided,
+      // non-unresolved) key — an already-ambiguous within-bureau duplicate
+      // must stay flagged, not get absorbed into some other bureau's clean
+      // single account.
+      let targetKey = key;
+      if (four && key === base) {
+        let bestKey = null;
+        let bestScore = -1;
+        for (const [existingKey, existing] of grouped.entries()) {
+          if (existing.last4 !== four) continue;
+          if (existing.variants[report.bureau]) continue; // this bureau already has its own account in that group
+          const sim = nameSimilarity(norm, existing.furnisherNorm);
+          if (sim >= CROSS_BUREAU_NAME_MATCH_THRESHOLD && sim > bestScore) { bestScore = sim; bestKey = existingKey; }
+        }
+        if (bestKey) targetKey = bestKey;
+      }
+
+      if (!grouped.has(targetKey)) grouped.set(targetKey, { last4: four, furnisherNorm: norm, variants: {} });
+      const group = grouped.get(targetKey);
+      group.variants[report.bureau] = preferAccount(group.variants[report.bureau], account);
     });
   });
 
   const accounts = [];
-  for (const [key, variants] of grouped.entries()) {
+  for (const [key, group] of grouped.entries()) {
+    const variants = group.variants;
     const representative = Object.values(variants)[0];
     const findings = [...crossBureauFindings(variants), ...perVariantFindings(variants)];
     if (key.includes('::unresolved::') || key.includes('::ambiguous::')) {
