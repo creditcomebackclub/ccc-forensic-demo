@@ -141,6 +141,12 @@ export function coerceBureauExtraction(report, forcedBureau = null) {
       dateClosed: clean(value('dateClosed', a.dateClosed)), lastPaymentDate: clean(value('lastPaymentDate', a.lastPaymentDate)),
       billingDate: clean(value('billingDate', a.billingDate)), paymentHistory: clean(value('paymentHistory', a.paymentHistory)),
       specialComment: clean(value('specialComment', a.specialComment)), complianceConditionCode: clean(value('complianceConditionCode', a.complianceConditionCode)),
+      creditLimit: Number.isFinite(value('creditLimit', a.creditLimit)) ? Number(value('creditLimit', a.creditLimit)) : null,
+      termsDuration: clean(value('termsDuration', a.termsDuration)),
+      termsFrequency: clean(value('termsFrequency', a.termsFrequency)),
+      actualPaymentAmount: Number.isFinite(value('actualPaymentAmount', a.actualPaymentAmount)) ? Number(value('actualPaymentAmount', a.actualPaymentAmount)) : null,
+      paymentRating: clean(value('paymentRating', a.paymentRating)),
+      originalChargeOffAmount: Number.isFinite(value('originalChargeOffAmount', a.originalChargeOffAmount)) ? Number(value('originalChargeOffAmount', a.originalChargeOffAmount)) : null,
       consumerDisputeIndicator: ['PRESENT', 'ABSENT'].includes(a.consumerDisputeIndicator)
         ? a.consumerDisputeIndicator : (a.disputeFlag === true ? 'PRESENT' : 'UNKNOWN'),
       remarks: clean(a.remarks),
@@ -255,6 +261,12 @@ function crossBureauFindings(variants) {
     ['originalLoanAmount', METRO2_FIELDS.HIGHEST_CREDIT.num, METRO2_FIELDS.HIGHEST_CREDIT.name, (v) => Number(v), 'low'],
     ['specialComment', METRO2_FIELDS.SPECIAL_COMMENT.num, METRO2_FIELDS.SPECIAL_COMMENT.name, upper, 'low'],
     ['scheduledMonthlyPayment', METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.num, METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.name, (v) => Number(v), 'low'],
+    ['creditLimit', METRO2_FIELDS.CREDIT_LIMIT.num, METRO2_FIELDS.CREDIT_LIMIT.name, (v) => Number(v), 'low'],
+    ['termsDuration', METRO2_FIELDS.TERMS_DURATION.num, METRO2_FIELDS.TERMS_DURATION.name, upper, 'low'],
+    ['termsFrequency', METRO2_FIELDS.TERMS_FREQUENCY.num, METRO2_FIELDS.TERMS_FREQUENCY.name, upper, 'low'],
+    ['actualPaymentAmount', METRO2_FIELDS.ACTUAL_PAYMENT_AMOUNT.num, METRO2_FIELDS.ACTUAL_PAYMENT_AMOUNT.name, (v) => Number(v), 'low'],
+    ['paymentRating', METRO2_FIELDS.PAYMENT_RATING.num, METRO2_FIELDS.PAYMENT_RATING.name, upper, 'med'],
+    ['originalChargeOffAmount', METRO2_FIELDS.ORIGINAL_CHARGE_OFF_AMT.num, METRO2_FIELDS.ORIGINAL_CHARGE_OFF_AMT.name, (v) => Number(v), 'med'],
   ];
   for (const [property, number, label, normalize, severity] of specs) {
     const observed = [];
@@ -299,6 +311,12 @@ function buildForensicComparison(variants) {
     ['originalLoanAmount', METRO2_FIELDS.HIGHEST_CREDIT.num, METRO2_FIELDS.HIGHEST_CREDIT.name, (value) => Number(value)],
     ['specialComment', METRO2_FIELDS.SPECIAL_COMMENT.num, METRO2_FIELDS.SPECIAL_COMMENT.name, upper],
     ['scheduledMonthlyPayment', METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.num, METRO2_FIELDS.SCHEDULED_MONTHLY_PMT.name, (value) => Number(value)],
+    ['creditLimit', METRO2_FIELDS.CREDIT_LIMIT.num, METRO2_FIELDS.CREDIT_LIMIT.name, (value) => Number(value)],
+    ['termsDuration', METRO2_FIELDS.TERMS_DURATION.num, METRO2_FIELDS.TERMS_DURATION.name, upper],
+    ['termsFrequency', METRO2_FIELDS.TERMS_FREQUENCY.num, METRO2_FIELDS.TERMS_FREQUENCY.name, upper],
+    ['actualPaymentAmount', METRO2_FIELDS.ACTUAL_PAYMENT_AMOUNT.num, METRO2_FIELDS.ACTUAL_PAYMENT_AMOUNT.name, (value) => Number(value)],
+    ['paymentRating', METRO2_FIELDS.PAYMENT_RATING.num, METRO2_FIELDS.PAYMENT_RATING.name, upper],
+    ['originalChargeOffAmount', METRO2_FIELDS.ORIGINAL_CHARGE_OFF_AMT.num, METRO2_FIELDS.ORIGINAL_CHARGE_OFF_AMT.name, (value) => Number(value)],
   ];
   return specs.map(([property, fieldNumber, label, normalize]) => {
     const observations = Object.entries(variants).map(([bureau, account]) => {
@@ -511,7 +529,12 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
       strategy: findings.length
         ? `Use only the ${findings.length} deterministic finding${findings.length === 1 ? '' : 's'} identified by rule ID and preserve the cited report evidence.`
         : 'No deterministic accuracy finding was established from displayed fields; staff review is required before targeting this account.',
-      paymentRating: representative.statusText || representative.accountStatus || null,
+      // Field 17B was never actually extracted until now — this always fell
+      // back to Field 17A's text (statusText/accountStatus), silently
+      // relabeling Account Status as Payment Rating. Prefer the real
+      // extracted 17B value now that one exists; keep the old fallback for
+      // accounts where no bureau reported a rating distinct from status.
+      paymentRating: representative.paymentRating || representative.statusText || representative.accountStatus || null,
       dateOfFirstDelinquency: representative.dofd || null,
       remarks: representative.remarks || null,
       disputeFlag: representative.consumerDisputeIndicator === 'PRESENT',

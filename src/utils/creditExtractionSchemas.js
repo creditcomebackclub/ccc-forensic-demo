@@ -11,6 +11,10 @@ const FIELD_NAME = {
     'scheduledMonthlyPayment', 'originalLoanAmount', 'dateOpened', 'dofd',
     'dateClosed', 'lastPaymentDate', 'billingDate', 'paymentHistory',
     'specialComment', 'complianceConditionCode',
+    // Fields 11, 13, 14, 16, 17B, 23 — previously defined in METRO2_FIELDS
+    // but never asked for, so nothing downstream could ever check them.
+    'creditLimit', 'termsDuration', 'termsFrequency', 'actualPaymentAmount',
+    'paymentRating', 'originalChargeOffAmount',
   ],
 };
 
