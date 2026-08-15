@@ -6,7 +6,7 @@ import {
   validateScheduledPayment,
 } from '../constants/metro2Fields.js';
 
-export const DETERMINISTIC_AUDIT_SCHEMA_VERSION = 'deterministic-audit-v1';
+export const DETERMINISTIC_AUDIT_SCHEMA_VERSION = 'deterministic-audit-v2';
 
 const BUREAU_KEYS = ['equifax', 'experian', 'transunion'];
 const BUREAU_CODES = { equifax: 'EQ', experian: 'EXP', transunion: 'TU' };
@@ -247,6 +247,44 @@ function crossBureauFindings(variants) {
   return out;
 }
 
+function buildForensicComparison(variants) {
+  const specs = [
+    ['dofd', '25', METRO2_FIELDS.DATE_FIRST_DELINQUENCY.name, normalizedDate],
+    ['accountStatus', '17A', METRO2_FIELDS.ACCOUNT_STATUS.name, upper],
+    ['balance', '21', METRO2_FIELDS.CURRENT_BALANCE.name, (value) => Number(value)],
+    ['pastDue', '22', METRO2_FIELDS.AMOUNT_PAST_DUE.name, (value) => Number(value)],
+    ['lastPaymentDate', '27', METRO2_FIELDS.DATE_OF_LAST_PAYMENT.name, normalizedDate],
+    ['billingDate', '24', METRO2_FIELDS.BILLING_DATE.name, normalizedDate],
+  ];
+  return specs.map(([property, fieldNumber, label, normalize]) => {
+    const observations = Object.entries(variants).map(([bureau, account]) => {
+      const rawValue = account?.[property];
+      const normalizedValue = rawValue === null || rawValue === undefined || rawValue === ''
+        ? null : normalize(rawValue);
+      return {
+        bureau: BUREAU_CODES[bureau],
+        rawValue: rawValue ?? null,
+        normalizedValue: Number.isNaN(normalizedValue) ? null : normalizedValue,
+        evidence: evidenceFor(account, property, bureau),
+      };
+    });
+    const displayed = observations.filter((entry) => entry.normalizedValue !== null);
+    const uniqueValues = new Set(displayed.map((entry) => String(entry.normalizedValue)));
+    const pageBacked = displayed.filter((entry) => Number.isFinite(Number(entry.evidence?.page))).length;
+    let mismatchStrength = 'INSUFFICIENT_DATA';
+    if (displayed.length >= 2 && uniqueValues.size === 1) mismatchStrength = 'CONSISTENT';
+    if (uniqueValues.size > 1) mismatchStrength = pageBacked === displayed.length
+      ? 'CONFIRMED_CONTRADICTION' : 'STRONG_INCONSISTENCY';
+    return {
+      field: property,
+      fieldNumber,
+      label,
+      mismatchStrength,
+      observations,
+    };
+  });
+}
+
 function isCollector(account) {
   const accountType = upper(account.accountType);
   const text = `${account.reportedType || ''} ${account.statusText || ''} ${account.remarks || ''}`.toLowerCase();
@@ -386,6 +424,9 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
     }
     const collector = Object.values(variants).some(isCollector);
     const paid = Object.values(variants).some((a) => PAID_STATUSES.has(upper(a.accountStatus)));
+    const reportTime = reportDate ? new Date(reportDate).getTime() : NaN;
+    const ageDays = Number.isFinite(reportTime)
+      ? Math.max(0, Math.floor((Date.now() - reportTime) / 86400000)) : null;
     accounts.push({
       id: key,
       furnisher: representative.furnisher,
@@ -409,6 +450,14 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
       remarks: representative.remarks || null,
       disputeFlag: representative.consumerDisputeIndicator === 'PRESENT',
       extractedByBureau: variants,
+      forensicComparison: buildForensicComparison(variants),
+      timingChecks: {
+        reportDate,
+        ageDays,
+        currentForGeneration: ageDays !== null && ageDays <= 45,
+        requiredAction: ageDays === null || ageDays > 45 ? 'FRESH_REPORT_REQUIRED' : null,
+      },
+      authorizedFindingIds: findings.filter((entry) => entry.outcome === 'FLAG').map((entry) => entry.ruleId),
     });
   }
   accounts.sort((a, b) => b.violations.length - a.violations.length);

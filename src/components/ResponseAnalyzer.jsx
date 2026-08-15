@@ -7,6 +7,7 @@ import { uploadResponseEvidence } from '../utils/responseEvidence';
 import { getLatestRound, markRoundClosePrompted, reviewRoundLetter } from '../utils/rounds.js';
 import { updateResponseEvidenceReview } from '../utils/responseEvidence.js';
 import RoundCloseModal from './RoundCloseModal.jsx';
+import PacketAccountResponseReview from './PacketAccountResponseReview.jsx';
 
 const CLASSIFICATION_CONFIG = {
   FORM_LETTER: { label: 'No Demand-Specific Statement Matched', tone: 'red' },
@@ -57,6 +58,8 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
   const [reviewChoice, setReviewChoice] = useState(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [roundReady, setRoundReady] = useState(null);
+  const [showPacketReview, setShowPacketReview] = useState(false);
+  const isPacket = Number(letter.packetVersion || letter.packet_version || 1) === 2;
 
   // Accumulates onto the existing selection so a client/admin can add pages
   // across multiple picks (common on mobile, where multi-select galleries
@@ -350,7 +353,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
                 <div className="text-[12px] text-white leading-relaxed">{analysis.phase3Leverage}</div>
               </div>
 
-              <div>
+              {!isPacket && <div>
                 <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Staff disposition</div>
                 <div className="grid grid-cols-2 gap-2">
                   {[
@@ -361,7 +364,11 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
                   ].map(([value, label, description]) => <button key={value} onClick={() => setReviewChoice(value)} className={`p-3 rounded border text-left ${reviewChoice === value ? 'border-gold bg-amber-50' : 'border-border'}`}><span className="block text-[11px] font-medium text-ink">{label}</span><span className="block text-[10px] text-ink-muted mt-0.5">{description}</span></button>)}
                 </div>
                 <textarea value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} maxLength={2000} rows={3} placeholder="Internal review notes (optional)" className="mt-2 w-full border border-border rounded p-2 text-[11px]" />
-              </div>
+              </div>}
+
+              {isPacket && <div className="rounded border border-blue-200 bg-blue-50 px-3 py-3 text-[11px] text-blue-900">
+                This is the packet-level extraction. Use <strong>Review each account</strong> to confirm a separate disposition and next action for every covered account.
+              </div>}
 
               {error && <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
             </div>
@@ -413,11 +420,15 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               <>
                 <button onClick={() => { setStep('upload'); setAnalysis(null); }}
                   className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Re-analyze</button>
-                <button onClick={handleSave} disabled={saving || !reviewChoice}
+                {isPacket ? <button onClick={() => setShowPacketReview(true)}
+                  className="px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
+                  style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}>
+                  Review each account
+                </button> : <button onClick={handleSave} disabled={saving || !reviewChoice}
                   className="px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
                   style={{ backgroundColor: (saving || !reviewChoice) ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
                   {saving ? 'Saving…' : 'Save Review Decision'}
-                </button>
+                </button>}
               </>
             )}
             {saved && (
@@ -428,6 +439,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
           </div>
         </div>
       </div>
+      {showPacketReview && <PacketAccountResponseReview letter={letter} evidence={activeEvidenceId ? { id: activeEvidenceId } : null} onClose={() => setShowPacketReview(false)} onSaved={onSaved} />}
       {roundReady && <RoundCloseModal roundId={roundReady.round_id} roundNumber={roundReady.round_number} onClose={() => setRoundReady(null)} onCompleted={() => { setRoundReady(null); onSaved?.(); onClose(); }} />}
     </div>
   );

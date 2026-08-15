@@ -49,7 +49,7 @@ export function buildCampaignItems(auditRecord) {
       source_key: `account:${account.clientAccountId}`,
       client_account_id: account.clientAccountId,
       label: account.furnisher || 'Unknown account',
-      snapshot: account,
+      snapshot: { ...account, auditReportDate: audit.client?.reportDate || auditRecord?.date || null },
       sort_order: sort++,
     });
   }

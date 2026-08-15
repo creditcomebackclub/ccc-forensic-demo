@@ -70,6 +70,16 @@ function sendMailQuiet(to, subject, html) {
     });
 }
 
+async function updatePacketCoverage(letterIds, patch, supabaseUrl, serviceKey) {
+  const ids = [...new Set((letterIds || []).filter(Boolean))];
+  if (!ids.length) return;
+  const result = await supabaseRequest(
+    '/rest/v1/letter_account_coverage?letter_id=in.(' + ids.map(encodeURIComponent).join(',') + ')',
+    'PATCH', { ...patch, updated_at: new Date().toISOString() }, supabaseUrl, serviceKey
+  );
+  if (result.status < 200 || result.status >= 300) console.error('Could not propagate Lob status to packet coverage:', ids, result.status);
+}
+
 // Certified letters fire `letter.certified.*` event ids; plain letters fire
 // `letter.*`. Handle both so tracking never silently stalls.
 const statusMap = {
@@ -318,6 +328,11 @@ exports.handler = async (event) => {
         supabaseUrl, supabaseKey
       );
     }
+    await updatePacketCoverage(
+      (Array.isArray(failedLetter.body) ? failedLetter.body : []).map((letter) => letter.id).concat(metaLetterId || []),
+      { mail_status: 'failed', tracking_status: 'Failed', delivered_at: null },
+      supabaseUrl, supabaseKey
+    );
     const failedSubmission = await supabaseRequest(
       '/rest/v1/mail_submissions?lob_id=eq.' + encodeURIComponent(lobId),
       'PATCH',
@@ -353,6 +368,11 @@ exports.handler = async (event) => {
         'PATCH', { ...cancelledPatch, lob_id: lobId }, supabaseUrl, supabaseKey
       );
     }
+    await updatePacketCoverage(
+      (Array.isArray(cancelledLetter.body) ? cancelledLetter.body : []).map((letter) => letter.id).concat(metaLetterId || []),
+      { mail_status: 'cancelled', tracking_status: 'Cancelled', delivered_at: null },
+      supabaseUrl, supabaseKey
+    );
     const cancelledSubmission = await supabaseRequest(
       '/rest/v1/mail_submissions?lob_id=eq.' + encodeURIComponent(lobId),
       'PATCH', { status: 'cancelled', last_error: 'Cancelled in Lob before production.' },
@@ -413,6 +433,15 @@ exports.handler = async (event) => {
     console.warn('No letter row matched lob_id', lobId, 'or letter_id', metaLetterId);
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'no matching letter row' }) };
   }
+
+  const coverageMailStatus = isDelivered ? 'delivered'
+    : trackingStatus === 'Returned to Sender' ? 'returned'
+      : trackingStatus === 'Mailed' ? 'queued' : 'in_transit';
+  await updatePacketCoverage(updatedRows.map((letter) => letter.id), {
+    mail_status: coverageMailStatus,
+    tracking_status: trackingStatus,
+    ...(isDelivered ? { delivered_at: patch.delivered_at } : {}),
+  }, supabaseUrl, supabaseKey);
 
   // Delivery starts the canonical 30-day clock for new adaptive rounds. The
   // stored due date is authoritative and may later receive one documented +15.

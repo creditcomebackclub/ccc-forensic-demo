@@ -3,10 +3,11 @@ import { AlertTriangle, Check, ChevronRight, Circle, FileText, Loader2, Mail, Sh
 import toast from 'react-hot-toast';
 import {
   approveCampaignLetter, createCampaignFromAudit, getCampaignWorkspace, getReviewedPriorSources,
-  replaceConfiguredRoutes, updateCampaign, updateCampaignItemStates,
+  replaceConfiguredRoutes, reviewCampaignItemEligibility, updateCampaign, updateCampaignItemStates,
 } from '../../utils/campaigns.js';
-import { generateCampaignAccountRoute, generateCampaignCleanupRoute, generateInterimLetter } from '../../utils/api.js';
+import { generateCampaignAccountRoute, generateCampaignCleanupRoute, generateCampaignPacketRoute, generateInterimLetter } from '../../utils/api.js';
 import { buildCleanupRouteGroups, getCampaignItemBureaus } from '../../utils/campaignItems.js';
+import { buildCampaignBlueprint, splitPacketSpec } from '../../utils/campaignBlueprint.js';
 import { isCampaignSelectionLocked } from '../../utils/campaignSelection.js';
 import { canMailLetter } from '../../utils/letterGeneration.js';
 import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../../utils/campaignMailing.js';
@@ -133,9 +134,11 @@ function DisputePicker({ workspace, onState, onBulkState, onContinue, busy, read
           </div>
           {rows.map((item) => {
             const [tag, bg, color] = itemTone(item.kind);
+            const comparisons = item.kind === 'account' ? (item.snapshot.forensicComparison || []) : [];
+            const contradictions = comparisons.filter((entry) => ['CONFIRMED_CONTRADICTION', 'STRONG_INCONSISTENCY'].includes(entry.mismatchStrength));
             return <div key={item.id} className="px-5 py-3 flex items-center gap-3" style={{ borderTop: `1px solid ${T.grid}` }}>
               <span className="text-[9px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0" style={{ background: bg, color }}>{tag}</span>
-              <div className="flex-1 min-w-0"><div className="text-[12px] font-medium truncate" style={{ color: T.ink }}>{item.label}</div>{item.kind === 'account' && <div className="text-[10px] mt-0.5 truncate" style={{ color: T.muted }}>{(item.snapshot.violations || []).length} supported finding{(item.snapshot.violations || []).length === 1 ? '' : 's'} · {(item.snapshot.bureaus || []).join('/') || 'bureau reporting unavailable'}</div>}</div>
+              <div className="flex-1 min-w-0"><div className="text-[12px] font-medium truncate" style={{ color: T.ink }}>{item.label}</div>{item.kind === 'account' && <><div className="text-[10px] mt-0.5 truncate" style={{ color: T.muted }}>{(item.snapshot.violations || []).length} supported finding{(item.snapshot.violations || []).length === 1 ? '' : 's'} · {(item.snapshot.bureaus || []).join('/') || 'bureau reporting unavailable'}</div>{comparisons.length > 0 && <div className="text-[9px] mt-1 truncate" style={{ color: contradictions.length ? '#92400E' : T.faint }}>Forensic matrix: {contradictions.length} page-backed mismatch{contradictions.length === 1 ? '' : 'es'}{contradictions.length ? ` · ${contradictions.map((entry) => entry.label).join(', ')}` : ' · no cross-bureau contradiction'}{item.snapshot.timingChecks?.ageDays != null ? ` · report age ${item.snapshot.timingChecks.ageDays}d` : ''}</div>}</>}</div>
               <div className="flex gap-1.5 shrink-0">
                 {[['selected', 'This round'], ['later', 'Later round'], ['candidate', 'Skip round']].map(([state, label]) => <button key={state} onClick={() => onState(item, state)} disabled={busy || readOnly || item.selectionState === state} className="px-2.5 py-1.5 rounded-md text-[10px] font-medium disabled:cursor-not-allowed" style={{ background: item.selectionState === state ? T.navy : '#F7F8FA', color: item.selectionState === state ? '#fff' : T.muted, border: `1px solid ${item.selectionState === state ? T.navy : T.border}` }}>{label}</button>)}
               </div>
@@ -157,7 +160,61 @@ function BuilderChoice({ onChoose, onStandalone }) {
   return <div className="space-y-4"><div className="text-center py-2"><div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>Letter Builder</div><h2 className="ccc-display text-[23px] font-semibold mt-1" style={{ color: T.navy }}>What type of letters do you want to build?</h2></div><div className="grid md:grid-cols-3 gap-4">{cards.map((card) => <button key={card.key} onClick={() => onChoose(card.key)} className="bg-white rounded-2xl p-5 text-left hover:-translate-y-0.5 transition-transform" style={{ border: `1px solid ${T.border}`, boxShadow: '0 4px 18px rgba(16,24,40,.05)' }}><div className="w-10 h-10 rounded-full flex items-center justify-center mb-4" style={{ background: '#FBF7EA', color: T.gold }}>{card.icon}</div><div className="text-[10px] uppercase tracking-wider" style={{ color: T.gold }}>{card.subtitle}</div><h3 className="ccc-display text-[18px] font-semibold mt-1" style={{ color: T.navy }}>{card.title}</h3><p className="text-[11px] leading-relaxed mt-2 min-h-[48px]" style={{ color: T.muted }}>{card.body}</p><div className="mt-4 text-[10px] uppercase tracking-wider font-semibold flex items-center gap-1" style={{ color: T.navy }}>{card.action} <ChevronRight size={12} /></div></button>)}<button onClick={onStandalone} className="bg-white rounded-2xl p-5 text-left hover:-translate-y-0.5 transition-transform" style={{ border: `1px solid ${T.border}`, boxShadow: '0 4px 18px rgba(16,24,40,.05)' }}><div className="w-10 h-10 rounded-full flex items-center justify-center mb-4" style={{ background: '#F5F3FF', color: '#6D4DB1' }}><Mail size={22} /></div><div className="text-[10px] uppercase tracking-wider" style={{ color: '#6D4DB1' }}>Outside the active round</div><h3 className="ccc-display text-[18px] font-semibold mt-1" style={{ color: T.navy }}>Interim Letter</h3><p className="text-[11px] leading-relaxed mt-2 min-h-[48px]" style={{ color: T.muted }}>Open the existing standalone-letter workspace without changing this campaign’s round or deadlines.</p><div className="mt-4 text-[10px] uppercase tracking-wider font-semibold flex items-center gap-1" style={{ color: T.navy }}>Open standalone letters <ChevronRight size={12} /></div></button></div></div>;
 }
 
-function RouteConfigurator({ workspace, mode, onSave, busy }) {
+function BlueprintConfigurator({ workspace, mode, onSave, onDefer, onFdcpaEligibility, busy }) {
+  const blueprint = useMemo(() => buildCampaignBlueprint(workspace.items), [workspace.items]);
+  const [packets, setPackets] = useState(() => blueprint.packets);
+  const [removedPackets, setRemovedPackets] = useState([]);
+  const itemById = useMemo(() => new Map(workspace.items.map((item) => [item.id, item])), [workspace.items]);
+  const collectorCandidates = workspace.items.filter((item) => item.kind === 'account'
+    && item.selectionState === 'selected' && item.snapshot?.type === 'C'
+    && item.snapshot?.addressStatus === 'YES' && item.snapshot?.furnisherAddress);
+  useEffect(() => { setPackets(blueprint.packets); setRemovedPackets([]); }, [blueprint]);
+  const removePacket = (packet) => {
+    setPackets((current) => current.filter((candidate) => candidate.key !== packet.key));
+    setRemovedPackets((current) => [...current.filter((candidate) => candidate.key !== packet.key), packet]);
+  };
+  const restorePacket = (packet) => {
+    setRemovedPackets((current) => current.filter((candidate) => candidate.key !== packet.key));
+    setPackets((current) => [...current.filter((candidate) => candidate.key !== packet.key), packet]);
+  };
+  const splitPacket = (packet) => setPackets((current) => current.flatMap((candidate) =>
+    candidate.key === packet.key ? splitPacketSpec(candidate, candidate.itemIds.length - 1) : [candidate]));
+  const recipientLabel = (packet) => packet.targetType === 'bureau'
+    ? BUREAU_LABEL[packet.targetBureau]
+    : `${itemById.get(packet.itemIds[0])?.label || 'Furnisher'} · ${packet.disputeBasis === 'FDCPA' ? 'FDCPA validation' : 'FCRA direct'}`;
+  return <div className="space-y-4">
+    <div className="bg-white rounded-2xl px-5 py-4" style={{ border: `1px solid ${T.border}` }}>
+      <div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>Proposed Round Blueprint</div>
+      <h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>Review recipient-compatible packets</h2>
+      <p className="text-[11px] mt-1" style={{ color: T.muted }}>The Blueprint groups no more than five accounts per recipient and legal path. Removing a packet defers that recipient route; account-level rounds still remain separate.</p>
+    </div>
+    {blueprint.blocked.length > 0 && <div className="rounded-2xl p-4 bg-amber-50 border border-amber-200">
+      <div className="text-[11px] font-semibold text-amber-900">{blueprint.blocked.length} selected account{blueprint.blocked.length === 1 ? '' : 's'} blocked before generation</div>
+      <div className="mt-2 space-y-1.5">{blueprint.blocked.map((decision) => <div key={decision.itemId} className="text-[10px] text-amber-800"><span className="font-semibold">{itemById.get(decision.itemId)?.label}</span> · {decision.classification.replaceAll('_', ' ')} · {decision.reason}</div>)}</div>
+    </div>}
+    {collectorCandidates.length > 0 && <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><div className="text-[11px] font-semibold text-blue-950">FDCPA eligibility review</div><p className="mt-1 text-[10px] text-blue-900">Collector/debt-purchaser classification is only a prerequisite. A separate FDCPA packet appears only after staff records the supporting eligibility facts.</p><div className="mt-2 space-y-2">{collectorCandidates.map((item) => { const verified = item.routeReview?.fdcpaValidationEligible === true || item.snapshot?.fdcpaValidationEligible === true; return <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-blue-100 bg-white px-3 py-2"><div className="min-w-0"><div className="truncate text-[10px] font-semibold text-ink">{item.label}{item.snapshot?.accountNumberMasked ? ` · ${item.snapshot.accountNumberMasked}` : ''}</div>{verified && item.routeReview?.notes && <div className="mt-0.5 truncate text-[9px] text-ink-muted">{item.routeReview.notes}</div>}</div><button onClick={() => onFdcpaEligibility(item, !verified)} disabled={busy} className="shrink-0 rounded-md px-2.5 py-1.5 text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: verified ? '#ECFDF3' : T.navy, color: verified ? '#166534' : T.gold, border: verified ? '1px solid #BBF7D0' : `1px solid ${T.navy}` }}>{verified ? 'FDCPA verified ✓' : 'Verify eligibility'}</button></div>; })}</div></div>}
+    <div className="grid md:grid-cols-2 gap-4">
+      {packets.map((packet) => {
+        const cleanup = packet.classification === 'CLEANUP';
+        const items = packet.itemIds.map((id) => itemById.get(id)).filter(Boolean);
+        return <div key={packet.key} className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${T.border}` }}>
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: cleanup ? '#F5F3FF' : '#FBF7EA', color: cleanup ? '#6D4DB1' : T.gold }}>{cleanup ? <FileText size={17} /> : <Sparkles size={17} />}</div>
+            <div className="flex-1 min-w-0"><div className="text-[9px] uppercase tracking-wider" style={{ color: T.faint }}>{cleanup ? 'Step 1 cleanup' : `${items.length} account packet`}</div><div className="text-[12px] font-semibold mt-0.5 truncate" style={{ color: T.ink }}>{recipientLabel(packet)}</div></div>
+            <button onClick={() => removePacket(packet)} className="text-[9px] uppercase tracking-wider text-gray-500 hover:text-red-700">Remove</button>
+          </div>
+          <div className="mt-3 space-y-1">{items.map((item) => <div key={item.id} className="flex items-center gap-2 text-[10px] px-2.5 py-1.5 rounded-lg bg-gray-50" style={{ color: T.muted }}><span className="min-w-0 flex-1 truncate">{item.label}{item.snapshot?.accountNumberMasked ? ` · ${item.snapshot.accountNumberMasked}` : ''}</span>{!cleanup && <button onClick={() => onDefer(item)} disabled={busy} className="shrink-0 text-[8px] uppercase tracking-wider font-semibold text-amber-700 disabled:opacity-40">Defer account</button>}</div>)}</div>
+          {!cleanup && packet.itemIds.length > 1 && <button onClick={() => splitPacket(packet)} className="mt-3 text-[9px] uppercase tracking-wider font-semibold" style={{ color: T.navy }}>Split last account into a separate packet</button>}
+        </div>;
+      })}
+    </div>
+    {removedPackets.length > 0 && <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4"><div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.muted }}>Disabled eligible recipients</div><div className="mt-2 flex flex-wrap gap-2">{removedPackets.map((packet) => <button key={packet.key} onClick={() => restorePacket(packet)} className="rounded-lg border border-border bg-white px-3 py-2 text-[9px] uppercase tracking-wider font-semibold" style={{ color: T.navy }}>Restore {recipientLabel(packet)}</button>)}</div></div>}
+    {!packets.length && <div className="rounded-xl p-4 text-[11px] text-amber-800 bg-amber-50">No eligible packet remains. Restore a route by reopening Build or return to Disputes and defer the selected account.</div>}
+    <div className="flex justify-end"><button onClick={() => onSave(packets)} disabled={!packets.length || busy} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{busy ? 'Saving…' : `Confirm ${packets.length} packet${packets.length === 1 ? '' : 's'}`}</button></div>
+  </div>;
+}
+
+function LegacyRouteConfigurator({ workspace, mode, onSave, busy }) {
   const selected = workspace.items.filter((item) => item.selectionState === 'selected');
   const accounts = selected.filter((item) => item.kind === 'account');
   const cleanupGroups = buildCleanupRouteGroups(selected);
@@ -213,6 +270,12 @@ function RouteConfigurator({ workspace, mode, onSave, busy }) {
   </div>;
 }
 
+function RouteConfigurator(props) {
+  return props.workspace.campaign.packetVersion === 2
+    ? <BlueprintConfigurator {...props} />
+    : <LegacyRouteConfigurator {...props} />;
+}
+
 function routeItems(route, itemById) {
   return (route.itemIds?.length ? route.itemIds : [route.itemId]).map((id) => itemById.get(id)).filter(Boolean);
 }
@@ -227,7 +290,9 @@ function routeDisplayName(route, itemById) {
   if (isCleanupRoute(route, itemById)) return `${BUREAU_LABEL[route.targetBureau] || 'Bureau'} cleanup letter`;
   const item = items[0];
   const target = route.targetType === 'bureau' ? BUREAU_LABEL[route.targetBureau] : 'direct furnisher';
-  return `${item?.label || 'Account dispute'} → ${target}`;
+  const count = items.length > 1 ? ` (${items.length} accounts)` : '';
+  const basis = route.disputeBasis === 'FDCPA' ? ' · FDCPA' : route.disputeBasis === 'FCRA_DIRECT' ? ' · FCRA direct' : '';
+  return `${item?.label || 'Account dispute'}${count} → ${target}${basis}`;
 }
 
 function BuildQueue({ workspace, busy, generationProgress, onGenerate, onReview }) {
@@ -277,7 +342,7 @@ function BuildQueue({ workspace, busy, generationProgress, onGenerate, onReview 
       <div className="bg-white rounded-2xl p-5" style={{ border: `1px solid ${T.border}` }}>
         <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3" style={{ background: '#FBF7EA', color: T.gold }}><Sparkles size={20} /></div>
         <h3 className="ccc-display text-[17px] font-semibold" style={{ color: T.navy }}>Account dispute letters</h3>
-        <p className="text-[11px] mt-1 min-h-[34px]" style={{ color: T.muted }}>{accounts.length ? `${accounts.length} recipient route${accounts.length === 1 ? '' : 's'} for the selected account disputes.` : 'No ungenerated account-dispute letters remain.'}</p>
+        <p className="text-[11px] mt-1 min-h-[34px]" style={{ color: T.muted }}>{accounts.length ? `${accounts.length} recipient packet${accounts.length === 1 ? '' : 's'} covering ${accounts.reduce((sum, route) => sum + routeItems(route, itemById).length, 0)} account route${accounts.reduce((sum, route) => sum + routeItems(route, itemById).length, 0) === 1 ? '' : 's'}.` : 'No ungenerated account-dispute packets remain.'}</p>
         {accountFailed.length > 0 && <div className="text-[10px] mt-2 text-red-700">{accountFailed.length} failed route{accountFailed.length === 1 ? '' : 's'} ready to retry.</div>}
         <button disabled={busy || !accountRunnable.length} onClick={() => onGenerate(accountRunnable, 'accounts')} className="mt-4 px-4 py-2.5 rounded-lg text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>{accountButtonLabel}</button>
       </div>
@@ -313,8 +378,8 @@ function LetterReview({ workspace, clientLetters, selectedLetterId, setSelectedL
         const items = routeItems(route, itemById);
         const cleanup = isCleanupRoute(route, itemById);
         const approved = route?.approvedLetterIds.includes(letter.id);
-        const label = cleanup ? `${BUREAU_LABEL[route.targetBureau]} file cleanup` : items[0]?.label || letter.furnisher;
-        const detail = cleanup ? `${items.length} selected PI/inquiry item${items.length === 1 ? '' : 's'} · 1 letter` : route?.targetType === 'bureau' ? BUREAU_LABEL[route.targetBureau] : letter.dispute_basis === 'FDCPA' ? 'Debt validation' : 'Direct furnisher';
+        const label = cleanup ? `${BUREAU_LABEL[route.targetBureau]} file cleanup` : items.length > 1 ? `${items.length}-account packet · ${route?.targetType === 'bureau' ? BUREAU_LABEL[route.targetBureau] : items[0]?.label}` : items[0]?.label || letter.furnisher;
+        const detail = cleanup ? `${items.length} selected PI/inquiry item${items.length === 1 ? '' : 's'} · 1 letter` : `${items.length} account${items.length === 1 ? '' : 's'} · ${route?.targetType === 'bureau' ? BUREAU_LABEL[route.targetBureau] : letter.dispute_basis === 'FDCPA' ? 'Debt validation' : 'Direct furnisher'}`;
         return <button key={letter.id} onClick={() => setSelectedLetterId(letter.id)} className="w-full text-left px-4 py-3 flex gap-3" style={{ background: selected?.id === letter.id ? '#FBF9F2' : '#fff', borderTop: `1px solid ${T.grid}` }}>
           <div className="mt-0.5">{approved ? <div className="w-5 h-5 rounded-full flex items-center justify-center bg-green-100 text-green-700"><Check size={11} /></div> : <Circle size={18} style={{ color: T.faint }} />}</div>
           <div className="min-w-0"><div className="text-[11px] font-semibold truncate" style={{ color: T.ink }}>{label}</div><div className="text-[10px] mt-0.5" style={{ color: T.muted }}>{detail}</div></div>
@@ -345,7 +410,10 @@ function MailingAndTracking({ workspace, viewStage, clientLetters, clientRounds,
   const ready = letters.filter((letter) => routeByLetter.get(letter.id)?.approvedLetterIds.includes(letter.id) && !isMailedMail(letter) && !isCancelledMail(letter));
   const mailed = letters.filter(isMailedMail);
   const cancelled = letters.filter(isCancelledMail);
-  const roundIds = [...new Set(workspace.routes.map((route) => route.disputeRoundId).filter(Boolean))];
+  const roundIds = [...new Set([
+    ...workspace.routes.map((route) => route.disputeRoundId),
+    ...(workspace.coverage || []).map((entry) => entry.disputeRoundId),
+  ].filter(Boolean))];
   const roundsClosed = roundIds.every((id) => (clientRounds || []).some((round) => round.round_id === id && round.status === 'closed'));
   const standaloneResolved = letters.filter((letter) => !(letter.roundId || letter.round_id)).every((letter) => !!letter.responseOutcome);
   const mayClose = workspace.campaign.stage === 'response_review' && roundsClosed && standaloneResolved;
@@ -486,6 +554,16 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
     if (hasDraftRoutes && !window.confirm('Changing this round’s dispute targets will clear its saved, ungenerated letter routes. Continue?')) return;
     run(() => updateCampaignItemStates(workspace.campaign.id, ids, selectionState));
   };
+  const reviseFdcpaEligibility = (item, eligible) => {
+    const notes = window.prompt(
+      eligible
+        ? 'Document the account-specific facts supporting FDCPA validation eligibility. Account type alone is not enough.'
+        : 'Optionally document why FDCPA eligibility is being removed.',
+      item.routeReview?.notes || '',
+    );
+    if (notes === null || (eligible && !notes.trim())) return;
+    run(() => reviewCampaignItemEligibility(item.id, { fdcpaEligible: eligible, notes }));
+  };
   const generateRoutes = async (routes, kind = 'all') => {
     const itemById = new Map(workspace.items.map((item) => [item.id, item]));
     const failures = [];
@@ -496,7 +574,11 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
         const account = items.find((item) => item.kind === 'account');
         setGenerationProgress({ kind, completed: index, total: routes.length, current: routeDisplayName(route, itemById) });
         try {
-          if (account) {
+          if (account && workspace.campaign.packetVersion === 2) {
+            const priorSourcesByItem = new Map();
+            for (const covered of items) priorSourcesByItem.set(covered.id, await getReviewedPriorSources(covered.clientAccountId));
+            await generateCampaignPacketRoute({ route, items, campaign: workspace.campaign, client, priorSourcesByItem });
+          } else if (account) {
             const priorSources = await getReviewedPriorSources(account.clientAccountId);
             await generateCampaignAccountRoute({ route, item: account, campaign: workspace.campaign, client, priorSources });
           } else {
@@ -521,7 +603,7 @@ export default function ClientCampaignWorkspace({ client, onOpenAudit, onOpenLet
     {error && <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-[11px] text-red-700">{error}</div>}
     {stage === 'select_disputes' && <DisputePicker workspace={workspace} busy={busy} readOnly={selectionLocked} hasDraftRoutes={hasDraftRoutes} onState={(item, state) => reviseSelection([item], state)} onBulkState={reviseSelection} onContinue={lifecycleStage === 'select_disputes' ? () => runAndView('configure_letters', () => updateCampaign(workspace.campaign.id, { stage: 'configure_letters' })) : () => setViewStage('configure_letters')} />}
     {stage === 'configure_letters' && !workspace.campaign.builderMode && <BuilderChoice onChoose={(mode) => run(() => updateCampaign(workspace.campaign.id, { builderMode: mode }))} onStandalone={() => setShowInterim(true)} />}
-    {stage === 'configure_letters' && workspace.campaign.builderMode && !workspace.routes.length && <RouteConfigurator workspace={workspace} mode={workspace.campaign.builderMode} busy={busy} onSave={(routes) => run(() => replaceConfiguredRoutes(workspace.campaign, workspace.items, routes))} />}
+    {stage === 'configure_letters' && workspace.campaign.builderMode && !workspace.routes.length && <RouteConfigurator workspace={workspace} mode={workspace.campaign.builderMode} busy={busy} onDefer={(item) => reviseSelection([item], 'later')} onFdcpaEligibility={reviseFdcpaEligibility} onSave={(routes) => run(() => replaceConfiguredRoutes(workspace.campaign, workspace.items, routes))} />}
     {stage === 'configure_letters' && workspace.routes.length > 0 && <BuildQueue workspace={workspace} busy={busy} generationProgress={generationProgress} onGenerate={(routes, kind) => run(() => generateRoutes(routes, kind))} onReview={progressIndex < stageIndex('letter_review') ? () => runAndView('letter_review', () => updateCampaign(workspace.campaign.id, { stage: 'letter_review' })) : () => setViewStage('letter_review')} />}
     {stage === 'letter_review' && <LetterReview workspace={workspace} clientLetters={client.letters || []} selectedLetterId={selectedLetterId} setSelectedLetterId={setSelectedLetterId} busy={busy} onApprove={(route, id, approved) => run(() => approveCampaignLetter(route, id, approved))} onReady={progressIndex < stageIndex('mailing') ? () => runAndView('mailing', () => updateCampaign(workspace.campaign.id, { stage: 'mailing' })) : () => setViewStage('mailing')} onBuildRemaining={() => setViewStage('configure_letters')} />}
     {['mailing', 'awaiting_responses'].includes(stage) && <MailingAndTracking workspace={workspace} viewStage={stage} clientLetters={client.letters || []} clientRounds={client.rounds || []} onMail={onMail} onAnalyze={onAnalyze} onAnalyzeBureau={onAnalyzeBureau} onOpenLetters={onOpenLetters} busy={busy} onBackReview={() => setViewStage('letter_review')} onBuildRemaining={() => setViewStage('configure_letters')} onCloseCampaign={() => run(() => updateCampaign(workspace.campaign.id, { stage: 'closed', closedAt: new Date().toISOString() }))} />}

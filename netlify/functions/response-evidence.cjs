@@ -97,11 +97,32 @@ async function loadLetter(db, letterId) {
   if (!letterId || typeof letterId !== 'string' || letterId.length > 500) return null;
   const { data, error } = await db
     .from('letters')
-    .select('id,user_id,client_id,client_account_id,client_name,phase,furnisher,mailed_date,response_outcome')
+    .select('id,user_id,client_id,client_account_id,client_name,phase,furnisher,mailed_date,response_outcome,packet_version,campaign_id,campaign_route_id')
     .eq('id', letterId)
     .limit(1);
   if (error) throw error;
   return data && data[0] || null;
+}
+
+async function seedPacketAssessments(db, evidence, letter, status = 'received') {
+  if (Number(letter.packet_version || 1) !== 2) return;
+  const { data: coverage, error } = await db.from('letter_account_coverage')
+    .select('id,user_id,client_account_id').eq('letter_id', letter.id);
+  if (error) throw error;
+  if (!coverage?.length) throw new Error('The packet has no account coverage records.');
+  const rows = coverage.map((entry) => ({
+    user_id: entry.user_id,
+    response_evidence_id: evidence.id,
+    coverage_id: entry.id,
+    client_account_id: entry.client_account_id,
+  }));
+  const { error: assessmentError } = await db.from('response_evidence_account_assessment')
+    .upsert(rows, { onConflict: 'response_evidence_id,coverage_id', ignoreDuplicates: true });
+  if (assessmentError) throw assessmentError;
+  const { error: coverageError } = await db.from('letter_account_coverage')
+    .update({ response_status: status, updated_at: new Date().toISOString() })
+    .eq('letter_id', letter.id);
+  if (coverageError) throw coverageError;
 }
 
 async function prepareUpload(db, userId, body) {
@@ -127,6 +148,16 @@ async function prepareUpload(db, userId, body) {
     return { error: response(409, { error: 'This letter is missing a client_id; link it to a client before uploading a response.' }) };
   }
 
+  if (Number(letter.packet_version || 1) === 2) {
+    const { data: existing, error: existingError } = await db.from('response_evidence')
+      .select('id,upload_status').eq('letter_id', letter.id)
+      .in('upload_status', ['uploading', 'received']).limit(1);
+    if (existingError) throw existingError;
+    if (existing?.length) {
+      return { error: response(409, { error: 'This packet already has a response upload. Add all response pages to that one packet record.' }) };
+    }
+  }
+
   const evidenceId = crypto.randomUUID();
   const prefix = responseEvidencePrefix(letter.user_id, letter.client_id, evidenceId);
   const paths = files.map((file) => `${prefix}/response_${String(file.index + 1).padStart(2, '0')}_${file.name}`);
@@ -145,8 +176,12 @@ async function prepareUpload(db, userId, body) {
     storage_paths: paths,
     file_names: files.map((file) => file.name),
     upload_status: 'uploading',
+    packet_upload: Number(letter.packet_version || 1) === 2,
     submitted_by: userId,
   });
+  if (insertError?.code === '23505' && Number(letter.packet_version || 1) === 2) {
+    return { error: response(409, { error: 'This packet already has a response upload. Add all response pages to that one packet record.' }) };
+  }
   if (insertError) throw insertError;
 
   try {
@@ -194,6 +229,7 @@ async function completeUpload(db, userId, body) {
   }
 
   if (evidence.upload_status === 'received') {
+    await seedPacketAssessments(db, evidence, letter);
     return response(200, {
       evidenceId: evidence.id,
       responseKind: evidence.response_kind,
@@ -251,6 +287,7 @@ async function completeUpload(db, userId, body) {
   }
   const { error: letterError } = await db.from('letters').update(letterPatch).eq('id', letter.id);
   if (letterError) throw letterError;
+  await seedPacketAssessments(db, evidence, letter);
 
   if (letter.round_id) {
     try {

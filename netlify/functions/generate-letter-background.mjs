@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { assertMapFullySourced, autoFixFieldCitations, validateFieldCitations } from '../../src/constants/metro2Fields.js';
-import { generatedLetterValidationError, unauthorizedFieldCitations } from '../../src/utils/letterGeneration.js';
+import { generatedLetterValidationError, packetAccountIsolationProblems, unauthorizedFieldCitations } from '../../src/utils/letterGeneration.js';
 import { hasInjectedSignature, injectSignatureImage } from '../../src/utils/signatureInjection.js';
 import { LETTER_CONTENT_SCHEMA, renderStructuredLetter } from '../../src/utils/structuredLetter.js';
 import { requireStaff } from './_requireAuth.cjs';
@@ -134,22 +134,22 @@ export const handler = async (event) => {
     for (let attempt = 1; attempt <= MAX_FIELD_ATTEMPTS; attempt += 1) {
       const result = await runStructuredCall({ anthropic, db, caller, letter, system: context.system, messages: conversation, attempt });
       content = result.parsed;
-      html = renderStructuredLetter({ content, client: context.client, account: context.account, letter, enclosures: context.enclosures });
+      html = renderStructuredLetter({ content, client: context.client, account: context.account, accounts: context.accounts, letter, enclosures: context.enclosures });
       html = autoFixFieldCitations(html).html;
-      const authorizedFindingText = JSON.stringify((context.account?.findings || []).filter((finding) => finding?.outcome === 'FLAG'));
-      const additionalAllowedFields = [];
-      if (context.account?.type === 'C' && letter.target_type === 'furnisher') additionalAllowedFields.push('20');
-      if (/\b97\b|charge[ -]?off/i.test(String(context.account?.status || ''))
-          && /Field(?:s)?\s*(?:21|22)|Current Balance|Amount Past Due/i.test(authorizedFindingText)) {
-        additionalAllowedFields.push('23');
-      }
+      const additionalAllowedFor = (account) => {
+        const authorizedFindingText = JSON.stringify((account?.findings || []).filter((finding) => finding?.outcome === 'FLAG'));
+        const allowed = [];
+        if (account?.type === 'C' && letter.target_type === 'furnisher') allowed.push('20');
+        if (/\b97\b|charge[ -]?off/i.test(String(account?.status || ''))
+            && /Field(?:s)?\s*(?:21|22)|Current Balance|Amount Past Due/i.test(authorizedFindingText)) allowed.push('23');
+        return allowed;
+      };
+      const packetMode = Number(letter.packet_version || 1) === 2;
       const fieldProblems = [
         ...validateFieldCitations(html),
-        ...unauthorizedFieldCitations(html, context.account, {
-          // Prospective Field 20/XB and Field 23 documentation permissions are
-          // derived from stored account/rule state, not model judgment.
-          additionalAllowed: additionalAllowedFields,
-        }),
+        ...(packetMode
+          ? packetAccountIsolationProblems(html, context.accounts, { additionalAllowedFor })
+          : unauthorizedFieldCitations(html, context.account, { additionalAllowed: additionalAllowedFor(context.account) })),
       ];
       if (!fieldProblems.length) break;
       if (attempt === MAX_FIELD_ATTEMPTS) throw new Error(`Metro 2 field citation check failed: ${fieldProblems.join(' | ')}`);

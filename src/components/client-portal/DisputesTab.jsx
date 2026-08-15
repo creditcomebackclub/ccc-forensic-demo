@@ -108,6 +108,18 @@ function CampaignJourneyCards({ campaigns, letters, rounds }) {
   );
 }
 
+function PacketCoverageSummary({ rows }) {
+  if (!rows?.length) return null;
+  const progress = {
+    resolved: 'Resolved', documents_requested: 'Documents requested',
+    next_step_being_prepared: 'Next step being prepared',
+  };
+  return <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{rows.length} account{rows.length === 1 ? '' : 's'} in this packet</div>
+    <div className="mt-2 space-y-2">{rows.map((row) => <div key={row.coverage_id} className="text-[11px]"><div className="flex items-center justify-between gap-3"><span className="truncate font-medium text-slate-700">{row.account_label}{row.masked_account ? ` · ${row.masked_account}` : ''}</span><span className="shrink-0 text-slate-500">{progress[row.client_progress] || (row.response_status === 'not_received' ? 'Awaiting response' : 'Under review')}</span></div>{row.documents_requested && row.document_request && <div className="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-900">Requested: {row.document_request}</div>}</div>)}</div>
+  </div>;
+}
+
 function ReturnReceiptButton({ lobId, returnReceiptUrl }) {
   const [loading, setLoading] = useState(false);
 
@@ -144,6 +156,7 @@ export default function DisputesTab({
   letters,
   rounds = [],
   campaigns = [],
+  packetCoverage = [],
   manualUploadUnlocked,
   setManualUploadUnlocked,
   uploadSuccess,
@@ -156,6 +169,8 @@ export default function DisputesTab({
   handleSubmitResponse,
   RESPONSE_ACCEPT
 }) {
+  const coverageByLetter = new Map();
+  for (const row of packetCoverage) coverageByLetter.set(row.letter_id, [...(coverageByLetter.get(row.letter_id) || []), row]);
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
       <h2 className="text-xl font-bold text-slate-900 mb-2">Your Campaign Letters</h2>
@@ -192,10 +207,14 @@ export default function DisputesTab({
               {(() => {
                 const badge = responseBadge(l);
                 const isFileUpdate = isPortalFileUpdate(l);
+                const campaignRound = l.campaign_id
+                  ? campaigns.find((campaign) => campaign.campaign_id === l.campaign_id)?.round_number
+                  : null;
+                const displayRound = Number(l.packet_version || 1) === 2 ? (campaignRound || l.round_number) : l.round_number;
                 const structuredLabel = isFileUpdate
                   ? 'Step 1 · Credit-file cleanup'
-                  : l.round_number
-                  ? `Round ${l.round_number} · ${l.target_type === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`
+                  : displayRound
+                  ? `Round ${displayRound} · ${l.target_type === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`
                   : null;
                 const title = isFileUpdate
                   ? `Credit-file cleanup — ${l.furnisher}`
@@ -222,6 +241,7 @@ export default function DisputesTab({
                   {l.summary}
                 </div>
               )}
+              <PacketCoverageSummary rows={coverageByLetter.get(l.id)} />
               
               {(() => {
                 const cd = responseCountdown(l);

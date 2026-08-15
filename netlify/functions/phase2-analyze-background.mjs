@@ -27,6 +27,7 @@ import { inferMediaType, isAnalyzable } from '../../src/utils/responseFiles.js';
 import { splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
 import { priorLetterPlainText } from '../../src/utils/roundEvidence.js';
 import { responseWindowDays } from '../../src/utils/responseWindow.js';
+import { assessPacketAccount } from '../../src/utils/packetResponse.js';
 import { renderStructuredLetter } from '../../src/utils/structuredLetter.js';
 import { unauthorizedFieldCitations } from '../../src/utils/letterGeneration.js';
 import { hasInjectedSignature, injectSignatureImage } from '../../src/utils/signatureInjection.js';
@@ -222,12 +223,28 @@ export const handler = async (event) => {
     await db.from('phase2_jobs').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', jobId);
   };
   const onTokens = (tokens) => updateJob({ tokens }, tokens === 0);
+  let packetCoverage = [];
 
   try {
     const { data: letter, error: letterErr } = await db.from('letters').select('*').eq('id', job.letter_id).single();
     if (letterErr || !letter) throw new Error('Could not find the Phase 1 letter for this job.');
     const priorLetterText = priorLetterPlainText(letter.html, 16000);
     const priorDemands = extractDemandsFromLetterHtml(letter.html);
+    const { data: loadedPacketCoverage, error: packetCoverageError } = Number(letter.packet_version || 1) === 2
+      ? await db.from('letter_account_coverage')
+        .select('id,user_id,client_account_id,coverage_order').eq('letter_id', letter.id).order('coverage_order')
+      : { data: [], error: null };
+    if (packetCoverageError) throw packetCoverageError;
+    packetCoverage = loadedPacketCoverage || [];
+    if (Number(letter.packet_version || 1) === 2 && !packetCoverage?.length) throw new Error('Packet response analysis requires account coverage.');
+    const packetSuffixes = Number(letter.packet_version || 1) === 2
+      ? [...String(letter.html || '').matchAll(/Masked account:\s*([^<\s]+)/gi)].map((match) => match[1])
+      : [];
+    if (packetCoverage?.length) {
+      await db.from('letter_account_coverage').update({
+        response_status: 'analyzing', updated_at: new Date().toISOString(),
+      }).eq('letter_id', letter.id);
+    }
     if (job.kind === 'non_response') {
       const clockStart = letter.delivered_at || mailedDateOverride || letter.mailed_date;
       const computedDue = clockStart
@@ -400,8 +417,8 @@ export const handler = async (event) => {
             {
               type: 'text',
               text: bureauResponse
-                ? `Today: ${today()}\nExpected sender: ${letter.phase || ''}\nRelated account suffix: ${letter.account_id || ''}\n\nBUREAU RESPONSE DOCUMENT${pageNote}`
-                : `Today: ${today()}\nExpected sender: ${letter.furnisher}\nRelated account suffix: ${letter.account_id || ''}\n\nFURNISHER RESPONSE DOCUMENT${pageNote}`,
+                ? `Today: ${today()}\nExpected sender: ${letter.phase || ''}\n${packetSuffixes.length ? `Packet covered account suffixes: ${packetSuffixes.join(', ')}\nFor every account-related claim, copy the visible account suffix into accountSuffix. Never apply one account's statement to another.\n` : `Related account suffix: ${letter.account_id || ''}\n`}\nBUREAU RESPONSE DOCUMENT${pageNote}`
+                : `Today: ${today()}\nExpected sender: ${letter.furnisher}\n${packetSuffixes.length ? `Packet covered account suffixes: ${packetSuffixes.join(', ')}\nFor every account-related claim, copy the visible account suffix into accountSuffix. Never apply one account's statement to another.\n` : `Related account suffix: ${letter.account_id || ''}\n`}\nFURNISHER RESPONSE DOCUMENT${pageNote}`,
             },
             ...pageBlocks,
             { type: 'text', text: 'Extract only the response statements and document-quality facts into the extraction schema. Do not compare them with Exhibit A and do not classify or evaluate the response.' },
@@ -490,6 +507,7 @@ export const handler = async (event) => {
     };
 
     let analysis;
+    let responseExtraction = null;
     let u = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
     if (job.kind === 'non_response') {
       analysis = buildNonResponseAnalysis(priorDemands, {
@@ -498,6 +516,7 @@ export const handler = async (event) => {
       });
     } else {
       const extracted = await runModel(messages);
+      responseExtraction = extracted.parsed;
       u = extracted.usage;
       if (isBureauFollowUp) {
         analysis = await renderFollowUpLetter(extracted.parsed);
@@ -601,6 +620,39 @@ export const handler = async (event) => {
     }
 
     const analyzedAt = new Date().toISOString();
+    if (packetCoverage?.length && !isBureauFollowUp && evidence) {
+      const assessmentRows = packetCoverage.map((coverage) => {
+        const result = assessPacketAccount({
+          letterHtml: letter.html,
+          coverageOrder: coverage.coverage_order,
+          responseKind: evidence.response_kind,
+          extraction: responseExtraction,
+          nonResponse: job.kind === 'non_response',
+          metadata: {
+            mailedDate: mailedDateOverride || letter.mailed_date || null,
+            responseDueAt: letter.response_due_at || null,
+          },
+        });
+        return {
+          user_id: coverage.user_id,
+          response_evidence_id: evidence.id,
+          coverage_id: coverage.id,
+          client_account_id: coverage.client_account_id,
+          disposition: result.proposedDisposition,
+          next_action: result.proposedNextAction,
+          cited_pages: result.citedPages,
+          analysis: result.analysis,
+          review_status: 'not_reviewed',
+          updated_at: analyzedAt,
+        };
+      });
+      const { error: assessmentError } = await db.from('response_evidence_account_assessment')
+        .upsert(assessmentRows, { onConflict: 'response_evidence_id,coverage_id' });
+      if (assessmentError) throw assessmentError;
+      await db.from('letter_account_coverage').update({
+        response_status: 'review_ready', updated_at: analyzedAt,
+      }).eq('letter_id', letter.id);
+    }
     if (isBureauFollowUp) {
       // Follow-up draft lives on the job result for the client to saveLetter.
       // Do not overwrite the prior bureau-response analysis on evidence.
@@ -667,6 +719,11 @@ export const handler = async (event) => {
       if (job.kind === 'bureau_response') {
         await db.from('letters').update({ bureau_response_status: 'received' }).eq('id', job.letter_id).catch(() => {});
       }
+    }
+    if (packetCoverage?.length) {
+      await db.from('letter_account_coverage').update({
+        response_status: 'received', updated_at: new Date().toISOString(),
+      }).eq('letter_id', job.letter_id).catch(() => {});
     }
     await updateJob({ status: 'error', error: e.message || 'Analysis failed', finished_at: new Date().toISOString() }, true);
   }

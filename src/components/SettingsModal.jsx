@@ -398,6 +398,25 @@ export default function SettingsModal({ onClose, displayName, email }) {
                   </select>
                   <p className="text-[10px] text-gray-400 mt-1">The default tone used when AI generates initial dispute letters.</p>
                 </div>
+                <div className="border border-border rounded-sm p-3.5 bg-gray-50">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(settings.disputes.consolidatedPacketsEnabled)}
+                      onChange={(e) => setSettings({
+                        ...settings,
+                        disputes: { ...settings.disputes, consolidatedPacketsEnabled: e.target.checked },
+                      })}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="block text-[12px] font-bold text-navy">Forensic Blueprint + consolidated packets</span>
+                      <span className="block text-[10px] text-gray-500 mt-1 leading-relaxed">
+                        Applies to newly created campaigns only. Compatible account disputes are grouped by recipient and legal path, up to five accounts per mailed packet.
+                      </span>
+                    </span>
+                  </label>
+                </div>
               </div>
             )}
 

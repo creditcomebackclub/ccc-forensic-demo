@@ -31,6 +31,51 @@ export function unauthorizedFieldCitations(html, account, { additionalAllowed = 
   return problems;
 }
 
+function sectionsWithAccountRefs(html) {
+  const sections = [];
+  for (const match of String(html || '').matchAll(/<(section|tr)\b([^>]*\bdata-account-ref=["']([^"']+)["'][^>]*)>([\s\S]*?)<\/\1>/gi)) {
+    sections.push({ accountRef: match[3], html: match[0], body: match[4] });
+  }
+  return sections;
+}
+
+/**
+ * Multi-account isolation guard. Account-specific Metro 2 claims are graded
+ * only against the frozen finding set for the section that contains them.
+ */
+export function packetAccountIsolationProblems(html, accounts = [], { additionalAllowedFor = () => [] } = {}) {
+  if (!(accounts || []).length) return [];
+  const byRef = new Map(accounts.map((entry) => [entry.accountRef, entry.account || entry]));
+  const represented = new Set();
+  const problems = [];
+  const scoped = sectionsWithAccountRefs(html);
+  for (const section of scoped) {
+    const account = byRef.get(section.accountRef);
+    if (!account) {
+      problems.push(`Uses unknown packet accountRef ${section.accountRef}.`);
+      continue;
+    }
+    represented.add(section.accountRef);
+    problems.push(...unauthorizedFieldCitations(section.html, account, {
+      additionalAllowed: additionalAllowedFor(account, section.accountRef),
+    }).map((problem) => `${section.accountRef}: ${problem}`));
+    for (const entry of accounts) {
+      if (entry.accountRef === section.accountRef) continue;
+      const masked = String((entry.account || entry)?.accountNumberMasked || '').replace(/[^a-z0-9]/gi, '');
+      const suffix = masked.slice(-4);
+      if (suffix.length === 4 && new RegExp(`(?:\\*|x|#|\\b)${suffix}\\b`, 'i').test(section.body)) {
+        problems.push(`${section.accountRef}: includes the masked suffix belonging to ${entry.accountRef}.`);
+      }
+    }
+  }
+  for (const entry of accounts) {
+    if (!represented.has(entry.accountRef)) problems.push(`The draft has no account-scoped section for ${entry.accountRef}.`);
+  }
+  const outsideScoped = String(html || '').replace(/<(section|tr)\b[^>]*\bdata-account-ref=["'][^"']+["'][^>]*>[\s\S]*?<\/\1>/gi, '');
+  if (citedFieldNumbers(outsideScoped).size) problems.push('Shared packet text contains an account-specific Metro 2 field citation.');
+  return problems;
+}
+
 const REQUIRED_GENERATED_SECTIONS = [
   ['signature-block', 'signature block'],
   ['mail-notation', 'certified-mail notation'],

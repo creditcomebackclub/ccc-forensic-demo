@@ -4,6 +4,7 @@ import { updateLetter } from '../utils/storage';
 import { listResponseEvidence, updateResponseEvidenceReview } from '../utils/responseEvidence';
 import { getLatestRound, markRoundClosePrompted, reviewRoundLetter } from '../utils/rounds.js';
 import RoundCloseModal from './RoundCloseModal.jsx';
+import PacketAccountResponseReview from './PacketAccountResponseReview.jsx';
 
 const OPTIONS = [
   {
@@ -36,7 +37,7 @@ const OPTIONS = [
   },
 ];
 
-export default function BureauResponseReview({ letter, evidence: evidenceProp, onClose, onSaved, onEscalate, onFollowUp }) {
+function LegacyBureauResponseReview({ letter, evidence: evidenceProp, onClose, onSaved, onEscalate, onFollowUp }) {
   const [evidence, setEvidence] = useState(evidenceProp || null);
   const [choice, setChoice] = useState(evidenceProp?.review_status || letter.bureauReviewStatus || 'not_reviewed');
   const [notes, setNotes] = useState(evidenceProp?.review_notes || letter.bureauReviewNotes || '');
@@ -202,4 +203,10 @@ export default function BureauResponseReview({ letter, evidence: evidenceProp, o
       {roundReady && <RoundCloseModal roundId={roundReady.round_id} roundNumber={roundReady.round_number} onClose={() => setRoundReady(null)} onCompleted={() => { setRoundReady(null); onSaved?.(); onClose(); }} />}
     </div>
   );
+}
+
+export default function BureauResponseReview(props) {
+  return Number(props.letter?.packetVersion || props.letter?.packet_version || 1) === 2
+    ? <PacketAccountResponseReview letter={props.letter} evidence={props.evidence} onClose={props.onClose} onSaved={props.onSaved} />
+    : <LegacyBureauResponseReview {...props} />;
 }

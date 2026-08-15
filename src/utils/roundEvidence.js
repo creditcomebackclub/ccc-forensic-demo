@@ -47,6 +47,7 @@ export function buildPriorRoundEvidenceDigest({ priorTargetType, nextTargetType,
     reportedChanges: analysis.reportedChanges || null,
     admissions: analysis.admissions || null,
     phase3Leverage: analysis.phase3Leverage || null,
+    citedPages: analysis.accountCitedPages || null,
   } : null;
   return {
     transition,

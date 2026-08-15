@@ -29,6 +29,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const [letters, setLetters] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [campaigns, setCampaigns] = useState([]);
+  const [packetCoverage, setPacketCoverage] = useState([]);
   const [loading, setLoading] = useState(true);
   const [auditHistory, setAuditHistory] = useState([]);
   const [progressUpdates, setProgressUpdates] = useState([]);
@@ -81,7 +82,7 @@ export default function ClientPortal({ session, onSignOut }) {
         // The client portal needs campaign state, not staff-only model output
         // or response-review notes. Keep the browser query intentionally
         // narrow; raw response evidence remains private to the staff UI.
-        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,round_id,round_number,letter_kind,target_type,target_bureau,response_due_at,response_window_extension_days,round_review_status,campaign_id';
+        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,round_id,round_number,letter_kind,target_type,target_bureau,response_due_at,response_window_extension_days,round_review_status,campaign_id,packet_version';
         const lettersQuery = cp.client_id
           ? supabase.from('letters').select(portalLetterColumns).eq('client_id', cp.client_id).order('saved_at', { ascending: true })
           : supabase.from('letters').select(portalLetterColumns).eq('client_name', cp.full_name).order('saved_at', { ascending: true });
@@ -90,6 +91,9 @@ export default function ClientPortal({ session, onSignOut }) {
           : Promise.resolve({ data: [], error: null });
         const campaignsQuery = cp.client_id
           ? supabase.from('client_campaign_status').select('campaign_id,client_id,round_number,stage,opened_at,closed_at,selected_cleanup_count,selected_account_count').eq('client_id', cp.client_id).order('round_number', { ascending: false })
+          : Promise.resolve({ data: [], error: null });
+        const packetCoverageQuery = cp.client_id
+          ? supabase.from('client_packet_account_status').select('*').eq('client_id', cp.client_id).order('coverage_order')
           : Promise.resolve({ data: [], error: null });
         const auditsQuery = cp.client_id
           ? supabase.from('audits').select('audit,saved_at').eq('client_id', cp.client_id).order('saved_at', { ascending: false }).limit(5)
@@ -100,10 +104,11 @@ export default function ClientPortal({ session, onSignOut }) {
           ? supabase.from('progress_updates').select('*').eq('client_id', cp.client_id).or('status.eq.sent,emailed_at.not.is.null').order('to_report_date', { ascending: false })
           : supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).or('status.eq.sent,emailed_at.not.is.null').order('to_report_date', { ascending: false });
 
-        const [lettersRes, roundsRes, campaignsRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
+        const [lettersRes, roundsRes, campaignsRes, packetCoverageRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
           lettersQuery,
           roundsQuery,
           campaignsQuery,
+          packetCoverageQuery,
           clientsQuery,
           auditsQuery,
           progressQuery,
@@ -114,6 +119,8 @@ export default function ClientPortal({ session, onSignOut }) {
         else setRounds(roundsRes.data || []);
         if (campaignsRes.error) console.warn('Client campaign status unavailable:', campaignsRes.error.message);
         else setCampaigns(campaignsRes.data || []);
+        if (packetCoverageRes.error) console.warn('Client packet status unavailable:', packetCoverageRes.error.message);
+        else setPacketCoverage(packetCoverageRes.data || []);
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
         setProgressUpdates(progressRes.data || []);
@@ -297,6 +304,9 @@ export default function ClientPortal({ session, onSignOut }) {
     .sort((a, b) => new Date(a.mailed_date) - new Date(b.mailed_date));
   const earliestPhase1MailDate = phase1Mailed[0]?.mailed_date || null;
   const accountDisputeLetters = letters.filter(l => !isPortalFileUpdate(l) && (l.target_type || isAccountDisputeCampaign(l.phase) || isBureauCampaign(l.phase)));
+  const packetLetterIds = new Set(packetCoverage.map((entry) => entry.letter_id));
+  const accountDisputeCount = packetCoverage.length
+    + accountDisputeLetters.filter((letter) => !packetLetterIds.has(letter.id)).length;
   const fileUpdateLetters = letters.filter(isPortalFileUpdate);
   const windowCloseDate = earliestPhase1MailDate
     ? new Date(new Date(earliestPhase1MailDate).getTime() + 30 * 86400000).toISOString()
@@ -461,7 +471,7 @@ export default function ClientPortal({ session, onSignOut }) {
                 delivered={delivered}
                 responded={responded}
                 deletions={deletions}
-                totalDisputes={accountDisputeLetters.length}
+                totalDisputes={accountDisputeCount}
                 fileUpdateCount={fileUpdateLetters.length}
                 latestScores={latestScores}
                 auditHistory={auditHistory}
@@ -503,6 +513,7 @@ export default function ClientPortal({ session, onSignOut }) {
                 letters={letters}
                 rounds={rounds}
                 campaigns={campaigns}
+                packetCoverage={packetCoverage}
                 manualUploadUnlocked={manualUploadUnlocked}
                 setManualUploadUnlocked={setManualUploadUnlocked}
                 uploadSuccess={uploadSuccess}

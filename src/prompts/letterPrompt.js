@@ -169,8 +169,11 @@ Return legal letter CONTENT only in the supplied JSON schema. Never output HTML,
 - summary: 2–3 plain-English sentences for the consumer explaining the supported dispute and requested outcome; no legal jargon.
 - opening: 1–4 concise opening paragraphs.
 - sections: at most 12 supported factual/legal sections. Each section has a heading, no more than 5 paragraphs, and no more than 12 optional numbered factual bullets. Preserve exact, supported Metro 2 field names and statute citations.
+- accountRef: when the server supplies an accounts[] packet, every section must copy exactly one supplied opaque accountRef. Never combine facts from different accountRef values in one section.
 - demands: no more than 16 precise corrections or recipient actions supported by the record.
 - closing: one concise final compliance statement. Do not include a sign-off or consumer name.
+
+When the server supplies accounts[], prefix every demand with the exact bracketed reference for its account, for example "[acct-1] Correct the supported balance field." Shared demands are not allowed in packet mode. This bracket marker is removed during rendering.
 
 Do not repeat identity data merely to make the letter longer. Never invent a fact, mailing address, source document, investigation result, violation, date, amount, or account number. Correct unsupported premises in prior material instead of copying them.`;
 }

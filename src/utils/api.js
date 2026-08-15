@@ -319,6 +319,84 @@ export async function generateCampaignAccountRoute({ route, item, campaign, clie
   }
 }
 
+/**
+ * Packet-mode generator. The database creates all per-account rounds and one
+ * shared placeholder in a single transaction; only that one PDF draft is sent
+ * through the background generation pipeline.
+ */
+export async function generateCampaignPacketRoute({ route, items, campaign, priorSourcesByItem = new Map() }) {
+  const coveredItems = [...new Map((items || []).map((item) => [item?.id, item])).values()].filter(Boolean);
+  if (campaign?.packetVersion !== 2 || !route?.id || !coveredItems.length) {
+    throw new Error('This consolidated packet is missing its reviewed campaign coverage.');
+  }
+  if (coveredItems.length > 5 || coveredItems.some((item) => item.kind !== 'account' || !item.clientAccountId)) {
+    throw new Error('A consolidated account packet must contain one to five linked account items.');
+  }
+  let attemptedLetterIds = [];
+  let backgroundAccepted = false;
+  try {
+    if (route.status === 'failed' && route.letterIds?.length) {
+      const { data: failedRows, error: failedRowsError } = await supabase.from('letters')
+        .select('id,html,mailed_date,lob_id,campaign_route_id,packet_version')
+        .in('id', route.letterIds);
+      if (failedRowsError) throw failedRowsError;
+      const retryIds = (failedRows || []).filter((letter) =>
+        letter.campaign_route_id === route.id && Number(letter.packet_version || 1) === 2
+        && letterGenerationState(letter) === 'failed' && !letter.mailed_date && !letter.lob_id)
+        .map((letter) => letter.id);
+      if (retryIds.length) {
+        const { error: resetError } = await supabase.from('letters')
+          .update({ html: 'GENERATING...', summary: null }).in('id', retryIds);
+        if (resetError) throw resetError;
+        attemptedLetterIds = retryIds;
+      }
+    }
+
+    const sourcePayload = [];
+    for (const item of coveredItems) {
+      const loaded = await loadPriorSources(priorSourcesByItem.get(item.id) || []);
+      loaded.forEach((source) => sourcePayload.push({
+        campaign_item_id: item.id,
+        source_letter_id: source.sourceLetterId,
+        response_evidence_id: source.responseEvidenceId,
+        apply_to_bureau: route.targetBureau || null,
+        source_order: source.sourceOrder || 0,
+      }));
+    }
+    const { data: started, error } = await supabase.rpc('start_campaign_packet', {
+      p_route_id: route.id,
+      p_sources: sourcePayload,
+    });
+    if (error) throw error;
+    const ids = started?.letter_ids || [];
+    attemptedLetterIds = ids;
+    if (ids.length !== 1) throw new Error('The consolidated route did not create exactly one packet placeholder.');
+
+    const { data: stored, error: storedError } = await supabase.from('letters')
+      .select('id,html').eq('id', ids[0]).single();
+    if (storedError) throw storedError;
+    const state = letterGenerationState(stored);
+    if (state === 'ready') {
+      const result = await pollForLetter(ids[0]);
+      await setRouteResult(route.id, { status: 'generated', letterIds: ids, generationError: null, generatedAt: new Date().toISOString() });
+      return [{ id: ids[0], ...result }];
+    }
+    if (state !== 'generating') throw new Error('The failed packet has no safe placeholder to retry.');
+    await dispatchLetterGeneration(ids);
+    backgroundAccepted = true;
+    const result = await pollForLetter(ids[0]);
+    await setRouteResult(route.id, { status: 'generated', letterIds: ids, generationError: null, generatedAt: new Date().toISOString() });
+    return [{ id: ids[0], ...result }];
+  } catch (error) {
+    const message = String(error.message || error).slice(0, 1000);
+    if (!backgroundAccepted && attemptedLetterIds.length) {
+      try { await supabase.from('letters').update({ html: `ERROR: ${message}` }).in('id', attemptedLetterIds).eq('html', 'GENERATING...'); } catch (_) {}
+    }
+    await setRouteResult(route.id, { status: isBackgroundPollTimeout(error) ? 'generating' : 'failed', generationError: message }).catch(() => {});
+    throw error;
+  }
+}
+
 export async function generateCombinedCleanupLetter(client, inquiries, metadata = {}) {
   const personalInfo = client?.personalInfo || {};
   const hasPersonalInfo = (personalInfo.formerAddresses || []).length > 0

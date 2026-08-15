@@ -28,6 +28,10 @@ const EVENT_COPY = {
     subject: ({ round }) => `Round ${round.round_number} review is complete`,
     body: ({ firstName, round }) => `Hi ${firstName},\n\nWe completed our review of every response and nonresponse in Round ${round.round_number}. This account's dispute campaign is now marked resolved. You can view the current status in your portal.`,
   },
+  round_review_complete: {
+    subject: ({ round }) => `Round ${round.round_number} review is complete`,
+    body: ({ firstName, round }) => `Hi ${firstName},\n\nWe completed the account-by-account response review for Round ${round.round_number}. Resolved accounts are complete, and any unresolved accounts have been placed on their approved next path.\n\nYou can view the current packet and account progress in your portal. No action is needed unless a document request is shown there.`,
+  },
   escalation_ready: {
     subject: ({ round }) => `Round ${round.round_number} is ready for escalation review`,
     body: ({ firstName, round }) => `Hi ${firstName},\n\nWe completed the response review for Round ${round.round_number} and marked the record ready for escalation review. This does not mean a complaint or legal filing has been submitted. Our team will review the available path and contact you if anything is needed.`,
@@ -73,7 +77,7 @@ function preparedEventKey(round) {
 }
 
 function roundEventKey(round, eventType) {
-  return round?.campaign_id && ['next_round_prepared', 'round_mailed'].includes(eventType)
+  return round?.campaign_id && ['next_round_prepared', 'round_mailed', 'first_response_received', 'documents_needed', 'round_review_complete'].includes(eventType)
     ? `campaign:${round.campaign_id}:${eventType}`
     : `${round?.id}:${eventType}`;
 }
@@ -108,6 +112,18 @@ async function loadContext(db, roundId) {
   ]);
   if (clientError || !client?.email) throw new Error('The client has no deliverable email address.');
   if (lettersError || !letters?.length) throw new Error('The round has no letters.');
+  if (round.campaign_id) {
+    const [{ data: campaignLetters, error: campaignLettersError }, { data: campaign, error: campaignError }] = await Promise.all([
+      db.from('letters')
+        .select('id,html,mailed_date,response_outcome,round_next_action,target_type,target_bureau,furnisher')
+        .eq('campaign_id', round.campaign_id).eq('letter_kind', 'dispute'),
+      db.from('client_campaigns').select('id,user_id,client_id,round_number').eq('id', round.campaign_id).single(),
+    ]);
+    if (campaignLettersError || campaignError || campaign?.user_id !== round.user_id || campaign?.client_id !== round.client_id) {
+      throw new Error('Could not load the campaign for its milestone email.');
+    }
+    return { round: { ...round, round_number: campaign.round_number }, client, letters: campaignLetters || [] };
+  }
   return { round, client, letters };
 }
 
@@ -156,11 +172,15 @@ async function queueRoundEvent({ roundId, eventType, requireAllGenerated = false
   const context = await loadContext(db, roundId);
   if ((requireAllGenerated || eventType === 'next_round_prepared') && context.letters.some((letter) => !letter.html || letter.html === 'GENERATING...' || letter.html.startsWith('ERROR:'))) return { skipped: 'round_not_generated' };
   if (eventType === 'next_round_prepared' && context.round.campaign_id) {
-    const { data: routes, error: routesError } = await db.from('campaign_letter_routes')
-      .select('status')
-      .eq('campaign_id', context.round.campaign_id);
-    if (routesError) throw new Error('Could not check campaign letter generation status.');
-    if (!campaignReadyForPreparedEmail(routes)) return { skipped: 'campaign_not_generated' };
+    const [{ data: routes, error: routesError }, { data: items, error: itemsError }] = await Promise.all([
+      db.from('campaign_letter_routes').select('status,item_id,item_ids').eq('campaign_id', context.round.campaign_id),
+      db.from('campaign_items').select('id,item_kind').eq('campaign_id', context.round.campaign_id),
+    ]);
+    if (routesError || itemsError) throw new Error('Could not check campaign account-packet generation status.');
+    const accountIds = new Set((items || []).filter((item) => item.item_kind === 'account').map((item) => item.id));
+    const accountRoutes = (routes || []).filter((route) => accountIds.has(route.item_id)
+      || (route.item_ids || []).some((id) => accountIds.has(id)));
+    if (!campaignReadyForPreparedEmail(accountRoutes)) return { skipped: 'campaign_not_generated' };
   }
   if (eventType === 'round_mailed' && context.round.campaign_id) {
     const { data: campaignLetters, error: campaignLettersError } = await db.from('letters')
@@ -173,7 +193,24 @@ async function queueRoundEvent({ roundId, eventType, requireAllGenerated = false
   if ((requireAllMailed || eventType === 'round_mailed') && context.letters.some((letter) => !letter.mailed_date)) return { skipped: 'round_not_fully_mailed' };
   if ((requireAllMailed || eventType === 'round_mailed') && !context.letters.length) return { skipped: 'round_has_no_letters' };
   if (eventType === 'first_response_received' && !context.letters.some((letter) => letter.response_outcome === 'received')) return { skipped: 'no_response_received' };
-  if (eventType === 'documents_needed' && !context.letters.some((letter) => letter.round_next_action === 'needs_documents')) return { skipped: 'documents_not_requested' };
+  if (context.round.campaign_id && ['documents_needed', 'round_review_complete'].includes(eventType)) {
+    const { data: coverage, error: coverageError } = await db.from('letter_account_coverage')
+      .select('id,response_status').eq('campaign_id', context.round.campaign_id);
+    if (coverageError) throw new Error('Could not check packet response-review progress.');
+    const coverageIds = (coverage || []).map((row) => row.id);
+    const { data: assessments, error: assessmentError } = coverageIds.length
+      ? await db.from('response_evidence_account_assessment')
+        .select('coverage_id,review_status,next_action,reviewed_at').in('coverage_id', coverageIds)
+      : { data: [], error: null };
+    if (assessmentError) throw new Error('Could not check packet account decisions.');
+    const latestByCoverage = new Map();
+    for (const row of assessments || []) {
+      const existing = latestByCoverage.get(row.coverage_id);
+      if (!existing || String(row.reviewed_at || '') > String(existing.reviewed_at || '')) latestByCoverage.set(row.coverage_id, row);
+    }
+    if (eventType === 'documents_needed' && ![...latestByCoverage.values()].some((row) => row.review_status === 'reviewed' && row.next_action === 'needs_documents')) return { skipped: 'documents_not_requested' };
+    if (eventType === 'round_review_complete' && (!(coverage || []).length || (coverage || []).some((row) => row.response_status !== 'reviewed'))) return { skipped: 'campaign_review_incomplete' };
+  } else if (eventType === 'documents_needed' && !context.letters.some((letter) => letter.round_next_action === 'needs_documents')) return { skipped: 'documents_not_requested' };
   if (eventType === 'round_resolved' && (context.round.status !== 'closed' || context.round.final_disposition !== 'resolved')) return { skipped: 'round_not_resolved' };
   if (eventType === 'escalation_ready' && (context.round.status !== 'closed' || context.round.final_disposition !== 'escalate')) return { skipped: 'round_not_escalated' };
   const targetTypes = [...new Set(context.letters.map((letter) => letter.target_type).filter(Boolean))];

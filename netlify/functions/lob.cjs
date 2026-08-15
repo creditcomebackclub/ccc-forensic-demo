@@ -82,11 +82,154 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_account_id,client_name,phase,round_id,round_number,letter_kind,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,campaign_id,campaign_route_id',
+      + '&select=id,user_id,client_id,client_account_id,client_name,phase,round_id,round_number,letter_kind,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,campaign_id,campaign_route_id,packet_version,dispute_basis',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
   return Array.isArray(result.body) ? result.body[0] : null;
+}
+
+function normalizedRecipient(value) {
+  if (!value) return '';
+  if (typeof value === 'object') return Object.values(value).map(normalizedRecipient).join('');
+  return String(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+async function validatePacketPreflight(letter, toAddress, supabaseUrl, serviceKey) {
+  const coverageResult = await supabaseRequest(
+    '/rest/v1/letter_account_coverage?letter_id=eq.' + encodeURIComponent(letter.id)
+      + '&select=id,user_id,client_id,campaign_id,campaign_route_id,campaign_item_id,client_account_id,dispute_round_id,coverage_order,frozen_findings,expected_recipient',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  const coverage = Array.isArray(coverageResult.body) ? coverageResult.body : [];
+  if (!isSuccess(coverageResult) || coverage.length < 1 || coverage.length > 5) {
+    throw new Error('The consolidated packet must have one to five verified account coverage records.');
+  }
+  const routeResult = await supabaseRequest(
+    '/rest/v1/campaign_letter_routes?id=eq.' + encodeURIComponent(letter.campaign_route_id)
+      + '&select=id,user_id,client_id,campaign_id,item_id,item_ids,target_type,target_bureau,dispute_basis,recipient_key',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  const route = Array.isArray(routeResult.body) ? routeResult.body[0] : null;
+  const coveredItems = coverage.map((entry) => entry.campaign_item_id);
+  const routeItems = route?.item_ids?.length ? route.item_ids : [route?.item_id];
+  if (!isSuccess(routeResult) || !route || route.user_id !== letter.user_id || route.client_id !== letter.client_id
+      || route.campaign_id !== letter.campaign_id || route.target_type !== letter.target_type
+      || route.target_bureau !== letter.target_bureau || route.dispute_basis !== letter.dispute_basis
+      || routeItems.length !== coveredItems.length || coveredItems.some((id) => !routeItems.includes(id))) {
+    throw new Error('The packet no longer matches its reviewed Blueprint route.');
+  }
+  if (coverage.some((entry, index) => entry.user_id !== letter.user_id || entry.client_id !== letter.client_id
+      || entry.campaign_id !== letter.campaign_id || entry.campaign_route_id !== letter.campaign_route_id
+      || entry.coverage_order !== index + 1 || !Array.isArray(entry.frozen_findings)
+      || !entry.frozen_findings.some((finding) => finding?.outcome === 'FLAG'))) {
+    throw new Error('Every packet account must retain its ordered frozen findings and campaign identity.');
+  }
+  const expectedKeys = new Set(coverage.map((entry) => normalizedRecipient(entry.expected_recipient)));
+  if (expectedKeys.size !== 1) throw new Error('The packet coverage contains mixed recipients or legal paths.');
+  const expected = coverage[0].expected_recipient || {};
+  if (letter.target_type === 'bureau') {
+    if (expected.type !== 'bureau' || expected.bureau !== letter.target_bureau) {
+      throw new Error('The packet bureau recipient does not match its frozen coverage.');
+    }
+  } else {
+    const actualAddress = normalizedRecipient([toAddress.name, toAddress.line1, toAddress.line2, toAddress.city, toAddress.state, toAddress.zip]);
+    const expectedAddress = normalizedRecipient([expected.name, expected.address]);
+    if (expected.type !== 'furnisher' || expected.basis !== letter.dispute_basis
+        || !actualAddress || !expectedAddress || !actualAddress.includes(expectedAddress.slice(-Math.min(24, expectedAddress.length)))) {
+      throw new Error('The verified mailing address does not match the reviewed direct-packet recipient.');
+    }
+  }
+
+  const roundIds = coverage.map((entry) => entry.dispute_round_id);
+  const roundsResult = await supabaseRequest(
+    '/rest/v1/dispute_rounds?id=in.(' + roundIds.map(encodeURIComponent).join(',') + ')&select=id,user_id,client_id,client_account_id,round_number,target_type,status,campaign_id',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  const rounds = Array.isArray(roundsResult.body) ? roundsResult.body : [];
+  const roundById = new Map(rounds.map((round) => [round.id, round]));
+  if (!isSuccess(roundsResult) || rounds.length !== coverage.length || coverage.some((entry) => {
+    const round = roundById.get(entry.dispute_round_id);
+    return !round || round.status !== 'open' || round.user_id !== letter.user_id
+      || round.client_id !== letter.client_id || round.client_account_id !== entry.client_account_id
+      || round.target_type !== letter.target_type || round.campaign_id !== letter.campaign_id;
+  })) throw new Error('Every covered account must have its matching open dispute round before mailing.');
+
+  const clientResult = await supabaseRequest('/rest/v1/clients?id=eq.' + encodeURIComponent(letter.client_id) + '&select=id,user_id,lpoa_signature_data', 'GET', null, supabaseUrl, serviceKey);
+  const client = Array.isArray(clientResult.body) ? clientResult.body[0] : null;
+  if (!isSuccess(clientResult) || !client || client.user_id !== letter.user_id || !client.lpoa_signature_data) {
+    throw new Error('A signed Limited Power of Attorney is required before mailing this packet.');
+  }
+  if (rounds.some((round) => round.round_number === 1)) {
+    const docsResult = await supabaseRequest('/rest/v1/documents?client_id=eq.' + encodeURIComponent(letter.client_id) + '&doc_type=in.(id,address)&select=id,doc_type', 'GET', null, supabaseUrl, serviceKey);
+    const docTypes = new Set((Array.isArray(docsResult.body) ? docsResult.body : []).map((doc) => doc.doc_type));
+    if (!isSuccess(docsResult) || !docTypes.has('id') || !docTypes.has('address')) throw new Error('A Round 1 packet requires a government ID and proof of current address.');
+  }
+
+  const laterItemIds = coverage.filter((entry) => roundById.get(entry.dispute_round_id)?.round_number > 1).map((entry) => entry.campaign_item_id);
+  if (laterItemIds.length) {
+    const linksResult = await supabaseRequest('/rest/v1/letter_source_links?user_id=eq.' + encodeURIComponent(letter.user_id) + '&letter_id=eq.' + encodeURIComponent(letter.id) + '&select=source_letter_id,response_evidence_id,campaign_item_ids', 'GET', null, supabaseUrl, serviceKey);
+    const links = Array.isArray(linksResult.body) ? linksResult.body : [];
+    if (!isSuccess(linksResult) || laterItemIds.some((itemId) => !links.some((link) => link.response_evidence_id && (link.campaign_item_ids || []).includes(itemId)))) {
+      throw new Error('Every later-round packet account requires its own reviewed prior evidence link.');
+    }
+    const evidenceIds = [...new Set(links.map((link) => link.response_evidence_id).filter(Boolean))];
+    const evidenceResult = await supabaseRequest('/rest/v1/response_evidence?id=in.(' + evidenceIds.map(encodeURIComponent).join(',') + ')&select=id,firm_user_id,analysis_status,review_status', 'GET', null, supabaseUrl, serviceKey);
+    const evidence = Array.isArray(evidenceResult.body) ? evidenceResult.body : [];
+    if (!isSuccess(evidenceResult) || evidence.length !== evidenceIds.length || evidence.some((row) => row.firm_user_id !== letter.user_id || row.analysis_status !== 'analyzed' || row.review_status === 'not_reviewed')) {
+      throw new Error('A packet prior source is no longer analyzed and reviewed.');
+    }
+    const sourceLetterIds = [...new Set(links.map((link) => link.source_letter_id).filter(Boolean))];
+    const sourceLettersResult = await supabaseRequest('/rest/v1/letters?id=in.(' + sourceLetterIds.map(encodeURIComponent).join(',') + ')&select=id,user_id,client_id,client_account_id,packet_version,mailed_date', 'GET', null, supabaseUrl, serviceKey);
+    const sourceLetters = Array.isArray(sourceLettersResult.body) ? sourceLettersResult.body : [];
+    if (!isSuccess(sourceLettersResult) || sourceLetters.length !== sourceLetterIds.length) {
+      throw new Error('A packet prior source letter is no longer available.');
+    }
+    const sourceLetterById = new Map(sourceLetters.map((source) => [source.id, source]));
+    const packetSourceIds = sourceLetters.filter((source) => Number(source.packet_version || 1) === 2).map((source) => source.id);
+    let sourceCoverage = [];
+    if (packetSourceIds.length) {
+      const sourceCoverageResult = await supabaseRequest('/rest/v1/letter_account_coverage?letter_id=in.(' + packetSourceIds.map(encodeURIComponent).join(',') + ')&select=id,letter_id,client_account_id', 'GET', null, supabaseUrl, serviceKey);
+      if (!isSuccess(sourceCoverageResult)) throw new Error('Packet prior-account coverage could not be revalidated.');
+      sourceCoverage = Array.isArray(sourceCoverageResult.body) ? sourceCoverageResult.body : [];
+    }
+    let sourceAssessments = [];
+    if (packetSourceIds.length) {
+      const assessmentResult = await supabaseRequest('/rest/v1/response_evidence_account_assessment?response_evidence_id=in.(' + evidenceIds.map(encodeURIComponent).join(',') + ')&select=response_evidence_id,coverage_id,client_account_id,review_status,next_action', 'GET', null, supabaseUrl, serviceKey);
+      if (!isSuccess(assessmentResult)) throw new Error('Packet prior-account assessments could not be revalidated.');
+      sourceAssessments = Array.isArray(assessmentResult.body) ? assessmentResult.body : [];
+    }
+    for (const currentCoverage of coverage.filter((entry) => laterItemIds.includes(entry.campaign_item_id))) {
+      const scopedLinks = links.filter((link) => (link.campaign_item_ids || []).includes(currentCoverage.campaign_item_id));
+      const hasEligibleSource = scopedLinks.some((link) => {
+        const sourceLetter = sourceLetterById.get(link.source_letter_id);
+        if (!sourceLetter || sourceLetter.user_id !== letter.user_id || sourceLetter.client_id !== letter.client_id || !sourceLetter.mailed_date) return false;
+        if (Number(sourceLetter.packet_version || 1) !== 2) {
+          return sourceLetter.client_account_id === currentCoverage.client_account_id;
+        }
+        const matchingCoverage = sourceCoverage.find((entry) =>
+          entry.letter_id === sourceLetter.id && entry.client_account_id === currentCoverage.client_account_id);
+        return Boolean(matchingCoverage && sourceAssessments.some((assessment) =>
+          assessment.response_evidence_id === link.response_evidence_id
+          && assessment.coverage_id === matchingCoverage.id
+          && assessment.client_account_id === currentCoverage.client_account_id
+          && assessment.review_status === 'reviewed'
+          && ['next_round', 'escalate'].includes(assessment.next_action)));
+      });
+      if (!hasEligibleSource) {
+        throw new Error('Every later-round account requires its own reviewed, follow-up-eligible prior assessment.');
+      }
+    }
+  }
+}
+
+async function updatePacketCoverage(letter, patch, supabaseUrl, serviceKey) {
+  if (Number(letter.packet_version || 1) !== 2) return;
+  const result = await supabaseRequest(
+    '/rest/v1/letter_account_coverage?letter_id=eq.' + encodeURIComponent(letter.id),
+    'PATCH', { ...patch, updated_at: new Date().toISOString() }, supabaseUrl, serviceKey
+  );
+  if (!isSuccess(result)) console.error('Could not update packet coverage:', letter.id, requestError(result, 'unknown error'));
 }
 
 async function validateStructuredRoundPreflight(letter, supabaseUrl, serviceKey) {
@@ -520,7 +663,8 @@ exports.handler = async (event) => {
           body: JSON.stringify({ error: signatureError, blocked: true, signature_state: signatureState }),
         };
       }
-      await validateStructuredRoundPreflight(letter, supabaseUrl, serviceKey);
+      if (Number(letter.packet_version || 1) === 2) await validatePacketPreflight(letter, toAddress, supabaseUrl, serviceKey);
+      else await validateStructuredRoundPreflight(letter, supabaseUrl, serviceKey);
       await validatePersonalInfoCleanupPreflight(letter, supabaseUrl, serviceKey);
       const validatedAttachments = await validateOptionalAttachments(letter, attachmentManifest, supabaseUrl, serviceKey);
       if (isBureauAccountDisputeLetter(letter)) {
@@ -656,6 +800,10 @@ exports.handler = async (event) => {
         last_error: null,
         attachment_manifest: validatedAttachments,
       }, supabaseUrl, serviceKey);
+      await updatePacketCoverage(letter, {
+        mail_status: 'processing',
+        tracking_status: null,
+      }, supabaseUrl, serviceKey);
 
       const letterPayload = {
         description: description || 'CCC Dispute Letter',
@@ -700,6 +848,7 @@ exports.handler = async (event) => {
           status: 'failed',
           last_error: requestError(result, 'Lob did not accept the letter'),
         }, supabaseUrl, serviceKey);
+        await updatePacketCoverage(letter, { mail_status: 'failed', tracking_status: 'Failed' }, supabaseUrl, serviceKey);
         return { statusCode: result.status || 502, body: JSON.stringify(result.body || { error: 'Lob did not accept the letter' }) };
       }
 
@@ -739,6 +888,10 @@ exports.handler = async (event) => {
         tracking_number: result.body.tracking_number || null,
         submitted_at: new Date().toISOString(),
         last_error: letterWasSaved ? null : 'Lob accepted the mailpiece, but the letters row requires reconciliation.',
+      }, supabaseUrl, serviceKey);
+      await updatePacketCoverage(letter, {
+        mail_status: letterWasSaved ? 'queued' : 'processing',
+        tracking_status: 'Mailed',
       }, supabaseUrl, serviceKey);
       if (letterWasSaved && validatedAttachments.length) {
         const snapshotRows = validatedAttachments.map((item) => ({

@@ -28,7 +28,10 @@ const DEFAULT_SETTINGS = {
     // prompt that existed before this setting had any real effect) — not
     // "Standard," so wiring this setting up for real doesn't silently
     // soften every future letter for anyone who's never touched Settings.
-    defaultAggressiveness: 'Aggressive'
+    defaultAggressiveness: 'Aggressive',
+    // Opt-in applies only when a new campaign is created. Existing campaigns
+    // retain their original routing behavior and historical packet shape.
+    consolidatedPacketsEnabled: false,
   }
 };
 
