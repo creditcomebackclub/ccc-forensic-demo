@@ -379,7 +379,7 @@ export const handler = async (event) => {
   // service-role mutation or model call.
   const { data: queuedJob, error: queuedJobErr } = await db
     .from('audit_jobs')
-    .select('id, mode, files')
+    .select('id, mode, files, selected_client_id')
     .eq('id', jobId)
     .eq('user_id', caller.userId)
     .eq('status', 'queued')
