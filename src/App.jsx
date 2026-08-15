@@ -8,6 +8,7 @@ import { getUnanalyzedResponseStats } from './utils/actionItems';
 import { computeClientCommission } from './utils/affiliateCommission';
 import { getSettings } from './utils/settings';
 import AffiliateProfilePanel from './components/AffiliateProfilePanel';
+import AffiliateApplicationsPanel from './components/AffiliateApplicationsPanel';
 
 const UploadZone = lazy(() => import('./components/UploadZone'));
 const AuditProgress = lazy(() => import('./components/AuditProgress'));
@@ -179,6 +180,11 @@ function AffiliatesPage() {
       </div>
 
       {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-[12px] text-red-700">{error}</div>}
+
+      <AffiliateApplicationsPanel
+        defaultCommissionRate={Number(defaultCommissionRate) || 0.20}
+        onAffiliateCreated={loadData}
+      />
 
       {affiliates.length === 0 ? (
         <div className="border border-border rounded p-12 text-center">

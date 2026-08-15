@@ -15,6 +15,16 @@
   status = 200
 
 [[redirects]]
+  from = "/affiliate/apply"
+  to = "/affiliate-apply.html"
+  status = 200
+
+[[redirects]]
+  from = "/affiliate/apply/"
+  to = "/affiliate-apply.html"
+  status = 200
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
@@ -40,6 +50,11 @@
   [functions."public-affiliate-lookup".rate_limit]
     window = "1m"
     limit = 30
+
+[functions."public-affiliate-application"]
+  [functions."public-affiliate-application".rate_limit]
+    window = "1m"
+    limit = 5
 
 # Calendly can retry legitimate events, while every request also requires an
 # authenticated API verification. Cap anonymous noise without interfering
