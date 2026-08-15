@@ -57,7 +57,7 @@
       '.ccc-embed .ccc-brand-row { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 20px; }' +
       '.ccc-embed .ccc-logo { height: 50px; width: auto; border-radius: 6px; object-fit: contain; display: block; }' +
       '.ccc-embed .ccc-brand-x { color: #C7CDDA; font-size: 15px; font-weight: 600; }' +
-      '.ccc-embed .ccc-partner-logo { max-height: 36px; max-width: 140px; object-fit: contain; }' +
+      '.ccc-embed .ccc-partner-logo { max-height: 50px; max-width: 140px; object-fit: contain; }' +
       '.ccc-embed .ccc-eyebrow-wrap { text-align: center; }' +
       '.ccc-embed .ccc-eyebrow {' +
       '  display: none; width: max-content; max-width: 100%; margin: 0 auto 16px;' +

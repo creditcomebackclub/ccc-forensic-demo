@@ -22,7 +22,10 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
   const [editForm, setEditForm] = useState({
     name: affiliate.name || '',
     company: affiliate.company || '',
-    email: affiliate.email || ''
+    email: affiliate.email || '',
+    brand_name: affiliate.brand_name || '',
+    brand_logo_url: affiliate.brand_logo_url || '',
+    brand_color: affiliate.brand_color || '#22C55E'
   });
   const [payingClientId, setPayingClientId] = useState(null);
   const [payAmount, setPayAmount] = useState('');
@@ -96,19 +99,28 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
   };
 
   const saveAffiliateInfo = async () => {
+    const brand_logo_url = editForm.brand_logo_url.trim() || null;
+    const brand_name = editForm.brand_name.trim() || null;
+    const brand_color = /^#[0-9a-f]{6}$/i.test(editForm.brand_color.trim()) ? editForm.brand_color.trim() : '#22C55E';
     await supabase.from('affiliates').update({
       name: editForm.name,
       company: editForm.company,
-      email: editForm.email
+      email: editForm.email,
+      brand_name,
+      brand_logo_url,
+      brand_color
     }).eq('id', affiliate.id);
-    
-    // Also update all clients that reference this affiliate if we wanted to denormalize, 
+
+    // Also update all clients that reference this affiliate if we wanted to denormalize,
     // but the clients table uses `referred_by` UUID, so we only need to update the affiliates table!
-    
+
     Object.assign(affiliate, {
       name: editForm.name,
       company: editForm.company,
-      email: editForm.email
+      email: editForm.email,
+      brand_name,
+      brand_logo_url,
+      brand_color
     });
 
     setIsEditingInfo(false);
@@ -133,28 +145,64 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
             <div>
               {isEditingInfo ? (
                 <div className="flex flex-col gap-2">
-                  <input 
-                    type="text" 
-                    value={editForm.name} 
+                  <input
+                    type="text"
+                    value={editForm.name}
                     onChange={e => setEditForm({...editForm, name: e.target.value})}
                     className="text-[16px] font-bold px-2 py-1 border rounded"
                     placeholder="Affiliate Name"
                   />
                   <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      value={editForm.company} 
+                    <input
+                      type="text"
+                      value={editForm.company}
                       onChange={e => setEditForm({...editForm, company: e.target.value})}
                       className="text-[12px] px-2 py-1 border rounded w-1/2"
                       placeholder="Company"
                     />
-                    <input 
-                      type="email" 
-                      value={editForm.email} 
+                    <input
+                      type="email"
+                      value={editForm.email}
                       onChange={e => setEditForm({...editForm, email: e.target.value})}
                       className="text-[12px] px-2 py-1 border rounded w-1/2"
                       placeholder="Email"
                     />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {editForm.brand_logo_url && (
+                      <img src={editForm.brand_logo_url} alt="Logo preview" className="w-7 h-7 rounded object-contain border" style={{ borderColor: T.border }} />
+                    )}
+                    <input
+                      type="text"
+                      value={editForm.brand_logo_url}
+                      onChange={e => setEditForm({...editForm, brand_logo_url: e.target.value})}
+                      className="text-[12px] px-2 py-1 border rounded flex-1"
+                      placeholder="Logo URL"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={editForm.brand_name}
+                      onChange={e => setEditForm({...editForm, brand_name: e.target.value})}
+                      className="text-[12px] px-2 py-1 border rounded w-1/2"
+                      placeholder="Portal Brand Name"
+                    />
+                    <div className="flex items-center gap-1 w-1/2">
+                      <input
+                        type="color"
+                        value={/^#[0-9a-f]{6}$/i.test(editForm.brand_color) ? editForm.brand_color : '#22C55E'}
+                        onChange={e => setEditForm({...editForm, brand_color: e.target.value})}
+                        className="w-7 h-7 p-0 border rounded"
+                      />
+                      <input
+                        type="text"
+                        value={editForm.brand_color}
+                        onChange={e => setEditForm({...editForm, brand_color: e.target.value})}
+                        className="text-[12px] px-2 py-1 border rounded flex-1"
+                        placeholder="Brand Color (hex)"
+                      />
+                    </div>
                   </div>
                   <div className="flex gap-2 mt-1">
                     <button onClick={saveAffiliateInfo} className="text-[11px] bg-navy text-white px-3 py-1 rounded font-medium">Save</button>
