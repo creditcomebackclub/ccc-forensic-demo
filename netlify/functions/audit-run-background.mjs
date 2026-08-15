@@ -135,6 +135,14 @@ function textFromVerifiedModelMessage(message, operation) {
   return text;
 }
 
+// Page-count splitting (pdfChunksForReport) only guards Anthropic's input
+// page cap. A report can sit well under that cap and still overflow the
+// output token budget purely from tradeline/violation density, so a single
+// unsplit call can hit this even though nothing was ever "too many pages."
+function isOutputLimitError(err) {
+  return err instanceof Error && /hit the output limit/i.test(err.message);
+}
+
 function normalizedMediaType(value) {
   return String(value || '').split(';', 1)[0].trim().toLowerCase();
 }
@@ -513,17 +521,7 @@ export const handler = async (event) => {
     return splitPdfByPages(pdfBytes);
   }
 
-  async function parseBureauReportChunked({ report, bureauName, stage, pct, today }) {
-    const bureauKey = normalizeBureauKey(bureauName);
-    const chunks = await pdfChunksForReport(report);
-    if (!chunks || chunks.length <= 1) {
-      const raw = await claudeCall(
-        buildReportContent(report.base64, bureauExtractionPrompt(bureauKey), report.mediaType),
-        { schema: CREDIT_BUREAU_EXTRACTION_SCHEMA, onTokens: progress(stage, pct), operation: 'audit.report_extraction' },
-      );
-      return assertBureauOutput(coerceBureauExtraction(parseAuditJSON(raw), bureauKey), bureauName);
-    }
-
+  async function runBureauChunks(chunks, { bureauKey, bureauName, stage, pct }) {
     console.log(`[audit] ${bureauName} PDF is ${chunks[0].totalPages} pages — splitting into ${chunks.length} parts`);
     const parts = [];
     for (const chunk of chunks) {
@@ -539,16 +537,31 @@ export const handler = async (event) => {
     return assertBureauOutput(mergeBureauExtractions(parts, bureauKey), bureauName);
   }
 
-  async function parseCombinedExtractionChunked({ report, stage }) {
+  async function parseBureauReportChunked({ report, bureauName, stage, pct, today }) {
+    const bureauKey = normalizeBureauKey(bureauName);
     const chunks = await pdfChunksForReport(report);
-    if (!chunks || chunks.length <= 1) {
-      const raw = await claudeCall(
-        buildReportContent(report.base64, combinedExtractionPrompt(null), report.mediaType),
-        { schema: COMBINED_CREDIT_EXTRACTION_SCHEMA, onTokens: progress(stage, null), operation: 'audit.report_extraction' },
-      );
-      return mergeCombinedExtractions([parseAuditJSON(raw)]);
+    if (chunks && chunks.length > 1) {
+      return runBureauChunks(chunks, { bureauKey, bureauName, stage, pct });
     }
 
+    try {
+      const raw = await claudeCall(
+        buildReportContent(report.base64, bureauExtractionPrompt(bureauKey), report.mediaType),
+        { schema: CREDIT_BUREAU_EXTRACTION_SCHEMA, onTokens: progress(stage, pct), operation: 'audit.report_extraction' },
+      );
+      return assertBureauOutput(coerceBureauExtraction(parseAuditJSON(raw), bureauKey), bureauName);
+    } catch (err) {
+      const totalPages = chunks?.[0]?.totalPages || 0;
+      if (!isOutputLimitError(err) || totalPages < 2) throw err;
+      console.warn(`[audit] ${bureauName} hit the output limit at ${totalPages} pages (under the page-split threshold) — forcing a split and retrying`);
+      const forcedChunks = await splitPdfByPages(report.bytes || Buffer.from(report.base64, 'base64'), {
+        maxPages: Math.max(1, Math.ceil(totalPages / 2)),
+      });
+      return runBureauChunks(forcedChunks, { bureauKey, bureauName, stage, pct });
+    }
+  }
+
+  async function runCombinedChunks(chunks, { stage }) {
     console.log(`[audit] report PDF is ${chunks[0].totalPages} pages — splitting into ${chunks.length} parts`);
     const parts = [];
     for (const chunk of chunks) {
@@ -562,6 +575,29 @@ export const handler = async (event) => {
       parts.push(parseAuditJSON(raw));
     }
     return mergeCombinedExtractions(parts);
+  }
+
+  async function parseCombinedExtractionChunked({ report, stage }) {
+    const chunks = await pdfChunksForReport(report);
+    if (chunks && chunks.length > 1) {
+      return runCombinedChunks(chunks, { stage });
+    }
+
+    try {
+      const raw = await claudeCall(
+        buildReportContent(report.base64, combinedExtractionPrompt(null), report.mediaType),
+        { schema: COMBINED_CREDIT_EXTRACTION_SCHEMA, onTokens: progress(stage, null), operation: 'audit.report_extraction' },
+      );
+      return mergeCombinedExtractions([parseAuditJSON(raw)]);
+    } catch (err) {
+      const totalPages = chunks?.[0]?.totalPages || 0;
+      if (!isOutputLimitError(err) || totalPages < 2) throw err;
+      console.warn(`[audit] combined report hit the output limit at ${totalPages} pages (under the page-split threshold) — forcing a split and retrying`);
+      const forcedChunks = await splitPdfByPages(report.bytes || Buffer.from(report.base64, 'base64'), {
+        maxPages: Math.max(1, Math.ceil(totalPages / 2)),
+      });
+      return runCombinedChunks(forcedChunks, { stage });
+    }
   }
 
   async function resolveClientForParse(bureauParse) {
