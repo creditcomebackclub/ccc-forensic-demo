@@ -12,13 +12,16 @@ const T = {
   cardShadow: '0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)',
 };
 
-// Real stages of the 3-file Individual pipeline — highlighted from actual
-// progress callbacks, not a timer
+// Real stages of the 3-file Individual pipeline, matched by prefix against
+// the job's live `stage` text (which grows a "(pages X-Y of Z)" suffix for
+// chunked files) — must track the literal strings audit-run-background.mjs
+// sends via progress(), not a paraphrase, or every stage silently fails to
+// match and the checklist gets stuck on the first item.
 const INDIVIDUAL_STAGES = [
-  'Analyzing Equifax report',
-  'Analyzing Experian report',
-  'Analyzing TransUnion report',
-  'Cross-bureau reconciliation & ranking',
+  'Extracting Equifax report',
+  'Extracting Experian report',
+  'Extracting TransUnion report',
+  'Applying deterministic cross-bureau rules',
 ];
 
 function fmtElapsed(seconds) {
@@ -32,7 +35,7 @@ function fmtTokens(n) {
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
 }
 
-export default function AuditProgress({ fileName, progress }) {
+export default function AuditProgress({ fileName, progress, mode }) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -44,7 +47,12 @@ export default function AuditProgress({ fileName, progress }) {
   const stage = progress?.stage || 'Starting analysis';
   const pct = progress?.pct ?? null;
   const tokens = fmtTokens(progress?.tokens);
-  const isIndividual = pct !== null;
+  // The 4-step checklist below is specific to the true 3-file Individual
+  // pipeline. Single Bureau and Merge jobs also report a numeric pct, but
+  // only ever run one step — showing this checklist for them just pins the
+  // display on "Extracting Equifax report" no matter which bureau is
+  // actually running.
+  const isIndividual = mode === 'individual';
   const currentStageIdx = isIndividual
     ? Math.max(0, INDIVIDUAL_STAGES.findIndex((s) => stage.startsWith(s)))
     : -1;

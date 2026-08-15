@@ -315,6 +315,7 @@ export default function App() {
   const [state, setState] = useState(STATE.IDLE);
   const [auditResult, setAuditResult] = useState(null);
   const [fileName, setFileName] = useState('');
+  const [auditMode, setAuditMode] = useState(null);
   const [auditProgress, setAuditProgress] = useState(null);
   const [error, setError] = useState(null);
   const [activeLetter, setActiveLetter] = useState(null);
@@ -641,6 +642,7 @@ export default function App() {
     setState(STATE.PROCESSING);
     setError(null);
     setAuditProgress(null);
+    setAuditMode(payload.mode || 'combined');
     try {
       let res;
       if (!payload.mode || payload.mode === 'combined') {
@@ -733,7 +735,7 @@ export default function App() {
             {view === VIEW.AUDIT && (
               <>
                 {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
-                {state === STATE.PROCESSING && <AuditProgress fileName={fileName} progress={auditProgress} />}
+                {state === STATE.PROCESSING && <AuditProgress fileName={fileName} progress={auditProgress} mode={auditMode} />}
                 {state === STATE.RESULTS && auditResult?.kind === 'bureau_parse' && (
                   <BureauParseStatus
                     result={auditResult}
