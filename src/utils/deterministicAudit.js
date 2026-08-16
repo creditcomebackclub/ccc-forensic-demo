@@ -455,7 +455,13 @@ function perVariantFindings(variants) {
     ].filter((v) => v && v.isViolation !== false);
     for (const v of deterministic) {
       out.push(finding(v.type, {
-        outcome: v.verification_status ? 'REVIEW_REQUIRED' : 'FLAG',
+        // Business decision (2026-08-15): debt-purchaser conformity findings
+        // resolve to FLAG regardless of verification_status. The citation's
+        // provenance metadata is preserved as-is below (verificationStatus)
+        // so it's never misrepresented as independently re-verified — this
+        // only changes whether that metadata gates the outcome, not what it
+        // says about the source.
+        outcome: 'FLAG',
         field: v.field,
         issue: v.issue,
         currentlyReports: `${BUREAU_CODES[bureau]}: ${v.found || 'nonconforming value displayed'}`,
