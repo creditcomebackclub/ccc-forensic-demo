@@ -260,18 +260,9 @@ function ClientOnboardingModal({ session, onComplete }) {
 
   const handleComplete = async () => {
     if (!signature) {
-      toast.error('Drawn signature required. Go to Step 3 and draw your signature before completing enrollment. Letters cannot be mailed without it.');
+      toast.error('Please draw your signature in Step 3 before completing enrollment.');
       setStep(3);
       return;
-    }
-    // Reject empty / near-empty canvas data URLs (cleared canvas still produces a PNG header)
-    if (typeof signature === 'string' && signature.startsWith('data:image')) {
-      const approxBytes = Math.ceil((signature.length - (signature.indexOf(',') + 1)) * 0.75);
-      if (approxBytes < 500) {
-        toast.error('Signature looks empty. Draw a clear signature in Step 3, then try again.');
-        setStep(3);
-        return;
-      }
     }
     setLoading(true);
     const toastId = toast.loading('Finalizing your enrollment...');
