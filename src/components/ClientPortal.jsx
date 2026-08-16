@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
+import { DOCUMENTS_BUCKET } from '../utils/storagePaths';
 import { inferMediaType, isAnalyzable, transcodeImageToJpeg, validateBatch, RESPONSE_ACCEPT } from '../utils/responseFiles';
 import { uploadResponseEvidence } from '../utils/responseEvidence';
 import { LogOut } from 'lucide-react';
@@ -36,7 +37,7 @@ export default function ClientPortal({ session, onSignOut }) {
   const [recoveryBlueprints, setRecoveryBlueprints] = useState([]);
   const [activeTab, setActiveTab] = useState('overview');
   const [uploadingLetter, setUploadingLetter] = useState(null);
-  const [clientDocs, setClientDocs] = useState({ id: null, address: null, other: [] });
+  const [clientDocs, setClientDocs] = useState({ id: null, address: null, lpoa: null, other: [] });
   const [uploadingDoc, setUploadingDoc] = useState(null);
   
   const [monitoringForm, setMonitoringForm] = useState({ service: '', email: '', password: '', ssnLast4: '' });
@@ -77,8 +78,8 @@ export default function ClientPortal({ session, onSignOut }) {
           ? supabase.from('clients').select('*').eq('id', cp.client_id).limit(1)
           : supabase.from('clients').select('*').eq('name', cp.full_name).limit(1);
         const documentsQuery = cp.client_id
-          ? supabase.from('documents').select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_id', cp.client_id)
-          : supabase.from('documents').select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_name', cp.full_name);
+          ? supabase.from(DOCUMENTS_BUCKET).select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_id', cp.client_id)
+          : supabase.from(DOCUMENTS_BUCKET).select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_name', cp.full_name);
         // The client portal needs campaign state, not staff-only model output
         // or response-review notes. Keep the browser query intentionally
         // narrow; raw response evidence remains private to the staff UI.
@@ -141,7 +142,8 @@ export default function ClientPortal({ session, onSignOut }) {
           setClientDocs({
             id: docRows.find(d => d.doc_type === 'id') || null,
             address: docRows.find(d => d.doc_type === 'address') || null,
-            other: docRows.filter(d => d.doc_type !== 'id' && d.doc_type !== 'address'),
+            lpoa: docRows.find(d => d.doc_type === 'lpoa' || d.doc_type === 'agreement' || (d.label || '').toLowerCase().includes('lpoa') || (d.label || '').toLowerCase().includes('agreement')) || null,
+            other: docRows.filter(d => d.doc_type !== 'id' && d.doc_type !== 'address' && d.doc_type !== 'lpoa' && d.doc_type !== 'agreement'),
           });
         }
       }
@@ -267,7 +269,46 @@ export default function ClientPortal({ session, onSignOut }) {
     }
   };
 
-  if (loading) return (
+
+  const viewSignedAgreement = async () => {
+    const doc = clientDocs?.lpoa;
+    if (!doc?.storage_path) {
+      toast.error('No signed agreement file is on file yet.');
+      return;
+    }
+    try {
+      const { data, error } = await supabase.storage
+        .from(DOCUMENTS_BUCKET)
+        .createSignedUrl(doc.storage_path, 60 * 10);
+      if (error) throw error;
+      if (!data?.signedUrl) throw new Error('Could not create download link.');
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      console.error('Signed agreement open failed:', e);
+      toast.error(e.message || 'Could not open signed agreement.');
+    }
+  };
+
+  const openRecoveryBlueprint = async (blueprint) => {
+    const target = blueprint || recoveryBlueprints?.[0];
+    if (!target?.storage_path) {
+      toast.error('Blueprint file is not available yet.');
+      return;
+    }
+    try {
+      const { data, error } = await supabase.storage
+        .from('recovery-blueprints')
+        .createSignedUrl(target.storage_path, 60 * 10);
+      if (error) throw error;
+      if (!data?.signedUrl) throw new Error('Could not create blueprint link.');
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      console.error('Blueprint open failed:', e);
+      toast.error(e.message || 'Could not open blueprint.');
+    }
+  };
+
+    if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-12 h-12 border-4 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
     </div>
@@ -496,7 +537,7 @@ export default function ClientPortal({ session, onSignOut }) {
             )}
 
             {activeTab === 'recovery-plan' && (
-              <RecoveryPlanTab blueprints={recoveryBlueprints} />
+              <RecoveryPlanTab blueprints={recoveryBlueprints} session={session} />
             )}
 
             {activeTab === 'documents' && (
@@ -544,7 +585,9 @@ export default function ClientPortal({ session, onSignOut }) {
             )}
             
             {activeTab === 'billing' && (
-              <BillingTab clientMeta={clientMeta} />
+              <BillingTab
+              signedAgreementAvailable={!!clientDocs?.lpoa?.storage_path}
+              onViewAgreement={viewSignedAgreement} clientMeta={clientMeta} />
             )}
             
             {activeTab === 'vip' && isVip && (
