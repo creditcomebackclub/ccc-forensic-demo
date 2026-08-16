@@ -285,7 +285,8 @@ export default function ClientPortal({ session, onSignOut }) {
       const out = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(out.error || 'Could not open signed agreement.');
       if (!out.signedUrl) throw new Error('No download link returned.');
-      window.open(out.signedUrl, '_blank', 'noopener,noreferrer');
+      const opened = window.open(out.signedUrl, '_blank', 'noopener,noreferrer');
+      if (!opened) throw new Error('Popup blocked — allow popups for this site and try again.');
     } catch (e) {
       console.error('Signed agreement open failed:', e);
       toast.error(e.message || 'Could not open signed agreement.');
