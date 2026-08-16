@@ -10,6 +10,7 @@ const {
   loadAttorneySignatureDataUrl,
   attorneySignatureImgTag,
 } = require('./_attorneySig.cjs');
+const { escapeHtml } = require('./_email.cjs');
 
 function supabaseRequest(path, method, body, url, key) {
   return new Promise((resolve, reject) => {
@@ -58,7 +59,7 @@ function buildLpoaHtml(clientName, signerName, signatureData, signedAt, feeText,
     + '</style></head><body>'
     + '<div class="header"><h1>Credit Dispute Authorization — Limited Power of Attorney</h1><p>Executed ' + dateStr + '</p></div>'
     + '<h2>1. Parties</h2>'
-    + '<p>This LPOA is between <strong>' + clientName + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO ("Attorney-in-Fact").</p>'
+    + '<p>This LPOA is between <strong>' + escapeHtml(clientName) + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO ("Attorney-in-Fact").</p>'
     + '<h2>2. Grant of Authority</h2>'
     + '<ul><li>Prepare and submit dispute letters to data furnishers under 15 U.S.C. §1681s-2(b)</li>'
     + '<li>Prepare and submit dispute letters to Equifax, Experian, and TransUnion</li>'
@@ -73,8 +74,8 @@ function buildLpoaHtml(clientName, signerName, signatureData, signedAt, feeText,
     + '<h2>6. Duration &amp; Revocation</h2><p>Effective until written revocation or dispute completion. To revoke: email creditcomebackclub@gmail.com with "LPOA REVOCATION — [Your Name]."</p>'
     + '<h2>7. ESIGN Disclosure</h2><p>Executed electronically under the ESIGN Act (15 U.S.C. §7001). Drawn signature, timestamp, and IP recorded as evidence of consent.</p>'
     + '<div class="sig-row">'
-    + '<div class="sig-col"><div class="sig-line">' + (signatureData ? '<img src="' + signatureData + '" style="max-height:56px;max-width:200px;" />' : '') + '</div>'
-    + '<div class="sig-label"><strong>' + signerName + '</strong> — Principal</div>'
+    + '<div class="sig-col"><div class="sig-line">' + (signatureData ? '<img src="' + escapeHtml(signatureData) + '" style="max-height:56px;max-width:200px;" />' : '') + '</div>'
+    + '<div class="sig-label"><strong>' + escapeHtml(signerName) + '</strong> — Principal</div>'
     + '<div class="sig-label">Date: ' + dateStr + '</div></div>'
     + '<div class="sig-col"><div class="sig-line" style="align-items:center;">' + attorneyBlock + '</div>'
     + '<div class="sig-label"><strong>Christopher Holland</strong> — Attorney-in-Fact, Credit Comeback Club</div>'
