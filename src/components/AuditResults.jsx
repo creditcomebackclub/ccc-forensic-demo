@@ -943,21 +943,65 @@ function AccountTable({ title, subtitle, accounts, onSelect, onGenerateLetter, e
 // the structured-output schema — a nested object pushed the compiled grammar
 // over the API's size limit). Best-effort split into the form's discrete
 // fields for a one-click fill; the human can still correct any part before
-// saving. Returns null if the string doesn't match the "...Street, City, ST
-// ZIP" shape every entry in masterPrompt.js's address list follows.
+// saving. Handles two shapes:
+//   "...Street, City, ST ZIP"  (every entry in masterPrompt.js's address
+//   list follows this) and the far more common shape a furnisher address
+//   actually comes back as from a real credit report extraction — a single
+//   comma directly before the state/zip, with no comma between street and
+//   city at all, e.g. "16 MCLELAND RD SAINT CLOUD, MN 56303-2198". That
+//   second shape used to fall through to null (parts.length < 3), which
+//   silently hid the "Use This" button and forced full manual retyping of
+//   an address the audit engine already extracted.
+// Returns null when the shape can't be determined confidently — better to
+// fall back to manual entry than guess a legal-mail address wrong.
+const STREET_SUFFIXES = new Set([
+  'RD', 'ROAD', 'ST', 'STREET', 'AVE', 'AVENUE', 'BLVD', 'BOULEVARD', 'DR', 'DRIVE',
+  'LN', 'LANE', 'WAY', 'CT', 'COURT', 'PL', 'PLACE', 'PKWY', 'PARKWAY', 'HWY', 'HIGHWAY',
+  'CIR', 'CIRCLE', 'TER', 'TERRACE', 'TRL', 'TRAIL', 'LOOP', 'SQ', 'SQUARE', 'PLZ', 'PLAZA',
+  'PIKE', 'ALY', 'ALLEY', 'XING', 'CROSSING', 'ROW', 'WALK', 'PT', 'POINT', 'HOLW', 'HOLLOW',
+  'VW', 'VIEW', 'CV', 'COVE', 'GLN', 'GLEN', 'MNR', 'MANOR', 'RIDGE', 'VLG', 'VILLAGE',
+  'EXT', 'EXTENSION', 'PATH', 'RUN', 'STE', 'SUITE',
+]);
+const DIRECTIONALS = new Set(['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW', 'NORTH', 'SOUTH', 'EAST', 'WEST']);
+
+function splitStreetCity(text) {
+  const boxMatch = text.match(/^(P\.?O\.?\s*BOX\s*\d+)\s+(.+)$/i);
+  if (boxMatch) return { line1: boxMatch[1].toUpperCase(), city: boxMatch[2].trim() };
+  const tokens = text.split(/\s+/).filter(Boolean);
+  let suffixIdx = -1;
+  for (let i = tokens.length - 1; i >= 1; i--) {
+    if (STREET_SUFFIXES.has(tokens[i].toUpperCase().replace(/\.$/, ''))) { suffixIdx = i; break; }
+  }
+  if (suffixIdx === -1) return null;
+  let end = suffixIdx + 1;
+  if (end < tokens.length && DIRECTIONALS.has(tokens[end].toUpperCase())) end++;
+  if (end >= tokens.length) return null;
+  return { line1: tokens.slice(0, end).join(' '), city: tokens.slice(end).join(' ') };
+}
+
 function parseAddressString(s, fallbackName) {
   const parts = String(s || '').split(',').map((p) => p.trim()).filter(Boolean);
-  if (parts.length < 3) return null;
-  const stateZip = parts[parts.length - 1];
-  const m = stateZip.match(/^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/);
-  if (!m) return null;
-  return {
-    name: parts.slice(0, parts.length - 3).join(', ') || fallbackName || '',
-    line1: parts[parts.length - 3],
-    city: parts[parts.length - 2],
-    state: m[1],
-    zip: m[2],
-  };
+  if (parts.length >= 3) {
+    const stateZip = parts[parts.length - 1];
+    const m = stateZip.match(/^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+    if (!m) return null;
+    return {
+      name: parts.slice(0, parts.length - 3).join(', ') || fallbackName || '',
+      line1: parts[parts.length - 3],
+      city: parts[parts.length - 2],
+      state: m[1],
+      zip: m[2],
+    };
+  }
+  if (parts.length === 2) {
+    const stateZip = parts[1];
+    const m = stateZip.match(/^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+    if (!m) return null;
+    const split = splitStreetCity(parts[0]);
+    if (!split) return null;
+    return { name: fallbackName || '', line1: split.line1, city: split.city, state: m[1], zip: m[2] };
+  }
+  return null;
 }
 
 function FurnisherAddressInput({ account, onSaved }) {
