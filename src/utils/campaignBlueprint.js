@@ -81,6 +81,69 @@ export function classifyAccountRoute(item, options = {}) {
   return { classification: ROUTE_CLASSIFICATIONS.DIRECT_ELIGIBLE, findings, reason: null, freshness };
 }
 
+/**
+ * Staff-facing route recommendation. Does not change classifyAccountRoute
+ * outcomes or auto-enable FDCPA — it only surfaces guidance for the tray UI.
+ */
+export function recommendAccountRoute(item, options = {}) {
+  const decision = classifyAccountRoute(item, options);
+  const snapshot = item?.snapshot || {};
+  const isCollector = snapshot.type === 'C'
+    || /collection|debt buyer|debt purchaser|portfolio recovery|midland|lvnv|cavalry/i.test(
+      String(snapshot.furnisher || item?.label || ''),
+    );
+  const addressVerified = String(snapshot.addressStatus || '').toUpperCase() === 'YES'
+    && Boolean(String(snapshot.furnisherAddress || '').trim());
+  const blocked = [
+    ROUTE_CLASSIFICATIONS.NO_DISPUTE,
+    ROUTE_CLASSIFICATIONS.CLIENT_CONFIRMATION_REQUIRED,
+    ROUTE_CLASSIFICATIONS.FRESH_REPORT_REQUIRED,
+  ].includes(decision.classification);
+
+  // Recommend FDCPA when collector-like and otherwise direct-capable, even if
+  // staff has not yet toggled fdcpaValidationEligible. Generation still requires
+  // the explicit eligibility flag.
+  const fdcpaRecommended = !blocked
+    && isCollector
+    && addressVerified
+    && decision.classification !== ROUTE_CLASSIFICATIONS.BUREAU_ONLY;
+
+  const furnisherFirstRecommended = fdcpaRecommended
+    || decision.classification === ROUTE_CLASSIFICATIONS.FDCPA_ELIGIBLE
+    || decision.classification === ROUTE_CLASSIFICATIONS.DIRECT_ELIGIBLE;
+
+  let badge = 'Bureau only';
+  let badgeTone = 'bureau';
+  if (blocked) {
+    badge = decision.classification === ROUTE_CLASSIFICATIONS.FRESH_REPORT_REQUIRED
+      ? 'Needs fresh report'
+      : decision.classification === ROUTE_CLASSIFICATIONS.CLIENT_CONFIRMATION_REQUIRED
+        ? 'Needs client fact'
+        : 'No dispute';
+    badgeTone = 'blocked';
+  } else if (decision.classification === ROUTE_CLASSIFICATIONS.FDCPA_ELIGIBLE) {
+    badge = 'FDCPA eligible';
+    badgeTone = 'fdcpa';
+  } else if (fdcpaRecommended) {
+    badge = 'FDCPA recommended';
+    badgeTone = 'fdcpa';
+  } else if (decision.classification === ROUTE_CLASSIFICATIONS.DIRECT_ELIGIBLE) {
+    badge = 'Furnisher direct OK';
+    badgeTone = 'direct';
+  }
+
+  return {
+    ...decision,
+    isCollector,
+    addressVerified,
+    fdcpaRecommended,
+    furnisherFirstRecommended,
+    bureauPacketEligible: !blocked,
+    badge,
+    badgeTone,
+  };
+}
+
 export function furnisherRecipientKey(item, disputeBasis = 'FCRA_DIRECT') {
   const snapshot = item?.snapshot || {};
   return `furnisher:${normalizeKey(snapshot.furnisher || item?.label)}:${normalizeKey(snapshot.furnisherAddress)}:${disputeBasis}`;

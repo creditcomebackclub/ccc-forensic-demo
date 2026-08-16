@@ -7,7 +7,7 @@ import {
 } from '../../utils/campaigns.js';
 import { generateCampaignAccountRoute, generateCampaignCleanupRoute, generateCampaignPacketRoute, generateInterimLetter } from '../../utils/api.js';
 import { buildCleanupRouteGroups, getCampaignItemBureaus } from '../../utils/campaignItems.js';
-import { buildCampaignBlueprint, splitPacketSpec } from '../../utils/campaignBlueprint.js';
+import { buildCampaignBlueprint, PACKET_MAX_ACCOUNTS, recommendAccountRoute, splitPacketSpec } from '../../utils/campaignBlueprint.js';
 import { isCampaignSelectionLocked } from '../../utils/campaignSelection.js';
 import { canMailLetter } from '../../utils/letterGeneration.js';
 import { campaignReadyForTracking, isCancelledMail, isMailedMail } from '../../utils/campaignMailing.js';
@@ -107,47 +107,198 @@ function EmptyCampaign({ client, latestAudit, onStart, busy, onOpenAudit }) {
   );
 }
 
+function routeBadgeStyle(tone) {
+  if (tone === 'fdcpa') return { background: '#EEF2FF', color: '#3730A3', border: '1px solid #C7D2FE' };
+  if (tone === 'direct') return { background: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0' };
+  if (tone === 'blocked') return { background: '#FFFBEB', color: '#B45309', border: '1px solid #FDE68A' };
+  return { background: '#F3F4F6', color: '#4B5563', border: '1px solid #E5E7EB' };
+}
+
+function AccountRouteMeta({ item }) {
+  const rec = recommendAccountRoute(item);
+  const bureaus = getCampaignItemBureaus(item);
+  const findings = (item.snapshot?.violations || []).length || (item.snapshot?.authorizedFindingIds || []).length;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <span className="text-[9px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full" style={routeBadgeStyle(rec.badgeTone)}>{rec.badge}</span>
+      {rec.isCollector && <span className="text-[9px] uppercase tracking-wider px-2 py-0.5 rounded-full" style={{ background: '#FAF5FF', color: '#6B21A8', border: '1px solid #E9D5FF' }}>Collector</span>}
+      {bureaus.map((b) => <span key={b} className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded" style={{ background: '#F7F8FA', color: T.faint }}>{BUREAU_LABEL[b] || b}</span>)}
+      {findings > 0 && <span className="text-[9px]" style={{ color: T.faint }}>{findings} finding{findings === 1 ? '' : 's'}</span>}
+      {typeof item.snapshot?.priorityScore === 'number' && item.snapshot.priorityScore > 0 && (
+        <span className="text-[9px] ccc-mono" style={{ color: T.muted }}>P{item.snapshot.priorityScore}</span>
+      )}
+    </div>
+  );
+}
+
 function DisputePicker({ workspace, onState, onBulkState, onContinue, busy, readOnly = false, hasDraftRoutes = false }) {
-  const groups = [
-    ['account', 'Accounts'], ['personal_info', 'Personal Information'], ['inquiry', 'Hard Inquiries'],
-  ];
-  const selected = workspace.items.filter((item) => item.selectionState === 'selected').length;
-  const later = workspace.items.filter((item) => item.selectionState === 'later').length;
+  const accounts = workspace.items.filter((item) => item.kind === 'account');
+  const personal = workspace.items.filter((item) => item.kind === 'personal_info');
+  const inquiries = workspace.items.filter((item) => item.kind === 'inquiry');
+
+  const thisRound = accounts.filter((item) => item.selectionState === 'selected');
+  const held = accounts.filter((item) => item.selectionState === 'later');
+  const skipped = accounts.filter((item) => item.selectionState !== 'selected' && item.selectionState !== 'later');
+
+  const selectedCount = workspace.items.filter((item) => item.selectionState === 'selected').length;
+  const laterCount = workspace.items.filter((item) => item.selectionState === 'later').length;
+
+  const recommendations = thisRound.map((item) => recommendAccountRoute(item));
+  const furnisherFirst = recommendations.filter((r) => r.furnisherFirstRecommended).length;
+  const fdcpaSuggested = recommendations.filter((r) => r.fdcpaRecommended || r.classification === 'FDCPA_ELIGIBLE').length;
+  const bureauEligible = recommendations.filter((r) => r.bureauPacketEligible).length;
+  // Rough bureau letter estimate: each bureau packs up to PACKET_MAX_ACCOUNTS
+  const bureauPresence = { equifax: 0, experian: 0, transunion: 0 };
+  for (const item of thisRound) {
+    for (const b of getCampaignItemBureaus(item)) {
+      if (bureauPresence[b] != null) bureauPresence[b] += 1;
+    }
+  }
+  const estimatedBureauLetters = Object.values(bureauPresence).reduce(
+    (sum, count) => sum + Math.ceil(count / PACKET_MAX_ACCOUNTS),
+    0,
+  );
+
+  const renderAccountRow = (item) => {
+    const rec = recommendAccountRoute(item);
+    return (
+    <div key={item.id} className="px-4 py-3 flex items-start gap-3" style={{ borderTop: `1px solid ${T.grid}` }}>
+      <div className="min-w-0 flex-1">
+        <div className="text-[12px] font-medium" style={{ color: T.ink }}>{item.label}</div>
+        <div className="text-[10px] mt-0.5" style={{ color: T.faint }}>
+          {item.snapshot?.accountNumberMasked || 'No masked account #'}
+          {item.snapshot?.balance != null ? ` · $${Number(item.snapshot.balance).toLocaleString()}` : ''}
+          {item.snapshot?.status ? ` · ${item.snapshot.status}` : ''}
+        </div>
+        <AccountRouteMeta item={item} />
+        {rec.reason && rec.badgeTone === 'blocked' && (
+          <div className="text-[10px] mt-1" style={{ color: '#B45309' }}>{rec.reason}</div>
+        )}
+      </div>
+      <div className="flex flex-col gap-1 shrink-0">
+        {[['selected', 'This round'], ['later', 'Hold'], ['candidate', 'Skip']].map(([state, label]) => (
+          <button
+            key={state}
+            type="button"
+            onClick={() => onState(item, state)}
+            disabled={busy || readOnly || item.selectionState === state}
+            className="px-2.5 py-1 rounded-md text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40"
+            style={{
+              background: item.selectionState === state ? T.navy : '#F7F8FA',
+              color: item.selectionState === state ? '#fff' : T.muted,
+              border: `1px solid ${item.selectionState === state ? T.navy : T.border}`,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+  };
+
+  const tray = (title, subtitle, rows, tone) => (
+    <div className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${T.border}` }}>
+      <div className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderBottom: `1px solid ${T.grid}`, background: tone }}>
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.12em] font-semibold" style={{ color: T.navy }}>{title}</div>
+          <div className="text-[10px] mt-0.5" style={{ color: T.muted }}>{subtitle}</div>
+        </div>
+        <div className="text-[16px] font-semibold" style={{ color: T.navy }}>{rows.length}</div>
+      </div>
+      {rows.length ? rows.map(renderAccountRow) : (
+        <div className="px-4 py-6 text-[11px]" style={{ color: T.faint }}>No accounts in this tray.</div>
+      )}
+    </div>
+  );
+
+  const softGroup = (kind, title, rows) => {
+    if (!rows.length) return null;
+    const allSelected = rows.every((item) => item.selectionState === 'selected');
+    return (
+      <div key={kind} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${T.border}` }}>
+        <div className="px-5 py-3 flex items-center justify-between gap-3" style={{ borderBottom: `1px solid ${T.grid}` }}>
+          <div className="text-[11px] uppercase tracking-[0.12em] font-semibold" style={{ color: T.navy }}>{title} <span style={{ color: T.faint }}>({rows.length})</span></div>
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => onBulkState(rows, 'selected')} disabled={busy || readOnly || allSelected} className="px-2.5 py-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: T.navy, color: T.gold }}>All this round</button>
+            <button onClick={() => onBulkState(rows, 'candidate')} disabled={busy || readOnly || rows.every((item) => item.selectionState === 'candidate')} className="px-2.5 py-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: '#F7F8FA', color: T.muted, border: `1px solid ${T.border}` }}>Clear</button>
+          </div>
+        </div>
+        {rows.map((item) => (
+          <div key={item.id} className="px-4 py-3 flex items-center justify-between gap-3" style={{ borderTop: `1px solid ${T.grid}` }}>
+            <div className="min-w-0">
+              <div className="text-[12px] font-medium" style={{ color: T.ink }}>{item.label}</div>
+              <div className="text-[10px]" style={{ color: T.faint }}>{(item.snapshot?.bureaus || []).join(', ') || 'Bureau coverage from audit'}</div>
+            </div>
+            <div className="flex gap-1">
+              {[['selected', 'This round'], ['later', 'Hold'], ['candidate', 'Skip']].map(([state, label]) => (
+                <button key={state} type="button" onClick={() => onState(item, state)} disabled={busy || readOnly || item.selectionState === state} className="px-2.5 py-1 rounded-md text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: item.selectionState === state ? T.navy : '#F7F8FA', color: item.selectionState === state ? '#fff' : T.muted, border: `1px solid ${item.selectionState === state ? T.navy : T.border}` }}>{label}</button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
-      <div className="bg-white rounded-2xl px-5 py-4 flex items-center justify-between gap-4" style={{ border: `1px solid ${T.border}` }}>
-        <div><div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>Round {workspace.campaign.roundNumber}</div><h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>{readOnly ? 'Review this round’s saved disputes' : 'Choose this round’s disputes'}</h2><p className="text-[11px] mt-1" style={{ color: T.muted }}>{readOnly ? 'This selection is locked because a downstream letter already exists. Existing generated or mailed packets will not be silently changed.' : hasDraftRoutes ? 'You can still edit this round. The first change clears its saved, ungenerated routes so Build can be configured from the revised selection.' : 'Selected items move to letter strategy. “Later round” stays in the carry-forward queue.'}</p></div>
-        <div className="text-right shrink-0"><div className="text-[20px] font-semibold" style={{ color: T.navy }}>{selected}</div><div className="text-[9px] uppercase tracking-wider" style={{ color: T.faint }}>selected · {later} later</div></div>
+      <div className="bg-white rounded-2xl px-5 py-4 flex items-start justify-between gap-4 flex-wrap" style={{ border: `1px solid ${T.border}` }}>
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.gold }}>Round {workspace.campaign.roundNumber}</div>
+          <h2 className="ccc-display text-[19px] font-semibold mt-0.5" style={{ color: T.navy }}>{readOnly ? 'Review this round’s saved disputes' : 'Choose this round’s disputes'}</h2>
+          <p className="text-[11px] mt-1 max-w-2xl" style={{ color: T.muted }}>
+            {readOnly
+              ? 'This selection is locked because a downstream letter already exists. Existing generated or mailed packets will not be silently changed.'
+              : hasDraftRoutes
+                ? 'You can still edit this round. The first change clears its saved, ungenerated routes so Build can be configured from the revised selection.'
+                : 'Move accounts into This round, Hold for later, or Skip. Bureau letters can pack up to 5 accounts each — select multiple bureau-eligible accounts to avoid one Lob letter per tradeline.'}
+          </p>
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-[20px] font-semibold" style={{ color: T.navy }}>{selectedCount}</div>
+          <div className="text-[9px] uppercase tracking-wider" style={{ color: T.faint }}>selected · {laterCount} held</div>
+        </div>
       </div>
-      {groups.map(([kind, title]) => {
-        const rows = workspace.items.filter((item) => item.kind === kind);
-        if (!rows.length) return null;
-        const supportsBulkSelection = kind === 'personal_info' || kind === 'inquiry';
-        const allSelected = rows.every((item) => item.selectionState === 'selected');
-        return <div key={kind} className="bg-white rounded-2xl overflow-hidden" style={{ border: `1px solid ${T.border}` }}>
-          <div className="px-5 py-3 flex items-center justify-between gap-3" style={{ borderBottom: `1px solid ${T.grid}` }}>
-            <div className="text-[11px] uppercase tracking-[0.12em] font-semibold" style={{ color: T.navy }}>{title} <span style={{ color: T.faint }}>({rows.length})</span></div>
-            {supportsBulkSelection && <div className="flex items-center gap-1.5">
-              <button onClick={() => onBulkState(rows, 'selected')} disabled={busy || readOnly || allSelected} className="px-2.5 py-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: allSelected ? '#ECFDF3' : T.navy, color: allSelected ? '#166534' : T.gold, border: `1px solid ${allSelected ? '#BBF7D0' : T.navy}` }}>{allSelected ? 'All selected ✓' : 'Select all'}</button>
-              <button onClick={() => onBulkState(rows, 'candidate')} disabled={busy || readOnly || rows.every((item) => item.selectionState === 'candidate')} className="px-2.5 py-1.5 rounded-md text-[9px] uppercase tracking-wider font-semibold disabled:opacity-40" style={{ background: '#F7F8FA', color: T.muted, border: `1px solid ${T.border}` }}>Clear</button>
-            </div>}
-          </div>
-          {rows.map((item) => {
-            const [tag, bg, color] = itemTone(item.kind);
-            const comparisons = item.kind === 'account' ? (item.snapshot.forensicComparison || []) : [];
-            const contradictions = comparisons.filter((entry) => ['CONFIRMED_CONTRADICTION', 'STRONG_INCONSISTENCY'].includes(entry.mismatchStrength));
-            return <div key={item.id} className="px-5 py-3 flex items-center gap-3" style={{ borderTop: `1px solid ${T.grid}` }}>
-              <span className="text-[9px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0" style={{ background: bg, color }}>{tag}</span>
-              <div className="flex-1 min-w-0"><div className="text-[12px] font-medium truncate" style={{ color: T.ink }}>{item.label}</div>{item.kind === 'account' && <><div className="text-[10px] mt-0.5 truncate" style={{ color: T.muted }}>{(item.snapshot.violations || []).length} supported finding{(item.snapshot.violations || []).length === 1 ? '' : 's'} · {(item.snapshot.bureaus || []).join('/') || 'bureau reporting unavailable'}</div>{comparisons.length > 0 && <div className="text-[9px] mt-1 truncate" style={{ color: contradictions.length ? '#92400E' : T.faint }}>Forensic matrix: {contradictions.length} page-backed mismatch{contradictions.length === 1 ? '' : 'es'}{contradictions.length ? ` · ${contradictions.map((entry) => entry.label).join(', ')}` : ' · no cross-bureau contradiction'}{item.snapshot.timingChecks?.ageDays != null ? ` · report age ${item.snapshot.timingChecks.ageDays}d` : ''}</div>}</>}</div>
-              <div className="flex gap-1.5 shrink-0">
-                {[['selected', 'This round'], ['later', 'Later round'], ['candidate', 'Skip round']].map(([state, label]) => <button key={state} onClick={() => onState(item, state)} disabled={busy || readOnly || item.selectionState === state} className="px-2.5 py-1.5 rounded-md text-[10px] font-medium disabled:cursor-not-allowed" style={{ background: item.selectionState === state ? T.navy : '#F7F8FA', color: item.selectionState === state ? '#fff' : T.muted, border: `1px solid ${item.selectionState === state ? T.navy : T.border}` }}>{label}</button>)}
-              </div>
-            </div>;
-          })}
-        </div>;
-      })}
-      {!readOnly && <div className="rounded-xl px-4 py-3 text-[10px] leading-relaxed" style={{ color: T.muted, background: '#FBF9F2', border: `1px solid ${T.border}` }}><span className="font-semibold" style={{ color: T.navy }}>Later round</span> carries the item into the next campaign when the same deterministic finding still exists in that round’s audit. <span className="font-semibold" style={{ color: T.navy }}>Skip round</span> excludes it from the carry-forward queue; a future audit can still surface it again as a new candidate.</div>}
-      <div className="flex justify-end"><button onClick={onContinue} disabled={!selected || busy} className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40 flex items-center gap-2" style={{ background: T.navy, color: T.gold }}>{readOnly ? 'Open Build' : 'Choose letter builder'} <ChevronRight size={13} /></button></div>
+
+      {thisRound.length > 0 && (
+        <div className="rounded-2xl px-4 py-3 flex flex-wrap gap-3 items-center" style={{ background: '#F8FAFC', border: `1px solid ${T.border}` }}>
+          <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.navy }}>Round preview</div>
+          <span className="text-[11px]" style={{ color: T.ink }}>{bureauEligible} bureau-eligible account{bureauEligible === 1 ? '' : 's'}</span>
+          <span className="text-[11px]" style={{ color: T.muted }}>·</span>
+          <span className="text-[11px]" style={{ color: T.ink }}>~{estimatedBureauLetters} bureau letter{estimatedBureauLetters === 1 ? '' : 's'} (max {PACKET_MAX_ACCOUNTS}/letter)</span>
+          {furnisherFirst > 0 && (
+            <>
+              <span className="text-[11px]" style={{ color: T.muted }}>·</span>
+              <span className="text-[11px]" style={{ color: T.ink }}>{furnisherFirst} furnisher-first capable</span>
+            </>
+          )}
+          {fdcpaSuggested > 0 && (
+            <>
+              <span className="text-[11px]" style={{ color: T.muted }}>·</span>
+              <span className="text-[11px] font-medium" style={{ color: '#3730A3' }}>{fdcpaSuggested} FDCPA recommended / eligible</span>
+            </>
+          )}
+        </div>
+      )}
+
+      {tray('This round', 'Included in Build · bureau packets group up to 5 accounts per letter', thisRound, '#F0FDF4')}
+      {tray('Hold for later', 'Carry-forward queue — not in this round’s letters', held, '#FFFBEB')}
+      {tray('Skipped / not selected', 'Still on the audit but out of this campaign selection', skipped, '#F9FAFB')}
+
+      {softGroup('personal_info', 'Personal Information', personal)}
+      {softGroup('inquiry', 'Hard Inquiries', inquiries)}
+
+      <div className="flex justify-end">
+        <button
+          onClick={onContinue}
+          disabled={busy || selectedCount === 0}
+          className="px-5 py-2.5 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-40 flex items-center gap-1.5"
+          style={{ background: T.navy, color: T.gold }}
+        >
+          {readOnly ? 'Open Build' : 'Choose letter builder'} <ChevronRight size={13} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -200,7 +351,7 @@ function BlueprintConfigurator({ workspace, mode, onSave, onDefer, onFdcpaEligib
         return <div key={packet.key} className="bg-white rounded-2xl p-4" style={{ border: `1px solid ${T.border}` }}>
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: cleanup ? '#F5F3FF' : '#FBF7EA', color: cleanup ? '#6D4DB1' : T.gold }}>{cleanup ? <FileText size={17} /> : <Sparkles size={17} />}</div>
-            <div className="flex-1 min-w-0"><div className="text-[9px] uppercase tracking-wider" style={{ color: T.faint }}>{cleanup ? 'Step 1 cleanup' : `${items.length} account packet`}</div><div className="text-[12px] font-semibold mt-0.5 truncate" style={{ color: T.ink }}>{recipientLabel(packet)}</div></div>
+            <div className="flex-1 min-w-0"><div className="text-[9px] uppercase tracking-wider" style={{ color: T.faint }}>{cleanup ? 'Step 1 cleanup' : items.length > 1 ? `${items.length} accounts · 1 letter (saves Lob cost)` : `1 account packet`}</div><div className="text-[12px] font-semibold mt-0.5 truncate" style={{ color: T.ink }}>{recipientLabel(packet)}</div></div>
             <button onClick={() => removePacket(packet)} className="text-[9px] uppercase tracking-wider text-gray-500 hover:text-red-700">Remove</button>
           </div>
           <div className="mt-3 space-y-1">{items.map((item) => <div key={item.id} className="flex items-center gap-2 text-[10px] px-2.5 py-1.5 rounded-lg bg-gray-50" style={{ color: T.muted }}><span className="min-w-0 flex-1 truncate">{item.label}{item.snapshot?.accountNumberMasked ? ` · ${item.snapshot.accountNumberMasked}` : ''}</span>{!cleanup && <button onClick={() => onDefer(item)} disabled={busy} className="shrink-0 text-[8px] uppercase tracking-wider font-semibold text-amber-700 disabled:opacity-40">Defer account</button>}</div>)}</div>
