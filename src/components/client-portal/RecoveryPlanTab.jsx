@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Download, FileCheck2, Loader2, ShieldCheck } from 'lucide-react';
 import { supabase } from '../../utils/supabase.js';
 
-export default function RecoveryPlanTab({ blueprints }) {
+export default function RecoveryPlanTab({ blueprints, session }) {
   const [opening, setOpening] = useState(null);
   const [error, setError] = useState(null);
 
@@ -10,19 +10,30 @@ export default function RecoveryPlanTab({ blueprints }) {
     setOpening(blueprint.id);
     setError(null);
     try {
-      const { data, error: signError } = await supabase.storage
-        .from('recovery-blueprints')
-        .createSignedUrl(blueprint.storage_path, 60 * 10);
-      if (signError) throw signError;
-      // Best-effort engagement tracking. Opening the approved artifact must
-      // still work if the timestamp update is temporarily unavailable.
+      const token = session?.access_token;
+      if (!token) throw new Error('Your session expired. Please sign in again.');
+
+      const res = await fetch('/.netlify/functions/portal-blueprint-url', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ blueprintId: blueprint.id }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out.error || 'Could not open Blueprint.');
+
+      // Best-effort engagement tracking
       supabase.rpc('mark_recovery_blueprint_viewed', { p_blueprint_id: blueprint.id })
         .then(({ error: viewError }) => {
           if (viewError) console.warn('Could not record Blueprint view:', viewError.message);
         });
-      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+
+      window.open(out.signedUrl, '_blank', 'noopener,noreferrer');
     } catch (err) {
-      setError('We could not open your Blueprint. Please try again or contact Credit Comeback Club.');
+      console.error(err);
+      setError(err.message || 'We could not open your Blueprint. Please try again or contact Credit Comeback Club.');
     } finally {
       setOpening(null);
     }
@@ -41,7 +52,7 @@ export default function RecoveryPlanTab({ blueprints }) {
       {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">{error}</div>}
 
       <div className="space-y-3">
-        {blueprints.map((blueprint, index) => (
+        {(blueprints || []).map((blueprint, index) => (
           <div key={blueprint.id} className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-slate-900 text-amber-400 flex items-center justify-center shrink-0">
               <FileCheck2 size={22} strokeWidth={1.6} />
@@ -63,6 +74,11 @@ export default function RecoveryPlanTab({ blueprints }) {
             </button>
           </div>
         ))}
+        {!(blueprints || []).length && (
+          <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-500">
+            Your Recovery Blueprint will appear here after your specialist approves and delivers it.
+          </div>
+        )}
       </div>
 
       <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-xs text-slate-500 leading-relaxed">
