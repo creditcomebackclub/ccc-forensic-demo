@@ -58,7 +58,7 @@ function footerDark(doc, model, page, total) {
 }
 
 function scoreBand(score) {
-  if (score == null || !Number.isFinite(Number(score))) return '—';
+  if (score == null || !Number.isFinite(Number(score))) return '-';
   const n = Number(score);
   if (n >= 800) return 'Exceptional';
   if (n >= 740) return 'Very Good';
@@ -117,7 +117,7 @@ function addCover(doc, model) {
     setColor(doc, C.white);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(20);
-    doc.text(score == null ? '—' : String(score), x + 76, 360, { align: 'center' });
+    doc.text(score == null ? '-' : String(score), x + 76, 360, { align: 'center' });
     setColor(doc, C.goldSoft);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
@@ -142,7 +142,7 @@ function addCover(doc, model) {
   doc.text('BUREAUS', M + 340, 720);
   setColor(doc, C.white);
   doc.setFontSize(9);
-  doc.text(model.client.location || '—', M, 738);
+  doc.text(model.client.location || '-', M, 738);
   doc.text(model.client.reportDateLabel, M + 170, 738);
   doc.text('EQ · EXP · TU', M + 340, 738);
 }
@@ -247,18 +247,18 @@ function addCostOfGap(doc, model) {
 
   setColor(doc, C.muted);
   doc.setFontSize(10);
-  doc.text('Lenders pull different bureaus. The weaker read is the one that prices you higher —', M, 148);
+  doc.text('Lenders pull different bureaus. The weaker read is the one that prices you higher -', M, 148);
   doc.text('on cars, insurance, and especially housing.', M, 164);
 
   setColor(doc, C.ink);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.text('ILLUSTRATIVE AUTO LOAN — $28,500 / 60 MONTHS', M, 200);
+  doc.text('ILLUSTRATIVE AUTO LOAN - $28,500 / 60 MONTHS', M, 200);
 
   const cards = [
-    { title: 'Mid-600s band', rate: '≈ 9–12%', pmt: '$590–$635', note: 'Higher payment' },
-    { title: 'National avg ~680', rate: '≈ 6–7%', pmt: '$550–$565', note: 'Better' },
-    { title: 'Mid-700s territory', rate: '≈ 4–5%', pmt: '$520–$535', note: 'Best pricing' },
+    { title: 'Mid-600s band', rate: '~ 9-12%', pmt: '$590-$635', note: 'Higher payment' },
+    { title: 'National avg ~680', rate: '~ 6-7%', pmt: '$550-$565', note: 'Better' },
+    { title: 'Mid-700s territory', rate: '~ 4-5%', pmt: '$520-$535', note: 'Best pricing' },
   ];
   cards.forEach((card, index) => {
     const x = M + index * 168;
@@ -301,7 +301,7 @@ function addCostOfGap(doc, model) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.text('On a $250k 30-year note, moving from a mid-600s rate band into the mid-700s', M + 18, 485);
-  doc.text('territory is routinely five figures in lifetime interest — often more. That is why', M + 18, 502);
+  doc.text('territory is routinely five figures in lifetime interest - often more. That is why', M + 18, 502);
   doc.text('we treat the weaker bureau file as the primary battlefield, not a side project.', M + 18, 519);
   doc.text('We are not promising a score. We are removing the documented reasons it is suppressed.', M + 18, 536);
 }
@@ -361,9 +361,9 @@ function addOpeningMove(doc, model) {
   doc.setFontSize(8);
   let y = 340;
   const bullets = [
-    `Field pressure — ${account.violations[0]?.field || 'Account status / balance'} requires documented investigation`,
-    `Route — ${account.routeLabel}`,
-    `Why first — Highest priority on the reviewed audit${account.priorityScore ? ` (score ${account.priorityScore})` : ''}`,
+    `Field pressure - ${account.violations[0]?.field || 'Account status / balance'} requires documented investigation`,
+    `Route - ${account.routeLabel}`,
+    `Why first - Highest priority on the reviewed audit${account.priorityScore ? ` (score ${account.priorityScore})` : ''}`,
   ];
   bullets.forEach((line) => {
     const wrapped = doc.splitTextToSize(`■  ${line}`, PAGE_W - M * 2 - 40).slice(0, 2);
@@ -628,7 +628,7 @@ function addClosing(doc, model) {
   setColor(doc, C.white);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
-  doc.text('Start Month One — Batch 1 letters', M + 18, 315);
+  doc.text('Start Month One - Batch 1 letters', M + 18, 315);
   setColor(doc, C.soft);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
@@ -647,7 +647,7 @@ function addClosing(doc, model) {
   setColor(doc, [138, 155, 176]);
   doc.setFontSize(8);
   doc.text(`Prepared for ${model.client.name}`, PAGE_W - M, 620, { align: 'right' });
-  doc.text(`Report date ${model.client.reportDate || '—'}`, PAGE_W - M, 636, { align: 'right' });
+  doc.text(`Report date ${model.client.reportDate || '-'}`, PAGE_W - M, 636, { align: 'right' });
   doc.text('creditcomebackclub.com', PAGE_W - M, 652, { align: 'right' });
 
   setColor(doc, [107, 124, 144]);
