@@ -1,3 +1,4 @@
+import { buildAccountResults } from '../../utils/portalPlan.js';
 import React, { useState } from 'react';
 import { Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -216,7 +217,12 @@ export default function DisputesTab({
                   : displayRound
                   ? `Round ${displayRound} · ${l.target_type === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`
                   : null;
-                const title = isFileUpdate
+                const accountResults = useMemo(
+    () => buildAccountResults({ packetCoverage, letters }),
+    [packetCoverage, letters],
+  );
+
+  const title = isFileUpdate
                   ? `Credit-file cleanup — ${l.furnisher}`
                   : isPortalBureauDispute(l)
                     ? `Credit Bureau Dispute (re: ${l.furnisher})`
@@ -280,7 +286,7 @@ export default function DisputesTab({
                 <div className="mt-4 pt-4 border-t border-gray-50">
                   {uploadSuccess === l.id ? (
                     <div className="text-xs text-green-700 font-bold flex items-center gap-1.5 bg-green-50 p-3 rounded-lg border border-green-200">
-                      <span>✓</span> Response uploaded — Credit Comeback Club has been notified.
+                      <span>✓</span> Response received — your specialist will log each account — Credit Comeback Club has been notified.
                     </div>
                   ) : (
                     <div>

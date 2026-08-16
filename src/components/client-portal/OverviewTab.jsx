@@ -1,10 +1,11 @@
 import React from 'react';
 import {
-  ArrowRight, CalendarDays, CheckCircle2, Clock3, FileSearch,
+  ArrowRight, CalendarDays, CheckCircle2, Clock3, FileCheck2, FileSearch,
   Flag, MailCheck, MapPin, Send, ShieldCheck, Sparkles, Target, TrendingUp,
+  Upload, AlertCircle,
 } from 'lucide-react';
 import ScoreMeter from './ScoreMeter';
-import { motion } from 'framer-motion';
+import { buildActionQueue, buildAccountResults, buildScoreGap, derivePortalStage } from '../../utils/portalPlan.js';
 
 function scoreAverage(values) {
   const usable = values.filter((score) => Number.isFinite(Number(score)) && Number(score) > 0).map(Number);
@@ -17,7 +18,7 @@ function formatDate(value) {
   catch { return null; }
 }
 
-function campaignState({ onboardingStage, mailed, delivered, responded, deletions }) {
+function campaignState({ onboardingStage, mailed, delivered, responded, deletions, hasBlueprint, stageId }) {
   if (deletions.length > 0) {
     return {
       eyebrow: 'Results in motion', title: 'Your campaign is producing results.',
@@ -29,14 +30,14 @@ function campaignState({ onboardingStage, mailed, delivered, responded, deletion
     return {
       eyebrow: 'Response received', title: 'We’re reviewing the latest response.',
       body: 'A response has arrived and your file is moving through its next decision point.',
-      next: 'Our team will record the appropriate next step in your campaign.', icon: FileSearch, tone: 'blue',
+      next: 'Account-level results appear below as your specialist logs each item.', icon: FileSearch, tone: 'blue',
     };
   }
   if (delivered.length > 0) {
     return {
       eyebrow: 'Response window active', title: 'Your dispute is officially in motion.',
       body: `${delivered.length} certified letter${delivered.length === 1 ? ' has' : 's have'} been confirmed delivered. The response clock is now running.`,
-      next: 'We’re tracking the response window and will act when it closes or a response arrives.', icon: Clock3, tone: 'amber',
+      next: 'If a bureau letter arrives at your home, upload it under Disputes.', icon: Clock3, tone: 'amber',
     };
   }
   if (mailed.length > 0) {
@@ -46,11 +47,18 @@ function campaignState({ onboardingStage, mailed, delivered, responded, deletion
       next: 'Confirmed delivery will start the response window.', icon: MapPin, tone: 'blue',
     };
   }
+  if (hasBlueprint) {
+    return {
+      eyebrow: 'Plan ready', title: 'Your Recovery Blueprint is on file.',
+      body: 'We already know the opening move and the first wave of work. Certified mail activity will appear here as soon as it is sent.',
+      next: 'Open your Blueprint anytime from this page or the Recovery Plan tab.', icon: FileCheck2, tone: 'gold',
+    };
+  }
   if (onboardingStage <= 1) {
     return {
       eyebrow: 'Forensic audit', title: 'We’re building your strongest opening move.',
       body: 'Your report, documentation, and dispute strategy are being prepared for the first campaign.',
-      next: 'Your first certified mail activity will appear here as soon as it is sent.', icon: FileSearch, tone: 'blue',
+      next: 'Your Recovery Blueprint and first mailing will appear here when ready.', icon: FileSearch, tone: 'blue',
     };
   }
   return {
@@ -60,43 +68,34 @@ function campaignState({ onboardingStage, mailed, delivered, responded, deletion
   };
 }
 
-function CaseJourney({ onboardingStage, mailed, delivered, responded, deletions }) {
-  const steps = [
-    { label: 'Forensic audit', icon: FileSearch, done: onboardingStage > 1 || mailed.length > 0, current: onboardingStage === 1 && mailed.length === 0 },
-    { label: 'Certified mail', icon: Send, done: mailed.length > 0, current: mailed.length > 0 && delivered.length === 0 },
-    { label: 'Confirmed delivery', icon: MailCheck, done: delivered.length > 0, current: delivered.length > 0 && responded.length === 0 },
-    { label: 'Review & response', icon: FileSearch, done: responded.length > 0, current: responded.length > 0 && deletions.length === 0 },
-    { label: 'Results', icon: Flag, done: deletions.length > 0, current: deletions.length > 0 },
-  ];
-
+function StageRail({ steps }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_14px_35px_rgba(15,23,42,0.05)]">
       <div className="mb-5 flex items-center justify-between gap-3">
         <div>
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Your case journey</div>
-          <div className="mt-1 text-sm font-bold text-slate-900">Every milestone, in one place.</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Where you are</div>
+          <div className="mt-1 text-sm font-bold text-slate-900">Plan → mail → responses → results → next wave</div>
         </div>
         <div className="hidden rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-700 sm:block">Live case status</div>
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-5 sm:gap-0">
         {steps.map((step, index) => {
-          const Icon = step.icon;
           const stateClass = step.current
             ? 'border-slate-900 bg-slate-900 text-white shadow-lg shadow-slate-900/15'
             : step.done
               ? 'border-amber-200 bg-amber-50 text-slate-900'
               : 'border-slate-100 bg-slate-50 text-slate-400';
           return (
-            <div className="relative flex items-center gap-3 sm:block" key={step.label}>
+            <div className="relative flex items-center gap-3 sm:block" key={step.id}>
               {index > 0 && <div className={`absolute left-[-9px] top-1/2 hidden h-px w-[18px] -translate-y-1/2 sm:block ${step.done || step.current ? 'bg-amber-300' : 'bg-slate-100'}`} />}
-              <div className={`relative z-10 flex min-h-[72px] flex-1 items-center gap-3 rounded-xl border p-3 sm:min-h-[112px] sm:flex-col sm:items-start sm:justify-center ${stateClass}`}>
-                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${step.current ? 'bg-amber-400 text-slate-900' : step.done ? 'bg-amber-400/20 text-amber-700' : 'bg-white text-slate-300'}`}>
-                  {step.done && !step.current ? <CheckCircle2 size={16} strokeWidth={2.4} /> : <Icon size={16} strokeWidth={2} />}
+              <div className={`relative z-10 flex min-h-[72px] flex-1 flex-col justify-center gap-1 rounded-xl border p-3 sm:min-h-[112px] ${stateClass}`}>
+                <div className="flex items-center gap-2">
+                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${step.current ? 'bg-amber-400 text-slate-900' : step.done ? 'bg-amber-400/20 text-amber-700' : 'bg-white text-slate-300'}`}>
+                    {step.done && !step.current ? <CheckCircle2 size={14} strokeWidth={2.4} /> : <span className="text-[10px] font-bold">{index + 1}</span>}
+                  </div>
+                  <div className={`text-[11px] font-bold leading-tight ${step.current ? 'text-white' : ''}`}>{step.label}</div>
                 </div>
-                <div>
-                  <div className={`text-[10px] font-bold uppercase tracking-[0.08em] ${step.current ? 'text-amber-300' : step.done ? 'text-amber-700' : 'text-slate-400'}`}>Step {index + 1}</div>
-                  <div className="mt-0.5 text-[12px] font-bold leading-tight">{step.label}</div>
-                </div>
+                <div className={`text-[10px] leading-snug ${step.current ? 'text-slate-300' : step.done ? 'text-slate-500' : 'text-slate-400'}`}>{step.detail}</div>
               </div>
             </div>
           );
@@ -126,17 +125,161 @@ function SignalCard({ label, value, helper, icon: Icon, tone = 'slate' }) {
   );
 }
 
+function BlueprintCard({ blueprint, onOpenPlan }) {
+  if (!blueprint) return null;
+  return (
+    <section className="rounded-2xl border border-slate-800 bg-slate-950 p-5 shadow-[0_14px_35px_rgba(15,23,42,0.12)]">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-400 text-slate-900">
+          <FileCheck2 size={22} strokeWidth={1.8} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-300">Your Recovery Blueprint</div>
+          <div className="mt-1 text-base font-bold text-white">The plan we’re executing on your file</div>
+          <div className="mt-1 text-[12px] text-slate-400">
+            Report {blueprint.report_date || 'on file'}
+            {blueprint.version != null ? ` · Version ${blueprint.version}` : ''}
+            {blueprint.sent_at ? ` · Delivered ${formatDate(blueprint.sent_at)}` : blueprint.approved_at ? ` · Approved ${formatDate(blueprint.approved_at)}` : ''}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenPlan}
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-400 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-900 hover:bg-amber-300"
+        >
+          View Blueprint
+          <ArrowRight size={14} />
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ActionQueue({ actions, onNavigate }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Needs from you</div>
+          <div className="mt-1 text-sm font-bold text-slate-900">Only the items that require your attention</div>
+        </div>
+      </div>
+      <div className="space-y-2">
+        {actions.map((action) => {
+          const tone = action.tone === 'green'
+            ? 'border-emerald-100 bg-emerald-50/70'
+            : action.tone === 'blue'
+              ? 'border-blue-100 bg-blue-50/70'
+              : 'border-amber-100 bg-amber-50/70';
+          const Icon = action.tone === 'green' ? CheckCircle2 : action.tone === 'blue' ? Upload : AlertCircle;
+          return (
+            <div key={action.id} className={`flex items-start gap-3 rounded-xl border p-3.5 ${tone}`}>
+              <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/80 text-slate-700">
+                <Icon size={15} strokeWidth={2.2} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-bold text-slate-900">{action.title}</div>
+                <div className="mt-0.5 text-[12px] leading-relaxed text-slate-600">{action.body}</div>
+              </div>
+              {action.tab && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.(action.tab)}
+                  className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-700 hover:bg-slate-50"
+                >
+                  Open
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ResultsSummary({ accountResults, onNavigate }) {
+  if (!accountResults?.hasResults) return null;
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Account results</div>
+          <div className="mt-1 text-sm font-bold text-slate-900">
+            {accountResults.wins} removed · {accountResults.working} still working
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onNavigate?.('disputes')}
+          className="text-[11px] font-bold uppercase tracking-wider text-amber-700 hover:text-amber-800"
+        >
+          View disputes →
+        </button>
+      </div>
+      <div className="divide-y divide-slate-100 rounded-xl border border-slate-100">
+        {accountResults.rows.slice(0, 6).map((row) => (
+          <div key={row.id} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-slate-900">{row.name}</div>
+              {row.bureau && <div className="text-[11px] text-slate-400">{row.bureau}</div>}
+            </div>
+            <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
+              row.positive
+                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                : 'bg-slate-50 text-slate-600 border border-slate-200'
+            }`}>
+              {row.outcomeLabel}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function OverviewTab({
   profile, clientMeta, firstName, mailed, delivered, responded, deletions,
   totalDisputes, fileUpdateCount = 0, latestScores, auditHistory, onboardingStage, onboardingDates,
+  recoveryBlueprints = [],
+  rounds = [],
+  campaigns = [],
+  packetCoverage = [],
+  letters = [],
+  clientDocs = { id: null, address: null },
+  stagedFiles = {},
+  uploadSuccess = null,
+  onNavigate,
 }) {
-  const state = campaignState({ onboardingStage, mailed, delivered, responded, deletions });
+  const hasBlueprint = (recoveryBlueprints || []).length > 0;
+  const latestBlueprint = recoveryBlueprints?.[0] || null;
+  const docsComplete = !!(clientDocs?.id && clientDocs?.address);
+  const stage = derivePortalStage({
+    blueprints: recoveryBlueprints,
+    mailed,
+    delivered,
+    responded,
+    deletions,
+    rounds,
+    campaigns,
+    docsComplete,
+  });
+  const state = campaignState({
+    onboardingStage,
+    mailed,
+    delivered,
+    responded,
+    deletions,
+    hasBlueprint,
+    stageId: stage.currentId,
+  });
   const StateIcon = state.icon;
   const startScores = [clientMeta?.score_eq_start, clientMeta?.score_exp_start, clientMeta?.score_tu_start];
   const currentScores = [latestScores?.equifax || clientMeta?.score_eq_start, latestScores?.experian || clientMeta?.score_exp_start, latestScores?.transunion || clientMeta?.score_tu_start];
   const startingAverage = scoreAverage(startScores);
   const currentAverage = scoreAverage(currentScores);
   const scoreDelta = startingAverage && currentAverage ? currentAverage - startingAverage : null;
+  const scoreGap = buildScoreGap(latestScores, clientMeta);
   const auditUpdated = auditHistory?.[0]?.saved_at ? formatDate(auditHistory[0].saved_at) : null;
   const disputeCount = totalDisputes || 0;
   const updateCount = fileUpdateCount || 0;
@@ -148,6 +291,15 @@ export default function OverviewTab({
     if (parts.length === 0) return 'items in your campaign';
     return parts.join(' · ');
   })();
+
+  const actions = buildActionQueue({
+    clientDocs,
+    profile,
+    letters,
+    stagedFiles,
+    uploadSuccess,
+  });
+  const accountResults = buildAccountResults({ packetCoverage, letters });
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
@@ -178,6 +330,13 @@ export default function OverviewTab({
         </div>
       </section>
 
+      <BlueprintCard
+        blueprint={latestBlueprint}
+        onOpenPlan={() => onNavigate?.('plan')}
+      />
+
+      <ActionQueue actions={actions} onNavigate={onNavigate} />
+
       <section className={`relative overflow-hidden rounded-2xl border p-5 shadow-sm ${state.tone === 'gold' ? 'border-amber-200 bg-amber-50' : state.tone === 'amber' ? 'border-amber-200 bg-amber-50/60' : 'border-blue-200 bg-blue-50/60'}`}>
         <div className="absolute right-4 top-4 opacity-10"><StateIcon size={96} /></div>
         <div className="relative flex items-start gap-4">
@@ -191,7 +350,9 @@ export default function OverviewTab({
         </div>
       </section>
 
-      <CaseJourney onboardingStage={onboardingStage} mailed={mailed} delivered={delivered} responded={responded} deletions={deletions} />
+      <StageRail steps={stage.steps} />
+
+      <ResultsSummary accountResults={accountResults} onNavigate={onNavigate} />
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <SignalCard label="Certified letters" value={mailed.length} helper={mailed.length ? 'Evidence-backed packages sent' : 'Preparing your first campaign'} icon={Send} tone="slate" />
@@ -215,6 +376,12 @@ export default function OverviewTab({
           </div>}
         </div>
         <div className="p-5 sm:p-6">
+          {scoreGap?.narrative && (
+            <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50/80 px-3.5 py-3 text-[12px] leading-relaxed text-slate-700">
+              <span className="font-bold text-amber-800">Score gap: </span>
+              {scoreGap.narrative}
+            </div>
+          )}
           {startScores.some(Boolean) ? (
             <>
               <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-[11px] text-slate-500">

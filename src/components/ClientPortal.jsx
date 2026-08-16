@@ -464,20 +464,29 @@ export default function ClientPortal({ session, onSignOut }) {
           >
             {activeTab === 'overview' && (
               <OverviewTab
-                profile={profile}
-                clientMeta={clientMeta}
-                firstName={firstName}
-                mailed={mailed}
-                delivered={delivered}
-                responded={responded}
-                deletions={deletions}
-                totalDisputes={accountDisputeCount}
-                fileUpdateCount={fileUpdateLetters.length}
-                latestScores={latestScores}
-                auditHistory={auditHistory}
-                onboardingStage={onboardingStage}
-                onboardingDates={onboardingDates}
-              />
+              profile={profile}
+              clientMeta={clientMeta}
+              firstName={firstName}
+              mailed={mailed}
+              delivered={delivered}
+              responded={responded}
+              deletions={deletions}
+              totalDisputes={totalDisputes}
+              fileUpdateCount={fileUpdateCount}
+              latestScores={latestScores}
+              auditHistory={auditHistory}
+              onboardingStage={onboardingStage}
+              onboardingDates={onboardingDates}
+              recoveryBlueprints={recoveryBlueprints}
+              rounds={rounds}
+              campaigns={campaigns}
+              packetCoverage={packetCoverage}
+              letters={letters}
+              clientDocs={clientDocs}
+              stagedFiles={stagedFiles}
+              uploadSuccess={uploadSuccess}
+              onNavigate={setActiveTab}
+            />
             )}
 
             {activeTab === 'progress' && (
