@@ -25,10 +25,17 @@ assert.equal(model.metrics.batch1StrikeZone, 4260);
 assert.equal(model.openingMove.id, 'a1', 'existing Claude order must be preserved');
 assert.equal(model.batch1Accounts.length, 2);
 assert.equal(model.openingMove.addressStatus, undefined, 'internal mail fields must not be exposed');
+assert.equal(model.templateVersion, 'recovery_blueprint_v2');
+assert.equal(model.pageCount, 9);
+assert.ok(model.scoreGap);
+assert.ok(Array.isArray(model.accuracyIssues));
+assert.ok(model.batch1Accounts[0].routeLabel);
+assert.equal(model.recoveryPath[0].title.includes('Forensic') || model.recoveryPath[0].title.includes('audit'), true);
+
 assert.equal(recoveryBlueprintFilename(model), 'ccc-recovery-blueprint-david-example-2026-07-31.pdf');
 
 const doc = buildRecoveryBlueprintPdf(model);
-assert.equal(doc.getNumberOfPages(), 6);
+assert.equal(doc.getNumberOfPages(), 9);
 assert.ok(doc.output('arraybuffer').byteLength > 5_000);
 
 const overflowFixture = structuredClone(fixture);
@@ -44,10 +51,10 @@ overflowFixture.accounts = Array.from({ length: 9 }, (_, index) => ({
 const overflowModel = buildRecoveryBlueprintModel(overflowFixture);
 assert.equal(overflowModel.batch1Accounts.length, 9);
 assert.equal(overflowModel.openingMove.id, 'overflow-0');
-assert.ok(buildRecoveryBlueprintPdf(overflowModel).getNumberOfPages() >= 6, 'large strike lists may add continuation pages but must never be truncated');
+assert.ok(buildRecoveryBlueprintPdf(overflowModel).getNumberOfPages() >= 9, 'large strike lists may add continuation pages but must never be truncated');
 
 if (process.env.BLUEPRINT_QA_OUTPUT) {
   writeFileSync(process.env.BLUEPRINT_QA_OUTPUT, Buffer.from(doc.output('arraybuffer')));
 }
 
-console.log('Recovery Blueprint model and six-page renderer tests passed.');
+console.log('Recovery Blueprint model and nine-page client audit renderer tests passed.');
