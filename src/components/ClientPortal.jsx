@@ -295,6 +295,8 @@ export default function ClientPortal({ session, onSignOut }) {
   const delivered = letters.filter(l => l.tracking_status === 'Delivered');
   const responded = letters.filter(l => l.response_outcome);
   const deletions = letters.filter(l => l.response_outcome === 'deleted');
+  const totalDisputes = letters.filter((l) => isAccountDisputeCampaign(l) && !isPortalFileUpdate(l)).length;
+  const fileUpdateCount = letters.filter((l) => isPortalFileUpdate(l)).length;
   const isVip = clientMeta && clientMeta.is_vip;
 
   // Onboarding timeline (Overview tab) — stage from earliest account-dispute mail.
