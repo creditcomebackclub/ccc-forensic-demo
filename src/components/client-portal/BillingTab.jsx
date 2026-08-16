@@ -1,6 +1,5 @@
 import React from 'react';
 import { CreditCard, FileText } from 'lucide-react';
-import { supabase } from '../../utils/supabase';
 import { useState } from 'react';
 
 const T = {
@@ -14,25 +13,32 @@ const T = {
   grid: '#EEF0F4',
 };
 
-export default function BillingTab({ clientMeta }) {
+export default function BillingTab({ clientMeta, signedAgreementAvailable, onViewAgreement }) {
   const ledger = Array.isArray(clientMeta?.ledger) ? clientMeta.ledger : [];
   const [loadingAgreement, setLoadingAgreement] = useState(false);
-  const [agreementError, setAgreementError] = useState('');
-  
+
   // Balance is sum of all unpaid Invoices
   const balanceDue = ledger.reduce((sum, tx) => {
     if (tx.type === 'Invoice' && tx.status !== 'Paid') return sum + (parseFloat(tx.amount) || 0);
     return sum;
   }, 0);
 
+  const handleViewAgreement = async () => {
+    setLoadingAgreement(true);
+    try {
+      await onViewAgreement();
+    } finally {
+      setLoadingAgreement(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="bg-white rounded-xl p-5 border" style={{ borderColor: T.border }}>
         <div className="flex items-center justify-between gap-4">
           <div><h2 className="text-sm uppercase tracking-wider font-bold" style={{ color: T.navy }}>Service Agreement</h2><p className="text-xs text-ink-muted mt-1">{clientMeta?.lpoa_signed ? 'Your service agreement and limited authorization are completed.' : 'Your service agreement is pending. Contact Credit Comeback Club if you need a new signing link.'}</p></div>
-          {clientMeta?.lpoa_signed && <button disabled={loadingAgreement} onClick={async () => { setLoadingAgreement(true); setAgreementError(''); try { const { data: { session } } = await supabase.auth.getSession(); const res = await fetch('/.netlify/functions/agreement-document-url', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) } }); const out = await res.json(); if (!res.ok) throw new Error(out.error || 'Could not open agreement.'); window.open(out.url, '_blank', 'noopener'); } catch (e) { setAgreementError(e.message || 'Could not open agreement.'); } finally { setLoadingAgreement(false); } }} className="px-3 py-2 rounded text-[11px] uppercase tracking-wider border flex items-center gap-1.5" style={{ borderColor: T.navy, color: T.navy }}><FileText size={13} />{loadingAgreement ? 'Loading…' : 'View signed agreement'}</button>}
+          {signedAgreementAvailable && <button disabled={loadingAgreement} onClick={handleViewAgreement} className="px-3 py-2 rounded text-[11px] uppercase tracking-wider border flex items-center gap-1.5" style={{ borderColor: T.navy, color: T.navy }}><FileText size={13} />{loadingAgreement ? 'Loading…' : 'View signed agreement'}</button>}
         </div>
-        {agreementError && <p className="text-xs text-red-600 mt-2">{agreementError}</p>}
       </div>
       
       {/* Balance Section */}
