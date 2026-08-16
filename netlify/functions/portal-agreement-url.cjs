@@ -35,63 +35,29 @@ exports.handler = async (event) => {
 
   const { data: profile } = await admin
     .from('client_profiles')
-    .select('client_id, full_name, user_id')
+    .select('client_id, full_name, user_id, lpoa_storage_bucket, lpoa_storage_path')
     .eq('user_id', userData.user.id)
     .limit(1)
     .maybeSingle();
 
   if (!profile) return json(404, { error: 'Client profile not found.' });
 
-  // Prefer documents table rows; fall back to known storage path pattern.
-  let docQuery = admin
-    .from('documents')
-    .select('id, doc_type, label, file_name, storage_path, uploaded_at')
-    .order('uploaded_at', { ascending: false });
-
-  if (profile.client_id) docQuery = docQuery.eq('client_id', profile.client_id);
-  else docQuery = docQuery.eq('client_name', profile.full_name);
-
-  const { data: docs, error: docErr } = await docQuery.limit(50);
-  if (docErr) console.warn('documents query', docErr.message);
-
-  const rows = docs || [];
-  const lpoa = rows.find((d) => {
-    const t = `${d.doc_type || ''} ${d.label || ''} ${d.file_name || ''}`.toLowerCase();
-    return t.includes('lpoa') || t.includes('agreement') || d.doc_type === 'lpoa' || d.doc_type === 'agreement';
-  });
-
-  let storagePath = lpoa?.storage_path || null;
-
-  // Fallback: list storage under firm paths if row missing but file was uploaded
-  if (!storagePath && profile.client_id) {
-    // documents path pattern from enroll: {firmUserId}/{clientId}/lpoa/lpoa-signed.html
-    // We don't always know firmUserId; try match from any doc path for this client
-    const anyPath = rows.find((d) => d.storage_path)?.storage_path;
-    if (anyPath && anyPath.includes('/')) {
-      const firmPrefix = anyPath.split('/')[0];
-      const candidate = `${firmPrefix}/${profile.client_id}/lpoa/lpoa-signed.html`;
-      const { data: listed } = await admin.storage.from('client-docs').list(`${firmPrefix}/${profile.client_id}/lpoa`);
-      if (listed && listed.some((f) => f.name === 'lpoa-signed.html')) {
-        storagePath = candidate;
-      }
-    }
-  }
-
-  if (!storagePath) {
+  if (!profile.lpoa_storage_path) {
     return json(404, {
       error: 'No signed agreement file is on file yet. Ask Credit Comeback Club to confirm enrollment documents were saved.',
       available: false,
     });
   }
 
+  const bucket = profile.lpoa_storage_bucket || 'documents';
   const { data: signed, error: signErr } = await admin.storage
-    .from('client-docs')
-    .createSignedUrl(storagePath, 60 * 15);
+    .from(bucket)
+    .createSignedUrl(profile.lpoa_storage_path, 60 * 15);
   if (signErr) return json(500, { error: signErr.message });
 
   return json(200, {
     signedUrl: signed.signedUrl,
-    fileName: lpoa?.file_name || 'lpoa-signed.html',
+    fileName: 'lpoa-signed.html',
     available: true,
   });
 };
