@@ -6,6 +6,8 @@ import {
   coerceBureauExtraction,
   computePriorityScore,
   applyFindingAdjudication,
+  adjudicateAccountFindingAt,
+  recomputeAccountFromFindings,
   isAuthorizedFinding,
   challengeStatementFor,
   evidenceQuality,
@@ -197,6 +199,20 @@ const campaignItem = {
   },
 };
 assert.equal(campaignAuthorizedFindings(campaignItem).length, 1, 'suppressed findings excluded from campaign routing');
+
+// Account-level adjudication rebuilds violations list used by Blueprint
+const targetAccount = ranked.accounts.find((a) => (a.findings || []).some((f) => f.ruleId === 'CROSS_BUREAU_DOFD_MISMATCH'));
+assert.ok(targetAccount, 'expected an account with DOFD mismatch');
+const dofdIndex = targetAccount.findings.findIndex((f) => f.ruleId === 'CROSS_BUREAU_DOFD_MISMATCH');
+const beforeCount = targetAccount.violations.length;
+const afterSuppress = adjudicateAccountFindingAt(targetAccount, dofdIndex, {
+  status: 'suppressed', reason: 'UI path test', by: 'tester',
+});
+assert.equal(afterSuppress.violations.length, beforeCount - 1);
+assert.ok(afterSuppress.findings[dofdIndex].adjudication.status === 'suppressed');
+const afterRestore = adjudicateAccountFindingAt(afterSuppress, dofdIndex, { status: 'authorized', by: 'tester' });
+assert.equal(afterRestore.violations.length, beforeCount);
+assert.ok(recomputeAccountFromFindings(afterRestore).priorityScore >= 0);
 
 // Blueprint consumes challenge statements and priority scores
 const blueprintModel = buildRecoveryBlueprintModel(ranked);

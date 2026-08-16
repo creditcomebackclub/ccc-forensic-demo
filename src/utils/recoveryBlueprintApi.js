@@ -28,8 +28,21 @@ export function getBlueprintStatus(audit) {
 
 export function persistReviewedAccounts(audit, accounts) {
   return blueprintRequest('save_corrections', audit, {
-    accounts: accounts.map(({ id, balance, status, accountNumberMasked, originalCreditor }) => ({
-      id, balance, status, accountNumberMasked, originalCreditor,
+    accounts: accounts.map((account) => ({
+      id: account.id,
+      balance: account.balance,
+      status: account.status,
+      accountNumberMasked: account.accountNumberMasked,
+      originalCreditor: account.originalCreditor,
+      // Adjudication + derived fields so Blueprint / campaign routing stay in sync
+      findings: account.findings || null,
+      violations: account.violations || null,
+      authorizedFindingIds: account.authorizedFindingIds || null,
+      primaryViolation: account.primaryViolation || null,
+      primaryChallengeStatement: account.primaryChallengeStatement || null,
+      strategy: account.strategy || null,
+      priorityScore: account.priorityScore || null,
+      batch: account.batch || null,
     })),
   });
 }

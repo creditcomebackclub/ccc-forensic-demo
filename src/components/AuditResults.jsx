@@ -3,12 +3,16 @@ import { supabase } from '../utils/supabase';
 import { generateCombinedCleanupLetter } from '../utils/api';
 import { buildAuditPdfDoc, auditPdfFilename, blobToBase64 } from '../utils/auditPdf';
 import { updateClientProfile, upsertFurnisherAddress } from '../utils/storage';
+import {
+  adjudicateAccountFindingAt,
+  isAuthorizedFinding,
+} from '../utils/deterministicAudit';
 import RecoveryBlueprintStudio from './RecoveryBlueprintStudio';
 import ProgressUpdateStudio from './ProgressUpdateStudio';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
   FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale, MoreHorizontal, Pencil,
-  X, Send, AlertCircle, Zap, TrendingUp,
+  X, Send, AlertCircle, Zap, TrendingUp, ShieldCheck, ShieldOff, HelpCircle,
 } from 'lucide-react';
 
 // Brand tokens — matches the dashboard / clients card system
@@ -76,6 +80,181 @@ function SeverityBar({ severity }) {
           style={{ backgroundColor: i < count ? color : '#E8E6DF' }}
         />
       ))}
+    </div>
+  );
+}
+
+const ADJUDICATION_STYLES = {
+  authorized: { bg: '#ECFDF5', border: '#A7F3D0', text: '#047857', label: 'Authorized' },
+  suppressed: { bg: '#F3F4F6', border: '#E5E7EB', text: '#6B7280', label: 'Suppressed' },
+  needs_client_fact: { bg: '#FFFBEB', border: '#FDE68A', text: '#B45309', label: 'Needs client fact' },
+};
+
+/**
+ * Staff adjudication for deterministic findings. Suppressing a FLAG removes it
+ * from account.violations / Blueprint / campaign routing. Session-local until
+ * "Save review" in Recovery Blueprint Studio persists corrections.
+ */
+function FindingAdjudicationPanel({ account, onUpdateAccount }) {
+  const findings = Array.isArray(account?.findings) && account.findings.length
+    ? account.findings
+    : (account?.violations || []).map((v) => ({ ...v, outcome: v.outcome || 'FLAG' }));
+  const authorizedCount = findings.filter(isAuthorizedFinding).length;
+  const [reasonDrafts, setReasonDrafts] = React.useState({});
+
+  const setStatus = (index, status) => {
+    if (!onUpdateAccount) return;
+    const reason = (reasonDrafts[index] || '').trim() || null;
+    // Legacy audits may only have violations[]; seed findings so adjudication sticks.
+    const base = Array.isArray(account.findings) && account.findings.length
+      ? account
+      : {
+          ...account,
+          findings: (account.violations || []).map((v) => ({
+            ...v,
+            outcome: v.outcome || 'FLAG',
+            source: v.statute || v.source,
+          })),
+        };
+    const next = adjudicateAccountFindingAt(base, index, {
+      status,
+      reason,
+      by: 'staff',
+    });
+    // Replace the whole account record so derived fields (violations, strategy,
+    // priorityScore, authorizedFindingIds) stay consistent.
+    onUpdateAccount(account.id, next);
+  };
+
+  if (!findings.length) {
+    return (
+      <div className="border border-border rounded-lg p-4 text-[12px] text-ink-muted">
+        No deterministic findings on this account.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <h3 className="ccc-display text-[14px] text-ink font-medium">
+          Findings ({findings.length})
+          <span className="text-[11px] font-normal text-ink-muted ml-2">
+            {authorizedCount} authorized for Blueprint / letters
+          </span>
+        </h3>
+        {typeof account.priorityScore === 'number' && account.priorityScore > 0 && (
+          <span className="ccc-mono text-[10px] px-2 py-1 rounded-full border" style={{ borderColor: T.border, color: T.muted }}>
+            Priority {account.priorityScore}
+          </span>
+        )}
+      </div>
+      <div className="space-y-3">
+        {findings.map((finding, index) => {
+          const status = finding.adjudication?.status
+            || (finding.outcome === 'FLAG' ? 'authorized' : 'needs_client_fact');
+          const style = ADJUDICATION_STYLES[status] || ADJUDICATION_STYLES.needs_client_fact;
+          const isFlag = finding.outcome === 'FLAG' || !finding.outcome;
+          return (
+            <div
+              key={`${finding.ruleId || 'finding'}-${index}`}
+              className="rounded-lg p-3"
+              style={{ border: `1px solid ${style.border}`, background: style.bg }}
+            >
+              <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="min-w-0">
+                  <div className="ccc-mono text-[11px] text-navy font-medium">{finding.field || 'Reporting accuracy'}</div>
+                  {finding.ruleId && (
+                    <div className="ccc-mono text-[9px] text-ink-faint mt-0.5">{finding.ruleId}</div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[9px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full" style={{ color: style.text, background: '#fff', border: `1px solid ${style.border}` }}>
+                    {style.label}
+                  </span>
+                  <SeverityBar severity={finding.severity} />
+                </div>
+              </div>
+              <div className="text-[12px] text-ink mt-1">{finding.issue}</div>
+              {finding.challengeStatement && (
+                <div className="text-[11px] text-ink-muted mt-1 italic">{finding.challengeStatement}</div>
+              )}
+              <div className="text-[11px] mt-2 grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[9px] uppercase tracking-wider text-ink-faint">Currently</div>
+                  <div className="text-ink-muted ccc-mono">{finding.currentlyReports || finding.currentValue || <span className="text-ink-faint italic">See issue above</span>}</div>
+                </div>
+                <div>
+                  <div className="text-[9px] uppercase tracking-wider text-ink-faint">Should Be</div>
+                  <div className="text-green-700 ccc-mono">{finding.shouldReport || finding.expectedValue || <span className="text-ink-faint italic">See issue above</span>}</div>
+                </div>
+              </div>
+              {(finding.statute || finding.source) && (
+                <div className="ccc-mono text-[10px] text-gold-dark mt-2 pt-2 border-t border-black/5">
+                  {finding.statute || finding.source}
+                </div>
+              )}
+              {finding.verificationStatus && (
+                <div className="text-[10px] mt-1" style={{ color: '#B45309' }}>
+                  Citation debt: {finding.verificationStatus}
+                </div>
+              )}
+              {finding.outcome === 'REVIEW_REQUIRED' && (
+                <div className="text-[10px] text-ink-faint mt-1">
+                  Not authorized for letter generation until staff supplies missing context or promotes it.
+                </div>
+              )}
+
+              {onUpdateAccount && isFlag && (
+                <div className="mt-3 pt-2 border-t border-black/5 space-y-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setStatus(index, 'authorized')}
+                      className="flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider rounded-md border bg-white hover:border-green-600"
+                      style={{ borderColor: status === 'authorized' ? '#047857' : T.border, color: status === 'authorized' ? '#047857' : T.muted }}
+                    >
+                      <ShieldCheck size={11} /> Authorize
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatus(index, 'suppressed')}
+                      className="flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider rounded-md border bg-white hover:border-gray-500"
+                      style={{ borderColor: status === 'suppressed' ? '#4B5563' : T.border, color: status === 'suppressed' ? '#4B5563' : T.muted }}
+                    >
+                      <ShieldOff size={11} /> Suppress
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStatus(index, 'needs_client_fact')}
+                      className="flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider rounded-md border bg-white hover:border-amber-600"
+                      style={{ borderColor: status === 'needs_client_fact' ? '#B45309' : T.border, color: status === 'needs_client_fact' ? '#B45309' : T.muted }}
+                    >
+                      <HelpCircle size={11} /> Needs fact
+                    </button>
+                  </div>
+                  {(status === 'suppressed' || status === 'needs_client_fact') && (
+                    <input
+                      type="text"
+                      placeholder="Reason (optional, saved with adjudication)"
+                      value={reasonDrafts[index] ?? finding.adjudication?.reason ?? ''}
+                      onChange={(e) => setReasonDrafts((prev) => ({ ...prev, [index]: e.target.value }))}
+                      onBlur={() => {
+                        const reason = (reasonDrafts[index] || '').trim();
+                        if (reason && reason !== (finding.adjudication?.reason || '')) {
+                          setStatus(index, status);
+                        }
+                      }}
+                      className="w-full border rounded-md px-2 py-1.5 text-[11px] focus:outline-none focus:border-navy bg-white"
+                      style={{ borderColor: T.border }}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -411,8 +590,27 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   useEffect(() => { setAccounts(audit.accounts || []); setCorrectionsDirty(false); }, [audit]);
   const auditView = { ...audit, accounts };
   const updateAccount = (id, patch) => {
-    setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch, _edited: true } : a)));
-    setSelectedAccount((s) => (s && s.id === id ? { ...s, ...patch, _edited: true } : s));
+    setAccounts((prev) => {
+      let next = prev.map((a) => (a.id === id ? { ...a, ...patch, _edited: true } : a));
+      // When findings were adjudicated, re-rank Batch 1 by priorityScore so the
+      // table and Blueprint opening move stay aligned with authorized FLAGs.
+      if (patch && (patch.findings || patch.violations)) {
+        const withViolations = next.filter((a) => (a.violations || []).length > 0)
+          .sort((a, b) => (Number(b.priorityScore) || 0) - (Number(a.priorityScore) || 0)
+            || (b.violations?.length || 0) - (a.violations?.length || 0));
+        const batch1Ids = new Set(withViolations.slice(0, 5).map((a) => a.id));
+        next = next.map((a) => ({
+          ...a,
+          batch: (a.violations || []).length ? (batch1Ids.has(a.id) ? 1 : 2) : a.batch,
+        }));
+      }
+      return next;
+    });
+    setSelectedAccount((s) => {
+      if (!s || s.id !== id) return s;
+      const merged = { ...s, ...patch, _edited: true };
+      return merged;
+    });
     setCorrectionsDirty(true);
   };
 
@@ -509,7 +707,11 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
         <CheckCircle2 size={18} className="text-green-700 shrink-0" />
         <div className="text-[12px]" style={{ color: T.ink }}>
           <span className="font-medium">Forensic audit complete</span>
-          <span style={{ color: T.muted }}> — {audit.accountsTargeted} accounts targeted · {audit.totalViolations} violations identified</span>
+          <span style={{ color: T.muted }}>
+            {' '}— {accounts.filter((a) => (a.violations || []).length > 0).length} accounts targeted ·{' '}
+            {accounts.reduce((sum, a) => sum + (a.violations || []).length, 0)} authorized findings
+            {audit.citationDebt?.count > 0 ? ` · ${audit.citationDebt.count} citation debt` : ''}
+          </span>
         </div>
         <div className="ml-auto text-[11px] flex items-center gap-3">
           {genStatus(cleanupStatus, 'Personal Info & Inquiries')}
@@ -544,8 +746,8 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
             { label: 'Equifax', val: audit.scores?.equifax ?? '—' },
             { label: 'Experian', val: audit.scores?.experian ?? '—' },
             { label: 'TransUnion', val: audit.scores?.transunion ?? '—' },
-            { label: 'Accounts', val: audit.accountsTargeted },
-            { label: 'Violations', val: audit.totalViolations, gold: true },
+            { label: 'Accounts', val: accounts.filter((a) => (a.violations || []).length > 0).length },
+            { label: 'Authorized', val: accounts.reduce((sum, a) => sum + (a.violations || []).length, 0), gold: true },
             { label: 'Total Balance', val: '$' + totalBalance.toLocaleString() },
           ].map((s) => (
             <div key={s.label} style={{ background: '#FAFBFC', border: '1px solid #EBEEF3', borderRadius: 10, padding: '10px 12px' }}>
@@ -1203,55 +1405,7 @@ function AccountDetail({ account, onClose, onGenerateLetter, existingLetters = n
             </div>
           )}
 
-          <div>
-            <h3 className="ccc-display text-[14px] text-ink font-medium mb-3">
-              Violations ({account.violations?.length || 0})
-            </h3>
-            <div className="space-y-3">
-              {account.violations?.map((v, i) => (
-                <div key={i} className="border border-border rounded p-3">
-                  <div className="flex items-start justify-between mb-1">
-                    <div>
-                      <div className="ccc-mono text-[11px] text-navy font-medium">{v.field}</div>
-                      {v.ruleId && <div className="ccc-mono text-[9px] text-ink-faint mt-0.5">{v.ruleId}</div>}
-                    </div>
-                    <SeverityBar severity={v.severity} />
-                  </div>
-                  <div className="text-[12px] text-ink mt-1">{v.issue}</div>
-                  <div className="text-[11px] mt-2 grid grid-cols-2 gap-3">
-                    <div>
-                      <div className="text-[9px] uppercase tracking-wider text-ink-faint">Currently</div>
-                      <div className="text-ink-muted ccc-mono">{v.currentlyReports || v.currentValue || <span className="text-ink-faint italic">See issue above</span>}</div>
-                    </div>
-                    <div>
-                      <div className="text-[9px] uppercase tracking-wider text-ink-faint">Should Be</div>
-                      <div className="text-green-700 ccc-mono">{v.shouldReport || v.expectedValue || <span className="text-ink-faint italic">See issue above</span>}</div>
-                    </div>
-                  </div>
-                  <div className="ccc-mono text-[10px] text-gold-dark mt-2 pt-2 border-t border-gray-100">
-                    {v.statute}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {(account.findings || []).some((finding) => finding.outcome === 'REVIEW_REQUIRED') && (
-            <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: 16 }}>
-              <div className="text-[10px] uppercase tracking-wider font-medium mb-2" style={{ color: '#B45309' }}>
-                Staff Review Required
-              </div>
-              <div className="space-y-2">
-                {(account.findings || []).filter((finding) => finding.outcome === 'REVIEW_REQUIRED').map((finding, index) => (
-                  <div key={`${finding.ruleId || 'review'}-${index}`} className="text-[11px] text-ink">
-                    <div className="ccc-mono font-medium">{finding.ruleId}</div>
-                    <div className="text-ink-muted mt-0.5">{finding.issue}</div>
-                    <div className="text-[10px] text-ink-faint mt-0.5">This item is not authorized for letter generation unless staff supplies the missing context and a deterministic rule promotes it.</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <FindingAdjudicationPanel account={account} onUpdateAccount={onUpdateAccount} />
 
           <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: 16 }}>
             <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#15803D', fontWeight: 600, marginBottom: 6 }}>The Game Plan — In Plain English</div>

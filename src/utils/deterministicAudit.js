@@ -260,6 +260,67 @@ export function isAuthorizedFinding(findingObj) {
   return !status || status === 'authorized';
 }
 
+/**
+ * After staff adjudication changes on findings[], rebuild the derived
+ * fields the Blueprint and campaign layer consume. Does not re-run rules.
+ */
+export function recomputeAccountFromFindings(account) {
+  if (!account || typeof account !== 'object') return account;
+  const findings = Array.isArray(account.findings) ? account.findings : [];
+  const authorized = findings.filter(isAuthorizedFinding);
+  const primary = authorized[0] || findings.find((f) => f.outcome === 'FLAG') || findings[0] || null;
+  const next = {
+    ...account,
+    findings,
+    violations: authorized.map((f) => ({
+      ruleId: f.ruleId,
+      field: f.field,
+      issue: f.issue,
+      currentlyReports: f.currentlyReports,
+      shouldReport: f.shouldReport,
+      statute: f.source || f.statute,
+      severity: f.severity,
+      evidenceRefs: f.evidenceRefs,
+      outcome: f.outcome,
+      evidenceQuality: f.evidenceQuality || null,
+      verificationStatus: f.verificationStatus || null,
+      adjudication: f.adjudication || null,
+      challengeStatement: f.challengeStatement || challengeStatementFor(f),
+    })),
+    primaryViolation: primary?.issue || '',
+    primaryChallengeStatement: primary ? challengeStatementFor(primary) : '',
+    authorizedFindingIds: authorized.map((f) => f.ruleId),
+    strategy: authorized.length
+      ? `Use only the ${authorized.length} authorized deterministic finding${authorized.length === 1 ? '' : 's'} identified by rule ID and preserve the cited report evidence.`
+      : 'No authorized deterministic accuracy finding was established from displayed fields; staff review is required before targeting this account.',
+  };
+  next.priorityScore = computePriorityScore(next);
+  return next;
+}
+
+/**
+ * Apply adjudication to one finding on an account and recompute derived fields.
+ * Pure — does not mutate inputs.
+ */
+export function adjudicateAccountFinding(account, ruleId, adjudication) {
+  const findings = (account?.findings || []).map((f) => {
+    if (f.ruleId !== ruleId) return f;
+    // Match first occurrence if duplicate ruleIds exist across bureaus —
+    // callers should pass a more specific key when needed.
+    return applyFindingAdjudication(f, adjudication);
+  });
+  // If multiple findings share a ruleId, only the first was updated above.
+  // Prefer index-based updates from the UI when available.
+  return recomputeAccountFromFindings({ ...account, findings });
+}
+
+export function adjudicateAccountFindingAt(account, findingIndex, adjudication) {
+  const findings = (account?.findings || []).map((f, index) => (
+    index === findingIndex ? applyFindingAdjudication(f, adjudication) : f
+  ));
+  return recomputeAccountFromFindings({ ...account, findings });
+}
+
 /** Client-facing challenge sentence derived from ruleId / field. Deterministic. */
 export function challengeStatementFor(findingObj) {
   if (!findingObj) return 'Reporting accuracy issue documented in the forensic audit.';
