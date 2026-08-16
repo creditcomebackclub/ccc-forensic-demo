@@ -296,9 +296,18 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
     if (onChanged) onChanged();
   };
 
+  // Sends the same portal-invite magic link as "Send Portal Invite" —
+  // deliberately NOT the separate agreement-onboarding.cjs/sign-agreement.html
+  // pre-portal signing flow (that one gates on a counsel-approved template
+  // and gets its own email; this button is for the in-portal wizard where
+  // the client sets a password, signs the LPOA, and uploads ID/address docs
+  // in one continuous session — ClientOnboardingModal in ClientSetupFlow.jsx).
+  // The billing tier/custom fee saved above feeds that wizard's LPOA fee
+  // section directly (billing_tier / service_agreement_fee_text on this
+  // client row), so save the plan first — the wizard reads it live.
   const startOnboarding = async () => {
     if (mode === 'custom' && !String(feeText || '').trim()) {
-      toast.error('Save the custom plan terms before preparing onboarding.');
+      toast.error('Save the custom plan terms before starting onboarding.');
       return;
     }
     if (!client.email) {
@@ -309,15 +318,16 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
     setOnboardingMessage('');
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch('/.netlify/functions/agreement-onboarding', {
+      const adminToken = session?.access_token;
+      const res = await fetch('/.netlify/functions/provision-user', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
-        body: JSON.stringify({ clientId: client.id, action: 'start' }),
+        headers: { 'Content-Type': 'application/json', ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}) },
+        body: JSON.stringify({ email: client.email.trim().toLowerCase(), fullName: client.name, kind: 'client', clientId: client.id }),
       });
       const out = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(out.error || 'Could not start onboarding.');
-      setOnboardingMessage(out.message || (out.status === 'sent' ? 'Secure agreement link sent.' : 'Packet prepared.'));
-      toast.success(out.sendBlocked ? 'Agreement packet prepared for counsel review' : 'Onboarding started');
+      setOnboardingMessage('Onboarding email sent — they set a password, sign the agreement, and upload documents in one flow, then land in the portal.');
+      toast.success('Onboarding started — invite sent');
       if (onChanged) onChanged();
     } catch (e) {
       toast.error(e.message || 'Could not start onboarding.');
@@ -329,7 +339,7 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
   return (
     <Section title="Service Agreement" span2>
       <p className="text-[12px]" style={{ color: T.muted }}>
-        Choose and save the exact plan first. Start Onboarding snapshots these terms into one agreement packet with the LPOA embedded; it never creates a payment.
+        Choose and save the exact plan first — Start Onboarding emails a portal link that reads this plan live for the LPOA fee section. The client sets a password, signs the agreement, and uploads their ID and proof of address in one flow before landing in the portal. It never creates a payment.
       </p>
 
       <div className="flex flex-wrap gap-2">
