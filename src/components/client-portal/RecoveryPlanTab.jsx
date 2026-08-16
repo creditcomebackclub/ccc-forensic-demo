@@ -30,7 +30,9 @@ export default function RecoveryPlanTab({ blueprints, session }) {
           if (viewError) console.warn('Could not record Blueprint view:', viewError.message);
         });
 
-      window.open(out.signedUrl, '_blank', 'noopener,noreferrer');
+      if (!out.signedUrl) throw new Error(out.error || 'No blueprint link returned.');
+      const w = window.open(out.signedUrl, '_blank', 'noopener,noreferrer');
+      if (!w) throw new Error('Popup blocked — allow popups for this site and try again.');
     } catch (err) {
       console.error(err);
       setError(err.message || 'We could not open your Blueprint. Please try again or contact Credit Comeback Club.');

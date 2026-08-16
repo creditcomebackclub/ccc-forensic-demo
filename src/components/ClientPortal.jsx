@@ -271,23 +271,27 @@ export default function ClientPortal({ session, onSignOut }) {
 
 
   const viewSignedAgreement = async () => {
-    const doc = clientDocs?.lpoa;
-    if (!doc?.storage_path) {
-      toast.error('No signed agreement file is on file yet.');
-      return;
-    }
     try {
-      const { data, error } = await supabase.storage
-        .from(DOCUMENTS_BUCKET)
-        .createSignedUrl(doc.storage_path, 60 * 10);
-      if (error) throw error;
-      if (!data?.signedUrl) throw new Error('Could not create download link.');
-      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+      const token = session?.access_token;
+      if (!token) {
+        toast.error('Your session expired. Please sign in again.');
+        return;
+      }
+      const res = await fetch('/.netlify/functions/portal-agreement-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: '{}',
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out.error || 'Could not open signed agreement.');
+      if (!out.signedUrl) throw new Error('No download link returned.');
+      window.open(out.signedUrl, '_blank', 'noopener,noreferrer');
     } catch (e) {
       console.error('Signed agreement open failed:', e);
       toast.error(e.message || 'Could not open signed agreement.');
     }
   };
+
 
   const openRecoveryBlueprint = async (blueprint) => {
     const target = blueprint || recoveryBlueprints?.[0];
@@ -586,7 +590,7 @@ export default function ClientPortal({ session, onSignOut }) {
             
             {activeTab === 'billing' && (
               <BillingTab
-              signedAgreementAvailable={!!clientDocs?.lpoa?.storage_path}
+              signedAgreementAvailable={true}
               onViewAgreement={viewSignedAgreement} clientMeta={clientMeta} />
             )}
             
