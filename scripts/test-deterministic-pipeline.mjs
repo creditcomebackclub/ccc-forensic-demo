@@ -4,7 +4,16 @@ import { readFileSync } from 'node:fs';
 import {
   buildDeterministicAudit,
   coerceBureauExtraction,
+  computePriorityScore,
+  applyFindingAdjudication,
+  isAuthorizedFinding,
+  challengeStatementFor,
+  evidenceQuality,
+  REPORT_MAX_AGE_DAYS,
+  DETERMINISTIC_AUDIT_SCHEMA_VERSION,
 } from '../src/utils/deterministicAudit.js';
+import { authorizedFindings as campaignAuthorizedFindings, auditFreshness } from '../src/utils/campaignBlueprint.js';
+import { buildRecoveryBlueprintModel } from '../src/utils/recoveryBlueprintModel.js';
 import {
   buildNonResponseAnalysis,
   evaluateBureauResponse,
@@ -137,5 +146,76 @@ assert.match(responseWorker, /evaluateFurnisherResponse/);
 assert.match(responseWorker, /evaluateBureauResponse/);
 assert.match(responseWorker, /schema: isBureauFollowUp \? BUREAU_FOLLOW_UP_SCHEMA : RESPONSE_EXTRACTION_SCHEMA/);
 assert.doesNotMatch(extractionPrompt, /Perform a full forensic|Identify every violation|Rank top 5|strongest.*leverage/i);
+
+// ─── v3: prioritization, adjudication, challenge statements, citation debt ───
+assert.equal(DETERMINISTIC_AUDIT_SCHEMA_VERSION, 'deterministic-audit-v3');
+assert.equal(REPORT_MAX_AGE_DAYS, 45);
+assert.equal(auditFreshness('2026-01-01', { now: new Date('2026-03-01') }).maxAgeDays, REPORT_MAX_AGE_DAYS);
+
+const ranked = buildDeterministicAudit([
+  report('equifax', account({
+    furnisher: 'Collector Co', accountType: '48', remarks: 'collection agency',
+    accountNumber: 'XXXX1111', balance: 5000, dofd: '2021-01-01',
+  })),
+  report('experian', account({
+    furnisher: 'Collector Co', accountType: '48', remarks: 'collection agency',
+    accountNumber: 'XXXX1111', balance: 5000, dofd: '2021-06-01',
+  })),
+  report('equifax', account({
+    furnisher: 'Small Bank', accountNumber: 'XXXX2222', balance: 50, dofd: '2021-01-01',
+  })),
+  report('experian', account({
+    furnisher: 'Small Bank', accountNumber: 'XXXX2222', balance: 50, dofd: '2021-02-01',
+  })),
+]);
+assert.ok(ranked.accounts.every((a) => typeof a.priorityScore === 'number'));
+assert.ok(ranked.accounts[0].priorityScore >= ranked.accounts[ranked.accounts.length - 1].priorityScore
+  || ranked.accounts.filter((a) => a.violations.length).length < 2,
+  'accounts with violations are ordered by priorityScore');
+assert.ok(ranked.accounts[0].findings.every((f) => f.adjudication && f.adjudication.status));
+assert.ok(ranked.accounts[0].violations.every((v) => v.challengeStatement));
+assert.ok(ranked.citationDebt && typeof ranked.citationDebt.count === 'number');
+
+const dofdFinding = ranked.accounts.flatMap((a) => a.findings)
+  .find((f) => f.ruleId === 'CROSS_BUREAU_DOFD_MISMATCH');
+assert.ok(dofdFinding, 'cross-bureau DOFD mismatch still produced');
+assert.match(challengeStatementFor(dofdFinding), /Bureaus report conflicting/i);
+assert.ok(['page_backed', 'value_only', 'insufficient'].includes(evidenceQuality(dofdFinding.evidenceRefs)));
+
+// Adjudication: suppressing a FLAG removes it from violations / campaign authorized set
+const suppressed = applyFindingAdjudication(dofdFinding, {
+  status: 'suppressed', reason: 'client confirmed intentional difference', by: 'tester',
+});
+assert.equal(suppressed.adjudication.status, 'suppressed');
+assert.equal(isAuthorizedFinding(suppressed), false);
+assert.equal(isAuthorizedFinding(dofdFinding), true);
+
+const campaignItem = {
+  snapshot: {
+    findings: [dofdFinding, suppressed],
+    violations: [dofdFinding, suppressed].filter((f) => f.outcome === 'FLAG'),
+  },
+};
+assert.equal(campaignAuthorizedFindings(campaignItem).length, 1, 'suppressed findings excluded from campaign routing');
+
+// Blueprint consumes challenge statements and priority scores
+const blueprintModel = buildRecoveryBlueprintModel(ranked);
+assert.ok(blueprintModel.openingMove);
+assert.ok(blueprintModel.openingMove.primaryChallengeStatement);
+assert.equal(typeof blueprintModel.metrics.citationDebtCount, 'number');
+assert.ok(blueprintModel.batch1Accounts.every((a) => a.batch === 1));
+
+// Multi-signal: last-4 alone with weak name should not fold different furnishers
+const weakName = buildDeterministicAudit([
+  report('equifax', account({ furnisher: 'Alpha Financial Services', accountNumber: 'XXXX9999', dateOpened: '2018-01-01', balance: 100 })),
+  report('experian', account({ furnisher: 'Zeta Motors LLC', accountNumber: 'XXXX9999', dateOpened: '2024-06-01', balance: 9000 })),
+]);
+// If they fold, both variants exist under one account; if not, two accounts.
+// Multi-signal requires supporting signals beyond last-4; these should stay separate.
+assert.ok(
+  weakName.accounts.length === 2
+  || (weakName.accounts.length === 1 && Object.keys(weakName.accounts[0].extractedByBureau || {}).length <= 1),
+  'weak name + divergent open date/balance should not confidently merge on last-4 alone',
+);
 
 console.log('All deterministic pipeline assertions passed.');
