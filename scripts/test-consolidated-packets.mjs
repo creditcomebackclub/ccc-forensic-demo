@@ -5,6 +5,7 @@ import {
   ROUTE_CLASSIFICATIONS,
   buildCampaignBlueprint,
   classifyAccountRoute,
+  recommendAccountRoute,
   splitPacketSpec,
   validatePacketSpec,
 } from '../src/utils/campaignBlueprint.js';
@@ -193,5 +194,30 @@ const { roundEventKey } = roundEmailModule;
 const campaignRound = { id: 'round-1', campaign_id: 'campaign-1' };
 assert.equal(roundEventKey(campaignRound, 'first_response_received'), 'campaign:campaign-1:first_response_received', 'first response email is idempotent for the whole campaign');
 assert.equal(roundEventKey({ id: 'round-2', campaign_id: 'campaign-1' }, 'round_review_complete'), 'campaign:campaign-1:round_review_complete', 'completion email is idempotent for the whole campaign');
+
+// Route recommendations are guidance only — they must not auto-enable FDCPA.
+const collectorRec = recommendAccountRoute(accountItem(20, {
+  label: 'Midland Credit Management',
+  snapshot: { type: 'C', furnisher: 'Midland Credit Management' },
+}), { now: TODAY });
+assert.equal(collectorRec.classification, ROUTE_CLASSIFICATIONS.DIRECT_ELIGIBLE, 'collector stays DIRECT until staff verifies FDCPA');
+assert.equal(collectorRec.fdcpaRecommended, true, 'collector with verified address is FDCPA-recommended');
+assert.equal(collectorRec.furnisherFirstRecommended, true);
+assert.equal(collectorRec.badgeTone, 'fdcpa');
+
+const verifiedFdcpaRec = recommendAccountRoute(accountItem(21, {
+  label: 'Portfolio Recovery',
+  snapshot: { type: 'C', furnisher: 'Portfolio Recovery' },
+  routeReview: { fdcpaValidationEligible: true },
+}), { now: TODAY });
+assert.equal(verifiedFdcpaRec.classification, ROUTE_CLASSIFICATIONS.FDCPA_ELIGIBLE);
+assert.match(verifiedFdcpaRec.badge, /FDCPA eligible/i);
+
+const bureauOnlyRec = recommendAccountRoute(accountItem(22, {
+  snapshot: { furnisherAddress: '', addressStatus: 'NO' },
+}), { now: TODAY });
+assert.equal(bureauOnlyRec.classification, ROUTE_CLASSIFICATIONS.BUREAU_ONLY);
+assert.equal(bureauOnlyRec.fdcpaRecommended, false);
+assert.equal(bureauOnlyRec.bureauPacketEligible, true);
 
 console.log('All consolidated packet assertions passed.');
