@@ -205,7 +205,8 @@ function addOpeningMove(doc, model) {
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(12);
   setColor(doc, C.white);
-  const why = doc.splitTextToSize(account.primaryViolation, PAGE_W - M * 2 - 44).slice(0, 5);
+  const whySource = account.primaryChallengeStatement || account.primaryViolation;
+  const why = doc.splitTextToSize(whySource, PAGE_W - M * 2 - 44).slice(0, 5);
   doc.text(why, M + 22, 304, { lineHeightFactor: 1.45 });
 
   doc.setFont('helvetica', 'bold');
@@ -279,7 +280,7 @@ function addStrikeList(doc, model) {
       account.furnisher,
       money(account.balance),
       account.bureauLabel,
-      account.primaryViolation,
+      account.primaryChallengeStatement || account.primaryViolation,
     ]),
     theme: 'plain',
     headStyles: { fillColor: C.navy, textColor: C.gold, fontStyle: 'bold', fontSize: 7.5, cellPadding: 8 },
