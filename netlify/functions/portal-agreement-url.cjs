@@ -62,8 +62,27 @@ exports.handler = async (event) => {
     return data.signedUrl;
   };
 
+  // Some stored LPOA HTML objects picked up the wrong mimetype at upload
+  // time (seen as application/octet-stream / text/plain, which makes the
+  // browser show raw markup instead of rendering it). Re-upload the same
+  // bytes with the correct Content-Type before signing so it self-heals.
+  const signLpoaHtml = async (bucket, path) => {
+    if (!bucket || !path) return null;
+    const dir = path.split('/').slice(0, -1).join('/');
+    const name = path.split('/').pop();
+    const { data: listing } = await admin.storage.from(bucket).list(dir, { search: name });
+    const entry = listing?.find((f) => f.name === name);
+    if (entry && entry.metadata?.mimetype && entry.metadata.mimetype !== 'text/html') {
+      const { data: blob } = await admin.storage.from(bucket).download(path);
+      if (blob) {
+        await admin.storage.from(bucket).update(path, blob, { contentType: 'text/html', upsert: true });
+      }
+    }
+    return trySign(bucket, path);
+  };
+
   // 1. Cached path from the staff-sent signing link (sign-lpoa.cjs).
-  let signedUrl = await trySign(profile.lpoa_storage_bucket || DOCUMENTS_BUCKET, profile.lpoa_storage_path);
+  let signedUrl = await signLpoaHtml(profile.lpoa_storage_bucket || DOCUMENTS_BUCKET, profile.lpoa_storage_path);
 
   // 2. In-portal wizard writes to the deterministic path but never backfills
   //    client_profiles — reconstruct it and check whether it's actually there.
@@ -75,7 +94,7 @@ exports.handler = async (event) => {
       .limit(1)
       .maybeSingle();
     if (clientRow?.lpoa_signed && clientRow.user_id) {
-      signedUrl = await trySign(DOCUMENTS_BUCKET, lpoaDocumentPath(clientRow.user_id, profile.client_id));
+      signedUrl = await signLpoaHtml(DOCUMENTS_BUCKET, lpoaDocumentPath(clientRow.user_id, profile.client_id));
     }
   }
 

@@ -332,7 +332,7 @@ export default function OverviewTab({
 
       <BlueprintCard
         blueprint={latestBlueprint}
-        onOpenPlan={() => onNavigate?.('plan')}
+        onOpenPlan={() => onNavigate?.('recovery-plan')}
       />
 
       <ActionQueue actions={actions} onNavigate={onNavigate} />
