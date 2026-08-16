@@ -320,7 +320,6 @@ function ClientOnboardingModal({ session, onComplete }) {
       const attorneySignatureDataUrl = null;
       const attorneySigImg = attorneySignatureDataUrl
         ? '<img src="' + attorneySignatureDataUrl + '" style="max-height:56px;max-width:220px;" />'
-        : '<span style="font-size:14px;font-weight:bold;">Christopher Holland</span>';
 
       // Embed the canvas signature data URL so the stored HTML is self-contained
       // (signed URLs expire; public client-docs URLs are being retired).
