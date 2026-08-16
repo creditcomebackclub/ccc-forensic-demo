@@ -318,8 +318,8 @@ function ClientOnboardingModal({ session, onComplete }) {
       // (service-role storage read). Calling loadAttorneySignatureDataUrl in the
       // browser throws "Can't find variable" on Safari/iOS.
       const attorneySignatureDataUrl = null;
-      const attorneySigImg = attorneySigDataUrl
-        ? '<img src="' + attorneySigDataUrl + '" style="max-height:56px;max-width:220px;" />'
+      const attorneySigImg = attorneySignatureDataUrl
+        ? '<img src="' + attorneySignatureDataUrl + '" style="max-height:56px;max-width:220px;" />'
         : '<span style="font-size:14px;font-weight:bold;">Christopher Holland</span>';
 
       // Embed the canvas signature data URL so the stored HTML is self-contained
