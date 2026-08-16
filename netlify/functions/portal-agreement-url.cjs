@@ -63,21 +63,16 @@ exports.handler = async (event) => {
   };
 
   // Some stored LPOA HTML objects picked up the wrong mimetype at upload
-  // time (seen as application/octet-stream / text/plain, which makes the
-  // browser show raw markup instead of rendering it). Re-upload the same
-  // bytes with the correct Content-Type before signing so it self-heals.
+  // time (seen served as text/plain, which makes the browser show raw
+  // markup instead of rendering it). Re-upload the same bytes with the
+  // correct Content-Type before signing every time — cheap for a
+  // few-KB HTML file, and avoids relying on the exact shape Supabase
+  // reports stored metadata in (which a first attempt at this got wrong).
   const signLpoaHtml = async (bucket, path) => {
     if (!bucket || !path) return null;
-    const dir = path.split('/').slice(0, -1).join('/');
-    const name = path.split('/').pop();
-    const { data: listing } = await admin.storage.from(bucket).list(dir, { search: name });
-    const entry = listing?.find((f) => f.name === name);
-    if (entry && entry.metadata?.mimetype && entry.metadata.mimetype !== 'text/html') {
-      const { data: blob } = await admin.storage.from(bucket).download(path);
-      if (blob) {
-        await admin.storage.from(bucket).update(path, blob, { contentType: 'text/html', upsert: true });
-      }
-    }
+    const { data: blob, error: downloadErr } = await admin.storage.from(bucket).download(path);
+    if (downloadErr || !blob) return null;
+    await admin.storage.from(bucket).update(path, blob, { contentType: 'text/html', upsert: true });
     return trySign(bucket, path);
   };
 
