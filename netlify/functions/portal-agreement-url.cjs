@@ -1,8 +1,21 @@
 /**
  * Client-authenticated signed URL for their signed LPOA / service agreement.
  * Does not rely on browser storage RLS or client documents SELECT.
+ *
+ * Three onboarding paths write the signed document to three different
+ * places (see ClientBillingPanel.jsx comment near startOnboarding and
+ * portal-enroll-upload.cjs's "legacy portal enrollment" branch), so this
+ * checks all three before giving up:
+ *   1. client_profiles.lpoa_storage_path — set by sign-lpoa.cjs (staff-sent
+ *      signing link).
+ *   2. The deterministic lpoaDocumentPath() location — written by the
+ *      in-portal wizard (ClientOnboardingModal), which never backfills
+ *      client_profiles.
+ *   3. client_service_agreements.signed_document_path — the separate
+ *      counsel-approved-template flow (agreement-onboarding.cjs).
  */
 const { createClient } = require('@supabase/supabase-js');
+const { DOCUMENTS_BUCKET, lpoaDocumentPath } = require('./_storagePaths.cjs');
 
 function json(statusCode, body) {
   return {
@@ -42,21 +55,52 @@ exports.handler = async (event) => {
 
   if (!profile) return json(404, { error: 'Client profile not found.' });
 
-  if (!profile.lpoa_storage_path) {
+  const trySign = async (bucket, path) => {
+    if (!bucket || !path) return null;
+    const { data, error } = await admin.storage.from(bucket).createSignedUrl(path, 60 * 15);
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl;
+  };
+
+  // 1. Cached path from the staff-sent signing link (sign-lpoa.cjs).
+  let signedUrl = await trySign(profile.lpoa_storage_bucket || DOCUMENTS_BUCKET, profile.lpoa_storage_path);
+
+  // 2. In-portal wizard writes to the deterministic path but never backfills
+  //    client_profiles — reconstruct it and check whether it's actually there.
+  if (!signedUrl && profile.client_id) {
+    const { data: clientRow } = await admin
+      .from('clients')
+      .select('user_id, lpoa_signed')
+      .eq('id', profile.client_id)
+      .limit(1)
+      .maybeSingle();
+    if (clientRow?.lpoa_signed && clientRow.user_id) {
+      signedUrl = await trySign(DOCUMENTS_BUCKET, lpoaDocumentPath(clientRow.user_id, profile.client_id));
+    }
+  }
+
+  // 3. Separate counsel-approved-template agreement flow.
+  if (!signedUrl && profile.client_id) {
+    const { data: agreementRows } = await admin
+      .from('client_service_agreements')
+      .select('signed_document_path')
+      .eq('client_id', profile.client_id)
+      .eq('status', 'signed')
+      .order('signed_at', { ascending: false })
+      .limit(1);
+    const agreementPath = agreementRows?.[0]?.signed_document_path;
+    if (agreementPath) signedUrl = await trySign(DOCUMENTS_BUCKET, agreementPath);
+  }
+
+  if (!signedUrl) {
     return json(404, {
       error: 'No signed agreement file is on file yet. Ask Credit Comeback Club to confirm enrollment documents were saved.',
       available: false,
     });
   }
 
-  const bucket = profile.lpoa_storage_bucket || 'documents';
-  const { data: signed, error: signErr } = await admin.storage
-    .from(bucket)
-    .createSignedUrl(profile.lpoa_storage_path, 60 * 15);
-  if (signErr) return json(500, { error: signErr.message });
-
   return json(200, {
-    signedUrl: signed.signedUrl,
+    signedUrl,
     fileName: 'lpoa-signed.html',
     available: true,
   });
