@@ -10,6 +10,18 @@ import {
 } from '../utils/storagePaths';
 import { notifyStaff } from '../utils/notifyStaff';
 
+// The signed LPOA this wizard builds is stored and later served as a real HTML
+// document by portal-agreement-view.cjs, from our own origin — so any
+// client-supplied text interpolated into it has to be escaped first. Mirrors
+// escapeHtml in netlify/functions/_email.cjs (that one is CJS, server-only).
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -341,7 +353,7 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '</style></head><body>'
         + '<div class="header"><h1>Credit Comeback Club — Limited Power of Attorney</h1><p>Credit Dispute Authorization | Executed ' + signedAt + '</p></div>'
         + '<h2>1. Parties</h2>'
-        + '<p>This Limited Power of Attorney is executed between <strong>' + clientFullName + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO, 970-644-0063 ("Attorney-in-Fact").</p>'
+        + '<p>This Limited Power of Attorney is executed between <strong>' + escapeHtml(clientFullName) + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO, 970-644-0063 ("Attorney-in-Fact").</p>'
         + '<h2>2. Grant of Authority</h2>'
         + '<p>Principal authorizes Credit Comeback Club to act exclusively for credit dispute activities, including:</p>'
         + '<ul><li>Prepare and submit dispute letters to data furnishers under 15 U.S.C. §1681s-2(b)</li>'
@@ -362,7 +374,7 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '<p>This document was executed electronically. The drawn signature below constitutes a legally binding electronic signature under the ESIGN Act (15 U.S.C. §7001). Execution timestamp, IP address, and user agent are recorded.</p>'
         + '<div class="sig-block">'
         + '<div class="sig-row">'
-        + '<div class="sig-col"><div class="sig-line"><img src="' + signature + '" style="max-height:56px;max-width:220px;" /></div><div class="sig-label">Principal Signature — ' + clientFullName + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
+        + '<div class="sig-col"><div class="sig-line"><img src="' + escapeHtml(signature) + '" style="max-height:56px;max-width:220px;" /></div><div class="sig-label">Principal Signature — ' + escapeHtml(clientFullName) + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
         + '<div class="sig-col"><div class="sig-line">' + attorneySigImg + '</div><div class="sig-label">Christopher Holland — Attorney-in-Fact, Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
         + '</div></div>'
         + '<div class="footer">Credit Comeback Club | Grand Junction, CO | 970-644-0063 | creditcomebackclub.com | Executed under ESIGN Act 15 U.S.C. §7001</div>'

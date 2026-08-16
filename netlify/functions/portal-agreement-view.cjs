@@ -70,8 +70,16 @@ exports.handler = async (event) => {
       // Serving this on our own origin gives up the isolation Supabase was
       // enforcing, so lock the document down instead: the LPOA only ever needs
       // inline CSS and a base64 signature image, never script or network access.
+      //
+      // `sandbox` (with no allow-* tokens) drops the document into an opaque
+      // origin, so even a bypass of the directives above cannot reach the
+      // portal's own localStorage/session on this domain. It is the same
+      // pairing Supabase Storage itself applies to HTML objects. Scripting is
+      // already dead via default-src 'none'; this is the second lock, and it
+      // matters because the stored LPOA historically interpolated a
+      // client-supplied name without escaping.
       'Content-Security-Policy':
-        "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     },
     body: html,
   };
