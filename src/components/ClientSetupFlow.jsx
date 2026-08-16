@@ -345,68 +345,56 @@ function ClientOnboardingModal({ session, onComplete }) {
 
       // Embed the canvas signature data URL so the stored HTML is self-contained
       // (signed URLs expire; public client-docs URLs are being retired).
-      const clientAddr = [clientFullName].filter(Boolean).join(', ');
-      // Full compliance packet: Client Service Agreement (with plan/fees) + LPOA (authorization only, no pricing).
-      // Drawn letter signature is uploaded separately (kind: signature) and must remain on lpoa_signature_data.
-      const lpoaHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>CCC Client Service Agreement & Limited Power of Attorney</title><style>'
-        + 'body{font-family:Georgia,serif;font-size:12px;line-height:1.55;margin:0;padding:40px;color:#0f172a;}'
-        + '.header{background:#0f172a;color:#fbbf24;padding:20px 28px;margin:-40px -40px 28px;}'
-        + '.header h1{margin:0;font-size:18px;}'
-        + '.header p{margin:4px 0 0;font-size:11px;color:#e2e8f0;}'
-        + 'h2{font-size:12px;background:#0f172a;color:#fff;padding:7px 12px;margin:24px 0 10px;}'
-        + 'h3{font-size:12px;margin:14px 0 6px;}'
-        + 'ul{padding-left:20px;}li{margin:4px 0;}'
-        + 'table{width:100%;border-collapse:collapse;margin:10px 0;font-size:11px;}'
-        + 'th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left;}th{background:#f1f5f9;}'
-        + '.notice{background:#fffbeb;border:1px solid #f59e0b;padding:10px 12px;margin:10px 0;font-size:11px;}'
-        + '.selected{background:#fef3c7;font-weight:bold;padding:2px 6px;}'
-        + '.sig-block{margin-top:28px;padding-top:14px;border-top:1px solid #cbd5e1;}'
-        + '.sig-row{display:flex;gap:32px;margin-top:14px;flex-wrap:wrap;}'
-        + '.sig-col{flex:1;min-width:200px;}'
-        + '.sig-line{border-bottom:1px solid #0f172a;min-height:56px;margin-bottom:4px;display:flex;align-items:flex-end;}'
-        + '.sig-label{font-size:10px;color:#64748b;}'
-        + '.footer{margin-top:32px;padding-top:10px;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;text-align:center;}'
+      const lpoaHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
+        + 'body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;margin:0;padding:40px;color:#000;}'
+        + '.header{background:#0f172a;color:#fbbf24;padding:20px 32px;margin:-40px -40px 32px;}'
+        + '.header h1{margin:0;font-size:20px;}'
+        + '.header p{margin:4px 0 0;font-size:11px;color:#fff;opacity:0.8;}'
+        + 'h2{font-size:12px;background:#0f172a;color:#fff;padding:6px 12px;margin:24px -12px 12px;}'
+        + 'ul{padding-left:20px;margin:8px 0;}'
+        + 'li{margin:4px 0;}'
+        + '.sig-block{margin-top:32px;padding-top:16px;border-top:1px solid #ddd;}'
+        + '.sig-row{display:flex;gap:40px;margin-top:16px;}'
+        + '.sig-col{flex:1;}'
+        + '.sig-line{border-bottom:1px solid #000;margin-bottom:4px;min-height:60px;display:flex;align-items:flex-end;}'
+        + '.sig-label{font-size:10px;color:#666;}'
+        + '.footer{margin-top:40px;padding-top:12px;border-top:1px solid #eee;font-size:10px;color:#999;text-align:center;}'
         + '</style></head><body>'
-        + '<div class="header"><h1>Credit Comeback Club</h1>'
-        + '<p>Client Service Agreement &amp; Limited Power of Attorney · Executed ' + signedAt + '</p>'
-        + '<p>creditcomebackclub.com · 480-913-9172 · Grand Junction, CO 81501</p></div>'
-        + '<h2>1. Parties &amp; Effective Date</h2>'
-        + '<p>This Credit Repair Services Agreement ("Agreement") is entered into as of <strong>' + signedAt + '</strong> between:</p>'
-        + '<p><strong>Service Provider:</strong> Credit Comeback Club, a DBA of Christopher Holland, Sole Proprietor, Grand Junction, CO 81501 · EIN: 81-3138942 · 480-913-9172</p>'
-        + '<p><strong>Client:</strong> ' + clientFullName + '</p>'
-        + '<h2>2. Consumer Rights Disclosure (CROA — 15 U.S.C. § 1679 et seq.)</h2>'
-        + '<div class="notice"><p>You have a right to dispute inaccurate information in your credit report by contacting the credit bureau directly at no fee. Any improvements from a credit repair company may also be achieved by you at no cost. You may cancel this contract without penalty before midnight of the 3rd business day after you signed. See cancellation section below.</p></div>'
-        + '<h2>3. Selected Service Plan &amp; Fees</h2>'
-        + '<p><strong>Selected Plan:</strong> <span class="selected">' + (billingTier || serviceAgreement.feeText || 'As agreed with Credit Comeback Club') + '</span></p>'
-        + '<p><strong>Fee schedule:</strong> ' + (feeScheduleLine || 'Per selected plan') + '</p>'
-        + '<p>Credit monitoring (' + (monitoringService || 'Privacy Guard') + '): approx. $' + monitoringFeeAmount + '/month (client responsibility).</p>'
-        + '<p><strong>Services:</strong> CCC will analyze Equifax, Experian, and TransUnion information as provided, identify inaccurate or unverifiable items, and prepare/submit dispute correspondence on Client\'s behalf as authorized herein.</p>'
-        + '<p><strong>No Guarantee:</strong> CCC makes no guarantee of specific outcomes. Results depend on individual profiles and creditor responses.</p>'
-        + '<p><strong>Prohibited Practices:</strong> CCC does not provide legal advice, dispute accurate/verifiable information, or create new credit identities.</p>'
-        + '<h2>4. Billing</h2>'
-        + '<p>First Work Fee is due at enrollment before dispute work commences (unless waived). Monthly fees, if applicable, are billed in advance on the enrollment anniversary.</p>'
-        + '<h2>5. CROA Cancellation</h2>'
-        + '<p>No advance fees for work not yet performed. Cancel within 3 business days by emailing info@creditcomebackclub.com with subject "CANCEL — [Your Name]".</p>'
-        + '<h2>6. Limited Power of Attorney (Authorization Only — No Pricing)</h2>'
-        + '<p><em>Fees appear only in Sections 3–4. This section is authorization to work the file.</em></p>'
-        + '<p>Principal <strong>' + clientFullName + '</strong> authorizes Credit Comeback Club (Attorney-in-Fact) to: prepare and submit disputes to furnishers under 15 U.S.C. §1681s-2(b); submit disputes to Equifax, Experian, and TransUnion under 15 U.S.C. §1681i; send certified mail; receive dispute-related correspondence; submit CFPB/FTC/state complaints when appropriate; and sign dispute correspondence as "By: Credit Comeback Club, Authorized Representative."</p>'
-        + '<p><strong>Limitations:</strong> Does not authorize financial decisions, account access, disputing accurate information, creating a new credit identity, or settling claims without written consent.</p>'
-        + '<p><strong>Duration:</strong> Until written revocation, work completion, or agreement termination. Revoke via email to creditcomebackclub@gmail.com with subject "LPOA REVOCATION — [Your Name]."</p>'
-        + '<h2>7. ESIGN</h2>'
-        + '<p>Electronic signature is legally binding under the ESIGN Act (15 U.S.C. §7001).</p>'
-        + '<div class="sig-block"><div class="sig-row">'
-        + '<div class="sig-col"><div class="sig-line"><img src="' + signature + '" style="max-height:56px;max-width:220px;" /></div>'
-        + '<div class="sig-label">Client / Principal — ' + clientFullName + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
-        + '<div class="sig-col"><div class="sig-line">' + attorneySigImg + '</div>'
-        + '<div class="sig-label">Christopher Holland — Attorney-in-Fact, Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
+        + '<div class="header"><h1>Credit Comeback Club — Limited Power of Attorney</h1><p>Credit Dispute Authorization | Executed ' + signedAt + '</p></div>'
+        + '<h2>1. Parties</h2>'
+        + '<p>This Limited Power of Attorney is executed between <strong>' + escapeHtml(clientFullName) + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO, 970-644-0063 ("Attorney-in-Fact").</p>'
+        + '<h2>2. Grant of Authority</h2>'
+        + '<p>Principal authorizes Credit Comeback Club to act exclusively for credit dispute activities, including:</p>'
+        + '<ul><li>Prepare and submit dispute letters to data furnishers under 15 U.S.C. §1681s-2(b)</li>'
+        + '<li>Prepare and submit dispute letters to Equifax, Experian, and TransUnion under 15 U.S.C. §1681i</li>'
+        + '<li>Send certified mail on behalf of Principal for credit disputes</li>'
+        + '<li>Receive and respond to furnisher and bureau correspondence</li>'
+        + '<li>Submit CFPB, FTC, and state AG complaints for FCRA/FDCPA violations</li>'
+        + '<li>Review credit reports and sign correspondence as "By: Credit Comeback Club, Authorized Representative"</li></ul>'
+        + '<h2>3. Limitations</h2>'
+        + '<p>This authorization does NOT grant authority to make financial decisions, access financial accounts, dispute accurate information, create a new credit identity, or settle legal claims without explicit written consent.</p>'
+        + '<h2>4. Fee Structure</h2>'
+        + '<p>' + feeScheduleLine + ' Credit monitoring (' + monitoringService + '): approx. $' + monitoringFeeAmount + '/month (Principal responsibility).</p>'
+        + '<h2>5. No Guarantee</h2>'
+        + '<p>No specific outcome is guaranteed. Results vary by credit profile and creditor response.</p>'
+        + '<h2>6. Duration & Revocation</h2>'
+        + '<p>Effective until written revocation, dispute completion, or agreement termination. To revoke: email creditcomebackclub@gmail.com with subject "LPOA REVOCATION — [Your Name]."</p>'
+        + '<h2>7. ESIGN Disclosure</h2>'
+        + '<p>This document was executed electronically. The drawn signature below constitutes a legally binding electronic signature under the ESIGN Act (15 U.S.C. §7001). Execution timestamp, IP address, and user agent are recorded.</p>'
+        + '<div class="sig-block">'
+        + '<div class="sig-row">'
+        + '<div class="sig-col"><div class="sig-line"><img src="' + escapeHtml(signature) + '" style="max-height:56px;max-width:220px;" /></div><div class="sig-label">Principal Signature — ' + escapeHtml(clientFullName) + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
+        + '<div class="sig-col"><div class="sig-line">' + attorneySigImg + '</div><div class="sig-label">Christopher Holland — Attorney-in-Fact, Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
         + '</div></div>'
-        + '<div class="footer">Credit Comeback Club · Grand Junction, CO · 480-913-9172 · Client Service Agreement &amp; LPOA · ESIGN 15 U.S.C. §7001</div>'
+        + '<div class="footer">Credit Comeback Club | Grand Junction, CO | 970-644-0063 | creditcomebackclub.com | Executed under ESIGN Act 15 U.S.C. §7001</div>'
         + '</body></html>';
 
+      // Hashed from the exact string about to be uploaded — lets anyone
+      // later confirm the stored document hasn't been altered since signing.
       const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(lpoaHtml));
       const documentHash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 
-      const documentPath = `${docsOwnerUserId}/${docsClientId}/lpoa/client-service-agreement-lpoa.html`;
+      const documentPath = `${docsOwnerUserId}/${docsClientId}/lpoa/lpoa-signed.html`;
       let lpoaUploaded = false;
       try {
         const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });
@@ -417,7 +405,7 @@ function ClientOnboardingModal({ session, onComplete }) {
             kind: 'lpoa',
             dataBase64: lpoaData,
             contentType: 'text/html',
-            fileName: 'client-service-agreement-lpoa.html',
+            fileName: 'lpoa-signed.html',
           })
         );
         lpoaUploaded = true;
@@ -659,7 +647,7 @@ function ClientOnboardingModal({ session, onComplete }) {
                   <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
                     <div className="bg-slate-900 px-4 py-3 flex items-center gap-2">
                       <FileText size={16} className="text-amber-400" />
-                      <span className="text-xs uppercase tracking-[0.1em] text-amber-400 font-bold">Client Service Agreement &amp; LPOA</span>
+                      <span className="text-xs uppercase tracking-[0.1em] text-amber-400 font-bold">Client Service Agreement</span>
                     </div>
                     <div className="p-5 max-h-48 overflow-y-auto text-xs text-gray-600 space-y-3 custom-scrollbar">
                       <p><strong className="text-slate-900">Services:</strong> Credit Comeback Club ("CCC") will analyze your Equifax, Experian, and TransUnion reports, identify inaccurate or unverifiable items, and prepare/submit direct furnisher dispute letters on your behalf.</p>
