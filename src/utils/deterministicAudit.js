@@ -9,6 +9,11 @@ import { lastFour, nameSimilarity, normalizeFurnisher } from './diffEngine.js';
 // within-bureau dedup never sees the mismatch. This mirrors
 // accountIdentity.js's anchor: last-4 is the strong signal across bureaus,
 // furnisher name only disambiguates a genuine last-4 collision.
+//
+// Multi-signal matching (below) still requires last-4 as the hard anchor,
+// then scores additional signals (name, original creditor, open date, DOFD,
+// balance band) so a weak name-only coincidence cannot fold two different
+// tradelines together.
 const CROSS_BUREAU_NAME_MATCH_THRESHOLD = 0.5;
 import {
   METRO2_FIELDS,
@@ -17,7 +22,25 @@ import {
   validateScheduledPayment,
 } from '../constants/metro2Fields.js';
 
-export const DETERMINISTIC_AUDIT_SCHEMA_VERSION = 'deterministic-audit-v2';
+// Additive schema: v2 fields remain; v3 adds priorityScore, evidenceQuality,
+// adjudication defaults, citationDebt, and challengeStatement helpers.
+export const DETERMINISTIC_AUDIT_SCHEMA_VERSION = 'deterministic-audit-v3';
+
+/** Single source of truth for report freshness (days). Used by timingChecks
+ *  and by campaignBlueprint.auditFreshness when callers do not override. */
+export const REPORT_MAX_AGE_DAYS = 45;
+
+/** Matching thresholds for cross-bureau account folding. */
+export const MATCH_THRESHOLDS = Object.freeze({
+  name: CROSS_BUREAU_NAME_MATCH_THRESHOLD,
+  /** Minimum independent signals (beyond last-4) required to auto-merge. */
+  multiSignalMin: 2,
+  dateWindowDays: 60,
+  balanceRelativeTolerance: 0.15,
+  balanceAbsoluteFloor: 25,
+});
+
+const SEVERITY_WEIGHT = Object.freeze({ high: 3, med: 2, low: 1 });
 
 const BUREAU_KEYS = ['equifax', 'experian', 'transunion'];
 const BUREAU_CODES = { equifax: 'EQ', experian: 'EXP', transunion: 'TU' };
@@ -109,6 +132,185 @@ function preferAccount(a, b) {
   out.explicitlyBlankFields = mergeStrings([...(a.explicitlyBlankFields || []), ...(b.explicitlyBlankFields || [])]);
   out.unreadableFields = mergeStrings([...(a.unreadableFields || []), ...(b.unreadableFields || [])]);
   return out;
+}
+
+function parseComparableDate(value) {
+  if (!value) return null;
+  const normalized = normalizedDate(value);
+  if (!normalized) return null;
+  // YYYY-MM or YYYY-MM-DD
+  const iso = normalized.length === 7 ? `${normalized}-01` : normalized;
+  const time = new Date(iso).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function datesWithinWindow(a, b, windowDays = MATCH_THRESHOLDS.dateWindowDays) {
+  const ta = parseComparableDate(a);
+  const tb = parseComparableDate(b);
+  if (ta == null || tb == null) return false;
+  return Math.abs(ta - tb) <= windowDays * 86400000;
+}
+
+function balancesClose(a, b) {
+  if (a == null || b == null || !Number.isFinite(Number(a)) || !Number.isFinite(Number(b))) return false;
+  const aa = Math.abs(Number(a));
+  const bb = Math.abs(Number(b));
+  const tolerance = Math.max(MATCH_THRESHOLDS.balanceAbsoluteFloor, MATCH_THRESHOLDS.balanceRelativeTolerance * Math.max(aa, bb));
+  return Math.abs(aa - bb) <= tolerance;
+}
+
+/**
+ * Score independent match signals between a candidate account and an existing
+ * cross-bureau group. last-4 is assumed already matched by the caller.
+ * Returns { score, signals[] } where score is the count of independent hits.
+ */
+function scoreCrossBureauSignals(candidate, group) {
+  const signals = [];
+  const candFurn = normalizeFurnisher(candidate?.furnisher || candidate?.originalCreditor || '');
+  const groupFurn = group.furnisherNorm || '';
+  const nameSim = nameSimilarity(candFurn, groupFurn);
+  if (nameSim >= MATCH_THRESHOLDS.name) signals.push({ id: 'furnisher_name', strength: nameSim });
+
+  const candOrig = normalizeFurnisher(candidate?.originalCreditor || '');
+  const groupOrig = group.originalCreditorNorm || '';
+  if (candOrig && groupOrig && nameSimilarity(candOrig, groupOrig) >= MATCH_THRESHOLDS.name) {
+    signals.push({ id: 'original_creditor', strength: nameSimilarity(candOrig, groupOrig) });
+  }
+
+  // Use any existing variant as the date/balance reference.
+  const ref = Object.values(group.variants || {})[0] || {};
+  if (datesWithinWindow(candidate?.dateOpened, ref.dateOpened)) signals.push({ id: 'date_opened', strength: 1 });
+  if (datesWithinWindow(candidate?.dofd, ref.dofd)) signals.push({ id: 'dofd', strength: 1 });
+  if (balancesClose(candidate?.balance, ref.balance)) signals.push({ id: 'balance', strength: 1 });
+
+  return { score: signals.length, signals, nameSim };
+}
+
+/**
+ * Classify evidence quality for a finding's evidenceRefs.
+ * page_backed: at least one observation has a finite page number
+ * value_only: observations exist but none are page-anchored
+ * insufficient: no usable refs
+ */
+export function evidenceQuality(evidenceRefs) {
+  const refs = Array.isArray(evidenceRefs) ? evidenceRefs : [];
+  if (!refs.length) return 'insufficient';
+  const pageBacked = refs.filter((ref) => Number.isFinite(Number(ref?.page))).length;
+  if (pageBacked > 0) return 'page_backed';
+  const hasValue = refs.some((ref) => ref?.rawValue != null && ref.rawValue !== '');
+  return hasValue ? 'value_only' : 'insufficient';
+}
+
+const SEVERITY_WEIGHT_LOOKUP = SEVERITY_WEIGHT;
+
+/** Weighted priority for Batch-1 selection. Higher = more urgent. */
+export function computePriorityScore(account) {
+  const violations = Array.isArray(account?.violations) ? account.violations : [];
+  const authorized = violations.filter((v) => !v.adjudication || v.adjudication.status === 'authorized');
+  const severityScore = authorized.reduce((sum, v) => sum + (SEVERITY_WEIGHT_LOOKUP[v.severity] || 1), 0);
+  const balance = Math.max(0, Number(account?.balance) || 0);
+  const balanceBand = balance <= 0 ? 0 : Math.min(3, Math.log10(balance + 1));
+  const collectorBonus = account?.type === 'C' ? 1.5 : 1;
+  const crossBureauBonus = authorized.some((v) => String(v.ruleId || '').startsWith('CROSS_BUREAU_')) ? 1.25 : 1;
+  return Number((severityScore * collectorBonus * crossBureauBonus + balanceBand * 0.5).toFixed(3));
+}
+
+/**
+ * Default adjudication on every finding. Staff can later suppress or mark
+ * needs_client_fact; only `authorized` findings flow into the Blueprint and
+ * campaign routing.
+ */
+function withAdjudication(findingObj) {
+  if (findingObj.adjudication) return findingObj;
+  const status = findingObj.outcome === 'FLAG' ? 'authorized' : 'needs_client_fact';
+  return {
+    ...findingObj,
+    adjudication: {
+      status,
+      reason: null,
+      by: null,
+      at: null,
+    },
+  };
+}
+
+/**
+ * Apply staff adjudication to a finding. Pure helper for UI / API layers.
+ * Does not mutate the input.
+ */
+export function applyFindingAdjudication(findingObj, { status, reason = null, by = null, at = null } = {}) {
+  const allowed = new Set(['authorized', 'suppressed', 'needs_client_fact']);
+  if (!allowed.has(status)) throw new Error(`Invalid adjudication status: ${status}`);
+  return {
+    ...findingObj,
+    adjudication: {
+      status,
+      reason: reason || null,
+      by: by || null,
+      at: at || new Date().toISOString(),
+    },
+  };
+}
+
+export function isAuthorizedFinding(findingObj) {
+  if (!findingObj) return false;
+  if (findingObj.outcome && findingObj.outcome !== 'FLAG') return false;
+  const status = findingObj.adjudication?.status;
+  // Backward compatible: missing adjudication on a FLAG is treated as authorized.
+  return !status || status === 'authorized';
+}
+
+/** Client-facing challenge sentence derived from ruleId / field. Deterministic. */
+export function challengeStatementFor(findingObj) {
+  if (!findingObj) return 'Reporting accuracy issue documented in the forensic audit.';
+  const ruleId = String(findingObj.ruleId || '');
+  const field = String(findingObj.field || 'a reported field');
+  if (ruleId.startsWith('CROSS_BUREAU_') && ruleId.endsWith('_MISMATCH')) {
+    return `Bureaus report conflicting values for ${field} on the same matched account.`;
+  }
+  if (ruleId === 'PAID_STATUS_WITH_NONZERO_BALANCE') {
+    return 'A paid or closed status is reported alongside a positive current balance.';
+  }
+  if (ruleId === 'PAID_STATUS_WITH_PAST_DUE') {
+    return 'A paid or closed status is reported alongside a positive amount past due.';
+  }
+  if (ruleId === 'ZERO_BALANCE_WITH_ACTIVE_DELINQUENCY') {
+    return 'A zero balance is reported alongside an active 30+ day delinquency status.';
+  }
+  if (ruleId.includes('DEBT_PURCHASER') || ruleId.includes('COLLECTOR') || ruleId.includes('CONFORMITY')) {
+    return `Debt-purchaser / collector reporting on ${field} does not conform to the cited Metro 2 rule.`;
+  }
+  if (ruleId.includes('SCHEDULED_PAYMENT') || ruleId.includes('SCHEDULED_MONTHLY')) {
+    return 'Scheduled monthly payment amount is inconsistent with the reported portfolio type or account status.';
+  }
+  if (ruleId.includes('DATE_OF_LAST_PAYMENT') || ruleId.includes('LAST_PAYMENT')) {
+    return 'Date of last payment is inconsistent with the furnisher class or account placement timeline.';
+  }
+  if (ruleId.includes('XB') || ruleId.includes('COMPLIANCE_CONDITION')) {
+    return 'Compliance Condition Code reporting requires review against the dispute and investigation timeline.';
+  }
+  return findingObj.issue || `Documented discrepancy on ${field}.`;
+}
+
+function collectCitationDebt(accounts) {
+  const pending = [];
+  for (const account of accounts || []) {
+    for (const f of account.findings || []) {
+      if (f.verificationStatus && String(f.verificationStatus).includes('PENDING')) {
+        pending.push({
+          accountId: account.id,
+          ruleId: f.ruleId,
+          field: f.field,
+          verificationStatus: f.verificationStatus,
+          furnisher: account.furnisher,
+        });
+      }
+    }
+  }
+  return {
+    count: pending.length,
+    items: pending,
+  };
 }
 
 export function coerceBureauExtraction(report, forcedBureau = null) {
@@ -229,22 +431,45 @@ export function mergeCombinedExtractions(parts) {
     .map((key) => mergeBureauExtractions(grouped.get(key), key));
 }
 
-function legacyViolation(finding) {
+function legacyViolation(findingObj) {
   return {
-    ruleId: finding.ruleId,
-    field: finding.field,
-    issue: finding.issue,
-    currentlyReports: finding.currentlyReports,
-    shouldReport: finding.shouldReport,
-    statute: finding.source,
-    severity: finding.severity,
-    evidenceRefs: finding.evidenceRefs,
-    outcome: finding.outcome,
+    ruleId: findingObj.ruleId,
+    field: findingObj.field,
+    issue: findingObj.issue,
+    currentlyReports: findingObj.currentlyReports,
+    shouldReport: findingObj.shouldReport,
+    statute: findingObj.source,
+    severity: findingObj.severity,
+    evidenceRefs: findingObj.evidenceRefs,
+    outcome: findingObj.outcome,
+    evidenceQuality: findingObj.evidenceQuality || evidenceQuality(findingObj.evidenceRefs),
+    verificationStatus: findingObj.verificationStatus || null,
+    adjudication: findingObj.adjudication || null,
+    challengeStatement: findingObj.challengeStatement || challengeStatementFor(findingObj),
   };
 }
 
 function finding(ruleId, data) {
-  return { ruleId, outcome: 'FLAG', ...data };
+  const base = { ruleId, outcome: 'FLAG', ...data };
+  const quality = base.evidenceQuality || evidenceQuality(base.evidenceRefs);
+  const withQuality = { ...base, evidenceQuality: quality };
+  // Soft evidence gate: high-severity cross-bureau mismatches with no
+  // page-backed observations demote to REVIEW_REQUIRED so staff confirm
+  // before the finding becomes an authorized target. Value-level mismatch
+  // is still recorded — only the outcome changes.
+  if (
+    withQuality.outcome === 'FLAG'
+    && withQuality.severity === 'high'
+    && String(ruleId).startsWith('CROSS_BUREAU_')
+    && quality === 'insufficient'
+  ) {
+    withQuality.outcome = 'REVIEW_REQUIRED';
+  }
+  const adjudicated = withAdjudication(withQuality);
+  return {
+    ...adjudicated,
+    challengeStatement: adjudicated.challengeStatement || challengeStatementFor(adjudicated),
+  };
 }
 
 // Every field the extraction schema actually captures per account (see
@@ -498,11 +723,15 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
       const key = counts.get(base) > 1 ? `${base}::ambiguous::${report.bureau}::${index}` : base;
       const four = lastFour(account?.accountNumber || account?.accountNumberMasked || '');
       const norm = normalizeFurnisher(account?.furnisher || account?.originalCreditor || '');
+      const origNorm = normalizeFurnisher(account?.originalCreditor || '');
 
       // Only attempt a cross-bureau fold for a clean (non-collided,
       // non-unresolved) key — an already-ambiguous within-bureau duplicate
       // must stay flagged, not get absorbed into some other bureau's clean
       // single account.
+      // Multi-signal: last-4 is required; then at least multiSignalMin
+      // independent supporting signals (name, original creditor, open date,
+      // DOFD, balance band) before auto-merge.
       let targetKey = key;
       if (four && key === base) {
         let bestKey = null;
@@ -510,14 +739,29 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
         for (const [existingKey, existing] of grouped.entries()) {
           if (existing.last4 !== four) continue;
           if (existing.variants[report.bureau]) continue; // this bureau already has its own account in that group
-          const sim = nameSimilarity(norm, existing.furnisherNorm);
-          if (sim >= CROSS_BUREAU_NAME_MATCH_THRESHOLD && sim > bestScore) { bestScore = sim; bestKey = existingKey; }
+          const { score, nameSim } = scoreCrossBureauSignals(account, existing);
+          // Backward-compatible floor: strong name match alone still counts
+          // as one signal; require multiSignalMin total supporting signals.
+          const effective = score >= MATCH_THRESHOLDS.multiSignalMin
+            || (nameSim >= MATCH_THRESHOLDS.name && score >= 1);
+          if (effective && score > bestScore) {
+            bestScore = score;
+            bestKey = existingKey;
+          }
         }
         if (bestKey) targetKey = bestKey;
       }
 
-      if (!grouped.has(targetKey)) grouped.set(targetKey, { last4: four, furnisherNorm: norm, variants: {} });
+      if (!grouped.has(targetKey)) {
+        grouped.set(targetKey, {
+          last4: four,
+          furnisherNorm: norm,
+          originalCreditorNorm: origNorm,
+          variants: {},
+        });
+      }
       const group = grouped.get(targetKey);
+      if (!group.originalCreditorNorm && origNorm) group.originalCreditorNorm = origNorm;
       group.variants[report.bureau] = preferAccount(group.variants[report.bureau], account);
     });
   });
@@ -544,7 +788,10 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
     const reportTime = reportDate ? new Date(reportDate).getTime() : NaN;
     const ageDays = Number.isFinite(reportTime)
       ? Math.max(0, Math.floor((Date.now() - reportTime) / 86400000)) : null;
-    accounts.push({
+    const flaggedFindings = findings.filter((f) => f.outcome === 'FLAG');
+    const authorizedFindingsList = flaggedFindings.filter(isAuthorizedFinding);
+    const primary = authorizedFindingsList[0] || flaggedFindings[0] || findings[0] || null;
+    const accountRecord = {
       id: key,
       furnisher: representative.furnisher,
       originalCreditor: representative.originalCreditor,
@@ -553,15 +800,18 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
       status: representative.statusText || representative.accountStatus || 'Not displayed',
       balance: Object.values(variants).map((a) => a.balance).find(Number.isFinite) ?? 0,
       bureaus: Object.keys(variants).map((b) => BUREAU_CODES[b]),
-      violations: findings.filter((f) => f.outcome === 'FLAG').map(legacyViolation),
+      // violations = authorized FLAGs only (adjudication-aware)
+      violations: authorizedFindingsList.map(legacyViolation),
       findings,
-      primaryViolation: findings[0]?.issue || '',
+      primaryViolation: primary?.issue || '',
+      primaryChallengeStatement: primary ? challengeStatementFor(primary) : '',
       addressStatus: representative.furnisherAddress ? 'CONFIRM' : 'PENDING',
       furnisherAddress: representative.furnisherAddress || null,
       batch: 2,
-      strategy: findings.length
-        ? `Use only the ${findings.length} deterministic finding${findings.length === 1 ? '' : 's'} identified by rule ID and preserve the cited report evidence.`
-        : 'No deterministic accuracy finding was established from displayed fields; staff review is required before targeting this account.',
+      priorityScore: 0, // filled after object is complete
+      strategy: authorizedFindingsList.length
+        ? `Use only the ${authorizedFindingsList.length} authorized deterministic finding${authorizedFindingsList.length === 1 ? '' : 's'} identified by rule ID and preserve the cited report evidence.`
+        : 'No authorized deterministic accuracy finding was established from displayed fields; staff review is required before targeting this account.',
       // Field 17B was never actually extracted until now — this always fell
       // back to Field 17A's text (statusText/accountStatus), silently
       // relabeling Account Status as Payment Rating. Prefer the real
@@ -576,15 +826,21 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
       timingChecks: {
         reportDate,
         ageDays,
-        currentForGeneration: ageDays !== null && ageDays <= 45,
-        requiredAction: ageDays === null || ageDays > 45 ? 'FRESH_REPORT_REQUIRED' : null,
+        maxAgeDays: REPORT_MAX_AGE_DAYS,
+        currentForGeneration: ageDays !== null && ageDays <= REPORT_MAX_AGE_DAYS,
+        requiredAction: ageDays === null || ageDays > REPORT_MAX_AGE_DAYS ? 'FRESH_REPORT_REQUIRED' : null,
       },
-      authorizedFindingIds: findings.filter((entry) => entry.outcome === 'FLAG').map((entry) => entry.ruleId),
-    });
+      authorizedFindingIds: authorizedFindingsList.map((entry) => entry.ruleId),
+    };
+    accountRecord.priorityScore = computePriorityScore(accountRecord);
+    accounts.push(accountRecord);
   }
-  accounts.sort((a, b) => b.violations.length - a.violations.length);
+  // Rank by weighted priority (severity × collector/cross-bureau bonuses × balance band),
+  // not raw violation count.
+  accounts.sort((a, b) => (b.priorityScore - a.priorityScore) || (b.violations.length - a.violations.length));
   accounts.filter((a) => a.violations.length).forEach((account, index) => { account.batch = index < 5 ? 1 : 2; });
   const totalViolations = accounts.reduce((sum, account) => sum + account.violations.length, 0);
+  const citationDebt = collectCitationDebt(accounts);
   const reportClock = reportDate ? new Date(reportDate) : new Date();
   const inquiries = reports.flatMap((report) => (report.inquiries || []).map((inquiry) => {
     const linked = accounts.find((account) => normalizeFurnisher(account.furnisher) === normalizeFurnisher(inquiry.furnisher));
@@ -618,6 +874,7 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
     accountsScanned: accounts.length,
     accountsTargeted: accounts.filter((a) => a.violations.length).length,
     totalViolations,
+    citationDebt,
     accounts,
     inquiries,
     personalInfo: mergePersonalInfo(reports),
