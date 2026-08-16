@@ -23,6 +23,23 @@ const BUREAU_KEYS = ['equifax', 'experian', 'transunion'];
 const BUREAU_CODES = { equifax: 'EQ', experian: 'EXP', transunion: 'TU' };
 const PAID_STATUSES = new Set(['13', '61', '62', '63', '64', '65']);
 const COLLECTOR_ACCOUNT_TYPES = new Set(['0C', '48', '77']);
+// Metro 2 Account Status codes for an active missed-payment delinquency
+// stage (METRO2_STATUS_CODES 71/78/80/82/83/84 — "30-59" through "180+ days
+// past the due date"). Deliberately excludes '11' ("0-29 days past due" —
+// current, not delinquent).
+const DELINQUENCY_STATUS_CODES = new Set(['71', '78', '80', '82', '83', '84']);
+// Real reports almost never transcribe the raw two-digit code — they show
+// free text like "120 days late" or "90 days past due". Match that
+// phrasing directly rather than requiring the literal code, same reasoning
+// as everywhere else in this file that free text won't equal a Metro 2
+// code verbatim. Requires >=30 days so "0-29 days" (current) never matches.
+function isActiveDelinquencyStatus(status) {
+  const s = upper(status);
+  if (!s) return false;
+  if (DELINQUENCY_STATUS_CODES.has(s)) return true;
+  const match = s.match(/\b(\d{2,3})\+?\s*(?:-\s*\d{1,3})?\s*DAYS?\b[^A-Z]{0,20}(PAST\s*DUE|LATE|DELINQUENT)/);
+  return !!match && Number(match[1]) >= 30;
+}
 
 function bureauKey(value) {
   const v = String(value || '').toLowerCase().replace(/[^a-z]/g, '');
@@ -376,6 +393,16 @@ function perVariantFindings(variants) {
         shouldReport: 'The status and amount past due must be mutually consistent',
         source: 'CRRG Base Segment Fields 17A and 22 consistency rule', severity: 'high',
         evidenceRefs: [...refs('accountStatus'), ...refs('pastDue')],
+      }));
+    }
+    if (Number(account.balance) === 0 && isActiveDelinquencyStatus(account.accountStatus)) {
+      out.push(finding('ZERO_BALANCE_WITH_ACTIVE_DELINQUENCY', {
+        field: `Fields 17A/21 (${METRO2_FIELDS.ACCOUNT_STATUS.name} / ${METRO2_FIELDS.CURRENT_BALANCE.name})`,
+        issue: 'A zero current balance is reported alongside an active missed-payment delinquency status. A $0 balance means nothing is owed, which cannot coexist with an active 30+ day delinquency stage.',
+        currentlyReports: `${BUREAU_CODES[bureau]}: status ${status}; balance $0`,
+        shouldReport: 'The status and balance must be mutually consistent',
+        source: 'CRRG Base Segment Fields 17A and 21 consistency rule', severity: 'high',
+        evidenceRefs: [...refs('accountStatus'), ...refs('balance')],
       }));
     }
 
