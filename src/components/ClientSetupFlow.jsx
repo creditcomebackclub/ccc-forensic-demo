@@ -314,7 +314,10 @@ function ClientOnboardingModal({ session, onComplete }) {
       const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('user_id', userId).single();
       const signedAt = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
       const clientFullName = (cp && cp.full_name) || session.user.email;
-      const attorneySigDataUrl = await loadAttorneySignatureDataUrl();
+      // Attorney signature is applied server-side in portal-enrollment-complete
+      // (service-role storage read). Calling loadAttorneySignatureDataUrl in the
+      // browser throws "Can't find variable" on Safari/iOS.
+      const attorneySignatureDataUrl = null;
       const attorneySigImg = attorneySigDataUrl
         ? '<img src="' + attorneySigDataUrl + '" style="max-height:56px;max-width:220px;" />'
         : '<span style="font-size:14px;font-weight:bold;">Christopher Holland</span>';
