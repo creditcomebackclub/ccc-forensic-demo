@@ -418,79 +418,13 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
 
       <Section title="Portal Access" span2>
         <div className="flex items-center gap-3 flex-wrap mt-1">
-          <OnboardingButton client={client} onChanged={onChanged} />
+          {(client.portalOnboarded || client.onboardingComplete) && (
+            <span className="text-[11px] px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">✓ Portal Active</span>
+          )}
           <ImpersonateButton client={client} />
         </div>
       </Section>
 
-    </div>
-  );
-}
-
-function OnboardingButton({ client, onChanged }) {
-  const [sending, setSending] = React.useState(false);
-  const [sent, setSent] = React.useState(false);
-  const [err, setErr] = React.useState(null);
-  const handleSend = async () => {
-    if (!client.email) { setErr('Add client email first.'); return; }
-    setSending(true);
-    setErr(null);
-    try {
-      const { supabase } = await import('../utils/supabase.js');
-      const normEmail = client.email.trim().toLowerCase();
-
-      // Provision the auth user + linked client_profiles row server-side
-      // (service role) BEFORE sending the magic link. Without this, first
-      // login can find a half-created account and misroute the client.
-      const { data: { session: adminSession } } = await supabase.auth.getSession();
-      const adminToken = adminSession?.access_token;
-      const authHeaders = {
-        'Content-Type': 'application/json',
-        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
-      };
-
-      const provRes = await fetch('/.netlify/functions/provision-user', {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({ email: normEmail, fullName: client.name, kind: 'client', clientId: client.id }),
-      });
-      if (!provRes.ok) {
-        const out = await provRes.json().catch(() => ({}));
-        throw new Error(out.error || 'Could not provision client account');
-      }
-
-      setSent(true);
-      setTimeout(() => setSent(false), 4000);
-    } catch (e) {
-      setErr(e.message || 'Could not send magic link');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div>
-      {(client.portalOnboarded || client.onboardingComplete) ? (
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">✓ Portal Active</span>
-          <button onClick={handleSend} disabled={sending}
-            className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-navy">
-            Resend Invite
-          </button>
-        </div>
-      ) : (
-        <div>
-          <button onClick={handleSend} disabled={sending || !client.email || !client.lpoaSigned}
-            className="flex items-center gap-2 px-4 py-2 text-[12px] uppercase tracking-wider rounded-lg transition-colors"
-            style={{ background: sending || !client.email || !client.lpoaSigned ? '#B5BBC9' : T.navy, color: T.gold, cursor: !client.email || !client.lpoaSigned ? 'not-allowed' : 'pointer' }}>
-            {sending ? 'Sending…' : sent ? '✓ Invite Sent!' : 'Send Portal Invite'}
-          </button>
-          {!client.email && <div className="text-[11px] text-amber-600 mt-1">Add client email first.</div>}
-          {!client.lpoaSigned && <div className="text-[11px] text-amber-600 mt-1">Complete the signed agreement packet first; it automatically sends the portal invitation.</div>}
-          {err && <div className="text-[11px] text-red-600 mt-1">{err}</div>}
-          {sent && <div className="text-[11px] text-green-600 mt-1">Portal invite sent to {client.email}. They set a password and complete enrollment (ID, address, LPOA) in the portal.</div>}
-        </div>
-      )}
     </div>
   );
 }

@@ -37,6 +37,13 @@ function reportDateLabel(value) {
 
 function normalizeAccount(account, index) {
   const violations = Array.isArray(account?.violations) ? account.violations : [];
+  const primaryChallenge = cleanText(
+    account?.primaryChallengeStatement
+      || violations[0]?.challengeStatement
+      || account?.primaryViolation
+      || violations[0]?.issue
+      || 'Reporting accuracy issue documented in the forensic audit.',
+  );
   return {
     id: cleanText(account?.id, `account-${index + 1}`),
     furnisher: cleanText(account?.furnisher, 'Account under review'),
@@ -48,16 +55,24 @@ function normalizeAccount(account, index) {
     bureaus: Array.isArray(account?.bureaus) ? account.bureaus : [],
     bureauLabel: bureauLabels(account?.bureaus) || 'Bureau not identified',
     batch: Number(account?.batch) === 1 ? 1 : 2,
+    priorityScore: finiteNumber(account?.priorityScore),
     violations: violations.map((violation) => ({
       field: cleanText(violation?.field, 'Reporting accuracy'),
       issue: cleanText(violation?.issue, 'The reporting requires documented review.'),
+      challengeStatement: cleanText(
+        violation?.challengeStatement,
+        violation?.issue || 'The reporting requires documented review.',
+      ),
       statute: cleanText(violation?.statute),
       severity: cleanText(violation?.severity, 'med'),
+      evidenceQuality: cleanText(violation?.evidenceQuality, ''),
     })),
     primaryViolation: cleanText(
       account?.primaryViolation,
       violations[0]?.issue || 'Reporting accuracy issue documented in the forensic audit.',
     ),
+    // Rule-aware client-facing challenge language (still fully deterministic).
+    primaryChallengeStatement: primaryChallenge,
     strategy: cleanText(
       account?.strategy,
       'Challenge the documented reporting discrepancy with account-specific evidence.',
@@ -68,18 +83,25 @@ function normalizeAccount(account, index) {
 /**
  * Presentation-only mapping from the reviewed forensic audit to the Recovery
  * Blueprint. This function deliberately contains no credit-analysis logic:
- * it preserves Claude's account order, batches, violations, and strategy.
+ * it preserves the deterministic audit's account order, batches, violations,
+ * priority scores, and challenge statements.
  */
 export function buildRecoveryBlueprintModel(audit, options = {}) {
   if (!audit || typeof audit !== 'object') throw new Error('A saved forensic audit is required.');
 
-  const accounts = (Array.isArray(audit.accounts) ? audit.accounts : []).map(normalizeAccount);
+  let accounts = (Array.isArray(audit.accounts) ? audit.accounts : []).map(normalizeAccount);
+  // Prefer the audit's already-ranked order (priorityScore). If scores are
+  // present, re-sort defensively so opening move stays consistent.
+  if (accounts.some((a) => a.priorityScore > 0)) {
+    accounts = [...accounts].sort((a, b) => (b.priorityScore - a.priorityScore) || (b.violations.length - a.violations.length));
+  }
   const targets = accounts.filter((account) => account.violations.length > 0);
   const effectiveTargets = targets.length ? targets : accounts;
   const batch1Accounts = accounts.filter((account) => account.batch === 1);
   const openingMove = batch1Accounts[0] || effectiveTargets[0] || null;
   const violationCount = accounts.reduce((total, account) => total + account.violations.length, 0);
   const allBureaus = unique(accounts.flatMap((account) => account.bureaus));
+  const citationDebtCount = Math.max(0, finiteNumber(audit.citationDebt?.count));
 
   const clientName = cleanText(audit.client?.name, 'Client');
   const reportDate = cleanText(audit.client?.reportDate || options.reportDate);
@@ -111,6 +133,12 @@ export function buildRecoveryBlueprintModel(audit, options = {}) {
       targetedNegativeBalance: effectiveTargets.reduce((sum, account) => sum + account.balance, 0),
       batch1StrikeZone: batch1Accounts.reduce((sum, account) => sum + account.balance, 0),
       bureauCoverage: allBureaus.length || Object.values(audit.scores || {}).filter((score) => score != null).length,
+      citationDebtCount,
+    },
+    citationDebt: {
+      count: citationDebtCount,
+      // Staff-facing only; never render raw pending items to the client PDF.
+      items: Array.isArray(audit.citationDebt?.items) ? audit.citationDebt.items : [],
     },
     openingMove,
     batch1Accounts,

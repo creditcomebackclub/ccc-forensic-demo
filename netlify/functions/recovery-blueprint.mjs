@@ -144,13 +144,23 @@ export const handler = async (event) => {
       const nextAudit = { ...auditRow.audit, accounts: (auditRow.audit.accounts || []).map((account) => {
         const correction = corrections.get(account.id);
         if (!correction) return account;
-        return {
+        const next = {
           ...account,
           balance: Number.isFinite(Number(correction.balance)) ? Number(correction.balance) : account.balance,
           status: String(correction.status || account.status || '').trim(),
           accountNumberMasked: String(correction.accountNumberMasked || account.accountNumberMasked || '').trim(),
           originalCreditor: correction.originalCreditor == null ? account.originalCreditor : String(correction.originalCreditor).trim() || null,
         };
+        // Staff adjudication of deterministic findings (Authorize / Suppress / Needs fact)
+        if (Array.isArray(correction.findings)) next.findings = correction.findings;
+        if (Array.isArray(correction.violations)) next.violations = correction.violations;
+        if (Array.isArray(correction.authorizedFindingIds)) next.authorizedFindingIds = correction.authorizedFindingIds;
+        if (correction.primaryViolation != null) next.primaryViolation = String(correction.primaryViolation);
+        if (correction.primaryChallengeStatement != null) next.primaryChallengeStatement = String(correction.primaryChallengeStatement);
+        if (correction.strategy != null) next.strategy = String(correction.strategy);
+        if (Number.isFinite(Number(correction.priorityScore))) next.priorityScore = Number(correction.priorityScore);
+        if (correction.batch === 1 || correction.batch === 2) next.batch = correction.batch;
+        return next;
       }) };
       const { error } = await db.from('audits').update({ audit: nextAudit }).eq('id', auditRow.id).eq('user_id', auditRow.user_id);
       if (error) throw error;

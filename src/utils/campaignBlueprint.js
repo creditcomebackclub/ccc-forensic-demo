@@ -1,4 +1,5 @@
 import { buildCleanupRouteGroups, getCampaignItemBureaus } from './campaignItems.js';
+import { isAuthorizedFinding, REPORT_MAX_AGE_DAYS } from './deterministicAudit.js';
 
 export const PACKET_MAX_ACCOUNTS = 5;
 export const ROUTE_CLASSIFICATIONS = Object.freeze({
@@ -16,13 +17,14 @@ const asTime = (value) => {
   return Number.isFinite(time) ? time : null;
 };
 
-export function auditFreshness(reportDate, { now = new Date(), maxAgeDays = 45 } = {}) {
+export function auditFreshness(reportDate, { now = new Date(), maxAgeDays = REPORT_MAX_AGE_DAYS } = {}) {
   const reportTime = asTime(reportDate);
   if (reportTime === null) return { current: false, ageDays: null, reason: 'The frozen audit has no reliable report date.' };
   const ageDays = Math.max(0, Math.floor((new Date(now).getTime() - reportTime) / 86400000));
   return {
     current: ageDays <= maxAgeDays,
     ageDays,
+    maxAgeDays,
     reason: ageDays <= maxAgeDays ? null : `The frozen report is ${ageDays} days old; refresh it before generating.`,
   };
 }
@@ -30,8 +32,13 @@ export function auditFreshness(reportDate, { now = new Date(), maxAgeDays = 45 }
 export function authorizedFindings(item) {
   const snapshot = item?.snapshot || {};
   const findings = Array.isArray(snapshot.findings) ? snapshot.findings : [];
-  if (findings.length) return findings.filter((finding) => finding?.outcome === 'FLAG');
-  return (snapshot.violations || []).filter((finding) => !finding?.outcome || finding.outcome === 'FLAG');
+  if (findings.length) {
+    return findings.filter((finding) => isAuthorizedFinding(finding));
+  }
+  return (snapshot.violations || []).filter((finding) => isAuthorizedFinding({
+    ...finding,
+    outcome: finding?.outcome || 'FLAG',
+  }));
 }
 
 const hasClientFactGate = (item) => (item?.snapshot?.findings || []).some((finding) =>
