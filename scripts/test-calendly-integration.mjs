@@ -8,6 +8,7 @@ const {
   consultationTags,
   ensureSubscription,
   isConsultationEvent,
+  isVipCallEvent,
   isStaleBookingEvent,
   normalizeWebhookEvent,
   webhookEventKey,
@@ -17,7 +18,8 @@ const { createGuideDownloadToken, verifyGuideDownloadToken } = require('../netli
 const { _test: { intakeLeadFields, normalizeIntent } } = require('../netlify/functions/public-intake.cjs');
 const { handler: guideDownloadHandler } = require('../netlify/functions/guide-download.cjs');
 const { bookedEmail } = require('../netlify/functions/_consultationBooking.cjs');
-const { handler: calendlyWebhookHandler, _test: { bookingPatch } } = require('../netlify/functions/calendly-webhook.cjs');
+const { handler: calendlyWebhookHandler, _test: { bookingPatch, vipCallBookingPatch } } = require('../netlify/functions/calendly-webhook.cjs');
+const { _test: { vipCallReminderHtml } } = require('../netlify/functions/daily-cron.cjs');
 
 let failed = 0;
 function assert(condition, message) {
@@ -90,6 +92,42 @@ assert(isStaleBookingEvent({ calendly_booking_updated_at: '2026-08-11T02:00:00Z'
 assert(!isStaleBookingEvent({ calendly_booking_updated_at: '2026-08-11T01:00:00Z' }, '2026-08-11T02:00:00Z'), 'accepts a newer booking event');
 assert(isConsultationEvent({ name: 'Credit Repair Consultation - Credit Comeback Club' }), 'accepts the configured consultation event family');
 assert(!isConsultationEvent({ name: 'Internal Team Meeting' }), 'ignores unrelated Calendly event types');
+assert(isVipCallEvent({ name: 'VIP Monthly 1-on-1 Call' }), 'accepts the configured VIP call event family');
+assert(!isVipCallEvent({ name: 'Credit Repair Consultation' }), 'does not treat the intake consultation as a VIP call');
+assert(!isConsultationEvent({ name: 'VIP Monthly 1-on-1 Call' }), 'does not treat a VIP call as the intake consultation');
+
+const freshVipPatch = vipCallBookingPatch(
+  { id: 'client-1', is_vip: true, vip_call_status: null, vip_call_invitee_uri: null, vip_call_updated_at: null },
+  {
+    event: 'invitee.created',
+    occurredAt: '2026-08-11T01:00:00Z',
+    inviteeUri: payload.payload.uri,
+    eventUri: payload.payload.event,
+    payload: {},
+    invitee: {},
+    scheduledEvent: { start_time: '2026-08-19T18:00:00Z' },
+  }
+);
+assert(freshVipPatch?.vip_call_status === 'scheduled', 'a new VIP call booking is recorded as scheduled');
+assert(freshVipPatch?.vip_call_scheduled_at === '2026-08-19T18:00:00Z', 'a new VIP call booking stores the Calendly start time');
+
+const staleVipPatch = vipCallBookingPatch(
+  { id: 'client-1', is_vip: true, vip_call_status: 'scheduled', vip_call_invitee_uri: 'https://api.calendly.com/scheduled_events/newer/invitees/newer', vip_call_updated_at: '2026-08-11T02:00:00Z' },
+  {
+    event: 'invitee.canceled',
+    occurredAt: '2026-08-11T01:00:00Z',
+    inviteeUri: payload.payload.uri,
+    eventUri: payload.payload.event,
+    payload: {},
+    invitee: {},
+    scheduledEvent: { start_time: '2026-08-19T18:00:00Z' },
+  }
+);
+assert(staleVipPatch === null, 'an out-of-order cancellation for a different invitee does not overwrite a newer VIP booking');
+
+const vipReminderHtml = vipCallReminderHtml({ name: 'Person' });
+assert(vipReminderHtml.includes('creditcomebackclub/monthly-vip-call'), 'VIP call reminder email links to the monthly VIP Calendly event');
+assert(vipReminderHtml.includes('Person'), 'VIP call reminder email greets the client by name');
 
 const completedReschedulePatch = bookingPatch(
   {

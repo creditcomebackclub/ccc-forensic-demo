@@ -26,6 +26,7 @@
     "test:consolidated-packets": "node scripts/test-consolidated-packets.mjs",
     "test:client-campaigns": "node scripts/test-client-campaigns.mjs",
     "test:calendly": "node scripts/test-calendly-integration.mjs",
+    "test:vip-call-reminder": "node scripts/test-vip-call-reminder.mjs",
     "test:claude-hardening": "node scripts/test-claude-hardening.mjs",
     "test:deterministic-pipeline": "node scripts/test-deterministic-pipeline.mjs"
   },

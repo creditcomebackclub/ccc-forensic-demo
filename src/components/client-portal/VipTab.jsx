@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Star, Calendar, TrendingUp, ExternalLink } from 'lucide-react';
 
 const CALENDLY_CSS_URL = 'https://assets.calendly.com/assets/external/widget.css';
@@ -6,6 +6,8 @@ const CALENDLY_JS_URL = 'https://assets.calendly.com/assets/external/widget.js';
 const CALENDLY_VIP_URL = 'https://calendly.com/creditcomebackclub/monthly-vip-call';
 
 export default function VipTab({ isVip }) {
+  const calendlyMountRef = useRef(null);
+
   useEffect(() => {
     if (!isVip) return;
 
@@ -16,13 +18,11 @@ export default function VipTab({ isVip }) {
       document.head.appendChild(link);
     }
 
-    const initBadge = () => {
-      window.Calendly?.initBadgeWidget({
-        url: CALENDLY_VIP_URL,
-        text: 'Schedule Your Monthly 1-on-1 With Chris',
-        color: '#0069ff',
-        textColor: '#ffffff',
-        branding: false,
+    const initInline = () => {
+      window.Calendly?.initInlineWidget({
+        url: `${CALENDLY_VIP_URL}?hide_gdpr_banner=1`,
+        parentElement: calendlyMountRef.current,
+        prefill: {},
       });
     };
 
@@ -34,13 +34,8 @@ export default function VipTab({ isVip }) {
       document.body.appendChild(script);
     }
 
-    if (window.Calendly) initBadge();
-    else script.addEventListener('load', initBadge, { once: true });
-
-    return () => {
-      document.querySelector('.calendly-badge-widget')?.remove();
-      document.querySelector('.calendly-overlay')?.remove();
-    };
+    if (window.Calendly) initInline();
+    else script.addEventListener('load', initInline, { once: true });
   }, [isVip]);
 
   if (!isVip) return null;
@@ -67,7 +62,7 @@ export default function VipTab({ isVip }) {
           <span className="text-xs font-bold uppercase tracking-[0.06em] text-slate-900">Monthly Strategy Call</span>
         </div>
         <p className="text-sm text-gray-600 mb-4 leading-relaxed">Book your 30-minute strategy call with Christopher Holland. Review your campaign, discuss next steps, and map your path to business credit.</p>
-        <p className="text-xs text-gray-400">Use the "Schedule Your Monthly 1-on-1 With Chris" badge in the corner of your screen to pick a time.</p>
+        <div ref={calendlyMountRef} style={{ minWidth: 320, height: 700 }} />
       </div>
 
       <div className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow">

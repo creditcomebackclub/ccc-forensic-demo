@@ -150,6 +150,12 @@ function isConsultationEvent(scheduledEvent) {
   return Boolean(expectedPrefix && actualName.startsWith(expectedPrefix));
 }
 
+function isVipCallEvent(scheduledEvent) {
+  const expectedPrefix = String(process.env.CALENDLY_VIP_EVENT_NAME_PREFIX || 'VIP').trim().toLowerCase();
+  const actualName = String(scheduledEvent?.name || '').trim().toLowerCase();
+  return Boolean(expectedPrefix && actualName.startsWith(expectedPrefix));
+}
+
 function webhookUrl() {
   const explicit = String(process.env.CALENDLY_WEBHOOK_URL || '').trim();
   if (explicit) {
@@ -215,6 +221,7 @@ module.exports = {
   ensureSubscription,
   isActiveSubscription,
   isConsultationEvent,
+  isVipCallEvent,
   isStaleBookingEvent,
   normalizeEmail,
   normalizeWebhookEvent,
