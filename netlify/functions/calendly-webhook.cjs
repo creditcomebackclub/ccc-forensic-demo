@@ -105,7 +105,7 @@ async function findVipCallClient(email, supabaseUrl, serviceKey) {
   const rows = await dbRequest(
     supabaseUrl,
     serviceKey,
-    '/rest/v1/clients?email=eq.' + encodeURIComponent(email) + '&is_vip=eq.true&select=' + fields + '&limit=1'
+    '/rest/v1/clients?email=eq.' + encodeURIComponent(email) + '&is_vip=eq.true&select=' + fields + '&order=created_at.desc.nullslast,id.asc'
   );
   return Array.isArray(rows) && rows[0] ? rows[0] : null;
 }

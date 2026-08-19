@@ -10,9 +10,10 @@ function assert(condition, message) {
   else { failed += 1; console.error('FAIL:', message); }
 }
 
-assert(!vipCallAlreadyBookedThisMonth(null, '2026-08'), 'a client with no VIP call booking is still reminder-eligible');
-assert(!vipCallAlreadyBookedThisMonth('2026-07-15T18:00:00Z', '2026-08'), 'a booking from a prior month does not suppress this month\'s reminder');
-assert(vipCallAlreadyBookedThisMonth('2026-08-01T18:00:00Z', '2026-08'), 'a booking already scheduled this month suppresses the reminder');
+assert(!vipCallAlreadyBookedThisMonth(null, null, '2026-08'), 'a client with no VIP call booking is still reminder-eligible');
+assert(!vipCallAlreadyBookedThisMonth('2026-07-15T18:00:00Z', 'scheduled', '2026-08'), 'a booking from a prior month does not suppress this month\'s reminder');
+assert(vipCallAlreadyBookedThisMonth('2026-08-01T18:00:00Z', 'scheduled', '2026-08'), 'a booking already scheduled this month suppresses the reminder');
+assert(!vipCallAlreadyBookedThisMonth('2026-08-01T18:00:00Z', 'canceled', '2026-08'), 'a canceled booking this month does not suppress the reminder, even though the stale scheduled_at is still this month');
 
 const html = vipCallReminderHtml({ name: 'Jordan' });
 assert(html.includes('creditcomebackclub/monthly-vip-call'), 'reminder email links to the VIP Calendly booking page');

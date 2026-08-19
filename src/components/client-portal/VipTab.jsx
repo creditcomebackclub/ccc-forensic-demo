@@ -19,6 +19,7 @@ export default function VipTab({ isVip }) {
     }
 
     const initInline = () => {
+      if (calendlyMountRef.current) calendlyMountRef.current.replaceChildren();
       window.Calendly?.initInlineWidget({
         url: `${CALENDLY_VIP_URL}?hide_gdpr_banner=1`,
         parentElement: calendlyMountRef.current,

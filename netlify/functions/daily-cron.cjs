@@ -347,7 +347,8 @@ function billingNoticeHtml({ name, eyebrow, paragraphs, tone, ctaLabel }) {
 // browser and this one runs as a CommonJS Netlify function.
 const CALENDLY_VIP_URL = 'https://calendly.com/creditcomebackclub/monthly-vip-call';
 
-function vipCallAlreadyBookedThisMonth(vipCallScheduledAt, monthKey) {
+function vipCallAlreadyBookedThisMonth(vipCallScheduledAt, vipCallStatus, monthKey) {
+  if (vipCallStatus === 'canceled') return false;
   return Boolean(vipCallScheduledAt && vipCallScheduledAt.slice(0, 7) === monthKey);
 }
 
@@ -878,14 +879,14 @@ exports.handler = async () => {
       const vipClients = await listAllRows(
         '/rest/v1/clients?is_vip=eq.true&status=neq.lead'
           + '&or=(billing_status.eq.Active,billing_status.is.null)'
-          + '&select=id,name,email,vip_call_scheduled_at&order=id.asc',
+          + '&select=id,name,email,vip_call_scheduled_at,vip_call_status&order=id.asc',
         supabaseUrl,
         supabaseKey
       );
 
       for (const c of vipClients) {
         if (!c.email) continue;
-        if (vipCallAlreadyBookedThisMonth(c.vip_call_scheduled_at, monthKey)) continue;
+        if (vipCallAlreadyBookedThisMonth(c.vip_call_scheduled_at, c.vip_call_status, monthKey)) continue;
         const firstName = (c.name || '').split(' ')[0] || c.name || 'there';
         const result = await sendAutomatedEmail({
           eventKey: `vip_call_reminder:${c.id}:${monthKey}`,
