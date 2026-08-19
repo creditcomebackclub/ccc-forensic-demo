@@ -766,6 +766,18 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [lifecycleFilter, setLifecycleFilter] = useState(null);
   const [showAddLead, setShowAddLead] = useState(false);
   const [convertingLead, setConvertingLead] = useState(null);
+  // Affiliate roster for Lead card / Add Lead dropdowns. `clients.referred_by`
+  // is a UUID pointing at affiliates.id; the Lead card needs the full list so
+  // staff can see which affiliate a lead came in under (or reassign when a
+  // lead was captured with a free-text source but really came from a partner).
+  const [affiliates, setAffiliates] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    supabase.from('affiliates').select('id, name, company').order('name').then(({ data }) => {
+      if (!cancelled && data) setAffiliates(data);
+    });
+    return () => { cancelled = true; };
+  }, []);
   const clientRefs = useRef({});
   const listRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
@@ -1061,6 +1073,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   const leadModal = showAddLead ? (
     <AddLeadModal
+      affiliates={affiliates}
       onClose={() => setShowAddLead(false)}
       onCreated={() => { setShowAddLead(false); load(); }}
     />
@@ -1587,6 +1600,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           leadStage={leadStage}
           isLeadRecent={isLeadRecent}
           isAdmin={isAdmin}
+          affiliates={affiliates}
           convertingId={convertingLead}
           onOpenSummaryAudit={openAuditFromSummary}
           onChanged={load}
@@ -1892,11 +1906,12 @@ function CreateClientModal({ onClose, onCreated }) {
     </div>
   );
 }
-function AddLeadModal({ onClose, onCreated }) {
+function AddLeadModal({ affiliates = [], onClose, onCreated }) {
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [phone, setPhone] = React.useState('');
   const [source, setSource] = React.useState('');
+  const [referredBy, setReferredBy] = React.useState('');
   const [notes, setNotes] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -1906,7 +1921,7 @@ function AddLeadModal({ onClose, onCreated }) {
     setLoading(true);
     setError(null);
     try {
-      await createLead({ name, email, phone, source, notes });
+      await createLead({ name, email, phone, source, notes, referredBy: referredBy || null });
       onCreated();
     } catch (e) {
       setError(e.message || 'Could not create lead');
@@ -1942,13 +1957,20 @@ function AddLeadModal({ onClose, onCreated }) {
               className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy" />
           </div>
           <div>
-            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Source</label>
+            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Affiliate Partner</label>
+            <select value={referredBy} onChange={e => setReferredBy(e.target.value)}
+              className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy bg-white">
+              <option value="">No affiliate partner</option>
+              {affiliates.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}{a.company ? ' · ' + a.company : ''}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Marketing Source</label>
             <select value={source} onChange={e => setSource(e.target.value)}
               className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy bg-white">
               <option value="">Select source…</option>
-              <option value="Razu Referral">Razu Referral</option>
-              <option value="Swiftedly">Swiftedly</option>
-              <option value="Fundhub">Fundhub</option>
               <option value="Facebook">Facebook</option>
               <option value="Website">Website</option>
               <option value="Word of Mouth">Word of Mouth</option>

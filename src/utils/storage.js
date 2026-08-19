@@ -44,13 +44,14 @@ export async function updateClientEmail(clientName, email, clientId) {
   if (error) throw error;
 }
 
-export async function updateLeadInfo(clientName, { email, phone, source, notes }, clientId) {
+export async function updateLeadInfo(clientName, { email, phone, source, notes, referredBy }, clientId) {
   const userId = await getUserId();
   const patch = clientId ? { id: clientId, user_id: userId, name: clientName } : { user_id: userId, name: clientName };
   if (email !== undefined) patch.email = email || null;
   if (phone !== undefined) patch.lead_phone = phone || null;
   if (source !== undefined) patch.lead_source = source || null;
   if (notes !== undefined) patch.lead_notes = notes || null;
+  if (referredBy !== undefined) patch.referred_by = referredBy || null;
   const { error } = await supabase.from('clients').upsert(patch, clientId ? { onConflict: 'id' } : { onConflict: 'user_id,name' });
   if (error) throw error;
 }
@@ -396,6 +397,7 @@ function normalizeClientSummary(row) {
     billingTier: row.billing_tier || null,
     exitReason: row.exit_reason || null,
     statusChangedAt: row.status_changed_at || null,
+    referredBy: row.referred_by || null,
   };
 }
 
@@ -730,7 +732,7 @@ export async function deleteClient(clientName, clientId) {
   if (c.error) throw c.error;
 }
 
-export async function createLead({ name, email, phone, source, notes }) {
+export async function createLead({ name, email, phone, source, notes, referredBy }) {
   const userId = await getUserId();
   const { error } = await supabase.from('clients').insert({
     user_id: userId,
@@ -739,6 +741,7 @@ export async function createLead({ name, email, phone, source, notes }) {
     lead_phone: phone ? phone.trim() : null,
     lead_source: source || null,
     lead_notes: notes || null,
+    referred_by: referredBy || null,
     status: 'lead',
     lead_created_at: new Date().toISOString(),
   });
