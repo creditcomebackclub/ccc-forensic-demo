@@ -17,6 +17,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, UserPlus, MoreHorizontal, ChevronRight, FileText } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { updateLeadInfo, updateLeadStage } from '../utils/storage';
+import { affiliateLabel } from '../utils/affiliate';
 
 const T = {
   navy: '#1B2A4A',
@@ -133,6 +134,7 @@ function LeadTile({
   isLeadRecent,
   isAdmin,
   affiliates = [],
+  affiliatesError = false,
   converting,
   onConvert,
   onDelete,
@@ -158,8 +160,13 @@ function LeadTile({
   // rather than silently omitted.
   const referringAffiliate = lead.referredBy ? affiliates.find((a) => a.id === lead.referredBy) : null;
   const referringAffiliateLabel = referringAffiliate
-    ? (referringAffiliate.name + (referringAffiliate.company ? ' · ' + referringAffiliate.company : ''))
+    ? affiliateLabel(referringAffiliate)
     : (lead.referredBy ? 'Affiliate ' + String(lead.referredBy).slice(0, 8) : null);
+  // Selecting a stored referredByVal that no longer maps to an affiliates
+  // row would silently fall back to the first option ("No affiliate
+  // partner") and contradict the badge above. Render a matching fallback
+  // <option> so the assigned affiliate stays visibly selected.
+  const referredByUnresolved = referredByVal && !affiliates.some((a) => a.id === referredByVal);
 
   const hasAudits = (lead.audits || []).length > 0;
   const ageDays = lead.leadCreatedAt ? daysBetween(lead.leadCreatedAt, todayISO()) : null;
@@ -305,12 +312,24 @@ function LeadTile({
               <input type="text" value={phoneVal} onChange={(e) => setPhoneVal(e.target.value)} placeholder="Phone"
                 className="w-full border rounded-sm px-2 py-1.5 text-[12px] focus:outline-none focus:border-navy" style={{ borderColor: T.border }} />
               <select value={referredByVal} onChange={(e) => setReferredByVal(e.target.value)}
-                title="Affiliate partner who referred this lead"
-                className="w-full border rounded-sm px-2 py-1.5 text-[12px] focus:outline-none focus:border-navy bg-white" style={{ borderColor: T.border }}>
-                <option value="">No affiliate partner</option>
-                {affiliates.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}{a.company ? ' · ' + a.company : ''}</option>
-                ))}
+                disabled={affiliatesError}
+                title={affiliatesError ? 'Affiliate list unavailable — retry after reload' : 'Affiliate partner who referred this lead'}
+                className="w-full border rounded-sm px-2 py-1.5 text-[12px] focus:outline-none focus:border-navy bg-white disabled:opacity-60" style={{ borderColor: T.border }}>
+                {affiliatesError ? (
+                  <option value={referredByVal}>Affiliate list unavailable — retry after reload</option>
+                ) : (
+                  <>
+                    <option value="">No affiliate partner</option>
+                    {referredByUnresolved && (
+                      <option value={referredByVal}>
+                        {'Affiliate ' + String(referredByVal).slice(0, 8) + ' (not in roster)'}
+                      </option>
+                    )}
+                    {affiliates.map((a) => (
+                      <option key={a.id} value={a.id}>{affiliateLabel(a)}</option>
+                    ))}
+                  </>
+                )}
               </select>
               <select value={sourceVal} onChange={(e) => setSourceVal(e.target.value)}
                 title="Marketing channel"
@@ -394,6 +413,7 @@ export default function LeadsKanban({
   isLeadRecent,
   isAdmin,
   affiliates = [],
+  affiliatesError = false,
   convertingId,
   onConvert,
   onDelete,
@@ -476,6 +496,7 @@ export default function LeadsKanban({
     isLeadRecent,
     isAdmin,
     affiliates,
+    affiliatesError,
     converting: convertingId === lead.id,
     onConvert: () => onConvert(lead),
     onDelete: () => onDelete(lead),

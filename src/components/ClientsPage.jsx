@@ -10,6 +10,7 @@ import { autoFixFieldCitations, collectBureauFollowUpProblems, collectPhase3Cita
 import { isPhase3FollowUpLetter } from '../utils/followUpEnclosures';
 import { hasInjectedSignature, injectSignatureImage } from '../utils/signatureInjection';
 import { supabase } from '../utils/supabase';
+import { affiliateLabel } from '../utils/affiliate';
 import { archiveHistoricalMailpiece, getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
 import { resolveLpoaViewUrl } from '../utils/storagePaths';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
@@ -770,12 +771,31 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   // is a UUID pointing at affiliates.id; the Lead card needs the full list so
   // staff can see which affiliate a lead came in under (or reassign when a
   // lead was captured with a free-text source but really came from a partner).
+  //
+  // A load failure (RLS denial, dropped table, network error) has to be
+  // distinguishable from "no affiliates exist yet" — otherwise a
+  // partner-referred lead could get saved as unattributed without anyone
+  // noticing. `affiliatesError` drives a disabled-select fallback downstream.
   const [affiliates, setAffiliates] = useState([]);
+  const [affiliatesError, setAffiliatesError] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    supabase.from('affiliates').select('id, name, company').order('name').then(({ data }) => {
-      if (!cancelled && data) setAffiliates(data);
-    });
+    supabase.from('affiliates').select('id, name, company').order('name')
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error('Could not load the affiliate roster', error);
+          setAffiliatesError(true);
+          return;
+        }
+        setAffiliates(data || []);
+        setAffiliatesError(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error('Could not load the affiliate roster', e);
+        setAffiliatesError(true);
+      });
     return () => { cancelled = true; };
   }, []);
   const clientRefs = useRef({});
@@ -1074,6 +1094,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const leadModal = showAddLead ? (
     <AddLeadModal
       affiliates={affiliates}
+      affiliatesError={affiliatesError}
       onClose={() => setShowAddLead(false)}
       onCreated={() => { setShowAddLead(false); load(); }}
     />
@@ -1601,6 +1622,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           isLeadRecent={isLeadRecent}
           isAdmin={isAdmin}
           affiliates={affiliates}
+          affiliatesError={affiliatesError}
           convertingId={convertingLead}
           onOpenSummaryAudit={openAuditFromSummary}
           onChanged={load}
@@ -1906,7 +1928,7 @@ function CreateClientModal({ onClose, onCreated }) {
     </div>
   );
 }
-function AddLeadModal({ affiliates = [], onClose, onCreated }) {
+function AddLeadModal({ affiliates = [], affiliatesError = false, onClose, onCreated }) {
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [phone, setPhone] = React.useState('');
@@ -1958,12 +1980,20 @@ function AddLeadModal({ affiliates = [], onClose, onCreated }) {
           </div>
           <div>
             <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Affiliate Partner</label>
-            <select value={referredBy} onChange={e => setReferredBy(e.target.value)}
-              className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy bg-white">
-              <option value="">No affiliate partner</option>
-              {affiliates.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}{a.company ? ' · ' + a.company : ''}</option>
-              ))}
+            <select value={affiliatesError ? '' : referredBy}
+              disabled={affiliatesError}
+              onChange={e => setReferredBy(e.target.value)}
+              className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy bg-white disabled:opacity-60">
+              {affiliatesError ? (
+                <option value="">Affiliate list unavailable — retry after reload</option>
+              ) : (
+                <>
+                  <option value="">No affiliate partner</option>
+                  {affiliates.map((a) => (
+                    <option key={a.id} value={a.id}>{affiliateLabel(a)}</option>
+                  ))}
+                </>
+              )}
             </select>
           </div>
           <div>
