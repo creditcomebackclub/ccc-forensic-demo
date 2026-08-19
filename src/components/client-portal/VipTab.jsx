@@ -10,6 +10,8 @@ export default function VipTab({ isVip }) {
 
   useEffect(() => {
     if (!isVip) return;
+    let disposed = false;
+    const mountEl = calendlyMountRef.current;
 
     if (!document.querySelector(`link[href="${CALENDLY_CSS_URL}"]`)) {
       const link = document.createElement('link');
@@ -19,10 +21,11 @@ export default function VipTab({ isVip }) {
     }
 
     const initInline = () => {
-      if (calendlyMountRef.current) calendlyMountRef.current.replaceChildren();
-      window.Calendly?.initInlineWidget({
+      if (disposed || !mountEl || !window.Calendly?.initInlineWidget) return;
+      mountEl.replaceChildren();
+      window.Calendly.initInlineWidget({
         url: `${CALENDLY_VIP_URL}?hide_gdpr_banner=1`,
-        parentElement: calendlyMountRef.current,
+        parentElement: mountEl,
         prefill: {},
       });
     };
@@ -37,6 +40,11 @@ export default function VipTab({ isVip }) {
 
     if (window.Calendly) initInline();
     else script.addEventListener('load', initInline, { once: true });
+
+    return () => {
+      disposed = true;
+      script.removeEventListener('load', initInline);
+    };
   }, [isVip]);
 
   if (!isVip) return null;

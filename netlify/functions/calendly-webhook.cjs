@@ -100,12 +100,18 @@ async function findClient(email, inviteeUri, supabaseUrl, serviceKey) {
   return chooseClient(byEmail, email, inviteeUri);
 }
 
-async function findVipCallClient(email, supabaseUrl, serviceKey) {
+async function findVipCallClient(email, inviteeUri, supabaseUrl, serviceKey) {
   const fields = 'id,user_id,name,email,is_vip,vip_call_status,vip_call_scheduled_at,vip_call_invitee_uri,vip_call_updated_at';
+  const byInvitee = await dbRequest(
+    supabaseUrl,
+    serviceKey,
+    '/rest/v1/clients?vip_call_invitee_uri=eq.' + encodeURIComponent(inviteeUri) + '&select=' + fields + '&limit=1'
+  );
+  if (Array.isArray(byInvitee) && byInvitee[0]) return byInvitee[0];
   const rows = await dbRequest(
     supabaseUrl,
     serviceKey,
-    '/rest/v1/clients?email=eq.' + encodeURIComponent(email) + '&is_vip=eq.true&select=' + fields + '&order=created_at.desc.nullslast,id.asc'
+    '/rest/v1/clients?email=eq.' + encodeURIComponent(email) + '&is_vip=eq.true&select=' + fields + '&order=created_at.desc.nullslast,id.asc&limit=1'
   );
   return Array.isArray(rows) && rows[0] ? rows[0] : null;
 }
@@ -239,7 +245,7 @@ exports.handler = async (event) => {
     }
 
     if (isVip) {
-      const vipClient = await findVipCallClient(verified.email, supabaseUrl, serviceKey);
+      const vipClient = await findVipCallClient(verified.email, verified.inviteeUri, supabaseUrl, serviceKey);
       if (!vipClient) {
         await updateReceipt(receipt.row.id, {
           processing_status: 'ignored',
