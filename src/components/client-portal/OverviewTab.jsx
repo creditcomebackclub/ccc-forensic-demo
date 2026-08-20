@@ -35,22 +35,22 @@ function campaignState({ onboardingStage, mailed, delivered, responded, deletion
   if (delivered.length > 0) {
     return {
       eyebrow: 'Response window active', title: 'Your dispute is officially in motion.',
-      body: `${delivered.length} certified letter${delivered.length === 1 ? ' has' : 's have'} been confirmed delivered. The response clock is now running.`,
+      body: `${delivered.length} campaign letter${delivered.length === 1 ? ' has' : 's have'} received a delivery scan. The review clock is now running.`,
       next: 'We’re tracking the response window and will act when it closes or a response arrives.', icon: Clock3, tone: 'amber',
     };
   }
   if (mailed.length > 0) {
     return {
-      eyebrow: 'Certified mail in transit', title: 'Your dispute package is on its way.',
-      body: `${mailed.length} certified letter${mailed.length === 1 ? ' is' : 's are'} moving through USPS tracking.`,
-      next: 'Confirmed delivery will start the response window.', icon: MapPin, tone: 'blue',
+      eyebrow: 'Campaign mail in transit', title: 'Your dispute package is on its way.',
+      body: `${mailed.length} campaign letter${mailed.length === 1 ? ' is' : 's are'} moving through the USPS mail stream.`,
+      next: 'A delivery scan or expected-delivery date will set the team’s review target.', icon: MapPin, tone: 'blue',
     };
   }
   if (onboardingStage <= 1) {
     return {
       eyebrow: 'Forensic audit', title: 'We’re building your strongest opening move.',
       body: 'Your report, documentation, and dispute strategy are being prepared for the first campaign.',
-      next: 'Your first certified mail activity will appear here as soon as it is sent.', icon: FileSearch, tone: 'blue',
+      next: 'Your first campaign mailing will appear here as soon as it is sent.', icon: FileSearch, tone: 'blue',
     };
   }
   return {
@@ -63,8 +63,8 @@ function campaignState({ onboardingStage, mailed, delivered, responded, deletion
 function CaseJourney({ onboardingStage, mailed, delivered, responded, deletions }) {
   const steps = [
     { label: 'Forensic audit', icon: FileSearch, done: onboardingStage > 1 || mailed.length > 0, current: onboardingStage === 1 && mailed.length === 0 },
-    { label: 'Certified mail', icon: Send, done: mailed.length > 0, current: mailed.length > 0 && delivered.length === 0 },
-    { label: 'Confirmed delivery', icon: MailCheck, done: delivered.length > 0, current: delivered.length > 0 && responded.length === 0 },
+    { label: 'Campaign mailed', icon: Send, done: mailed.length > 0, current: mailed.length > 0 && delivered.length === 0 },
+    { label: 'Delivery scan', icon: MailCheck, done: delivered.length > 0, current: delivered.length > 0 && responded.length === 0 },
     { label: 'Review & response', icon: FileSearch, done: responded.length > 0, current: responded.length > 0 && deletions.length === 0 },
     { label: 'Results', icon: Flag, done: deletions.length > 0, current: deletions.length > 0 },
   ];
@@ -194,8 +194,8 @@ export default function OverviewTab({
       <CaseJourney onboardingStage={onboardingStage} mailed={mailed} delivered={delivered} responded={responded} deletions={deletions} />
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <SignalCard label="Certified letters" value={mailed.length} helper={mailed.length ? 'Evidence-backed packages sent' : 'Preparing your first campaign'} icon={Send} tone="slate" />
-        <SignalCard label="Confirmed delivery" value={delivered.length} helper={delivered.length ? 'Response clock started' : 'Tracking will appear here'} icon={MailCheck} tone="blue" />
+        <SignalCard label="Letters mailed" value={mailed.length} helper={mailed.length ? 'Campaign packages sent' : 'Preparing your first campaign'} icon={Send} tone="slate" />
+        <SignalCard label="Delivery scans" value={delivered.length} helper={delivered.length ? 'Review clock started' : 'Mailpiece updates will appear here'} icon={MailCheck} tone="blue" />
         <SignalCard label="Responses logged" value={responded.length} helper={responded.length ? 'Being evaluated for next action' : 'We’re monitoring for replies'} icon={FileSearch} tone="amber" />
         <SignalCard label="Verified removals" value={deletions.length} helper={deletions.length ? 'Confirmed in your report history' : 'Results will be reflected here'} icon={Flag} tone="green" />
       </section>

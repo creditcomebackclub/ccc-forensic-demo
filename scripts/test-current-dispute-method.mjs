@@ -14,6 +14,8 @@ const campaign = read('src/components/DisputeCampaignStudio.jsx');
 const mailer = read('src/components/LobMailer.jsx');
 const notifications = read('netlify/functions/send-lpoa.cjs');
 const dailyCron = read('netlify/functions/daily-cron.cjs');
+const lobServer = read('netlify/functions/lob.cjs');
+const clientPortal = read('src/components/ClientPortal.jsx');
 const correctionsClient = read('src/utils/recoveryBlueprintApi.js');
 const correctionsServer = read('netlify/functions/recovery-blueprint.mjs');
 
@@ -40,7 +42,13 @@ absent(auditPrompt, /LETTER_HTML|Setup\s*&\s*Spike|Phase 1|Metro 2/i);
 assert.match(campaign, /CCC Dispute —/);
 absent(campaign, /`Phase 1 —/);
 assert.match(mailer, /ccc_dispute_mailed/);
+assert.match(mailer, /requiresCccR1IdentityDocuments/);
+assert.match(mailer, /Send First Class/);
+assert.match(lobServer, /mailService === USPS_FIRST_CLASS \? \{\} : \{ extra_service: 'certified_return_receipt' \}/);
+assert.match(lobServer, /CCC R1 IDENTITY ENCLOSURES INVALID/);
+assert.match(clientPortal, /USPS First Class/);
 assert.match(notifications, /move any surviving accounts according to the saved CCC round sequence/);
+assert.match(notifications, /mailed via USPS First Class/);
 assert.match(dailyCron, /ccc_day30_review/);
 assert.match(notifications, /CCC will not assume a result that is not documented/);
 for (const field of ['accountKind', 'latePaymentCount', 'latePaymentBand']) {

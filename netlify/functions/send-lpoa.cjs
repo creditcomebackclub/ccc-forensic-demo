@@ -207,9 +207,8 @@ exports.handler = async (event) => {
     };
 
     const bodies = {
-      ccc_dispute_mailed: `<p>Your <strong>${details || 'CCC dispute letter'}</strong> to <strong>${furnisher}</strong> has been mailed via USPS Certified Mail.</p>
-        ${trackingNumber ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}" style="color:#1B2A4A;">USPS Tracking ${trackingNumber.slice(-8)}</a></p>` : ''}
-        <p>We will track delivery, record the bureau's result, and move any surviving accounts according to the saved CCC round sequence.</p>`,
+      ccc_dispute_mailed: `<p>Your <strong>${details || 'CCC dispute letter'}</strong> to <strong>${furnisher}</strong> has been mailed via USPS First Class.</p>
+        <p>First Class mail does not create a Certified tracking number or signed return receipt. CCC will monitor Lob's mailpiece scans, record the bureau's result, and move any surviving accounts according to the saved CCC round sequence.</p>`,
       phase1_mailed: `<p>Your Phase 1 dispute letter to <strong>${furnisher}</strong> has been mailed via USPS Certified Mail.</p>
         ${trackingNumber ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}" style="color:#1B2A4A;">USPS Tracking ${trackingNumber.slice(-8)}</a></p>` : ''}
         <p>The furnisher has 30 days from delivery to respond. We will monitor the response and notify you of next steps.</p>`,
@@ -229,7 +228,7 @@ exports.handler = async (event) => {
       <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
         <p>Hi ${clientName},</p>
         ${bodies[phase] || '<p>' + (details || 'Your dispute campaign has been updated.') + '</p>'}
-        <p>Log in to your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a> to see full details and tracking.</p>
+        <p>Log in to your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a> to see full details and mailpiece status.</p>
         <p>Questions? Reply to this email or call 970-644-0063.</p>
         <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
         <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
@@ -485,7 +484,7 @@ exports.handler = async (event) => {
       ccc_day7_checkin: {
         subject: 'Your CCC Dispute Campaign — Week 1 Update',
         headline: 'Your bureau letter is in progress.',
-        body: 'Your certified CCC dispute letter to ' + (furnisher || 'the credit bureau') + ' is in its review window. No action is needed from you right now.',
+        body: 'Your USPS First Class CCC dispute letter to ' + (furnisher || 'the credit bureau') + ' is in its review window. No action is needed from you right now.',
         action: 'Keep any bureau mail or updated credit report you receive and upload it to your CCC portal.',
         tone: '#EFF6FF',
         borderColor: '#BFDBFE',

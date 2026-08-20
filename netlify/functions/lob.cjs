@@ -79,7 +79,7 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_name,phase,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id',
+      + '&select=id,user_id,client_id,client_name,phase,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,mail_service,expected_delivery_date,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,dispute_round_number',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
@@ -188,6 +188,40 @@ async function validateBureauFollowUpPreflight(letter, manifest, supabaseUrl, se
   return issues;
 }
 
+async function validateCccR1IdentityPreflight(letter, manifest, supabaseUrl, serviceKey) {
+  const { requiresCccR1IdentityDocuments } = await import('../../src/utils/cccMailRules.js');
+  if (!requiresCccR1IdentityDocuments(letter)) return [];
+  if (!letter.client_id || !letter.user_id) {
+    return ['CCC R1 requires a canonical client record before identity documents can be attached.'];
+  }
+
+  const result = await supabaseRequest(
+    '/rest/v1/documents?user_id=eq.' + encodeURIComponent(letter.user_id)
+      + '&client_id=eq.' + encodeURIComponent(letter.client_id)
+      + '&doc_type=in.(id,address)&select=id,doc_type,storage_path',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  if (!isSuccess(result)) throw new Error(requestError(result, 'Could not validate CCC R1 identity documents'));
+
+  const documents = Array.isArray(result.body) ? result.body : [];
+  const idDocument = documents.find((document) => document.doc_type === 'id');
+  const addressDocument = documents.find((document) => document.doc_type === 'address');
+  const issues = [];
+  if (!idDocument) issues.push('Government-issued photo ID is missing.');
+  if (!addressDocument) issues.push('Proof of current address is missing.');
+  if (issues.length > 0) return issues;
+
+  const expectedIds = [idDocument.id, addressDocument.id];
+  const expectedPaths = [idDocument.storage_path, addressDocument.storage_path];
+  if (!manifest
+    || manifest.kind !== 'ccc_r1_identity_v1'
+    || JSON.stringify(manifest.document_ids || []) !== JSON.stringify(expectedIds)
+    || JSON.stringify(manifest.storage_paths || []) !== JSON.stringify(expectedPaths)) {
+    issues.push('The rendered CCC R1 packet manifest does not match the client’s current ID and proof-of-address records.');
+  }
+  return issues;
+}
+
 async function findSubmission(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/mail_submissions?letter_id=eq.' + encodeURIComponent(letterId)
@@ -251,7 +285,7 @@ async function prepareFailedRetry(letter, submission, supabaseUrl, serviceKey) {
         + '&lob_id=eq.' + encodeURIComponent(letter.lob_id)
         + '&tracking_status=eq.Failed',
       'PATCH',
-      { lob_id: null, mailed_date: null, tracking_number: null, tracking_status: 'Failed', delivered_at: null },
+      { lob_id: null, mailed_date: null, tracking_number: null, tracking_status: 'Failed', delivered_at: null, expected_delivery_date: null },
       supabaseUrl, serviceKey
     );
     if (!isSuccess(cleared) || !Array.isArray(cleared.body) || cleared.body.length !== 1) {
@@ -390,6 +424,22 @@ exports.handler = async (event) => {
           }),
         };
       }
+      const identityIssues = await validateCccR1IdentityPreflight(
+        letter,
+        enclosureManifest,
+        supabaseUrl,
+        serviceKey
+      );
+      if (identityIssues.length > 0) {
+        return {
+          statusCode: 422,
+          body: JSON.stringify({
+            error: 'CCC R1 IDENTITY ENCLOSURES INVALID — nothing was sent.',
+            issues: identityIssues,
+            blocked: true,
+          }),
+        };
+      }
 
       let submission = await findSubmission(letterId, supabaseUrl, serviceKey);
       if (submission && (submission.status === 'submitted' || submission.status === 'accepted_unreconciled') && submission.lob_id) {
@@ -399,6 +449,8 @@ exports.handler = async (event) => {
             id: submission.lob_id,
             tracking_number: submission.tracking_number || letter.tracking_number || null,
             mailed_date: letter.mailed_date || null,
+            mail_service: letter.mail_service || null,
+            expected_delivery_date: letter.expected_delivery_date || null,
             duplicate: true,
             mail_submission_status: submission.status,
           }),
@@ -423,6 +475,8 @@ exports.handler = async (event) => {
             id: submission.lob_id,
             tracking_number: submission.tracking_number || letter.tracking_number || null,
             mailed_date: letter.mailed_date || null,
+            mail_service: letter.mail_service || null,
+            expected_delivery_date: letter.expected_delivery_date || null,
             duplicate: true,
             mail_submission_status: submission.status,
           }),
@@ -440,6 +494,8 @@ exports.handler = async (event) => {
         last_error: null,
       }, supabaseUrl, serviceKey);
 
+      const { USPS_FIRST_CLASS, mailServiceForLetter } = await import('../../src/utils/cccMailRules.js');
+      const mailService = mailServiceForLetter(letter);
       const letterPayload = {
         description: description || 'CCC Dispute Letter',
         to: {
@@ -467,8 +523,10 @@ exports.handler = async (event) => {
         double_sided: true,
         address_placement: 'top_first_page',
         mail_type: 'usps_first_class',
-        // Letters state "return receipt requested" — the mailing must match
-        extra_service: 'certified_return_receipt',
+        // New CCC flow letters use regular First Class, exactly as the course
+        // specifies. Historical Phase 1/3 workflows retain their original
+        // Certified Return Receipt service so old client records stay true.
+        ...(mailService === USPS_FIRST_CLASS ? {} : { extra_service: 'certified_return_receipt' }),
         // Lets the webhook match the letter row even if lob_id never got saved
         metadata: { letter_id: String(letterId) },
       };
@@ -499,6 +557,8 @@ exports.handler = async (event) => {
           mailed_date: mailedAt,
           tracking_number: result.body.tracking_number || null,
           tracking_status: 'Mailed',
+          mail_service: mailService,
+          expected_delivery_date: result.body.expected_delivery_date || null,
         },
         supabaseUrl,
         serviceKey
@@ -549,6 +609,7 @@ exports.handler = async (event) => {
         body: JSON.stringify({
           ...(result.body || {}),
           mailed_date: mailedAt,
+          mail_service: mailService,
           artifact_archive: artifactArchive && artifactArchive.archived ? 'archived' : 'pending',
           mail_submission_status: letterWasSaved ? 'submitted' : 'accepted_unreconciled',
           reconciliation_required: !letterWasSaved,

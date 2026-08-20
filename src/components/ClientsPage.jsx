@@ -324,6 +324,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
   const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
+  const isCccDispute = String(l.phase || '').startsWith('CCC Dispute —');
   // Phase 3's own escalation-readiness uses the 45-day CRA clock, not the
   // 30-day one — same reasoning as DashboardPage.jsx's identical gate.
   const status3 = isPhase3 ? letterStatus(l, CRA_WINDOW_DAYS) : null;
@@ -349,7 +350,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
 
   const handleDelete = async () => {
     const confirmMsg = l.mailedDate
-      ? 'This letter was already mailed via certified mail on ' + fmt(l.mailedDate) + '. Deleting it only removes it from CCC\'s tracking system \u2014 it does NOT recall the physical mail already sent to ' + l.furnisher + '. This cannot be undone. Continue?'
+      ? 'This letter was already mailed on ' + fmt(l.mailedDate) + '. Deleting it only removes it from CCC\'s tracking system \u2014 it does NOT recall the physical mail already sent to ' + l.furnisher + '. This cannot be undone. Continue?'
       : 'Delete this letter draft for ' + l.furnisher + '? This cannot be undone.';
     if (!window.confirm(confirmMsg)) return;
     try {
@@ -424,10 +425,11 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
           <span className={isPhase3 ? 'font-medium' : ''} style={{ color: isPhase3 ? '#8F7524' : T.ink }}>{l.phase || 'Letter'}</span>
           <span className="text-ink-muted"> · {fmtTime(l.savedAt)}</span>
           {l.mailedDate && <span className="text-ink-muted"> · mailed {fmt(l.mailedDate)}</span>}
+          {l.mailedDate && l.mailService === 'usps_first_class' && <span className="text-[10px] text-ink-faint ml-1">· First Class</span>}
           {l.trackingNumber && (
             <a href={"https://tools.usps.com/go/TrackConfirmAction?tLabels=" + l.trackingNumber} target="_blank" rel="noopener noreferrer" className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2">USPS #{l.trackingNumber.slice(-8)}</a>
           )}
-          {l.trackingStatus === 'Delivered' && l.lobId && (
+          {l.trackingStatus === 'Delivered' && l.lobId && l.mailService !== 'usps_first_class' && (
             <ReturnReceiptButton lobId={l.lobId} returnReceiptUrl={l.returnReceiptUrl} />
           )}
           <MailpieceLink artifact={(l.mailArtifacts || []).find((artifact) => artifact.artifact_type === 'mailpiece_pdf')} />
@@ -458,7 +460,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
         <div className="mt-2 flex items-center gap-2">
           <span className="text-[11px] text-ink-muted">Mail date:</span>
           <input type="date" value={dateVal} onChange={(e) => setDateVal(e.target.value)} className="text-[12px] border border-border rounded-sm px-2 py-0.5" />
-          <button onClick={() => save({ mailedDate: dateVal })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
+          <button onClick={() => save({ mailedDate: dateVal, ...(isCccDispute ? { mailService: 'usps_first_class' } : {}) })} className="text-[11px] uppercase tracking-wider text-white bg-navy px-2 py-0.5 rounded-sm">Save</button>
           <button onClick={() => setMode(null)} className="text-[11px] uppercase tracking-wider text-ink-muted">Cancel</button>
         </div>
       )}
@@ -1120,7 +1122,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           return (
             <LobMailer
               letter={currentLetter}
-              furnisherAddress={currentLetter ? ((currentLetter.phase && currentLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+              furnisherAddress={currentLetter ? ((currentLetter.phase && (currentLetter.phase.startsWith('Phase 3') || currentLetter.phase.startsWith('CCC Dispute —'))) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
               batchRemaining={lobMailerQueue.length - 1}
               onNext={() => setLobMailerQueue(prev => prev.slice(1))}
               onClose={() => setLobMailerQueue([])}
@@ -1129,6 +1131,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   mailedDate: data.mailedDate,
                   trackingStatus: 'Mailed',
                   trackingNumber: data.trackingNumber || null,
+                  mailService: data.mailService,
+                  expectedDeliveryDate: data.expectedDeliveryDate,
                   deliveredAt: null,
                   lobId: data.lobId,
                 });
@@ -1538,7 +1542,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         return (
           <LobMailer
             letter={currentLetter}
-            furnisherAddress={currentLetter ? ((currentLetter.phase && currentLetter.phase.startsWith('Phase 3')) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+            furnisherAddress={currentLetter ? ((currentLetter.phase && (currentLetter.phase.startsWith('Phase 3') || currentLetter.phase.startsWith('CCC Dispute —'))) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
             batchRemaining={lobMailerQueue.length - 1}
             onNext={() => setLobMailerQueue(prev => prev.slice(1))}
             onClose={() => setLobMailerQueue([])}
@@ -1547,6 +1551,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                 mailedDate: data.mailedDate,
                 trackingStatus: 'Mailed',
                 trackingNumber: data.trackingNumber || null,
+                mailService: data.mailService,
+                expectedDeliveryDate: data.expectedDeliveryDate,
                 deliveredAt: null,
                 lobId: data.lobId,
               });

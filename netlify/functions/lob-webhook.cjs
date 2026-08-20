@@ -420,9 +420,12 @@ exports.handler = async (event) => {
           const clientName = letter.client_name.split(' ')[0];
           const tn = letter.tracking_number || trackingNumber;
           const isBureauDispute = String(letter.phase || '').startsWith('Phase 3');
-          const reviewDays = isBureauDispute ? 45 : 30;
+          const isCccDispute = String(letter.phase || '').startsWith('CCC Dispute —');
+          const reviewDays = isBureauDispute && !isCccDispute ? 45 : 30;
 
-          const subject = 'Dispute Letter Delivered — ' + furnisher + ' Has ' + reviewDays + ' Days to Respond';
+          const subject = isCccDispute
+            ? 'CCC Letter Delivery Scan — ' + furnisher
+            : 'Dispute Letter Delivered — ' + furnisher + ' Has ' + reviewDays + ' Days to Respond';
           const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
             <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
               <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
@@ -430,10 +433,14 @@ exports.handler = async (event) => {
             </div>
             <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
               <p>Hi ${clientName},</p>
-              <p>Your dispute letter to <strong>${furnisher}</strong> has been delivered. Its ${reviewDays}-day review window has begun.</p>
-              ${tn ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${tn}" style="color:#1B2A4A;">USPS Tracking ${tn.slice(-8)}</a></p>` : ''}
-              <p>We will monitor for their response and prepare Phase 3 escalation letters in advance.</p>
-              <p>Log in to your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a> to see full details and tracking.</p>
+              <p>${isCccDispute
+                ? `Lob received a USPS delivery scan for your First Class CCC dispute letter to <strong>${furnisher}</strong>. CCC's ${reviewDays}-day operational round review is now underway.`
+                : `Your dispute letter to <strong>${furnisher}</strong> has been delivered. Its ${reviewDays}-day review window has begun.`}</p>
+              ${tn && !isCccDispute ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${tn}" style="color:#1B2A4A;">USPS Tracking ${tn.slice(-8)}</a></p>` : ''}
+              <p>${isCccDispute
+                ? 'We will record the documented result and determine the next saved CCC round for any account that remains.'
+                : 'We will monitor for their response and prepare Phase 3 escalation letters in advance.'}</p>
+              <p>Log in to your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a> to see full details and mailpiece status.</p>
               <p>Questions? Reply to this email or call 970-644-0063.</p>
               <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
               <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>

@@ -19,6 +19,7 @@ import {
   clientCampaignLabel,
   isAccountDisputeCampaign,
   isBureauCampaign,
+  isCccDisputeCampaign,
   isFileUpdateCampaign,
 } from '../utils/clientCampaignCopy';
 
@@ -78,7 +79,7 @@ export default function ClientPortal({ session, onSignOut }) {
         // The client portal needs campaign state, not staff-only model output
         // or response-review notes. Keep the browser query intentionally
         // narrow; raw response evidence remains private to the staff UI.
-        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status';
+        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,mail_service,expected_delivery_date,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status';
         const lettersQuery = cp.client_id
           ? supabase.from('letters').select(portalLetterColumns).eq('client_id', cp.client_id).order('saved_at', { ascending: true })
           : supabase.from('letters').select(portalLetterColumns).eq('client_name', cp.full_name).order('saved_at', { ascending: true });
@@ -274,10 +275,16 @@ export default function ClientPortal({ session, onSignOut }) {
     .filter(l => isAccountDisputeCampaign(l.phase) && l.mailed_date)
     .sort((a, b) => new Date(a.mailed_date) - new Date(b.mailed_date));
   const earliestPhase1MailDate = phase1Mailed[0]?.mailed_date || null;
+  const earliestCampaignLetter = phase1Mailed[0] || null;
+  const earliestReviewStart = earliestCampaignLetter?.delivered_at
+    ? String(earliestCampaignLetter.delivered_at).slice(0, 10)
+    : isCccDisputeCampaign(earliestCampaignLetter?.phase) && earliestCampaignLetter?.expected_delivery_date
+      ? earliestCampaignLetter.expected_delivery_date
+      : earliestPhase1MailDate;
   const accountDisputeLetters = letters.filter(l => isAccountDisputeCampaign(l.phase) || isBureauCampaign(l.phase));
   const fileUpdateLetters = letters.filter(l => isFileUpdateCampaign(l.phase));
-  const windowCloseDate = earliestPhase1MailDate
-    ? new Date(new Date(earliestPhase1MailDate).getTime() + 30 * 86400000).toISOString()
+  const windowCloseDate = earliestReviewStart
+    ? new Date(new Date(earliestReviewStart + 'T00:00:00').getTime() + 30 * 86400000).toISOString()
     : null;
   const phase3Mailed = letters.some(l => l.phase?.startsWith('Phase 3') && l.mailed_date);
   const firstDeletionDate = deletions
@@ -303,17 +310,32 @@ export default function ClientPortal({ session, onSignOut }) {
       ? 'File update prepared — ' + l.furnisher
       : 'Dispute letter prepared — ' + l.furnisher;
     if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: preparedTitle, subtitle: clientCampaignLabel(l.phase), tone: 'blue' });
-    if (l.mailed_date) timeline.push({ date: l.mailed_date, icon: '✉️', title: 'Letter mailed via certified mail — ' + l.furnisher, subtitle: l.tracking_number ? 'USPS #' + l.tracking_number.slice(-8) : null, tone: 'default' });
+    if (l.mailed_date) {
+      const firstClassCcc = isCccDisputeCampaign(l.phase) && l.mail_service === 'usps_first_class';
+      timeline.push({
+        date: l.mailed_date,
+        icon: '✉️',
+        title: `Letter mailed via ${firstClassCcc ? 'USPS First Class' : 'certified mail'} — ${l.furnisher}`,
+        subtitle: l.tracking_number && !firstClassCcc
+          ? 'USPS #' + l.tracking_number.slice(-8)
+          : firstClassCcc && l.expected_delivery_date
+            ? 'Estimated delivery ' + new Date(l.expected_delivery_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            : null,
+        tone: 'default',
+      });
+    }
 
     // Granular in-transit milestones from Lob webhook
     if (l.tracking_status === 'In Transit' && l.mailed_date)
-      timeline.push({ date: l.mailed_date, icon: '🚚', title: 'In Transit — ' + l.furnisher, subtitle: l.tracking_number ? 'USPS #' + l.tracking_number.slice(-8) : null, tone: 'default' });
+      timeline.push({ date: l.mailed_date, icon: '🚚', title: 'In Transit — ' + l.furnisher, subtitle: l.tracking_number && l.mail_service !== 'usps_first_class' ? 'USPS #' + l.tracking_number.slice(-8) : 'Lob mailpiece scan', tone: 'default' });
     if (l.tracking_status === 'Out for Delivery' && l.mailed_date)
       timeline.push({ date: l.mailed_date, icon: '📬', title: 'Out for Delivery — ' + l.furnisher, subtitle: 'Expected delivery today', tone: 'gold' });
 
     if (l.tracking_status === 'Delivered') {
-      const responseWindow = isBureauCampaign(l.phase) ? '45-day bureau review' : '30-day response';
-      timeline.push({ date: l.delivered_at || l.mailed_date, icon: '✅', title: 'Delivered — ' + l.furnisher, subtitle: responseWindow + ' response window started', tone: 'green', lobId: l.lob_id, trackingNumber: l.tracking_number });
+      const responseWindow = isCccDisputeCampaign(l.phase)
+        ? '30-day CCC round review'
+        : isBureauCampaign(l.phase) ? '45-day bureau review' : '30-day response';
+      timeline.push({ date: l.delivered_at || l.mailed_date, icon: '✅', title: 'Delivered — ' + l.furnisher, subtitle: responseWindow + ' response window started', tone: 'green', lobId: l.lob_id, trackingNumber: l.mail_service === 'usps_first_class' ? null : l.tracking_number });
     }
     if (l.tracking_status === 'Returned to Sender') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '↩️', title: 'Returned to Sender — ' + l.furnisher, subtitle: 'Letter returned — address may need to be verified', tone: 'red' });
     if (l.tracking_status === 'Available for Pickup') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '🏢', title: 'Available for Pickup — ' + l.furnisher, subtitle: 'Awaiting pickup at post office', tone: 'gold' });

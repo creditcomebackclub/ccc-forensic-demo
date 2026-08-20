@@ -10,7 +10,7 @@ const STAGES = [
   {
     icon: FileText,
     title: 'Audit & Letters',
-    copy: 'Your report is analyzed and demands go out certified.',
+    copy: 'Your report is analyzed and each CCC round is mailed First Class to the appropriate bureau.',
   },
   {
     icon: Clock,

@@ -221,6 +221,8 @@ export async function updateLetter(id, patch) {
   if ('trackingNumber' in patch) mapped.tracking_number = patch.trackingNumber;
   if ('trackingStatus' in patch) mapped.tracking_status = patch.trackingStatus;
   if ('deliveredAt' in patch) mapped.delivered_at = patch.deliveredAt;
+  if ('mailService' in patch) mapped.mail_service = patch.mailService;
+  if ('expectedDeliveryDate' in patch) mapped.expected_delivery_date = patch.expectedDeliveryDate;
   if ('html' in patch) mapped.html = patch.html;
   if ('summary' in patch) mapped.summary = patch.summary;
   if ('phase2Analysis' in patch) mapped.phase2_analysis = patch.phase2Analysis;
@@ -309,6 +311,8 @@ function normalizeLetter(l) {
     trackingNumber: l.tracking_number,
     trackingStatus: l.tracking_status,
     deliveredAt: l.delivered_at,
+    mailService: l.mail_service || null,
+    expectedDeliveryDate: l.expected_delivery_date || null,
     returnReceiptUrl: l.return_receipt_url,
     responseFileUrl: l.response_file_url,
     hasResponseFile: !!l.response_file_url || !!l.has_response_file,
@@ -496,6 +500,9 @@ export async function listInFlightLetterRows({ limit = 200, cursor = null } = {}
     phase: row.phase,
     mailDate: row.mailed_date,
     deliveryDate: row.delivered_at || null,
+    mailService: row.mail_service || null,
+    expectedDeliveryDate: row.expected_delivery_date || null,
+    scheduleBasis: row.schedule_basis || null,
     bureauReviewStatus: row.bureau_review_status || 'not_reviewed',
     deadline: row.deadline || null,
     sortDeadline: row.sort_deadline,

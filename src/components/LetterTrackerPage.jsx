@@ -34,6 +34,10 @@ function daysLabel(row) {
   return row.daysRemaining + 'd left';
 }
 
+function scheduleLabel(row) {
+  return row.scheduleBasis === 'expected_delivery' ? 'Review target' : 'Deadline';
+}
+
 function decorateInFlightRow(row) {
   const deadline = row.deadline ? new Date(row.deadline + 'T00:00:00') : null;
   const daysRemaining = deadline ? Math.ceil((deadline - new Date()) / 86400000) : null;
@@ -153,7 +157,7 @@ export default function LetterTrackerPage({ onNavigate, isAdmin }) {
         <div className="bg-white p-4 rounded-xl border" style={{ borderColor: counts.overdue > 0 ? '#FECACA' : T.border }}>
           <div className="text-[11px] font-bold uppercase tracking-wider" style={{ color: T.muted }}>Overdue</div>
           <div className="text-2xl font-bold mt-1" style={{ color: counts.overdue > 0 ? T.red : T.ink }}>{counts.overdue}</div>
-          <div className="text-[11px]" style={{ color: T.faint }}>Past the applicable response window</div>
+          <div className="text-[11px]" style={{ color: T.faint }}>Past the applicable review target</div>
         </div>
         <div className="bg-white p-4 rounded-xl border" style={{ borderColor: T.border }}>
           <div className="text-[11px] font-bold uppercase tracking-wider" style={{ color: T.muted }}>Due soon</div>
@@ -205,7 +209,8 @@ export default function LetterTrackerPage({ onNavigate, isAdmin }) {
                         <div className="text-[11px] mt-0.5" style={{ color: T.faint }}>
                           {r.bureau ? r.bureau + ' · ' : ''}{r.phase} · Mailed {fmt(r.mailDate)}
                           {r.deliveryDate && <> · Delivered {fmt(r.deliveryDate)}</>}
-                          {r.deadline && <> · Deadline {fmt(r.deadline)}</>}
+                          {!r.deliveryDate && r.expectedDeliveryDate && <> · Expected {fmt(r.expectedDeliveryDate)}</>}
+                          {r.deadline && <> · {scheduleLabel(r)} {fmt(r.deadline)}</>}
                         </div>
                       </div>
                       <span

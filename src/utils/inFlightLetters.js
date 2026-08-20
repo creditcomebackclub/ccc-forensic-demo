@@ -3,6 +3,7 @@
 // (a Netlify function, hence this module has zero Supabase/browser
 // dependency — pure functions over already-fetched data, importable from
 // either side exactly like diffEngine.js).
+import { cccReviewClock, isFirstClassCccLetter } from './cccMailRules.js';
 //
 // Display and navigation only — nothing here triggers Phase 2 analysis or
 // any other action; it only reads letters/accounts that already exist.
@@ -56,12 +57,12 @@ export function inFlightLettersForClient(clientName, letters, latestAuditAccount
       return !isPhase3(l.phase) || !l.bureauReviewStatus || l.bureauReviewStatus === 'not_reviewed';
     })
     .map((l) => {
-      // Deadline computes from delivery date, not mail date — the
-      // statutory basis of the whole non-response argument. No delivery
-      // yet means no deadline yet either (still in transit).
       const deliveryDate = l.deliveredAt || null;
       const windowDays = responseWindowDays(l.phase);
-      const deadline = deliveryDate ? new Date(new Date(deliveryDate).getTime() + windowDays * 86400000) : null;
+      const firstClassClock = cccReviewClock(l);
+      const scheduleStart = isFirstClassCccLetter(l) ? firstClassClock.start : deliveryDate;
+      const scheduleBasis = isFirstClassCccLetter(l) ? firstClassClock.basis : (deliveryDate ? 'delivered' : null);
+      const deadline = scheduleStart ? new Date(new Date(scheduleStart).getTime() + windowDays * 86400000) : null;
       const daysRemaining = deadline ? Math.ceil((deadline - now) / 86400000) : null;
 
       let status;
@@ -82,6 +83,9 @@ export function inFlightLettersForClient(clientName, letters, latestAuditAccount
         bureau: bureauFromPhase(l.phase),
         mailDate: l.mailedDate,
         deliveryDate,
+        expectedDeliveryDate: l.expectedDeliveryDate || null,
+        mailService: l.mailService || null,
+        scheduleBasis,
         deadline: deadline ? deadline.toISOString().slice(0, 10) : null,
         responseWindowDays: windowDays,
         daysRemaining,

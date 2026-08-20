@@ -257,7 +257,7 @@ exports.handler = async () => {
 
   // --- 1. Process tracked delivery clocks and client updates ---
   const letters = await listAllRows(
-    '/rest/v1/letters?select=id,client_id,client_name,furnisher,phase,mailed_date,delivered_at,response_outcome,notifications_sent,bureau_review_status&response_outcome=is.null&order=id.asc',
+    '/rest/v1/letters?select=id,client_id,client_name,furnisher,phase,mailed_date,delivered_at,mail_service,expected_delivery_date,response_outcome,notifications_sent,bureau_review_status&response_outcome=is.null&order=id.asc',
     supabaseUrl,
     supabaseKey
   );
@@ -275,15 +275,21 @@ exports.handler = async () => {
   const adminDigestItems = [];
 
   for (const letter of letters) {
-    // Certified Mail is the source of truth for this operation. A letter
-    // with no delivery event is an exception to reconcile with Lob/USPS, not
-    // a silently assumed deadline based on its mailing date.
-    if (!letter.delivered_at) continue;
     const isPhase3 = String(letter.phase || '').startsWith('Phase 3');
     const isCccDispute = String(letter.phase || '').startsWith('CCC Dispute —');
+    const isCccFirstClass = isCccDispute && letter.mail_service === 'usps_first_class';
+    // Lob's normal First Class events can still provide a delivery scan. If
+    // one has not arrived, its own expected-delivery date drives an internal
+    // review target. It is never represented as proof of actual delivery.
+    const clockStart = letter.delivered_at
+      ? letter.delivered_at.slice(0, 10)
+      : isCccFirstClass && letter.expected_delivery_date
+        ? letter.expected_delivery_date.slice(0, 10)
+        : null;
+    if (!clockStart) continue;
+    const clockBasis = letter.delivered_at ? 'confirmed delivery' : 'Lob expected delivery';
     const windowDays = isPhase3 ? 45 : 30;
     const adminNotificationKey = isPhase3 ? 'admin45' : 'admin30';
-    const clockStart = letter.delivered_at.slice(0, 10);
     const daysElapsed = daysBetween(clockStart, today);
     const sent = letter.notifications_sent || [];
     let newSent = [...sent];
@@ -320,7 +326,7 @@ exports.handler = async () => {
         furnisher: letter.furnisher,
         phase: letter.phase || 'Phase 1',
         daysElapsed,
-        deliveredOrMailed: 'delivered ' + clockStart,
+        deliveredOrMailed: clockBasis + ' ' + clockStart,
       });
       newSent.push(adminNotificationKey); touched = true;
 
@@ -335,7 +341,7 @@ exports.handler = async () => {
               </div>
               <div style="border:1px solid #ddd;border-top:none;padding:20px 28px;border-radius:0 0 4px 4px;">
                 <p><strong>${letter.client_name}</strong> — ${letter.furnisher} (${letter.phase || 'Phase 1'})</p>
-                <p>${daysElapsed} days since confirmed delivery with no logged response. This has crossed the ${windowDays}-day operational review window and is ready for ${isCccDispute ? 'result recording and next-round review' : 'staff review'}.</p>
+                <p>${daysElapsed} days since ${clockBasis} with no logged response. This has crossed the ${windowDays}-day operational review window and is ready for ${isCccDispute ? 'result recording and next-round review' : 'staff review'}.</p>
               </div>
             </div>`,
             sgKey
@@ -863,7 +869,7 @@ exports.handler = async () => {
           <table style="width:100%;margin-bottom:24px;border-collapse:collapse;">
             <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${leadsDrippedCount}</strong> Lead Nurture Emails Sent</td></tr>
             <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${clientUpdatesCount}</strong> Client Update Emails Sent</td></tr>
-            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${lobDeliveriesCount}</strong> Certified Letters Delivered</td></tr>
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f3f4f6;font-size:14px;"><strong>${lobDeliveriesCount}</strong> Letter Delivery Scans</td></tr>
           </table>
 
           ${adminDigestItems.length > 0 ? `

@@ -6,6 +6,7 @@ import {
   clientCampaignDetail,
   clientCampaignLabel,
   isBureauCampaign,
+  isCccDisputeCampaign,
   isFileUpdateCampaign,
 } from '../../utils/clientCampaignCopy';
 
@@ -20,17 +21,36 @@ function daysBetween(aIso, bIso) {
 function responseCountdown(l) {
   if (l.response_outcome === 'deleted' || l.response_outcome === 'received' || l.response_outcome === 'no_response') return null;
   const isPhase3 = isBureauCampaign(l.phase);
+  const isCccDispute = isCccDisputeCampaign(l.phase);
   const isFileUpdate = isFileUpdateCampaign(l.phase);
-  const windowDays = isPhase3 ? BUREAU_RESPONSE_WINDOW_DAYS : RESPONSE_WINDOW_DAYS;
-  if (l.mailed_date && !l.delivered_at) {
+  const windowDays = isPhase3 && !isCccDispute ? BUREAU_RESPONSE_WINDOW_DAYS : RESPONSE_WINDOW_DAYS;
+  const usesEstimatedFirstClassClock = isCccDispute
+    && l.mail_service === 'usps_first_class'
+    && !l.delivered_at
+    && l.expected_delivery_date;
+  if (l.mailed_date && !l.delivered_at && !usesEstimatedFirstClassClock) {
     return { label: `In Transit — ${windowDays}-day window begins upon delivery`, tone: 'text-gray-600 bg-gray-50 border-gray-200' };
   }
-  const clockStart = l.delivered_at ? l.delivered_at.slice(0, 10) : l.mailed_date;
+  const clockStart = l.delivered_at
+    ? l.delivered_at.slice(0, 10)
+    : usesEstimatedFirstClassClock ? l.expected_delivery_date : l.mailed_date;
   if (!clockStart) return null;
   const elapsed = daysBetween(clockStart, todayISO());
   const remaining = windowDays - elapsed;
+  if (usesEstimatedFirstClassClock && elapsed < 0) {
+    return {
+      label: 'USPS First Class — estimated delivery ' + new Date(clockStart + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      tone: 'text-gray-600 bg-gray-50 border-gray-200',
+    };
+  }
   
   if (remaining > 0) {
+    if (isCccDispute) {
+      return {
+        label: `CCC round review: day ${elapsed} of ${windowDays}${usesEstimatedFirstClassClock ? ' (estimated-delivery basis)' : ''}`,
+        tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200',
+      };
+    }
     if (isPhase3) {
       return { label: 'Day ' + elapsed + ' of ' + windowDays + ' — Bureau investigation in progress', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
     }
@@ -40,6 +60,9 @@ function responseCountdown(l) {
     return { label: 'Day ' + elapsed + ' of ' + windowDays + ' — ' + remaining + ' day' + (remaining === 1 ? '' : 's') + ' remaining', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
   }
   
+  if (isCccDispute) {
+    return { label: 'CCC round review due — staff is checking the documented result', tone: 'text-red-700 bg-red-50 border-red-200' };
+  }
   if (isPhase3) {
     return { label: 'Bureau investigation window closed — final review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
   }
@@ -51,13 +74,16 @@ function responseCountdown(l) {
 
 function responseBadge(l) {
   const isBureau = isBureauCampaign(l.phase);
+  const isCccDispute = isCccDisputeCampaign(l.phase);
   const isFileUpdate = isFileUpdateCampaign(l.phase);
   if (l.response_outcome === 'deleted') return { label: '🏆 Deleted', tone: 'bg-green-50 text-green-700 border-green-200' };
   if (l.response_outcome === 'no_response') {
-    const closedLabel = isBureau ? 'Bureau window closed' : isFileUpdate ? 'File update window closed' : 'No Response — Escalated';
+    const closedLabel = isCccDispute
+      ? 'CCC Round Ready for Review'
+      : isBureau ? 'Bureau window closed' : isFileUpdate ? 'File update window closed' : 'No Response — Escalated';
     return { label: closedLabel, tone: 'bg-red-50 text-red-700 border-red-200' };
   }
-  if (l.response_outcome === 'received' && isBureau) {
+  if (l.response_outcome === 'received' && (isBureau || isCccDispute)) {
     if (l.bureau_response_status === 'analyzing') return { label: 'Bureau Response Under Review', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
     if (l.bureau_response_status === 'review_ready') return { label: 'Bureau Review Ready', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
     if (l.bureau_response_status === 'reviewed') return { label: 'Next Step Recorded', tone: 'bg-green-50 text-green-700 border-green-200' };
@@ -65,6 +91,9 @@ function responseBadge(l) {
   }
   if (l.response_outcome === 'received') return { label: 'Response Received', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
   if (l.tracking_status === 'Delivered') return { label: 'Delivered', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
+  if (isCccDispute && l.tracking_status === 'Out for Delivery') return { label: 'Out for Delivery', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (isCccDispute && l.tracking_status === 'In Transit') return { label: 'In Transit', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (isCccDispute && l.mailed_date) return { label: 'Mailed First Class', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   if (l.mailed_date) return { label: 'In Transit', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   return { label: 'Pending', tone: 'bg-gray-50 text-gray-500 border-gray-200' };
 }
@@ -168,13 +197,16 @@ export default function DisputesTab({
               
               {l.mailed_date && (
                 <div className="text-[11px] text-gray-400 mt-3 font-medium">
-                  Mailed {new Date(l.mailed_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                  {l.tracking_number && (
+                  Mailed {isCccDisputeCampaign(l.phase) && l.mail_service === 'usps_first_class' ? 'USPS First Class · ' : ''}{new Date(l.mailed_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  {l.tracking_number && l.mail_service !== 'usps_first_class' && (
                     <a href={'https://tools.usps.com/go/TrackConfirmAction?tLabels=' + l.tracking_number} target="_blank" rel="noopener noreferrer"
                       className="ml-2 text-slate-900 font-semibold hover:text-blue-600 transition-colors">Track →</a>
                   )}
-                  {l.tracking_status === 'Delivered' && l.lob_id && (
+                  {l.tracking_status === 'Delivered' && l.lob_id && l.mail_service !== 'usps_first_class' && (
                     <ReturnReceiptButton lobId={l.lob_id} returnReceiptUrl={l.return_receipt_url} />
+                  )}
+                  {!l.tracking_number && isCccDisputeCampaign(l.phase) && l.expected_delivery_date && (
+                    <span className="ml-2">Estimated delivery {new Date(l.expected_delivery_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
                   )}
                 </div>
               )}

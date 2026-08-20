@@ -12,6 +12,12 @@ import {
 import { listMailArtifacts } from '../utils/mailArtifacts';
 import { inferMediaType } from '../utils/responseFiles';
 import { supabase } from '../utils/supabase';
+import {
+  USPS_FIRST_CLASS,
+  isCccDisputePhase,
+  mailServiceForLetter,
+  requiresCccR1IdentityDocuments,
+} from '../utils/cccMailRules';
 
 const LOB_FUNCTION_URL = '/.netlify/functions/lob';
 
@@ -74,6 +80,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
   const [step, setStep] = useState('confirm');
   const [toAddr, setToAddr] = useState(furnisherAddress || { name: letter.furnisher, line1: '', line2: '', city: '', state: '', zip: '' });
   const [docs, setDocs] = useState([]);
+  const [documentsLoading, setDocumentsLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -81,16 +88,28 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
   const [verified, setVerified] = useState(false);
 
   useEffect(() => {
+    let active = true;
+    setDocumentsLoading(true);
+    setDocs([]);
     if (!letter.clientId) {
       console.warn('LobMailer: letter missing clientId — skipping document enclosure lookup');
       setDocs([]);
-      return;
+      setDocumentsLoading(false);
+      return () => { active = false; };
     }
-    getDocuments(letter.clientName, letter.clientId).then(setDocs).catch(console.error);
+    getDocuments(letter.clientName, letter.clientId)
+      .then((rows) => { if (active) setDocs(rows); })
+      .catch((e) => { if (active) console.error(e); })
+      .finally(() => { if (active) setDocumentsLoading(false); });
+    return () => { active = false; };
   }, [letter.clientName, letter.clientId]);
 
   const idDoc = docs.find((d) => d.doc_type === 'id');
   const addressDoc = docs.find((d) => d.doc_type === 'address');
+  const isCccDispute = isCccDisputePhase(letter.phase);
+  const requiresIdentityDocuments = requiresCccR1IdentityDocuments(letter);
+  const mailService = mailServiceForLetter(letter);
+  const identityDocumentsMissing = requiresIdentityDocuments && (!idDoc || !addressDoc);
   const isBureauFollowUp = isPhase3FollowUpLetter(letter);
   let followUpContractError = null;
   let followUpPlan = [];
@@ -145,6 +164,12 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
     }
     if (isBureauFollowUp && followUpContractError) {
       setError(followUpContractError);
+      return;
+    }
+    if (requiresIdentityDocuments && (documentsLoading || !idDoc || !addressDoc)) {
+      setError(documentsLoading
+        ? 'R1 DOCUMENT CHECK IN PROGRESS — wait for the client document record to finish loading.'
+        : 'R1 DOCUMENTS REQUIRED — upload both a government-issued photo ID and proof of current address before mailing. Nothing was sent.');
       return;
     }
     setSending(true);
@@ -264,7 +289,6 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // Phase 3, and Phase 1.
       let enclosurePages = '';
       const isPhase3 = letter.phase && letter.phase.startsWith('Phase 3');
-      const isCccDispute = String(letter.phase || '').startsWith('CCC Dispute —');
       let followUpEnclosureManifest = null;
 
       if (isBureauFollowUp) {
@@ -502,6 +526,11 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           enclosurePages += await buildIdAddressPages();
         }
 
+      } else if (isCccDispute) {
+        // The CCC course packet is exact here: both identity documents are
+        // attached to R1 only. R2+ must not keep resending them, and the new
+        // bureau flow does not add the legacy LPOA enclosure.
+        if (requiresIdentityDocuments) enclosurePages += await buildIdAddressPages();
       } else {
         // Phase 1 enclosures: LPOA + ID + Address
         try {
@@ -564,7 +593,11 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         // Lob to print. A browser timestamp is unsafe: retrying after a
         // timeout would otherwise create a second physical letter.
         metadata: { letter_id: String(letter.id) },
-        enclosureManifest: followUpEnclosureManifest,
+        enclosureManifest: followUpEnclosureManifest || (requiresIdentityDocuments ? {
+          kind: 'ccc_r1_identity_v1',
+          document_ids: [idDoc.id, addressDoc.id],
+          storage_paths: [idDoc.storage_path, addressDoc.storage_path],
+        } : null),
       });
 
       // A duplicate response means Lob already accepted this exact durable
@@ -589,6 +622,8 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
               lobId: res.id,
               mailedDate: res.mailed_date || new Date().toISOString().slice(0, 10),
               trackingNumber: res.tracking_number || null,
+              mailService: res.mail_service || mailService,
+              expectedDeliveryDate: res.expected_delivery_date || null,
             });
             saveErr = null;
             break;
@@ -724,6 +759,24 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
                       Phase 1, furnisher responses, ID, and proof of address are intentionally excluded.
                     </div>
                   </div>
+                ) : isCccDispute ? (
+                  requiresIdentityDocuments ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 text-[12px]">
+                        {idDoc
+                          ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Government ID — {idDoc.file_name}</span></>
+                          : <><AlertCircle size={12} strokeWidth={2} className="text-red-500" /><span className="text-red-700">Required government ID is missing</span></>}
+                      </div>
+                      <div className="flex items-center gap-2 text-[12px]">
+                        {addressDoc
+                          ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Proof of Address — {addressDoc.file_name}</span></>
+                          : <><AlertCircle size={12} strokeWidth={2} className="text-red-500" /><span className="text-red-700">Required proof of current address is missing</span></>}
+                      </div>
+                      <div className="text-[10px] text-ink-muted pt-1">CCC R1 requires both documents. Mailing is blocked until both are present.</div>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-ink-muted">No ID or proof of address — the CCC course rule attaches them to R1 only.</div>
+                  )
                 ) : (
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2 text-[12px]">
@@ -748,7 +801,11 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
               <div className="border border-border rounded-sm p-3 bg-amber-50">
                 <div className="text-[11px] text-amber-800 leading-relaxed">
-                  <strong>USPS Certified Mail</strong> — Letter will be printed and mailed by Lob. Mail date and tracking number saved automatically. Verify address before sending.
+                  {mailService === USPS_FIRST_CLASS ? (
+                    <><strong>USPS First Class</strong> — Lob will print and mail one packet. CCC saves the Lob mailpiece status and expected delivery date; no Certified tracking number or signed receipt is created.</>
+                  ) : (
+                    <><strong>USPS Certified Mail</strong> — Letter will be printed and mailed by Lob. Mail date and tracking number saved automatically. Verify address before sending.</>
+                  )}
                 </div>
               </div>
 
@@ -765,7 +822,9 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
               <div className="text-[12px] text-ink-muted mb-4">
                 {result.duplicate
                   ? 'Lob had already accepted this letter. No additional mailpiece was created.'
-                  : 'Lob is printing and mailing your certified letter with return receipt'}
+                  : mailService === USPS_FIRST_CLASS
+                    ? 'Lob is printing and mailing your packet via USPS First Class.'
+                    : 'Lob is printing and mailing your certified letter with return receipt'}
               </div>
               <div className="border border-border rounded-sm p-4 text-left space-y-2">
                 <div className="text-[11px]">
@@ -828,15 +887,18 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
                   aren't clicking a button that's guaranteed to fail. */}
               <button
                 onClick={handleSend}
-                disabled={sending || !verified || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip || letter.enclosureParseBlocked || !!followUpContractError}
+                disabled={sending || documentsLoading || identityDocumentsMissing || !verified || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip || letter.enclosureParseBlocked || !!followUpContractError}
                 title={letter.enclosureParseBlocked
                   ? 'Blocked: enclosure could not be reliably parsed — re-upload and re-analyze first'
-                  : (followUpContractError || (!verified ? 'Verify the address first' : undefined))}
+                  : (followUpContractError
+                    || (identityDocumentsMissing ? 'Blocked: CCC R1 requires both ID and proof of address' : null)
+                    || (documentsLoading ? 'Checking client documents' : null)
+                    || (!verified ? 'Verify the address first' : undefined))}
                 className="flex items-center gap-2 px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                style={{ backgroundColor: (sending || !verified || !toAddr.line1 || letter.enclosureParseBlocked || followUpContractError) ? '#B5BBC9' : '#1B2A4A', color: (sending || !verified || !toAddr.line1 || letter.enclosureParseBlocked || followUpContractError) ? '#FFFFFF' : '#C9A84C' }}
+                style={{ backgroundColor: (sending || documentsLoading || identityDocumentsMissing || !verified || !toAddr.line1 || letter.enclosureParseBlocked || followUpContractError) ? '#B5BBC9' : '#1B2A4A', color: (sending || documentsLoading || identityDocumentsMissing || !verified || !toAddr.line1 || letter.enclosureParseBlocked || followUpContractError) ? '#FFFFFF' : '#C9A84C' }}
               >
                 <Send size={13} strokeWidth={2} />
-                {sending ? 'Sending…' : 'Send Certified Mail'}
+                {sending ? 'Sending…' : mailService === USPS_FIRST_CLASS ? 'Send First Class' : 'Send Certified Mail'}
               </button>
             </div>
           )}

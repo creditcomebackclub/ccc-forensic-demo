@@ -390,7 +390,13 @@ export default function InboxPage({ isAdmin, onNavigate }) {
             // closes it themselves. This save is what actually marks the
             // letter mailed — skipping it would leave Lob thinking it sent
             // while our own data still shows it sitting in this column.
-            await updateLetter(lobMailerLetter.id, { mailedDate: data.mailedDate, lobId: data.lobId, trackingNumber: data.trackingNumber });
+            await updateLetter(lobMailerLetter.id, {
+              mailedDate: data.mailedDate,
+              lobId: data.lobId,
+              trackingNumber: data.trackingNumber,
+              mailService: data.mailService,
+              expectedDeliveryDate: data.expectedDeliveryDate,
+            });
             load();
           }}
         />

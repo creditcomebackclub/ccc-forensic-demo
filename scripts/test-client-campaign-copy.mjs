@@ -4,6 +4,7 @@ import {
   clientCampaignLabel,
   isAccountDisputeCampaign,
   isBureauCampaign,
+  isCccDisputeCampaign,
   isFileUpdateCampaign,
 } from '../src/utils/clientCampaignCopy.js';
 
@@ -26,6 +27,7 @@ assert(!isFileUpdateCampaign('Phase 3 — Experian'), 'Phase 3 is not file updat
 assert(isBureauCampaign('Phase 3 — TransUnion'), 'Phase 3 is bureau');
 assert(isBureauCampaign('Phase 4'), 'Phase 4 is bureau');
 assert(!isBureauCampaign('Personal Info & Inquiries'), 'file update is not bureau campaign');
+assert(isCccDisputeCampaign('CCC Dispute — Accuracy R1 — Equifax'), 'CCC round is recognized');
 
 assert(isAccountDisputeCampaign('Phase 1'), 'Phase 1 is account dispute');
 assert(isAccountDisputeCampaign('Phase 2'), 'Phase 2 is account dispute');
@@ -35,10 +37,12 @@ assert(!isAccountDisputeCampaign('Phase 3 — Equifax'), 'Phase 3 is not account
 assert(clientCampaignLabel('Personal Info & Inquiries') === 'File update', 'label: file update');
 assert(clientCampaignLabel('Phase 1') === 'Account dispute', 'label: account dispute');
 assert(clientCampaignLabel('Phase 3 — Experian') === 'Credit Bureau Review', 'label: bureau review');
+assert(clientCampaignLabel('CCC Dispute — Collection R1 — Experian') === 'CCC bureau dispute', 'label: CCC bureau dispute');
 
 assert(clientCampaignDetail('Inquiry Removal') === 'Personal info & inquiry cleanup', 'detail: file update');
 assert(clientCampaignDetail('Phase 1').includes('direct'), 'detail: account dispute');
 assert(clientCampaignDetail('Phase 3 — TU').includes('Bureau'), 'detail: bureau');
+assert(clientCampaignDetail('CCC Dispute — Consent R1 — TU').toLowerCase().includes('consent'), 'detail: CCC flow');
 
 if (failed) {
   console.error(`\n${failed} assertion(s) failed`);

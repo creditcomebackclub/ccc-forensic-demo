@@ -21,6 +21,7 @@
     "test:dispute-tracking": "node scripts/test-dispute-tracking.mjs",
     "test:dispute-rewrite": "node scripts/test-dispute-rewrite.mjs",
     "test:current-dispute-method": "node scripts/test-current-dispute-method.mjs",
+    "test:ccc-mail": "node scripts/test-ccc-mail-rules.mjs",
     "test:operations": "node scripts/test-operations-control-center.mjs"
   },
   "dependencies": {
