@@ -171,10 +171,21 @@ assert(
 const durableSignature = 'data:image/png;base64,Y2Fub25pY2FsLXNpZ25hdHVyZQ==';
 const embeddedSignature = embeddedSignatureSource(injectSignatureImage(structuredLetter, durableSignature, 'Robert Kerstner'));
 assert(embeddedSignature === durableSignature, 'embedded signature source is available to packet assembly');
-const historicalRemoteSignature = '<p>Prior letter</p><img src="https://archive.example/Client/signature.png" style="max-height:60px" />';
+// A real retired link: the public client-docs URL shape that stopped
+// resolving when that bucket was made private.
+const retiredSignatureUrl = 'https://mlsbdmewxocgweotcdud.supabase.co/storage/v1/object/public/client-docs/307b398b-ffc5-4e11-b9b6-64a7f281b136/signature.png';
+const historicalRemoteSignature = `<p>Prior letter</p><img src="${retiredSignatureUrl}" style="max-height:60px" />`;
 const repairedHistoricalSignature = embedCanonicalSignatureInHistoricalHtml(historicalRemoteSignature, durableSignature);
 assert(repairedHistoricalSignature.includes(durableSignature), 'historical enclosure uses the canonical embedded signature');
-assert(!repairedHistoricalSignature.includes('https://archive.example/Client/signature.png'), 'retired historical signature URL is removed from the packet');
+assert(!repairedHistoricalSignature.includes(retiredSignatureUrl), 'retired historical signature URL is removed from the packet');
+throwsMessage(
+  () => embedCanonicalSignatureInHistoricalHtml(
+    '<p>Prior letter</p><img src="https://archive.example/Client/signature.png" />',
+    durableSignature
+  ),
+  'will not reliably render in physical mail',
+  'a historical image hosted outside our storage fails closed instead of being overwritten with the client signature'
+);
 throwsMessage(
   () => embedCanonicalSignatureInHistoricalHtml(historicalRemoteSignature, null),
   'no canonical embedded signature',

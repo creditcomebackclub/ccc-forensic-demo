@@ -1,3 +1,5 @@
+import { embedRemoteSignatureImages, remoteImageSources, classifyRemoteSignatureUrl } from './signatureInjection.js';
+
 // Canonical Supabase Storage path contract for client documents.
 //
 // documents/{firmUid}/
@@ -22,13 +24,15 @@ export function attorneySignatureImgTag(dataUrl) {
 }
 
 export function lpoaHtmlNeedsAttorneySignature(html) {
-  return typeof html === 'string' && ATTORNEY_BOLD_FALLBACK_RE.test(html);
+  if (typeof html !== 'string') return false;
+  ATTORNEY_BOLD_FALLBACK_RE.lastIndex = 0;
+  return ATTORNEY_BOLD_FALLBACK_RE.test(html);
 }
 
 /** Swap the bold-text attorney fallback for the real signature image. */
 export function injectAttorneySignatureHtml(html, dataUrl) {
   if (!html || !dataUrl) return html;
-  if (!ATTORNEY_BOLD_FALLBACK_RE.test(html)) return html;
+  if (!lpoaHtmlNeedsAttorneySignature(html)) return html;
   ATTORNEY_BOLD_FALLBACK_RE.lastIndex = 0;
   return html.replace(ATTORNEY_BOLD_FALLBACK_RE, attorneySignatureImgTag(dataUrl));
 }
@@ -40,11 +44,28 @@ export function injectAttorneySignatureHtml(html, dataUrl) {
 export async function loadAttorneySignatureDataUrl(supabase) {
   const { data, error } = await supabase.storage.from(FIRM_ASSETS_BUCKET).download(FIRM_ATTORNEY_SIG_PATH);
   if (error || !data) throw error || new Error('Attorney signature not found');
-  const buf = await data.arrayBuffer();
-  const bytes = new Uint8Array(buf);
+  return blobToDataUrl(data, 'image/png');
+}
+
+async function blobToDataUrl(blob, fallbackType = 'image/png') {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = '';
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return `data:image/png;base64,${btoa(binary)}`;
+  return `data:${blob.type && blob.type !== 'text/plain' ? blob.type : fallbackType};base64,${btoa(binary)}`;
+}
+
+/**
+ * The client's drawn signature as stored alongside their LPOA. Prefer this
+ * over a signature lifted from a letter: it is the image actually executed on
+ * that document.
+ */
+export async function loadClientSignatureDataUrl(supabase, lpoaData) {
+  const path = lpoaData?.signaturePath || null;
+  if (!path) return null;
+  const bucket = lpoaData.storageBucket || DOCUMENTS_BUCKET;
+  const { data, error } = await supabase.storage.from(bucket).download(path);
+  if (error || !data) return null;
+  return blobToDataUrl(data, 'image/png');
 }
 
 export function identityDocPath(firmUserId, clientId, docType, ext) {
@@ -141,16 +162,44 @@ export async function fetchLpoaHtml(supabase, lpoaData) {
  * present. Older portal enrollments fell back to bold text when clients
  * couldn't read firm assets after the storage reorg.
  */
-export async function fetchLpoaHtmlForPrint(supabase, lpoaData) {
+export async function fetchLpoaHtmlForPrint(supabase, lpoaData, { clientSignatureDataUrl = null } = {}) {
   const html = await fetchLpoaHtml(supabase, lpoaData);
-  if (!html || !lpoaHtmlNeedsAttorneySignature(html)) return html;
-  try {
-    const dataUrl = await loadAttorneySignatureDataUrl(supabase);
-    return injectAttorneySignatureHtml(html, dataUrl);
-  } catch (e) {
-    console.warn('Could not inject attorney signature into LPOA:', e?.message || e);
-    return html;
+  if (!html) return html;
+
+  // LPOAs signed before the storage reorg hardcoded public client-docs URLs
+  // for both signature images. That bucket is private now, so those links are
+  // dead weight in a mailpiece — Lob fails the whole piece trying to fetch
+  // them. Resolve both to embedded images, or refuse to hand back HTML that
+  // would print an unsigned power of attorney.
+  const remoteKinds = remoteImageSources(html).map(classifyRemoteSignatureUrl);
+  const needsAttorneyImage = lpoaHtmlNeedsAttorneySignature(html) || remoteKinds.includes('attorney');
+
+  let attorneySignatureDataUrl = null;
+  if (needsAttorneyImage) {
+    try {
+      attorneySignatureDataUrl = await loadAttorneySignatureDataUrl(supabase);
+    } catch (e) {
+      // The bold-text fallback is cosmetic and may stay; a retired attorney
+      // image link cannot, and embedRemoteSignatureImages fails closed below.
+      console.warn('Could not load attorney signature for LPOA:', e?.message || e);
+    }
   }
+
+  let repaired = attorneySignatureDataUrl
+    ? injectAttorneySignatureHtml(html, attorneySignatureDataUrl)
+    : html;
+
+  if (remoteKinds.length === 0) return repaired;
+
+  const clientSignature = remoteKinds.includes('client')
+    ? (await loadClientSignatureDataUrl(supabase, lpoaData)) || clientSignatureDataUrl
+    : clientSignatureDataUrl;
+
+  return embedRemoteSignatureImages(repaired, {
+    clientSignatureDataUrl: clientSignature,
+    attorneySignatureDataUrl,
+    context: 'Limited Power of Attorney enclosure',
+  });
 }
 
 /**

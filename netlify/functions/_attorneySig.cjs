@@ -53,13 +53,15 @@ function attorneySignatureImgTag(dataUrl) {
 /** Replace the bold-text attorney fallback with the real signature image. */
 function injectAttorneySignatureHtml(html, dataUrl) {
   if (!html || !dataUrl) return html;
-  if (!BOLD_FALLBACK_RE.test(html)) return html;
+  if (!htmlNeedsAttorneySignature(html)) return html;
   BOLD_FALLBACK_RE.lastIndex = 0;
   return html.replace(BOLD_FALLBACK_RE, attorneySignatureImgTag(dataUrl));
 }
 
 function htmlNeedsAttorneySignature(html) {
-  return typeof html === 'string' && BOLD_FALLBACK_RE.test(html);
+  if (typeof html !== 'string') return false;
+  BOLD_FALLBACK_RE.lastIndex = 0;
+  return BOLD_FALLBACK_RE.test(html);
 }
 
 module.exports = {
