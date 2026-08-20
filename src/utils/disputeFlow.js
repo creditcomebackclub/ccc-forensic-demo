@@ -39,6 +39,15 @@ export const FLOW_LETTER_ROUNDS = {
   accuracy_solo: 1,
 };
 
+// Migration boundary: legacy Setup & Spike, Dispute Fox, Metro 2, and manual
+// letters remain historical evidence only. They never advance a client into
+// a later CCC round; every client enters this method at a newly classified R1.
+export const CCC_TRANSITION_START_ROUND = 1;
+
+export function cccTransitionStartRound(_legacyLetters = []) {
+  return CCC_TRANSITION_START_ROUND;
+}
+
 export const FLOW_SEQUENCES = {
   accuracy: [
     'Factual Dispute',

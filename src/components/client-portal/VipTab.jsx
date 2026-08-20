@@ -1,7 +1,52 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Star, Calendar, TrendingUp, ExternalLink } from 'lucide-react';
 
+const CALENDLY_CSS_URL = 'https://assets.calendly.com/assets/external/widget.css';
+const CALENDLY_JS_URL = 'https://assets.calendly.com/assets/external/widget.js';
+const CALENDLY_VIP_URL = 'https://calendly.com/creditcomebackclub/monthly-vip-call';
+
 export default function VipTab({ isVip }) {
+  const calendlyMountRef = useRef(null);
+
+  useEffect(() => {
+    if (!isVip) return;
+    let disposed = false;
+    const mountEl = calendlyMountRef.current;
+
+    if (!document.querySelector(`link[href="${CALENDLY_CSS_URL}"]`)) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = CALENDLY_CSS_URL;
+      document.head.appendChild(link);
+    }
+
+    const initInline = () => {
+      if (disposed || !mountEl || !window.Calendly?.initInlineWidget) return;
+      mountEl.replaceChildren();
+      window.Calendly.initInlineWidget({
+        url: `${CALENDLY_VIP_URL}?hide_event_type_details=1&hide_gdpr_banner=1`,
+        parentElement: mountEl,
+        prefill: {},
+      });
+    };
+
+    let script = document.querySelector(`script[src="${CALENDLY_JS_URL}"]`);
+    if (!script) {
+      script = document.createElement('script');
+      script.src = CALENDLY_JS_URL;
+      script.async = true;
+      document.body.appendChild(script);
+    }
+
+    if (window.Calendly) initInline();
+    else script.addEventListener('load', initInline, { once: true });
+
+    return () => {
+      disposed = true;
+      script.removeEventListener('load', initInline);
+    };
+  }, [isVip]);
+
   if (!isVip) return null;
 
   return (
@@ -25,8 +70,8 @@ export default function VipTab({ isVip }) {
           </div>
           <span className="text-xs font-bold uppercase tracking-[0.06em] text-slate-900">Monthly Strategy Call</span>
         </div>
-        <p className="text-sm text-gray-600 mb-4 leading-relaxed">Book your 15-minute strategy call with Christopher Holland. Review your campaign, discuss next steps, and map your path to business credit.</p>
-        <p className="text-xs text-gray-400 italic">Your strategy call link is coming soon — we'll send it to you directly.</p>
+        <p className="text-sm text-gray-600 mb-4 leading-relaxed">Book your 30-minute strategy call with Christopher Holland. Review your campaign, discuss next steps, and map your path to business credit.</p>
+        <div ref={calendlyMountRef} style={{ minWidth: 320, height: 700 }} />
       </div>
 
       <div className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow">

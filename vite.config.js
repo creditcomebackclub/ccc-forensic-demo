@@ -16,8 +16,15 @@ export default defineConfig({
         // explicitly excluded gets served the cached index.html) hijacks
         // them for any browser that already has the SW installed, showing
         // the app shell instead of the real page.
-        navigateFallbackDenylist: [/^\/freeguide/, /^\/home/, /^\/join/, /^\/terms/, /^\/privacy/, /^\/success/, /^\/sign-lpoa/, /^\/downloads\//],
-        globIgnores: ['**/freeguide.html', '**/home.html', '**/join.html', '**/terms.html', '**/privacy.html', '**/success.html', '**/sign-lpoa.html', 'downloads/**'],
+        //
+        // The same hijack applies to any server endpoint opened as a
+        // navigation rather than fetched — /.netlify/functions/* directly and
+        // /api/* via the netlify.toml redirect. window.open()ing one of those
+        // (portal-agreement-view, guide-download) would otherwise load the
+        // cached app shell into the new tab, which boots the SPA at its
+        // default tab instead of showing the document.
+        navigateFallbackDenylist: [/^\/freeguide/, /^\/home/, /^\/join/, /^\/terms/, /^\/privacy/, /^\/success/, /^\/sign-lpoa/, /^\/+affiliate(?:\/apply|-apply\.html)/, /^\/downloads\//, /^\/\.netlify\//, /^\/api\//],
+        globIgnores: ['**/freeguide.html', '**/home.html', '**/join.html', '**/affiliate-apply.html', '**/terms.html', '**/privacy.html', '**/success.html', '**/sign-lpoa.html', 'downloads/**'],
       },
       manifest: {
         name: 'Credit Comeback Club',

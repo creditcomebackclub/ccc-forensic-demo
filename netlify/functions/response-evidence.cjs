@@ -10,9 +10,14 @@ const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
 const crypto = require('crypto');
 const { requireAuth } = require('./_requireAuth.cjs');
+const { responseEvidencePrefix, responseEvidencePrefixes } = require('./_storagePaths.cjs');
+const { queueRoundEvent } = require('./_roundEmail.cjs');
+
+// Canonical path: responses/{firmUid}/{clientId}/response-evidence/{evidenceId}/…
 
 const MAX_FILES = 12;
-const MAX_FILE_SIZE = 25 * 1024 * 1024;
+const MAX_FILE_SIZE = 12 * 1024 * 1024;
+const MAX_TOTAL_FILE_SIZE = 18 * 1024 * 1024;
 const ALLOWED_TYPES = new Set([
   'application/pdf',
   'image/jpeg',
@@ -37,7 +42,7 @@ function cleanName(value) {
 }
 
 function isBureauLetter(letter) {
-  return String(letter.phase || '').startsWith('Phase 3');
+  return letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3');
 }
 
 function clientMatchesLetter(clientProfile, letter) {
@@ -69,7 +74,7 @@ function parseFiles(files) {
   if (!Array.isArray(files) || files.length === 0) throw new Error('At least one response file is required.');
   if (files.length > MAX_FILES) throw new Error(`A response can contain at most ${MAX_FILES} files.`);
 
-  return files.map((file, index) => {
+  const parsed = files.map((file, index) => {
     const name = cleanName(file && file.name);
     const contentType = String(file && file.contentType || '').toLowerCase();
     const size = Number(file && file.size || 0);
@@ -81,17 +86,43 @@ function parseFiles(files) {
     }
     return { name, contentType, size, index };
   });
+  const total = parsed.reduce((sum, file) => sum + file.size, 0);
+  if (total > MAX_TOTAL_FILE_SIZE) {
+    throw new Error(`All response files together must be ${Math.floor(MAX_TOTAL_FILE_SIZE / 1024 / 1024)} MB or less.`);
+  }
+  return parsed;
 }
 
 async function loadLetter(db, letterId) {
   if (!letterId || typeof letterId !== 'string' || letterId.length > 500) return null;
   const { data, error } = await db
     .from('letters')
-    .select('id,user_id,client_id,client_account_id,client_name,phase,furnisher,mailed_date,response_outcome')
+    .select('id,user_id,client_id,client_account_id,client_name,phase,furnisher,mailed_date,response_outcome,packet_version,campaign_id,campaign_route_id')
     .eq('id', letterId)
     .limit(1);
   if (error) throw error;
   return data && data[0] || null;
+}
+
+async function seedPacketAssessments(db, evidence, letter, status = 'received') {
+  if (Number(letter.packet_version || 1) !== 2) return;
+  const { data: coverage, error } = await db.from('letter_account_coverage')
+    .select('id,user_id,client_account_id').eq('letter_id', letter.id);
+  if (error) throw error;
+  if (!coverage?.length) throw new Error('The packet has no account coverage records.');
+  const rows = coverage.map((entry) => ({
+    user_id: entry.user_id,
+    response_evidence_id: evidence.id,
+    coverage_id: entry.id,
+    client_account_id: entry.client_account_id,
+  }));
+  const { error: assessmentError } = await db.from('response_evidence_account_assessment')
+    .upsert(rows, { onConflict: 'response_evidence_id,coverage_id', ignoreDuplicates: true });
+  if (assessmentError) throw assessmentError;
+  const { error: coverageError } = await db.from('letter_account_coverage')
+    .update({ response_status: status, updated_at: new Date().toISOString() })
+    .eq('letter_id', letter.id);
+  if (coverageError) throw coverageError;
 }
 
 async function prepareUpload(db, userId, body) {
@@ -113,15 +144,29 @@ async function prepareUpload(db, userId, body) {
     return { error: response(409, { error: 'A response can be uploaded only after this dispute has been mailed.' }) };
   }
 
+  if (!letter.client_id) {
+    return { error: response(409, { error: 'This letter is missing a client_id; link it to a client before uploading a response.' }) };
+  }
+
+  if (Number(letter.packet_version || 1) === 2) {
+    const { data: existing, error: existingError } = await db.from('response_evidence')
+      .select('id,upload_status').eq('letter_id', letter.id)
+      .in('upload_status', ['uploading', 'received']).limit(1);
+    if (existingError) throw existingError;
+    if (existing?.length) {
+      return { error: response(409, { error: 'This packet already has a response upload. Add all response pages to that one packet record.' }) };
+    }
+  }
+
   const evidenceId = crypto.randomUUID();
-  const prefix = `${letter.user_id}/response-evidence/${evidenceId}`;
+  const prefix = responseEvidencePrefix(letter.user_id, letter.client_id, evidenceId);
   const paths = files.map((file) => `${prefix}/response_${String(file.index + 1).padStart(2, '0')}_${file.name}`);
   const responseKind = isBureauLetter(letter) ? 'bureau' : 'furnisher';
 
   const { error: insertError } = await db.from('response_evidence').insert({
     id: evidenceId,
     firm_user_id: letter.user_id,
-    client_id: letter.client_id || null,
+    client_id: letter.client_id,
     client_account_id: letter.client_account_id || null,
     client_name: letter.client_name,
     letter_id: letter.id,
@@ -131,8 +176,12 @@ async function prepareUpload(db, userId, body) {
     storage_paths: paths,
     file_names: files.map((file) => file.name),
     upload_status: 'uploading',
+    packet_upload: Number(letter.packet_version || 1) === 2,
     submitted_by: userId,
   });
+  if (insertError?.code === '23505' && Number(letter.packet_version || 1) === 2) {
+    return { error: response(409, { error: 'This packet already has a response upload. Add all response pages to that one packet record.' }) };
+  }
   if (insertError) throw insertError;
 
   try {
@@ -180,6 +229,7 @@ async function completeUpload(db, userId, body) {
   }
 
   if (evidence.upload_status === 'received') {
+    await seedPacketAssessments(db, evidence, letter);
     return response(200, {
       evidenceId: evidence.id,
       responseKind: evidence.response_kind,
@@ -189,8 +239,11 @@ async function completeUpload(db, userId, body) {
   }
 
   const paths = Array.isArray(evidence.storage_paths) ? evidence.storage_paths : [];
-  const prefix = `${evidence.firm_user_id}/response-evidence/${evidence.id}/`;
-  if (!paths.length || paths.some((path) => typeof path !== 'string' || !path.startsWith(prefix))) {
+  const prefixes = responseEvidencePrefixes(evidence.firm_user_id, evidence.client_id, evidence.id);
+  const matchedPrefix = prefixes.find((prefix) =>
+    paths.length && paths.every((path) => typeof path === 'string' && path.startsWith(prefix))
+  );
+  if (!matchedPrefix) {
     return response(400, { error: 'Response upload paths are invalid.' });
   }
 
@@ -199,12 +252,18 @@ async function completeUpload(db, userId, body) {
   // letter until each expected object exists.
   const { data: storedFiles, error: listError } = await db.storage
     .from(evidence.storage_bucket || 'responses')
-    .list(prefix.slice(0, -1), { limit: MAX_FILES + 2 });
+    .list(matchedPrefix.slice(0, -1), { limit: MAX_FILES + 2 });
   if (listError) throw listError;
   const expectedNames = new Set(paths.map((path) => path.split('/').pop()));
   const presentNames = new Set((storedFiles || []).map((file) => file.name));
   if ([...expectedNames].some((name) => !presentNames.has(name))) {
     return response(409, { error: 'One or more response files have not finished uploading. Please try again.' });
+  }
+  const actualTotal = (storedFiles || [])
+    .filter((file) => expectedNames.has(file.name))
+    .reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
+  if (actualTotal > MAX_TOTAL_FILE_SIZE) {
+    return response(413, { error: `The uploaded response exceeds the ${Math.floor(MAX_TOTAL_FILE_SIZE / 1024 / 1024)} MB total limit.` });
   }
 
   const now = new Date().toISOString();
@@ -228,6 +287,15 @@ async function completeUpload(db, userId, body) {
   }
   const { error: letterError } = await db.from('letters').update(letterPatch).eq('id', letter.id);
   if (letterError) throw letterError;
+  await seedPacketAssessments(db, evidence, letter);
+
+  if (letter.round_id) {
+    try {
+      await queueRoundEvent({ roundId: letter.round_id, eventType: 'first_response_received' });
+    } catch (emailError) {
+      console.error('First-response milestone email failed (response remains saved):', emailError.message);
+    }
+  }
 
   return response(200, {
     evidenceId: evidence.id,

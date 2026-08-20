@@ -2,6 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle, FileText, X } from 'lucide-react';
 import { updateLetter } from '../utils/storage';
 import { listResponseEvidence, updateResponseEvidenceReview } from '../utils/responseEvidence';
+import { getLatestRound, markRoundClosePrompted, reviewRoundLetter } from '../utils/rounds.js';
+import RoundCloseModal from './RoundCloseModal.jsx';
+import PacketAccountResponseReview from './PacketAccountResponseReview.jsx';
 
 const OPTIONS = [
   {
@@ -34,12 +37,13 @@ const OPTIONS = [
   },
 ];
 
-export default function BureauResponseReview({ letter, evidence: evidenceProp, onClose, onSaved, onEscalate, onFollowUp }) {
+function LegacyBureauResponseReview({ letter, evidence: evidenceProp, onClose, onSaved, onEscalate, onFollowUp }) {
   const [evidence, setEvidence] = useState(evidenceProp || null);
   const [choice, setChoice] = useState(evidenceProp?.review_status || letter.bureauReviewStatus || 'not_reviewed');
   const [notes, setNotes] = useState(evidenceProp?.review_notes || letter.bureauReviewNotes || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [roundReady, setRoundReady] = useState(null);
 
   useEffect(() => {
     if (evidenceProp?.id) {
@@ -72,22 +76,40 @@ export default function BureauResponseReview({ letter, evidence: evidenceProp, o
       // The rationale is staff-only evidence. Do not persist newly written
       // notes onto letters, which the client portal can read as part of its
       // campaign timeline.
-      if (evidence?.id) {
+      if (letter.roundId) {
+        if (!evidence?.id) throw new Error('Analyzed bureau-response evidence is required for a structured round review.');
+        const decision = {
+          resolved: { reviewStatus: 'resolved', nextAction: 'resolved' },
+          follow_up: { reviewStatus: 'follow_up', nextAction: 'next_round' },
+          needs_documents: { reviewStatus: 'needs_documents', nextAction: 'needs_documents' },
+          escalated: { reviewStatus: 'escalated', nextAction: 'escalate' },
+        }[chosen.key];
+        await reviewRoundLetter({ letterId: letter.id, responseEvidenceId: evidence.id, ...decision, notes: notes.trim() || null });
+      } else if (evidence?.id) {
         await updateResponseEvidenceReview(evidence.id, {
           reviewStatus: chosen.key,
           reviewNotes: notes.trim() || null,
           reviewedAt,
         });
       }
-      await updateLetter(letter.id, {
-        bureauReviewStatus: chosen.key,
-        bureauNextAction: chosen.action,
-        bureauReviewNotes: evidence?.id ? null : (notes.trim() || null),
-        bureauReviewedAt: reviewedAt,
-        bureauResponseStatus: 'reviewed',
-      });
+      if (!letter.roundId) {
+        await updateLetter(letter.id, {
+          bureauReviewStatus: chosen.key,
+          bureauNextAction: chosen.action,
+          bureauReviewNotes: evidence?.id ? null : (notes.trim() || null),
+          bureauReviewedAt: reviewedAt,
+          bureauResponseStatus: 'reviewed',
+        });
+      }
       onSaved && onSaved();
-      if (openEscalation) onEscalate && onEscalate();
+      if (letter.roundId && letter.clientAccountId) {
+        const latest = await getLatestRound(letter.clientAccountId);
+        if (latest?.round_id === letter.roundId && latest.ready_to_close && !latest.close_prompted_at) {
+          await markRoundClosePrompted(letter.roundId);
+          setRoundReady(latest);
+        }
+        else onClose();
+      } else if (openEscalation) onEscalate && onEscalate();
       else if (startFollowUp) onFollowUp && onFollowUp(evidence);
       else onClose();
     } catch (e) {
@@ -112,8 +134,9 @@ export default function BureauResponseReview({ letter, evidence: evidenceProp, o
           <FileText size={15} className="shrink-0 mt-0.5" />
           <span>
             A bureau response is a staff decision point—not an automatic escalation.
-            Choosing <strong>Continue with bureau follow-up</strong> drafts a supplemental Phase 3 letter
-            from the unresolved issues in this analysis.
+            {letter.roundId
+              ? <>Choosing <strong>Another round</strong> saves this reviewed evidence for a later explicit target and bureau selection.</>
+              : <>Choosing <strong>Continue with bureau follow-up</strong> drafts a supplemental legacy Phase 3 letter from the unresolved issues in this analysis.</>}
             {classification ? <> Current classification: <strong>{classification}</strong>.</> : null}
           </span>
         </div>
@@ -126,7 +149,7 @@ export default function BureauResponseReview({ letter, evidence: evidenceProp, o
               <div className="flex items-center gap-2 text-[12px] font-medium text-ink">
                 {choice === option.key && <CheckCircle size={14} style={{ color: option.tone }} />}
                 {choice !== option.key && <span className="w-[14px]" />}
-                {option.title}
+                {letter.roundId && option.key === 'follow_up' ? 'Another round' : option.title}
               </div>
               <div className="text-[11px] text-ink-muted ml-[22px] mt-1">{option.description}</div>
             </button>
@@ -143,7 +166,7 @@ export default function BureauResponseReview({ letter, evidence: evidenceProp, o
         <div className="flex items-center justify-between gap-3 pt-1">
           <button onClick={onClose} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
           <div className="flex gap-2">
-            {choice === 'follow_up' ? (
+            {choice === 'follow_up' && !letter.roundId ? (
               <>
                 <button onClick={() => save(false, false)} disabled={saving || !chosen}
                   className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border border-navy text-navy disabled:opacity-40">
@@ -168,7 +191,7 @@ export default function BureauResponseReview({ letter, evidence: evidenceProp, o
                 {saving ? 'Saving…' : 'Save decision'}
               </button>
             )}
-            {choice === 'escalated' && (
+            {choice === 'escalated' && !letter.roundId && (
               <button onClick={() => save(true)} disabled={saving}
                 className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md text-white bg-red-700 disabled:opacity-40">
                 Save &amp; open escalation
@@ -177,6 +200,13 @@ export default function BureauResponseReview({ letter, evidence: evidenceProp, o
           </div>
         </div>
       </div>
+      {roundReady && <RoundCloseModal roundId={roundReady.round_id} roundNumber={roundReady.round_number} onClose={() => setRoundReady(null)} onCompleted={() => { setRoundReady(null); onSaved?.(); onClose(); }} />}
     </div>
   );
+}
+
+export default function BureauResponseReview(props) {
+  return Number(props.letter?.packetVersion || props.letter?.packet_version || 1) === 2
+    ? <PacketAccountResponseReview letter={props.letter} evidence={props.evidence} onClose={props.onClose} onSaved={props.onSaved} />
+    : <LegacyBureauResponseReview {...props} />;
 }

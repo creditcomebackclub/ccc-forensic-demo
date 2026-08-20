@@ -1,8 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
 import { supabase } from '../utils/supabase';
-import { Check, X, DollarSign, Edit2, Link } from 'lucide-react';
-import { computeClientCommission } from '../utils/affiliateCommission';
+import { Check, X, DollarSign, Edit2, Link, FileSignature } from 'lucide-react';
+import { computeClientCommission, commissionRate } from '../utils/affiliateCommission';
+import { notifyAffiliate } from '../utils/notifyAffiliate';
+import {
+  INQUIRY_ONLY_FEE_TEXT,
+  buildLatePaymentPackage,
+  hasCustomServiceAgreement,
+} from '../utils/pricing';
+import { toast } from 'react-hot-toast';
 
 const T = {
   navy: '#1B2A4A',
@@ -165,6 +172,296 @@ function LifecycleStatusField({ status, exitReason, onSave }) {
   );
 }
 
+const ENGAGEMENT_LABELS = {
+  pending_onboarding: 'Pending Onboarding', active: 'Active', paused: 'Paused', inactive: 'Inactive', graduated: 'Graduated',
+};
+
+function EngagementStatusField({ status, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(status || 'pending_onboarding');
+  useEffect(() => setValue(status || 'pending_onboarding'), [status]);
+  if (editing) return <div className="flex items-center gap-1.5 justify-end"><select value={value} onChange={(e) => setValue(e.target.value)} className="border rounded-md px-2 py-1 text-[12px] bg-white" style={{ borderColor: T.border }}><option value="pending_onboarding">Pending Onboarding</option><option value="active">Active</option><option value="paused">Paused</option><option value="inactive">Inactive</option><option value="graduated">Graduated</option></select><button onClick={async () => { await onSave(value); setEditing(false); }} className="text-green-600"><Check size={13} /></button><button onClick={() => setEditing(false)} className="text-ink-faint"><X size={13} /></button></div>;
+  return <div className="flex items-center gap-1.5 group justify-end"><span className="text-[12px]" style={{ color: status === 'active' ? '#15803D' : T.ink }}>{ENGAGEMENT_LABELS[status] || 'Pending Onboarding'}</span><button onClick={() => setEditing(true)} className="opacity-30 group-hover:opacity-100 text-ink-faint hover:text-navy"><Edit2 size={11} /></button></div>;
+}
+
+function ServiceAgreementSection({ client, ledger, save, onChanged }) {
+  const isCustom = (client.serviceAgreementMode || 'tier') === 'custom';
+  const [mode, setMode] = useState(isCustom ? 'custom' : 'tier');
+  const [label, setLabel] = useState(client.serviceAgreementLabel || '');
+  const [amount, setAmount] = useState(
+    client.serviceAgreementAmount != null ? String(client.serviceAgreementAmount) : ''
+  );
+  const [feeText, setFeeText] = useState(client.serviceAgreementFeeText || '');
+  const [perBureau, setPerBureau] = useState('75');
+  const [bureauCount, setBureauCount] = useState('2');
+  const [includeInquiryPi, setIncludeInquiryPi] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [startingOnboarding, setStartingOnboarding] = useState(false);
+  const [onboardingMessage, setOnboardingMessage] = useState('');
+
+  useEffect(() => {
+    setMode((client.serviceAgreementMode || 'tier') === 'custom' ? 'custom' : 'tier');
+    setLabel(client.serviceAgreementLabel || '');
+    setAmount(client.serviceAgreementAmount != null ? String(client.serviceAgreementAmount) : '');
+    setFeeText(client.serviceAgreementFeeText || '');
+  }, [
+    client.id,
+    client.serviceAgreementMode,
+    client.serviceAgreementLabel,
+    client.serviceAgreementAmount,
+    client.serviceAgreementFeeText,
+  ]);
+
+  const applyLatePaymentPreset = () => {
+    const built = buildLatePaymentPackage({
+      perBureau,
+      bureauCount,
+      includeInquiryPi,
+    });
+    setMode('custom');
+    setLabel(built.label);
+    setAmount(String(built.amount));
+    setFeeText(built.feeText);
+  };
+
+  const applyInquiryPreset = () => {
+    setMode('custom');
+    setLabel('Inquiry / PI removal');
+    setAmount('');
+    setFeeText(INQUIRY_ONLY_FEE_TEXT);
+  };
+
+  const applyBlankCustom = () => {
+    setMode('custom');
+    setLabel('');
+    setAmount('');
+    setFeeText('');
+  };
+
+  const saveAgreement = async () => {
+    if (mode === 'custom' && !String(feeText || '').trim()) {
+      toast.error('Custom agreement needs fee text for the LPOA.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const fields = mode === 'custom'
+        ? {
+            service_agreement_mode: 'custom',
+            service_agreement_label: label.trim() || null,
+            service_agreement_amount: amount !== '' && !Number.isNaN(Number(amount)) ? Number(amount) : null,
+            service_agreement_fee_text: feeText.trim(),
+            // One-shot custom packages must not enter automated monthly invoicing.
+            billing_type: 'Paid in Full',
+          }
+        : {
+            service_agreement_mode: 'tier',
+            service_agreement_label: null,
+            service_agreement_amount: null,
+            service_agreement_fee_text: null,
+          };
+      await save(fields);
+      toast.success(mode === 'custom' ? 'Custom service agreement saved' : 'Using standard tier fees for LPOA');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addMatchingInvoice = async () => {
+    if (mode !== 'custom' || amount === '' || Number.isNaN(Number(amount))) {
+      toast.error('Save a custom agreement with an amount first.');
+      return;
+    }
+    const desc = label.trim() || 'Custom service package';
+    const amt = Number(amount);
+    const today = new Date().toISOString().slice(0, 10);
+    const updatedLedger = [...(Array.isArray(ledger) ? ledger : []), {
+      id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+      date: today,
+      type: 'Invoice',
+      amount: amt,
+      description: desc,
+      status: 'Due',
+      created_at: new Date().toISOString(),
+    }];
+    await save({
+      ledger: updatedLedger,
+      service_agreement_mode: 'custom',
+      service_agreement_label: desc,
+      service_agreement_amount: amt,
+      service_agreement_fee_text: feeText.trim() || null,
+      billing_type: 'Paid in Full',
+    });
+    toast.success('Ledger invoice added — mark paid when payment lands');
+    if (onChanged) onChanged();
+  };
+
+  // Sends the same portal-invite magic link as "Send Portal Invite" —
+  // deliberately NOT the separate agreement-onboarding.cjs/sign-agreement.html
+  // pre-portal signing flow (that one gates on a counsel-approved template
+  // and gets its own email; this button is for the in-portal wizard where
+  // the client sets a password, signs the LPOA, and uploads ID/address docs
+  // in one continuous session — ClientOnboardingModal in ClientSetupFlow.jsx).
+  // The billing tier/custom fee saved above feeds that wizard's LPOA fee
+  // section directly (billing_tier / service_agreement_fee_text on this
+  // client row), so save the plan first — the wizard reads it live.
+  const startOnboarding = async () => {
+    if (mode === 'custom' && !String(feeText || '').trim()) {
+      toast.error('Save the custom plan terms before starting onboarding.');
+      return;
+    }
+    if (!client.email) {
+      toast.error('Add the client email before starting onboarding.');
+      return;
+    }
+    setStartingOnboarding(true);
+    setOnboardingMessage('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const adminToken = session?.access_token;
+      const res = await fetch('/.netlify/functions/provision-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}) },
+        body: JSON.stringify({ email: client.email.trim().toLowerCase(), fullName: client.name, kind: 'client', clientId: client.id }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out.error || 'Could not start onboarding.');
+      setOnboardingMessage('Onboarding email sent — they set a password, sign the agreement, and upload documents in one flow, then land in the portal.');
+      toast.success('Onboarding started — invite sent');
+      if (onChanged) onChanged();
+    } catch (e) {
+      toast.error(e.message || 'Could not start onboarding.');
+    } finally {
+      setStartingOnboarding(false);
+    }
+  };
+
+  return (
+    <Section title="Service Agreement" span2>
+      <p className="text-[12px]" style={{ color: T.muted }}>
+        Choose and save the exact plan first — Start Onboarding emails a portal link that reads this plan live for the LPOA fee section. The client sets a password, signs the agreement, and uploads their ID and proof of address in one flow before landing in the portal. It never creates a payment.
+      </p>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setMode('tier')}
+          className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-md border transition-colors"
+          style={{
+            borderColor: mode === 'tier' ? T.navy : T.border,
+            background: mode === 'tier' ? T.navy : '#fff',
+            color: mode === 'tier' ? T.gold : T.ink,
+          }}
+        >
+          Tier plan
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('custom')}
+          className="text-[11px] uppercase tracking-wider px-3 py-1.5 rounded-md border transition-colors"
+          style={{
+            borderColor: mode === 'custom' ? T.navy : T.border,
+            background: mode === 'custom' ? T.navy : '#fff',
+            color: mode === 'custom' ? T.gold : T.ink,
+          }}
+        >
+          Custom package
+        </button>
+      </div>
+
+      {mode === 'tier' ? (
+        <div className="text-[12px] px-3 py-2 rounded-md border" style={{ borderColor: T.border, color: T.muted }}>
+          LPOA fees follow the Service Tier below
+          {client.billingTier ? ` (${client.billingTier})` : ' (set a tier first)'}.
+          {hasCustomServiceAgreement(client) && (
+            <span className="block mt-1 text-amber-700">A custom agreement is saved — click Save to clear it and return to tier fees.</span>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2 items-end">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>$ / bureau</label>
+              <input type="number" value={perBureau} onChange={(e) => setPerBureau(e.target.value)}
+                className="border rounded-md px-2 py-1 text-[12px] w-20" style={{ borderColor: T.border }} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>Bureaus</label>
+              <input type="number" min="1" max="3" value={bureauCount} onChange={(e) => setBureauCount(e.target.value)}
+                className="border rounded-md px-2 py-1 text-[12px] w-16" style={{ borderColor: T.border }} />
+            </div>
+            <label className="flex items-center gap-1.5 text-[12px] mb-1" style={{ color: T.ink }}>
+              <input type="checkbox" checked={includeInquiryPi} onChange={(e) => setIncludeInquiryPi(e.target.checked)} />
+              Include inquiry/PI letters
+            </label>
+            <button type="button" onClick={applyLatePaymentPreset}
+              className="text-[11px] uppercase tracking-wider px-2.5 py-1.5 rounded-md border hover:bg-gray-50" style={{ borderColor: T.border, color: T.navy }}>
+              Late payment preset
+            </button>
+            <button type="button" onClick={applyInquiryPreset}
+              className="text-[11px] uppercase tracking-wider px-2.5 py-1.5 rounded-md border hover:bg-gray-50" style={{ borderColor: T.border, color: T.navy }}>
+              Inquiry/PI only
+            </button>
+            <button type="button" onClick={applyBlankCustom}
+              className="text-[11px] uppercase tracking-wider px-2.5 py-1.5 rounded-md border hover:bg-gray-50" style={{ borderColor: T.border, color: T.muted }}>
+              Blank custom
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>Package label</label>
+              <input value={label} onChange={(e) => setLabel(e.target.value)}
+                placeholder="e.g. Late payment + inquiry/PI (2 bureaus)"
+                className="border rounded-md px-2 py-1.5 text-[12px]" style={{ borderColor: T.border }} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>Amount ($)</label>
+              <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+                placeholder="150"
+                className="border rounded-md px-2 py-1.5 text-[12px]" style={{ borderColor: T.border }} />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>LPOA fee text (Section 4)</label>
+            <textarea value={feeText} onChange={(e) => setFeeText(e.target.value)} rows={4}
+              placeholder="Exact prose the client will sign…"
+              className="border rounded-md px-2 py-1.5 text-[12px] w-full" style={{ borderColor: T.border }} />
+          </div>
+
+          <div className="text-[11px] px-3 py-2 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+            Saving a custom package sets Billing Type to <strong>Paid in Full</strong> so automated monthly invoices are not created.
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2 pt-1">
+        <button type="button" onClick={saveAgreement} disabled={saving}
+          className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md disabled:opacity-50"
+          style={{ background: T.navy, color: T.gold }}>
+          {saving ? 'Saving…' : 'Save agreement'}
+        </button>
+        {mode === 'custom' && (
+          <>
+            <button type="button" onClick={addMatchingInvoice}
+              className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border hover:bg-gray-50"
+              style={{ borderColor: T.border, color: T.ink }}>
+              Add matching ledger invoice
+            </button>
+          </>
+        )}
+        <button type="button" onClick={startOnboarding} disabled={startingOnboarding || saving}
+          className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
+          style={{ borderColor: T.navy, color: T.navy }}>
+          <FileSignature size={12} /> {startingOnboarding ? 'Preparing…' : 'Start onboarding'}
+        </button>
+      </div>
+      {onboardingMessage && <div className="text-[11px] px-3 py-2 rounded-md bg-amber-50 text-amber-800 border border-amber-200">{onboardingMessage}</div>}
+    </Section>
+  );
+}
+
 export default function ClientBillingPanel({ client, onChanged }) {
   const today = new Date().toISOString().slice(0, 10);
   const [showAddTx, setShowAddTx] = useState(false);
@@ -217,6 +514,30 @@ export default function ClientBillingPanel({ client, onChanged }) {
     }
   };
 
+  const notifyCommissionEarnedIfNeeded = (prevLedger, nextLedger) => {
+    if (!client.referredBy) return;
+    const affiliate = affiliates[client.referredBy] || null;
+    const before = computeClientCommission(
+      { referral_fee: client.referralFee, ledger: prevLedger },
+      affiliate,
+      commissionPayouts
+    ).earned;
+    const after = computeClientCommission(
+      { referral_fee: client.referralFee, ledger: nextLedger },
+      affiliate,
+      commissionPayouts
+    ).earned;
+    const delta = after - before;
+    if (delta <= 0.004) return;
+    const rate = commissionRate({ referral_fee: client.referralFee }, affiliate);
+    const revenueAmount = rate > 0 ? delta / rate : null;
+    notifyAffiliate('commission_earned', {
+      clientId: client.id,
+      amount: delta,
+      revenueAmount,
+    });
+  };
+
   const [editingTxId, setEditingTxId] = useState(null);
 
   const addTransaction = async () => {
@@ -257,6 +578,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
     }
 
     await save({ ledger: updatedLedger });
+    notifyCommissionEarnedIfNeeded(ledger, updatedLedger);
     setShowAddTx(false);
     setEditingTxId(null);
     setNewTx({ date: new Date().toISOString().slice(0, 10), type: 'Invoice', amount: '', description: '', status: 'Due', paidDate: today });
@@ -288,11 +610,14 @@ export default function ClientBillingPanel({ client, onChanged }) {
     const stamp = paidOnDate ? new Date(paidOnDate + 'T12:00:00').toISOString() : new Date().toISOString();
     const updated = ledger.map(t => t.id === id ? { ...t, status: 'Paid', paid_at: t.paid_at || stamp } : t);
     await save({ ledger: updated });
+    notifyCommissionEarnedIfNeeded(ledger, updated);
     setMarkingPaidId(null);
   };
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start mt-2">
+      <ServiceAgreementSection client={client} ledger={ledger} save={save} onChanged={onChanged} />
+
       <Section title="Billing Setup">
         <Row label="Amount Due">
           <div className="text-[18px] font-bold" style={{ color: balanceDue > 0 ? '#DC2626' : T.ink }}>
@@ -304,11 +629,51 @@ export default function ClientBillingPanel({ client, onChanged }) {
             ${totalPaid.toFixed(2)}
           </div>
         </Row>
+
+        {hasCustomServiceAgreement(client) && (
+          <>
+            <Row label="Active Package">
+              <div className="text-[12px] font-medium text-right" style={{ color: T.ink }}>
+                {client.serviceAgreementLabel || 'Custom package'}
+              </div>
+            </Row>
+            <Row label="Package Amount">
+              <div className="text-[14px] font-semibold" style={{ color: T.navy }}>
+                {client.serviceAgreementAmount != null
+                  ? `$${Number(client.serviceAgreementAmount).toFixed(2)}`
+                  : '—'}
+              </div>
+            </Row>
+          </>
+        )}
+
+        <Row label="Service Eligibility">
+          <EngagementStatusField
+            status={client.engagementStatus}
+            onSave={(value) => save({ engagement_status: value, engagement_status_changed_at: new Date().toISOString() })}
+          />
+          <div className="text-[10px] mt-1 text-right" style={{ color: T.faint }}>Controls starting new rounds only; it does not stop work already in flight.</div>
+        </Row>
+
         <Row label="Billing Status">
           <LifecycleStatusField
             status={client.billingStatus}
             exitReason={client.exitReason}
-            onSave={(fields) => save(fields)}
+            onSave={async (fields) => {
+              const prev = client.billingStatus || 'Active';
+              await save(fields);
+              if (
+                client.referredBy
+                && ['Paused', 'Graduated', 'Inactive'].includes(fields.billing_status)
+                && fields.billing_status !== prev
+              ) {
+                notifyAffiliate('exited', {
+                  clientId: client.id,
+                  billingStatus: fields.billing_status,
+                  exitReason: fields.exit_reason,
+                });
+              }
+            }}
           />
         </Row>
         <Row label="Billing Start Date">
@@ -320,15 +685,24 @@ export default function ClientBillingPanel({ client, onChanged }) {
             onSave={(v) => save({ billing_start_date: v })} 
           />
         </Row>
-        <Row label="Service Tier">
-          <Field 
-            label="service tier" 
-            value={client.billingTier} 
-            options={['Standard', 'VIP', 'Paid In Full']}
-            placeholder="Select tier..."
-            onSave={(v) => save({ billing_tier: v })} 
-          />
-        </Row>
+        {!hasCustomServiceAgreement(client) && (
+          <Row label="Service Tier">
+            <Field
+              label="service tier"
+              value={client.billingTier}
+              options={['Standard', 'VIP', 'Paid In Full']}
+              placeholder="Select tier..."
+              onSave={(v) => save({ billing_tier: v })}
+            />
+          </Row>
+        )}
+        {hasCustomServiceAgreement(client) && (
+          <Row label="Service Tier">
+            <span className="text-[12px] italic" style={{ color: T.faint }}>
+              Custom package (LPOA uses Service Agreement above)
+            </span>
+          </Row>
+        )}
         <Row label="Billing Type">
           <Field 
             label="billing type" 
@@ -337,12 +711,44 @@ export default function ClientBillingPanel({ client, onChanged }) {
             onSave={(v) => save({ billing_type: v })} 
           />
         </Row>
+        {client.billingType === 'Automated Recurring' && (
+          <Row label="Custom Monthly Fee">
+            <Field
+              label="custom monthly fee"
+              value={client.billingRecurringAmount != null ? String(client.billingRecurringAmount) : ''}
+              type="number"
+              placeholder="Uses tier price"
+              onSave={(value) => {
+                const amount = value === '' ? null : Number(value);
+                if (amount != null && (!Number.isFinite(amount) || amount <= 0)) {
+                  toast.error('Custom monthly fee must be greater than $0.');
+                  return;
+                }
+                return save({ billing_recurring_amount: amount });
+              }}
+            />
+            <div className="text-[10px] mt-1 text-right" style={{ color: T.faint }}>
+              Optional override for recurring invoices and MRR; does not affect balances or payments.
+            </div>
+          </Row>
+        )}
         
         {client.billingStatus === 'Active' && (
           <div className="mt-2 bg-green-50 text-green-800 text-[11px] px-3 py-2 rounded-md border border-green-200 flex items-start gap-2">
             <Check size={14} className="mt-0.5 flex-shrink-0" />
             <div>
-              <strong>Billing is active.</strong> Client will be included in the automated billing cycle (once gateway is integrated).
+              {hasCustomServiceAgreement(client) || client.billingType === 'Paid in Full' ? (
+                <>
+                  <strong>One-time / paid-in-full billing.</strong>
+                  {hasCustomServiceAgreement(client)
+                    ? ' Custom package drives the LPOA — no automated monthly invoices.'
+                    : ' Not enrolled in the automated monthly billing cycle.'}
+                </>
+              ) : (
+                <>
+                  <strong>Billing is active.</strong> Client will be included in the automated billing cycle (once gateway is integrated).
+                </>
+              )}
             </div>
           </div>
         )}
@@ -428,6 +834,12 @@ export default function ClientBillingPanel({ client, onChanged }) {
               });
               if (error) throw error;
               setPayingCommission(false);
+              notifyAffiliate('commission_paid', {
+                clientId: client.id,
+                affiliateId: client.referredBy,
+                amount,
+                paidAt: new Date(commissionPayDate + 'T12:00:00').toISOString(),
+              });
               if (onChanged) onChanged();
             } catch (e) {
               console.error('Failed to record commission payout:', e);

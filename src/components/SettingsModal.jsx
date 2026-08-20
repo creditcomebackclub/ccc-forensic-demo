@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, User, Save, DollarSign, Bell, Users, FileText } from 'lucide-react';
+import { X, Check, User, Save, DollarSign, Bell, Users, FileText, CalendarDays, RefreshCw } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 import { getSettings, saveSettings } from '../utils/settings';
 import DisputeTemplateLibrary from './DisputeTemplateLibrary';
@@ -17,6 +17,10 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
   const [savingSettings, setSavingSettings] = useState(false);
   const [savedSettings, setSavedSettings] = useState(false);
 
+  const [calendlyStatus, setCalendlyStatus] = useState(null);
+  const [loadingCalendly, setLoadingCalendly] = useState(false);
+  const [connectingCalendly, setConnectingCalendly] = useState(false);
+
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -26,6 +30,50 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
     }
     load();
   }, []);
+
+  const loadCalendlyStatus = async () => {
+    setLoadingCalendly(true);
+    setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not signed in.');
+      const response = await fetch('/api/calendly-admin', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const body = await response.json();
+      if (!response.ok && response.status !== 409) throw new Error(body.error || 'Could not check Calendly.');
+      setCalendlyStatus(body);
+    } catch (e) {
+      setError(e.message || 'Could not check Calendly.');
+    } finally {
+      setLoadingCalendly(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'integrations' && !calendlyStatus && !loadingCalendly) loadCalendlyStatus();
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const connectCalendly = async () => {
+    setConnectingCalendly(true);
+    setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Not signed in.');
+      const response = await fetch('/api/calendly-admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ action: 'ensure_subscription' }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Could not connect Calendly.');
+      setCalendlyStatus(body);
+    } catch (e) {
+      setError(e.message || 'Could not connect Calendly.');
+    } finally {
+      setConnectingCalendly(false);
+    }
+  };
 
   const handleSaveName = async () => {
     setSavingName(true);
@@ -68,8 +116,9 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
     { id: 'profile', label: 'Profile', icon: User },
     { id: 'pricing', label: 'Pricing', icon: DollarSign },
     { id: 'notifications', label: 'Notifications', icon: Bell },
+    { id: 'integrations', label: 'Integrations', icon: CalendarDays },
     { id: 'affiliates', label: 'Affiliates', icon: Users },
-    { id: 'templates', label: 'Letter Library', icon: FileText },
+    { id: 'templates', label: 'Letter Library', icon: FileText }
   ];
 
   if (!settings) return null;
@@ -215,7 +264,8 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
                 </p>
                 {[
                   { key: 'emailNewLeads', label: 'New Affiliate Leads', desc: 'When an affiliate refers a new client via their portal.' },
-                  { key: 'emailClientUploads', label: 'Client Document Uploads', desc: 'When a client uploads a new document or ID.' },
+                  { key: 'emailOnboardingComplete', label: 'Portal Onboarding Complete', desc: 'When a client finishes enrollment (ID, address, LPOA).' },
+                  { key: 'emailClientUploads', label: 'Client Document Uploads', desc: 'When a client uploads a new document, ID, or dispute response.' },
                   { key: 'emailEscalations', label: 'Action Required Escalations', desc: 'When the system flags a response that needs manual review.' }
                 ].map(opt => (
                   <label key={opt.key} className="flex items-start gap-3 cursor-pointer p-3 border border-border rounded-sm hover:bg-gray-50 transition-colors">
@@ -223,6 +273,35 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
                       <input
                         type="checkbox"
                         checked={settings.notifications[opt.key]}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          notifications: { ...settings.notifications, [opt.key]: e.target.checked }
+                        })}
+                        className="accent-navy w-4 h-4"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-bold text-navy">{opt.label}</div>
+                      <div className="text-[11px] text-gray-500">{opt.desc}</div>
+                    </div>
+                  </label>
+                ))}
+
+                <p className="text-[12px] text-gray-500 pt-4 mb-2 border-t border-border">
+                  Partner emails (sent to affiliates, not you).
+                </p>
+                {[
+                  { key: 'emailAffiliateReferralConfirm', label: 'Referral Received', desc: 'Confirm to the partner when their referral lands in your CRM.' },
+                  { key: 'emailAffiliateEnrolled', label: 'Client Enrolled', desc: 'When a referred client finishes enrollment / signs LPOA.' },
+                  { key: 'emailAffiliateExited', label: 'Status Exit / Pause', desc: 'When a referred client becomes Paused, Graduated, or Inactive.' },
+                  { key: 'emailAffiliateCommission', label: 'Commission Earned & Paid', desc: 'When revenue clears or you record a commission payout.' },
+                  { key: 'emailAffiliateMonthlySummary', label: 'Monthly Partner Summary', desc: 'Snapshot of referrals and commissions on the 1st of each month.' },
+                ].map(opt => (
+                  <label key={opt.key} className="flex items-start gap-3 cursor-pointer p-3 border border-border rounded-sm hover:bg-gray-50 transition-colors">
+                    <div className="pt-0.5">
+                      <input
+                        type="checkbox"
+                        checked={settings.notifications[opt.key] !== false}
                         onChange={(e) => setSettings({
                           ...settings,
                           notifications: { ...settings.notifications, [opt.key]: e.target.checked }
@@ -254,6 +333,58 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
               </div>
             )}
 
+            {activeTab === 'integrations' && (
+              <div className="space-y-4">
+                <div className="border border-border rounded-sm p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-[13px] font-bold text-navy">Calendly Consultation Sync</div>
+                      <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                        Synchronizes bookings, cancellations, and reschedules with the lead record. A booking stops generic nurture and sends one preparation email; Calendly remains responsible for appointment reminders.
+                      </p>
+                    </div>
+                    <span className={`shrink-0 px-2 py-1 rounded-sm text-[10px] font-bold uppercase tracking-wider ${
+                      calendlyStatus?.connected ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                    }`}>
+                      {loadingCalendly ? 'Checking' : calendlyStatus?.connected ? 'Connected' : 'Not connected'}
+                    </span>
+                  </div>
+
+                  {calendlyStatus?.subscription && (
+                    <div className="mt-4 bg-gray-50 border border-border rounded-sm px-3 py-2 text-[11px] text-gray-600 space-y-1">
+                      <div><span className="font-bold text-navy">Events:</span> {(calendlyStatus.subscription.events || []).join(', ')}</div>
+                      <div><span className="font-bold text-navy">Endpoint:</span> {calendlyStatus.subscription.callbackUrl}</div>
+                    </div>
+                  )}
+
+                  {calendlyStatus?.error && !error && (
+                    <div className="mt-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-sm px-3 py-2">{calendlyStatus.error}</div>
+                  )}
+
+                  <div className="flex gap-2 mt-4">
+                    <button
+                      onClick={connectCalendly}
+                      disabled={connectingCalendly || loadingCalendly}
+                      className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-bold uppercase tracking-wider rounded-sm bg-navy text-gold disabled:opacity-50"
+                    >
+                      <CalendarDays size={13} />
+                      {connectingCalendly ? 'Connecting…' : calendlyStatus?.connected ? 'Verify Connection' : 'Connect Calendly'}
+                    </button>
+                    <button
+                      onClick={loadCalendlyStatus}
+                      disabled={loadingCalendly || connectingCalendly}
+                      className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-bold uppercase tracking-wider rounded-sm border border-border text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      <RefreshCw size={13} className={loadingCalendly ? 'animate-spin' : ''} /> Refresh
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-400">
+                  The Calendly access token stays server-side in Netlify and is never returned to this screen.
+                </p>
+              </div>
+            )}
+
             {activeTab === 'templates' && (
               <div className="h-full min-h-[620px]">
                 <DisputeTemplateLibrary canEdit={isAdmin} />
@@ -266,7 +397,7 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
           </div>
 
           <div className="px-6 py-4 border-t border-border bg-gray-50 flex justify-between items-center">
-            {activeTab !== 'profile' && activeTab !== 'templates' ? (
+            {!['profile', 'integrations', 'templates'].includes(activeTab) ? (
               <button
                 onClick={handleSaveSettings}
                 disabled={savingSettings}

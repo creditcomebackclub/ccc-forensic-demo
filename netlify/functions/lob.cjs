@@ -1,6 +1,9 @@
 const https = require('https');
 const crypto = require('crypto');
+const { PDFDocument } = require('pdf-lib');
 const { archiveLobArtifact } = require('./_lobArtifacts.cjs');
+const { responseEvidencePrefixes } = require('./_storagePaths.cjs');
+const { queueCampaignCleanupMailed, queueRoundEvent } = require('./_roundEmail.cjs');
 
 function lobRequest(path, method, body, apiKey, extraHeaders) {
   return new Promise((resolve, reject) => {
@@ -65,6 +68,77 @@ function supabaseRequest(path, method, body, supabaseUrl, serviceKey, extraHeade
   });
 }
 
+// Lob renders the mailpiece HTML on its own schedule and fetches every remote
+// asset at that moment. The browser assembles that HTML, so the browser cannot
+// be the only thing that checks it — re-read what was actually uploaded.
+// Unquoted `src=https://…` renders the same as the quoted form, so the
+// allowlist has to see it too.
+const MAIL_ASSET_URL_RE = /(?:\bsrc\s*=\s*["']?|url\(\s*["']?)(https?:\/\/[^"')\s>]+)/gi;
+
+const MAILPIECE_PREFLIGHT_TIMEOUT_MS = 15000;
+
+/**
+ * The mailpiece URL arrives in the request body, and this function both fetches
+ * it and hands it to Lob to print. Neither may point anywhere but the signed
+ * document we just uploaded: otherwise it is a server-side request primitive,
+ * and a way to have Lob print arbitrary content on firm letterhead.
+ */
+function durableMailpieceUrl(remoteUrl, supabaseUrl) {
+  const expectedPrefix = String(supabaseUrl).replace(/\/+$/, '') + '/storage/v1/object/sign/documents/';
+  let parsed;
+  let expected;
+  try {
+    parsed = new URL(String(remoteUrl));
+    expected = new URL(expectedPrefix);
+  } catch (e) {
+    throw new Error('The rendered letter URL is not a valid URL.');
+  }
+  if (parsed.protocol !== 'https:' || parsed.origin !== expected.origin || !String(remoteUrl).startsWith(expectedPrefix)) {
+    throw new Error('The rendered letter URL must be a signed document URL from this project storage.');
+  }
+  return String(remoteUrl);
+}
+
+function scanRemoteAssetUrls(fileUrl) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(fileUrl);
+    const req = https.request({
+      hostname: u.hostname,
+      port: 443,
+      path: u.pathname + u.search,
+      method: 'GET',
+      timeout: MAILPIECE_PREFLIGHT_TIMEOUT_MS,
+    }, (res) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume();
+        reject(new Error('Could not re-read the uploaded mailpiece for preflight (' + res.statusCode + ')'));
+        return;
+      }
+      const found = new Set();
+      let carry = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        // Keep a tail between chunks so a URL split across the boundary is
+        // still seen whole; the Set absorbs the resulting overlap.
+        const text = carry + chunk;
+        MAIL_ASSET_URL_RE.lastIndex = 0;
+        let match;
+        while ((match = MAIL_ASSET_URL_RE.exec(text)) !== null) found.add(match[1]);
+        carry = text.slice(-2048);
+      });
+      res.on('end', () => resolve(Array.from(found)));
+      res.on('error', reject);
+    });
+    // Without this a stalled endpoint holds an irreversible mail send open
+    // until Netlify kills the whole invocation.
+    req.on('timeout', () => {
+      req.destroy(new Error('Timed out re-reading the uploaded mailpiece for preflight'));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 function isSuccess(res) {
   return res && res.status >= 200 && res.status < 300;
 }
@@ -79,16 +153,271 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_name,phase,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,mail_service,expected_delivery_date,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,dispute_round_number',
+      + '&select=id,user_id,client_id,client_account_id,client_name,phase,round_id,round_number,letter_kind,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,mail_service,expected_delivery_date,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,campaign_id,campaign_route_id,packet_version,dispute_basis,dispute_round_number',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
   return Array.isArray(result.body) ? result.body[0] : null;
 }
 
+function normalizedRecipient(value) {
+  if (!value) return '';
+  if (typeof value === 'object') return Object.values(value).map(normalizedRecipient).join('');
+  return String(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+async function validatePacketPreflight(letter, toAddress, supabaseUrl, serviceKey) {
+  const coverageResult = await supabaseRequest(
+    '/rest/v1/letter_account_coverage?letter_id=eq.' + encodeURIComponent(letter.id)
+      + '&select=id,user_id,client_id,campaign_id,campaign_route_id,campaign_item_id,client_account_id,dispute_round_id,coverage_order,frozen_findings,expected_recipient',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  const coverage = Array.isArray(coverageResult.body) ? coverageResult.body : [];
+  if (!isSuccess(coverageResult) || coverage.length < 1 || coverage.length > 5) {
+    throw new Error('The consolidated packet must have one to five verified account coverage records.');
+  }
+  const routeResult = await supabaseRequest(
+    '/rest/v1/campaign_letter_routes?id=eq.' + encodeURIComponent(letter.campaign_route_id)
+      + '&select=id,user_id,client_id,campaign_id,item_id,item_ids,target_type,target_bureau,dispute_basis,recipient_key',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  const route = Array.isArray(routeResult.body) ? routeResult.body[0] : null;
+  const coveredItems = coverage.map((entry) => entry.campaign_item_id);
+  const routeItems = route?.item_ids?.length ? route.item_ids : [route?.item_id];
+  if (!isSuccess(routeResult) || !route || route.user_id !== letter.user_id || route.client_id !== letter.client_id
+      || route.campaign_id !== letter.campaign_id || route.target_type !== letter.target_type
+      || route.target_bureau !== letter.target_bureau || route.dispute_basis !== letter.dispute_basis
+      || routeItems.length !== coveredItems.length || coveredItems.some((id) => !routeItems.includes(id))) {
+    throw new Error('The packet no longer matches its reviewed Blueprint route.');
+  }
+  if (coverage.some((entry, index) => entry.user_id !== letter.user_id || entry.client_id !== letter.client_id
+      || entry.campaign_id !== letter.campaign_id || entry.campaign_route_id !== letter.campaign_route_id
+      || entry.coverage_order !== index + 1 || !Array.isArray(entry.frozen_findings)
+      || !entry.frozen_findings.some((finding) => finding?.outcome === 'FLAG'))) {
+    throw new Error('Every packet account must retain its ordered frozen findings and campaign identity.');
+  }
+  const expectedKeys = new Set(coverage.map((entry) => normalizedRecipient(entry.expected_recipient)));
+  if (expectedKeys.size !== 1) throw new Error('The packet coverage contains mixed recipients or legal paths.');
+  const expected = coverage[0].expected_recipient || {};
+  if (letter.target_type === 'bureau') {
+    if (expected.type !== 'bureau' || expected.bureau !== letter.target_bureau) {
+      throw new Error('The packet bureau recipient does not match its frozen coverage.');
+    }
+  } else {
+    const actualAddress = normalizedRecipient([toAddress.name, toAddress.line1, toAddress.line2, toAddress.city, toAddress.state, toAddress.zip]);
+    const expectedAddress = normalizedRecipient([expected.name, expected.address]);
+    if (expected.type !== 'furnisher' || expected.basis !== letter.dispute_basis
+        || !actualAddress || !expectedAddress || !actualAddress.includes(expectedAddress.slice(-Math.min(24, expectedAddress.length)))) {
+      throw new Error('The verified mailing address does not match the reviewed direct-packet recipient.');
+    }
+  }
+
+  const roundIds = coverage.map((entry) => entry.dispute_round_id);
+  const roundsResult = await supabaseRequest(
+    '/rest/v1/dispute_rounds?id=in.(' + roundIds.map(encodeURIComponent).join(',') + ')&select=id,user_id,client_id,client_account_id,round_number,target_type,status,campaign_id',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  const rounds = Array.isArray(roundsResult.body) ? roundsResult.body : [];
+  const roundById = new Map(rounds.map((round) => [round.id, round]));
+  if (!isSuccess(roundsResult) || rounds.length !== coverage.length || coverage.some((entry) => {
+    const round = roundById.get(entry.dispute_round_id);
+    return !round || round.status !== 'open' || round.user_id !== letter.user_id
+      || round.client_id !== letter.client_id || round.client_account_id !== entry.client_account_id
+      || round.target_type !== letter.target_type || round.campaign_id !== letter.campaign_id;
+  })) throw new Error('Every covered account must have its matching open dispute round before mailing.');
+
+  const clientResult = await supabaseRequest('/rest/v1/clients?id=eq.' + encodeURIComponent(letter.client_id) + '&select=id,user_id,lpoa_signature_data', 'GET', null, supabaseUrl, serviceKey);
+  const client = Array.isArray(clientResult.body) ? clientResult.body[0] : null;
+  if (!isSuccess(clientResult) || !client || client.user_id !== letter.user_id || !client.lpoa_signature_data) {
+    throw new Error('A signed Limited Power of Attorney is required before mailing this packet.');
+  }
+  if (rounds.some((round) => round.round_number === 1)) {
+    const docsResult = await supabaseRequest('/rest/v1/documents?client_id=eq.' + encodeURIComponent(letter.client_id) + '&doc_type=in.(id,address)&select=id,doc_type', 'GET', null, supabaseUrl, serviceKey);
+    const docTypes = new Set((Array.isArray(docsResult.body) ? docsResult.body : []).map((doc) => doc.doc_type));
+    if (!isSuccess(docsResult) || !docTypes.has('id') || !docTypes.has('address')) throw new Error('A Round 1 packet requires a government ID and proof of current address.');
+  }
+
+  const laterItemIds = coverage.filter((entry) => roundById.get(entry.dispute_round_id)?.round_number > 1).map((entry) => entry.campaign_item_id);
+  if (laterItemIds.length) {
+    const linksResult = await supabaseRequest('/rest/v1/letter_source_links?user_id=eq.' + encodeURIComponent(letter.user_id) + '&letter_id=eq.' + encodeURIComponent(letter.id) + '&select=source_letter_id,response_evidence_id,campaign_item_ids', 'GET', null, supabaseUrl, serviceKey);
+    const links = Array.isArray(linksResult.body) ? linksResult.body : [];
+    if (!isSuccess(linksResult) || laterItemIds.some((itemId) => !links.some((link) => link.response_evidence_id && (link.campaign_item_ids || []).includes(itemId)))) {
+      throw new Error('Every later-round packet account requires its own reviewed prior evidence link.');
+    }
+    const evidenceIds = [...new Set(links.map((link) => link.response_evidence_id).filter(Boolean))];
+    const evidenceResult = await supabaseRequest('/rest/v1/response_evidence?id=in.(' + evidenceIds.map(encodeURIComponent).join(',') + ')&select=id,firm_user_id,analysis_status,review_status', 'GET', null, supabaseUrl, serviceKey);
+    const evidence = Array.isArray(evidenceResult.body) ? evidenceResult.body : [];
+    if (!isSuccess(evidenceResult) || evidence.length !== evidenceIds.length || evidence.some((row) => row.firm_user_id !== letter.user_id || row.analysis_status !== 'analyzed' || row.review_status === 'not_reviewed')) {
+      throw new Error('A packet prior source is no longer analyzed and reviewed.');
+    }
+    const sourceLetterIds = [...new Set(links.map((link) => link.source_letter_id).filter(Boolean))];
+    const sourceLettersResult = await supabaseRequest('/rest/v1/letters?id=in.(' + sourceLetterIds.map(encodeURIComponent).join(',') + ')&select=id,user_id,client_id,client_account_id,packet_version,mailed_date', 'GET', null, supabaseUrl, serviceKey);
+    const sourceLetters = Array.isArray(sourceLettersResult.body) ? sourceLettersResult.body : [];
+    if (!isSuccess(sourceLettersResult) || sourceLetters.length !== sourceLetterIds.length) {
+      throw new Error('A packet prior source letter is no longer available.');
+    }
+    const sourceLetterById = new Map(sourceLetters.map((source) => [source.id, source]));
+    const packetSourceIds = sourceLetters.filter((source) => Number(source.packet_version || 1) === 2).map((source) => source.id);
+    let sourceCoverage = [];
+    if (packetSourceIds.length) {
+      const sourceCoverageResult = await supabaseRequest('/rest/v1/letter_account_coverage?letter_id=in.(' + packetSourceIds.map(encodeURIComponent).join(',') + ')&select=id,letter_id,client_account_id', 'GET', null, supabaseUrl, serviceKey);
+      if (!isSuccess(sourceCoverageResult)) throw new Error('Packet prior-account coverage could not be revalidated.');
+      sourceCoverage = Array.isArray(sourceCoverageResult.body) ? sourceCoverageResult.body : [];
+    }
+    let sourceAssessments = [];
+    if (packetSourceIds.length) {
+      const assessmentResult = await supabaseRequest('/rest/v1/response_evidence_account_assessment?response_evidence_id=in.(' + evidenceIds.map(encodeURIComponent).join(',') + ')&select=response_evidence_id,coverage_id,client_account_id,review_status,next_action', 'GET', null, supabaseUrl, serviceKey);
+      if (!isSuccess(assessmentResult)) throw new Error('Packet prior-account assessments could not be revalidated.');
+      sourceAssessments = Array.isArray(assessmentResult.body) ? assessmentResult.body : [];
+    }
+    for (const currentCoverage of coverage.filter((entry) => laterItemIds.includes(entry.campaign_item_id))) {
+      const scopedLinks = links.filter((link) => (link.campaign_item_ids || []).includes(currentCoverage.campaign_item_id));
+      const hasEligibleSource = scopedLinks.some((link) => {
+        const sourceLetter = sourceLetterById.get(link.source_letter_id);
+        if (!sourceLetter || sourceLetter.user_id !== letter.user_id || sourceLetter.client_id !== letter.client_id || !sourceLetter.mailed_date) return false;
+        if (Number(sourceLetter.packet_version || 1) !== 2) {
+          return sourceLetter.client_account_id === currentCoverage.client_account_id;
+        }
+        const matchingCoverage = sourceCoverage.find((entry) =>
+          entry.letter_id === sourceLetter.id && entry.client_account_id === currentCoverage.client_account_id);
+        return Boolean(matchingCoverage && sourceAssessments.some((assessment) =>
+          assessment.response_evidence_id === link.response_evidence_id
+          && assessment.coverage_id === matchingCoverage.id
+          && assessment.client_account_id === currentCoverage.client_account_id
+          && assessment.review_status === 'reviewed'
+          && ['next_round', 'escalate'].includes(assessment.next_action)));
+      });
+      if (!hasEligibleSource) {
+        throw new Error('Every later-round account requires its own reviewed, follow-up-eligible prior assessment.');
+      }
+    }
+  }
+}
+
+async function updatePacketCoverage(letter, patch, supabaseUrl, serviceKey) {
+  if (Number(letter.packet_version || 1) !== 2) return;
+  const result = await supabaseRequest(
+    '/rest/v1/letter_account_coverage?letter_id=eq.' + encodeURIComponent(letter.id),
+    'PATCH', { ...patch, updated_at: new Date().toISOString() }, supabaseUrl, serviceKey
+  );
+  if (!isSuccess(result)) console.error('Could not update packet coverage:', letter.id, requestError(result, 'unknown error'));
+}
+
+async function validateStructuredRoundPreflight(letter, supabaseUrl, serviceKey) {
+  if (!letter.round_id) return;
+  const roundResult = await supabaseRequest('/rest/v1/dispute_rounds?id=eq.' + encodeURIComponent(letter.round_id) + '&select=id,user_id,client_id,client_account_id,round_number,target_type,status', 'GET', null, supabaseUrl, serviceKey);
+  const round = Array.isArray(roundResult.body) ? roundResult.body[0] : null;
+  if (!isSuccess(roundResult) || !round || round.status !== 'open') throw new Error('Only a letter in an open dispute round may be mailed.');
+  if (round.user_id !== letter.user_id || round.client_id !== letter.client_id || round.client_account_id !== letter.client_account_id || round.round_number !== letter.round_number || round.target_type !== letter.target_type) {
+    throw new Error('The letter does not match its structured dispute round.');
+  }
+  const clientResult = await supabaseRequest('/rest/v1/clients?id=eq.' + encodeURIComponent(letter.client_id) + '&select=id,user_id,lpoa_signature_data', 'GET', null, supabaseUrl, serviceKey);
+  const client = Array.isArray(clientResult.body) ? clientResult.body[0] : null;
+  if (!isSuccess(clientResult) || !client || client.user_id !== letter.user_id || !client.lpoa_signature_data) {
+    throw new Error('A signed Limited Power of Attorney is required before mailing a structured dispute round.');
+  }
+  if (round.round_number === 1) {
+    const docsResult = await supabaseRequest('/rest/v1/documents?client_id=eq.' + encodeURIComponent(letter.client_id) + '&doc_type=in.(id,address)&select=id,doc_type', 'GET', null, supabaseUrl, serviceKey);
+    const docTypes = new Set((Array.isArray(docsResult.body) ? docsResult.body : []).map((doc) => doc.doc_type));
+    if (!isSuccess(docsResult) || !docTypes.has('id') || !docTypes.has('address')) {
+      throw new Error('Round 1 requires a government ID and proof of current address before mailing.');
+    }
+  }
+  if (round.round_number <= 1) return;
+  const linksResult = await supabaseRequest('/rest/v1/letter_source_links?user_id=eq.' + encodeURIComponent(letter.user_id) + '&letter_id=eq.' + encodeURIComponent(letter.id) + '&select=source_letter_id,response_evidence_id', 'GET', null, supabaseUrl, serviceKey);
+  const links = Array.isArray(linksResult.body) ? linksResult.body : [];
+  if (!isSuccess(linksResult) || !links.length || links.some((link) => !link.response_evidence_id)) throw new Error('A later-round letter requires reviewed prior source evidence before mailing.');
+  const evidenceIds = [...new Set(links.map((link) => link.response_evidence_id))];
+  const evidenceResult = await supabaseRequest('/rest/v1/response_evidence?id=in.(' + evidenceIds.map(encodeURIComponent).join(',') + ')&select=id,firm_user_id,analysis_status,review_status', 'GET', null, supabaseUrl, serviceKey);
+  const evidence = Array.isArray(evidenceResult.body) ? evidenceResult.body : [];
+  if (!isSuccess(evidenceResult) || evidence.length !== evidenceIds.length || evidence.some((row) => row.firm_user_id !== letter.user_id || row.analysis_status !== 'analyzed' || row.review_status === 'not_reviewed')) {
+    throw new Error('A selected prior source is no longer analyzed and reviewed.');
+  }
+}
+
+async function validateOptionalAttachments(letter, manifest, supabaseUrl, serviceKey) {
+  const items = Array.isArray(manifest) ? manifest : [];
+  if (items.length > 5) throw new Error('At most five optional supporting documents may be mailed.');
+  if (!items.length) return [];
+  const ids = [...new Set(items.map((item) => String(item.document_id || '')).filter(Boolean))];
+  if (ids.length !== items.length) throw new Error('Optional attachment identifiers are missing or duplicated.');
+  const result = await supabaseRequest('/rest/v1/documents?id=in.(' + ids.map(encodeURIComponent).join(',') + ')&select=id,user_id,client_id,file_name,storage_path', 'GET', null, supabaseUrl, serviceKey);
+  if (!isSuccess(result) || !Array.isArray(result.body) || result.body.length !== ids.length) throw new Error('One or more optional documents no longer exist.');
+  const byId = new Map(result.body.map((doc) => [doc.id, doc]));
+  const validated = [];
+  let totalPages = 0;
+  for (const item of items) {
+    const doc = byId.get(item.document_id);
+    if (!doc || doc.user_id !== letter.user_id || doc.client_id !== letter.client_id || doc.storage_path !== item.storage_path) throw new Error('An optional document does not belong to this client.');
+    const objectPath = String(doc.storage_path).split('/').map(encodeURIComponent).join('/');
+    const objectResponse = await fetch(`${supabaseUrl}/storage/v1/object/authenticated/documents/${objectPath}`, {
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+    });
+    if (!objectResponse.ok) throw new Error('An optional supporting document could not be read from private storage.');
+    const bytes = new Uint8Array(await objectResponse.arrayBuffer());
+    if (bytes.byteLength > 5 * 1024 * 1024) throw new Error(`${doc.file_name} exceeds the 5 MB optional-document limit.`);
+    const isPdf = /\.pdf$/i.test(doc.file_name || '') || /application\/pdf/i.test(objectResponse.headers.get('content-type') || '');
+    const isImage = /\.(jpe?g|png|webp)$/i.test(doc.file_name || '') || /^image\/(jpeg|png|webp)/i.test(objectResponse.headers.get('content-type') || '');
+    if (!isPdf && !isImage) throw new Error(`${doc.file_name} must be a PDF, JPG, PNG, or WEBP file.`);
+    let pageCount = 1;
+    if (isPdf) {
+      try {
+        const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
+        pageCount = pdf.getPageCount();
+      } catch (pdfError) {
+        throw new Error(`${doc.file_name} is not a readable PDF.`);
+      }
+    }
+    totalPages += pageCount;
+    if (totalPages > 4) throw new Error('Optional supporting documents may contain at most four total pages.');
+    validated.push({ document_id: doc.id, file_name: doc.file_name, storage_path: doc.storage_path, byte_size: bytes.byteLength, page_count: pageCount, sha256: crypto.createHash('sha256').update(bytes).digest('hex') });
+  }
+  return validated;
+}
+
 function isBureauFollowUp(letter) {
   return /^Phase 3\b.*\(Follow-up\)/i.test(String(letter?.phase || ''))
     || !!(letter?.source_phase3_letter_id || letter?.source_bureau_response_evidence_id);
+}
+
+function isFileUpdateLetter(letter) {
+  const cleanupPhases = new Set([
+    'Personal Info Cleanup',
+    'Inquiry Removal',
+    'Personal Info & Inquiries',
+    'Interim Letter',
+  ]);
+  return String(letter?.letter_kind || '') === 'file_update'
+    || cleanupPhases.has(String(letter?.phase || ''));
+}
+
+function isPersonalInfoCleanupLetter(letter) {
+  return ['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries']
+    .includes(String(letter?.phase || ''));
+}
+
+async function validatePersonalInfoCleanupPreflight(letter, supabaseUrl, serviceKey) {
+  if (!isPersonalInfoCleanupLetter(letter)) return;
+  if (!letter.client_id || !letter.user_id) {
+    throw new Error('PI/inquiry letters require a linked client before mailing.');
+  }
+  const docsResult = await supabaseRequest(
+    '/rest/v1/documents?client_id=eq.' + encodeURIComponent(letter.client_id)
+      + '&doc_type=in.(id,address)&select=id,user_id,client_id,doc_type',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  const docs = Array.isArray(docsResult.body) ? docsResult.body : [];
+  const validTypes = new Set(docs
+    .filter((doc) => doc.user_id === letter.user_id && doc.client_id === letter.client_id)
+    .map((doc) => doc.doc_type));
+  if (!isSuccess(docsResult) || !validTypes.has('id') || !validTypes.has('address')) {
+    throw new Error('PI/inquiry letters require a government-issued photo ID and proof of current address before mailing.');
+  }
+}
+
+function isBureauAccountDisputeLetter(letter) {
+  if (!letter || isFileUpdateLetter(letter)) return false;
+  return letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3');
 }
 
 function bureauFromPhase(phase) {
@@ -157,7 +486,10 @@ async function validateBureauFollowUpPreflight(letter, manifest, supabaseUrl, se
 
   const paths = Array.isArray(evidence?.storage_paths) ? evidence.storage_paths : [];
   const names = Array.isArray(evidence?.file_names) ? evidence.file_names : [];
-  const expectedPrefix = `${letter.user_id}/response-evidence/${sourceEvidenceId}/`;
+  const prefixes = responseEvidencePrefixes(letter.user_id, letter.client_id, sourceEvidenceId);
+  const pathsMatch = paths.length > 0 && prefixes.some((expectedPrefix) =>
+    paths.every((path) => typeof path === 'string' && path.startsWith(expectedPrefix))
+  );
   if (!evidence
     || evidence.id !== sourceEvidenceId
     || evidence.firm_user_id !== letter.user_id
@@ -167,14 +499,15 @@ async function validateBureauFollowUpPreflight(letter, manifest, supabaseUrl, se
     || evidence.storage_bucket !== 'responses'
     || evidence.upload_status !== 'received'
     || paths.length === 0
-    || paths.some((path) => typeof path !== 'string' || !path.startsWith(expectedPrefix))
+    || !pathsMatch
     || names.length !== paths.length) {
     issues.push('Exhibit B is not a complete bureau response to Exhibit A for this same client and firm.');
   }
+  const hasLpoa = !!(client?.lpoa_signature_data?.lpoaPath || client?.lpoa_signature_data?.lpoaUrl);
   if (!client
     || client.id !== letter.client_id
     || client.user_id !== letter.user_id
-    || !client.lpoa_signature_data?.lpoaUrl) {
+    || !hasLpoa) {
     issues.push('Exhibit C is missing the client’s signed Limited Power of Attorney.');
   }
 
@@ -308,6 +641,43 @@ async function prepareFailedRetry(letter, submission, supabaseUrl, serviceKey) {
   return reset.body[0];
 }
 
+// A canceled Lob job may be mailed again only through an explicit staff
+// action after the bad enclosure has been corrected. Rotate idempotency so
+// Lob creates a genuinely new mailpiece while retaining the canceled job in
+// lob_webhook_events and the current lob_id until this guarded transition.
+async function prepareCancelledRetry(letter, submission, supabaseUrl, serviceKey) {
+  if (submission.status !== 'cancelled' || letter.tracking_status !== 'Cancelled') {
+    throw new Error('This mailpiece is not a confirmed canceled Lob send and cannot be re-mailed.');
+  }
+  if (letter.lob_id) {
+    const cleared = await supabaseRequest(
+      '/rest/v1/letters?id=eq.' + encodeURIComponent(letter.id)
+        + '&lob_id=eq.' + encodeURIComponent(letter.lob_id)
+        + '&tracking_status=eq.Cancelled',
+      'PATCH',
+      { lob_id: null, mailed_date: null, tracking_number: null, tracking_status: 'Cancelled', delivered_at: null },
+      supabaseUrl, serviceKey
+    );
+    if (!isSuccess(cleared) || !Array.isArray(cleared.body) || cleared.body.length !== 1) {
+      throw new Error('The canceled mailpiece changed before it could be re-mailed. Refresh the letter and try again.');
+    }
+  }
+  const reset = await supabaseRequest(
+    '/rest/v1/mail_submissions?letter_id=eq.' + encodeURIComponent(letter.id) + '&status=eq.cancelled',
+    'PATCH',
+    {
+      idempotency_key: crypto.randomUUID(), status: 'pending', lob_id: null,
+      tracking_number: null, submitted_at: null, last_error: null,
+      updated_at: new Date().toISOString(),
+    },
+    supabaseUrl, serviceKey
+  );
+  if (!isSuccess(reset) || !Array.isArray(reset.body) || reset.body.length !== 1) {
+    throw new Error('Could not prepare a fresh safe send for this canceled mailpiece.');
+  }
+  return reset.body[0];
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
@@ -357,10 +727,16 @@ exports.handler = async (event) => {
     }
 
     if (action === 'send_letter') {
-      const { toAddress, fromAddress, remoteUrl, description, metadata, enclosureManifest } = payload;
+      const { toAddress, fromAddress, remoteUrl, description, metadata, enclosureManifest, attachmentManifest } = payload;
       const letterId = metadata && metadata.letter_id;
       if (!letterId || !remoteUrl || !toAddress || !fromAddress) {
         return { statusCode: 400, body: JSON.stringify({ error: 'letter_id, rendered letter URL, and complete addresses are required' }) };
+      }
+      let mailpieceUrl;
+      try {
+        mailpieceUrl = durableMailpieceUrl(remoteUrl, supabaseUrl);
+      } catch (e) {
+        return { statusCode: 400, body: JSON.stringify({ error: e.message, blocked: true }) };
       }
 
       // The database—not browser state—is the authoritative preflight check.
@@ -369,20 +745,78 @@ exports.handler = async (event) => {
       // another tab.
       const letter = await findLetter(letterId, supabaseUrl, serviceKey);
       if (!letter) return { statusCode: 404, body: JSON.stringify({ error: 'Letter not found' }) };
-      if (String(letter.phase || '').startsWith('Phase 3')) {
+      const storedHtml = String(letter.html || '').trim();
+      const declaresDocument = /^<!doctype\s+html/i.test(storedHtml) || /^<html\b/i.test(storedHtml);
+      const incompleteDocument = declaresDocument && !/<\/body>\s*<\/html>\s*$/i.test(storedHtml);
+      const missingCampaignClosingSections = !!letter.campaign_route_id && !['signature-block', 'mail-notation', 'enclosures']
+        .every((className) => new RegExp(`class=["'][^"']*${className}[^"']*["']`, 'i').test(storedHtml));
+      if (!storedHtml || storedHtml === 'GENERATING...' || storedHtml.startsWith('ERROR:') || incompleteDocument || missingCampaignClosingSections) {
+        return {
+          statusCode: 422,
+          body: JSON.stringify({
+            error: storedHtml === 'GENERATING...'
+              ? 'LETTER GENERATION IS STILL RUNNING — nothing was sent.'
+              : 'LETTER GENERATION FAILED — regenerate and review the letter before mailing. Nothing was sent.',
+            blocked: true,
+          }),
+        };
+      }
+      const { letterSignatureState } = await import('../../src/utils/letterGeneration.js');
+      const signatureState = letterSignatureState(storedHtml);
+      if (signatureState !== 'embedded') {
+        const signatureError = signatureState === 'missing'
+          ? 'CLIENT SIGNATURE REQUIRED — wait for the signed LPOA/signature capture, then regenerate or repair the draft. Nothing was sent.'
+          : signatureState === 'remote'
+            ? 'CLIENT SIGNATURE LINK IS NOT DURABLE — embed the canonical signature before mailing. Nothing was sent.'
+            : 'CLIENT SIGNATURE IS INVALID — rebuild it from the canonical stored signature before mailing. Nothing was sent.';
+        return {
+          statusCode: 422,
+          body: JSON.stringify({ error: signatureError, blocked: true, signature_state: signatureState }),
+        };
+      }
+      if (Number(letter.packet_version || 1) === 2) await validatePacketPreflight(letter, toAddress, supabaseUrl, serviceKey);
+      else await validateStructuredRoundPreflight(letter, supabaseUrl, serviceKey);
+      await validatePersonalInfoCleanupPreflight(letter, supabaseUrl, serviceKey);
+      const validatedAttachments = await validateOptionalAttachments(letter, attachmentManifest, supabaseUrl, serviceKey);
+      if (isBureauAccountDisputeLetter(letter)) {
         const {
+          autoFixFieldCitations,
           collectBureauFollowUpProblems,
           collectPhase3CitationProblems,
+          normalizeFollowUpPresentation,
         } = await import('../../src/constants/metro2Fields.js');
+        let html = letter.html || '';
+        html = autoFixFieldCitations(html).html;
+        if (isBureauFollowUp(letter)) html = normalizeFollowUpPresentation(html);
         const currentProblems = isBureauFollowUp(letter)
-          ? collectBureauFollowUpProblems(letter.html)
-          : collectPhase3CitationProblems(letter.html);
+          ? collectBureauFollowUpProblems(html)
+          : collectPhase3CitationProblems(html);
         if (currentProblems.length > 0) {
           return {
             statusCode: 422,
             body: JSON.stringify({
               error: 'PHASE 3 CONTENT FAILED CURRENT PRODUCTION-SAFETY RULES — nothing was sent.',
               issues: currentProblems,
+              blocked: true,
+            }),
+          };
+        }
+        // If mechanical autofix changed the stored letter, persist and ask the
+        // staffer to reopen the mailer so Lob's remoteUrl is rebuilt from the
+        // corrected HTML. Allowing this send would print the unfixed upload.
+        if (html !== (letter.html || '')) {
+          await supabaseRequest(
+            '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId),
+            'PATCH',
+            { html },
+            supabaseUrl,
+            serviceKey
+          );
+          return {
+            statusCode: 409,
+            body: JSON.stringify({
+              error: 'Letter HTML was auto-corrected for Metro 2 citations. Re-open the mailer and send again so the printed packet uses the fixed text.',
+              corrected: true,
               blocked: true,
             }),
           };
@@ -401,7 +835,7 @@ exports.handler = async (event) => {
       // A bureau-facing Phase 3 packet must identify the exact furnishers it
       // covers. Never use a client-wide fallback here: it can attach unrelated
       // Phase 1 disputes and responses to the wrong bureau reinvestigation.
-      if (String(letter.phase || '').startsWith('Phase 3')
+      if (isBureauAccountDisputeLetter(letter)
         && (!Array.isArray(letter.covered_furnishers) || letter.covered_furnishers.length === 0)) {
         return {
           statusCode: 422,
@@ -436,6 +870,24 @@ exports.handler = async (event) => {
           body: JSON.stringify({
             error: 'CCC R1 IDENTITY ENCLOSURES INVALID — nothing was sent.',
             issues: identityIssues,
+            blocked: true,
+          }),
+        };
+      }
+
+      // Fail closed on any asset Lob would have to fetch from somewhere we do
+      // not control. Retired public client-docs URLs inside legacy LPOA
+      // enclosures failed whole mailpieces this way; only short-lived signed
+      // URLs we minted for this send are acceptable.
+      const durableAssetPrefix = String(supabaseUrl).replace(/\/+$/, '') + '/storage/v1/object/sign/documents/';
+      const remoteAssets = await scanRemoteAssetUrls(mailpieceUrl);
+      const nonDurableAssets = remoteAssets.filter((url) => !url.startsWith(durableAssetPrefix));
+      if (nonDurableAssets.length > 0) {
+        return {
+          statusCode: 422,
+          body: JSON.stringify({
+            error: 'MAILPIECE CONTAINS NON-DURABLE IMAGE LINKS — Lob would fail to render it. Nothing was sent.',
+            issues: nonDurableAssets.slice(0, 10),
             blocked: true,
           }),
         };
@@ -486,12 +938,20 @@ exports.handler = async (event) => {
       if (submission.status === 'failed') {
         submission = await prepareFailedRetry(letter, submission, supabaseUrl, serviceKey);
       }
+      if (submission.status === 'cancelled') {
+        submission = await prepareCancelledRetry(letter, submission, supabaseUrl, serviceKey);
+      }
 
       await updateSubmission(letterId, {
         status: 'pending',
         attempt_count: (submission.attempt_count || 0) + 1,
         last_attempt_at: new Date().toISOString(),
         last_error: null,
+        attachment_manifest: validatedAttachments,
+      }, supabaseUrl, serviceKey);
+      await updatePacketCoverage(letter, {
+        mail_status: 'processing',
+        tracking_status: null,
       }, supabaseUrl, serviceKey);
 
       const { USPS_FIRST_CLASS, mailServiceForLetter } = await import('../../src/utils/cccMailRules.js');
@@ -516,16 +976,13 @@ exports.handler = async (event) => {
           address_zip: fromAddress.zip,
           address_country: 'US',
         },
-        file: remoteUrl,
+        file: mailpieceUrl,
         // Text letters print B&W double-sided — enclosures are grayscaled
         // upstream anyway, and this roughly halves the per-letter cost
         color: false,
         double_sided: true,
         address_placement: 'top_first_page',
         mail_type: 'usps_first_class',
-        // New CCC flow letters use regular First Class, exactly as the course
-        // specifies. Historical Phase 1/3 workflows retain their original
-        // Certified Return Receipt service so old client records stay true.
         ...(mailService === USPS_FIRST_CLASS ? {} : { extra_service: 'certified_return_receipt' }),
         // Lets the webhook match the letter row even if lob_id never got saved
         metadata: { letter_id: String(letterId) },
@@ -541,6 +998,7 @@ exports.handler = async (event) => {
           status: 'failed',
           last_error: requestError(result, 'Lob did not accept the letter'),
         }, supabaseUrl, serviceKey);
+        await updatePacketCoverage(letter, { mail_status: 'failed', tracking_status: 'Failed' }, supabaseUrl, serviceKey);
         return { statusCode: result.status || 502, body: JSON.stringify(result.body || { error: 'Lob did not accept the letter' }) };
       }
 
@@ -583,6 +1041,26 @@ exports.handler = async (event) => {
         submitted_at: new Date().toISOString(),
         last_error: letterWasSaved ? null : 'Lob accepted the mailpiece, but the letters row requires reconciliation.',
       }, supabaseUrl, serviceKey);
+      await updatePacketCoverage(letter, {
+        mail_status: letterWasSaved ? 'queued' : 'processing',
+        tracking_status: 'Mailed',
+      }, supabaseUrl, serviceKey);
+      if (letterWasSaved && validatedAttachments.length) {
+        const snapshotRows = validatedAttachments.map((item) => ({
+          user_id: letter.user_id,
+          letter_id: letter.id,
+          document_id: item.document_id,
+          mail_submission_id: submission.id,
+          storage_path: item.storage_path,
+          file_name: item.file_name,
+          byte_size: item.byte_size,
+          page_count: item.page_count,
+          sha256: item.sha256,
+          included_by: admin.userId,
+        }));
+        const snapshotResult = await supabaseRequest('/rest/v1/letter_attachments?on_conflict=user_id,letter_id,document_id,mail_submission_id', 'POST', snapshotRows, supabaseUrl, serviceKey, { Prefer: 'resolution=ignore-duplicates,return=minimal' });
+        if (!isSuccess(snapshotResult)) console.error('Could not snapshot optional mail attachments:', requestError(snapshotResult, 'unknown error'));
+      }
       // Archive the immutable, Lob-rendered mailpiece while this request still
       // knows the CCC letter id. This is evidence capture, never a condition
       // of mailing: Lob already accepted the mailpiece, so an archive failure
@@ -602,6 +1080,20 @@ exports.handler = async (event) => {
           if (!artifactArchive.archived) console.warn('Lob mailpiece not archived yet:', artifactArchive.reason, result.body.id);
         } catch (archiveErr) {
           console.error('Lob mailpiece archive failed (mail was still accepted):', result.body.id, archiveErr.message);
+        }
+      }
+      if (letterWasSaved && letter.round_id) {
+        try {
+          await queueRoundEvent({ roundId: letter.round_id, eventType: 'round_mailed', requireAllMailed: true });
+        } catch (emailError) {
+          console.error('Round mailed milestone email failed (mail was still accepted):', emailError.message);
+        }
+      }
+      if (letterWasSaved && letter.campaign_id && isPersonalInfoCleanupLetter(letter)) {
+        try {
+          await queueCampaignCleanupMailed({ campaignId: letter.campaign_id });
+        } catch (emailError) {
+          console.error('Cleanup mailed milestone email failed (mail was still accepted):', emailError.message);
         }
       }
       return {
@@ -646,3 +1138,8 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ error: e.message || 'Lob request failed' }) };
   }
 };
+
+// Exported for preflight regression tests; the handler is the only entry point
+// used in production.
+exports.durableMailpieceUrl = durableMailpieceUrl;
+exports.MAIL_ASSET_URL_RE = MAIL_ASSET_URL_RE;

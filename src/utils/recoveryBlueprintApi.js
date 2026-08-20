@@ -28,15 +28,24 @@ export function getBlueprintStatus(audit) {
 
 export function persistReviewedAccounts(audit, accounts) {
   return blueprintRequest('save_corrections', audit, {
-    accounts: accounts.map(({ id, balance, status, accountNumberMasked, originalCreditor, accountKind, latePaymentCount, latePaymentBand }) => ({
-      id,
-      balance,
-      status,
-      accountNumberMasked,
-      originalCreditor,
-      accountKind,
-      latePaymentCount,
-      latePaymentBand,
+    accounts: accounts.map((account) => ({
+      id: account.id,
+      balance: account.balance,
+      status: account.status,
+      accountNumberMasked: account.accountNumberMasked,
+      originalCreditor: account.originalCreditor,
+      accountKind: account.accountKind,
+      latePaymentCount: account.latePaymentCount,
+      latePaymentBand: account.latePaymentBand,
+      // Adjudication + derived fields so Blueprint / campaign routing stay in sync
+      findings: account.findings || null,
+      violations: account.violations || null,
+      authorizedFindingIds: account.authorizedFindingIds || null,
+      primaryViolation: account.primaryViolation || null,
+      primaryChallengeStatement: account.primaryChallengeStatement || null,
+      strategy: account.strategy || null,
+      priorityScore: account.priorityScore || null,
+      batch: account.batch || null,
     })),
   });
 }
@@ -53,7 +62,14 @@ export function sendBlueprint(audit, details) {
   return blueprintRequest('send', audit, details);
 }
 
+export function deleteBlueprint(audit, artifactId) {
+  return blueprintRequest('delete', audit, { artifactId });
+}
+
+export function base64ToPdfBytes(base64) {
+  return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+}
+
 export function base64PdfUrl(base64) {
-  const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-  return URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+  return URL.createObjectURL(new Blob([base64ToPdfBytes(base64)], { type: 'application/pdf' }));
 }

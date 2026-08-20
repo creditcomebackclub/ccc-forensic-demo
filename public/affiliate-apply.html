@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>Partner Application | Credit Comeback Club</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --navy:#1B2A4A; --deep:#101B33; --gold:#C9A84C; --ink:#111827; --muted:#6B7280; --border:#E5E7EB; --bg:#F5F7FB; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; font-family:'Barlow',Arial,sans-serif; color:var(--ink); background:linear-gradient(135deg,var(--deep),#25395f); padding:36px 16px; }
+    .shell { width:100%; max-width:920px; margin:0 auto; display:grid; grid-template-columns:minmax(0,.85fr) minmax(420px,1.15fr); background:white; border-radius:22px; overflow:hidden; box-shadow:0 28px 70px rgba(4,10,24,.38); }
+    .intro { padding:48px 42px; color:white; background:var(--navy); position:relative; overflow:hidden; }
+    .intro:after { content:""; position:absolute; width:340px; height:340px; border-radius:50%; right:-170px; bottom:-180px; background:rgba(201,168,76,.09); }
+    .logo { width:68px; height:68px; object-fit:contain; border-radius:13px; border:1px solid rgba(255,255,255,.15); margin-bottom:34px; }
+    .eyebrow { color:var(--gold); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.12em; }
+    h1 { font-family:'Barlow Condensed',sans-serif; font-size:38px; line-height:1.05; margin:10px 0 16px; max-width:320px; }
+    .intro p { color:rgba(255,255,255,.72); font-size:14px; line-height:1.65; margin:0 0 25px; }
+    .benefits { margin:0; padding:0; list-style:none; display:grid; gap:14px; }
+    .benefits li { display:flex; gap:11px; font-size:13px; line-height:1.45; color:rgba(255,255,255,.86); }
+    .check { width:19px; height:19px; flex:0 0 19px; display:grid; place-items:center; border-radius:50%; color:var(--gold); background:rgba(201,168,76,.12); font-size:11px; font-weight:700; }
+    .form-side { padding:44px 46px 38px; background:var(--bg); }
+    .form-side h2 { font-family:'Barlow Condensed',sans-serif; color:var(--navy); font-size:27px; margin:0 0 7px; }
+    .form-side .lede { color:var(--muted); font-size:13px; line-height:1.5; margin:0 0 25px; }
+    form { display:grid; gap:15px; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:13px; }
+    label { display:block; color:#4B5563; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; margin:0 0 6px; }
+    input, textarea { width:100%; border:1px solid var(--border); border-radius:9px; padding:11px 13px; font:14px 'Barlow',Arial,sans-serif; color:var(--ink); background:white; }
+    textarea { min-height:92px; resize:vertical; }
+    input:focus, textarea:focus { outline:none; border-color:var(--gold); box-shadow:0 0 0 3px rgba(201,168,76,.12); }
+    .ack { display:flex; gap:10px; align-items:flex-start; color:var(--muted); font-size:11.5px; line-height:1.45; }
+    .ack input { width:auto; margin-top:2px; }
+    button { border:0; border-radius:9px; padding:13px 18px; background:var(--navy); color:var(--gold); font:700 12px 'Barlow',Arial,sans-serif; text-transform:uppercase; letter-spacing:.07em; cursor:pointer; }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+    .error { min-height:0; color:#B91C1C; font-size:12px; text-align:center; }
+    .fine { color:#9CA3AF; font-size:10.5px; line-height:1.5; text-align:center; margin:2px 0 0; }
+    .fine a { color:#6B7280; }
+    .honeypot { position:absolute; left:-10000px; width:1px; height:1px; overflow:hidden; }
+    #success { display:none; padding:70px 25px; text-align:center; }
+    #success .icon { width:55px; height:55px; margin:0 auto 18px; display:grid; place-items:center; border-radius:50%; background:#ECFDF3; color:#15803D; font-size:25px; }
+    #success h2 { margin-bottom:10px; }
+    #success p { max-width:390px; margin:0 auto; color:var(--muted); font-size:14px; line-height:1.65; }
+    @media (max-width:780px) { body{padding:0;background:var(--navy)} .shell{grid-template-columns:1fr;border-radius:0;min-height:100vh} .intro{padding:32px 25px} .logo{margin-bottom:22px} h1{font-size:32px} .form-side{padding:32px 24px} }
+    @media (max-width:480px) { .row{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="intro">
+      <img src="/logo.jpg" alt="Credit Comeback Club" class="logo">
+      <div class="eyebrow">Partner Program</div>
+      <h1>Help clients make a stronger credit comeback.</h1>
+      <p>Apply to become a Credit Comeback Club referral partner. We handle the credit-restoration work while approved partners receive access to referral tracking and commission reporting.</p>
+      <ul class="benefits">
+        <li><span class="check">✓</span><span>Submit and track client referrals from a secure partner portal.</span></li>
+        <li><span class="check">✓</span><span>Follow enrollment and commission status without chasing updates.</span></li>
+        <li><span class="check">✓</span><span>Receive a confirmed commission rate and program details upon approval.</span></li>
+      </ul>
+    </section>
+
+    <section class="form-side">
+      <div id="application">
+        <h2>Apply to partner with us</h2>
+        <p class="lede">Tell us who you serve and how you expect to refer clients. Applications are reviewed before portal access is created.</p>
+        <form id="affiliateForm">
+          <div class="honeypot" aria-hidden="true">
+            <label for="faxNumber">Leave this field blank</label>
+            <input id="faxNumber" name="faxNumber" type="text" tabindex="-1" autocomplete="off">
+          </div>
+          <div class="row">
+            <div><label for="name">Full name *</label><input id="name" name="name" required maxlength="120" autocomplete="name"></div>
+            <div><label for="company">Company</label><input id="company" name="company" maxlength="160" autocomplete="organization"></div>
+          </div>
+          <div class="row">
+            <div><label for="email">Email *</label><input id="email" name="email" type="email" required maxlength="254" autocomplete="email"></div>
+            <div><label for="phone">Phone</label><input id="phone" name="phone" type="tel" maxlength="40" autocomplete="tel"></div>
+          </div>
+          <div><label for="websiteUrl">Website or LinkedIn</label><input id="websiteUrl" name="websiteUrl" maxlength="500" placeholder="yourcompany.com"></div>
+          <div><label for="referralNotes">Who do you serve?</label><textarea id="referralNotes" name="referralNotes" maxlength="1200" placeholder="Briefly describe your clients or audience and how you expect to introduce Credit Comeback Club."></textarea></div>
+          <label class="ack" for="acknowledged"><input id="acknowledged" name="acknowledged" type="checkbox" required><span>I understand this is an application. Affiliate status, commission terms, and portal access begin only after Credit Comeback Club approves the application.</span></label>
+          <div class="error" id="errorMessage" role="alert"></div>
+          <button id="submitButton" type="submit">Submit Partner Application</button>
+          <p class="fine">Your information is used only to review and administer the partner program. See our <a href="/privacy.html">Privacy Policy</a>.</p>
+        </form>
+      </div>
+      <div id="success">
+        <div class="icon">✓</div>
+        <h2>Application received</h2>
+        <p>Thank you for your interest in partnering with Credit Comeback Club. We’ll review your information and email you. If approved, your secure partner-portal invitation will arrive separately.</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById('affiliateForm');
+    const submit = document.getElementById('submitButton');
+    const error = document.getElementById('errorMessage');
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      error.textContent = '';
+      submit.disabled = true;
+      submit.textContent = 'Submitting…';
+      const data = new FormData(form);
+      try {
+        const response = await fetch('/api/public-affiliate-application', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: data.get('name'), email: data.get('email'), phone: data.get('phone'),
+            company: data.get('company'), websiteUrl: data.get('websiteUrl'),
+            referralNotes: data.get('referralNotes'), faxNumber: data.get('faxNumber'),
+            acknowledged: data.get('acknowledged') === 'on'
+          })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || 'Could not submit your application.');
+        document.getElementById('application').style.display = 'none';
+        document.getElementById('success').style.display = 'block';
+      } catch (requestError) {
+        error.textContent = requestError.message || 'Could not submit your application.';
+        submit.disabled = false;
+        submit.textContent = 'Submit Partner Application';
+      }
+    });
+  </script>
+</body>
+</html>

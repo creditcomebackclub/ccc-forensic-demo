@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Download, Eye, FileCheck2, Loader2, Mail, Save, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Download, Eye, FileCheck2, Loader2, Mail, Save, Trash2, X } from 'lucide-react';
+import PdfCanvasPreview from './PdfCanvasPreview.jsx';
 import {
   approveBlueprint,
-  base64PdfUrl,
+  base64ToPdfBytes,
+  deleteBlueprint,
   getBlueprintStatus,
   persistReviewedAccounts,
   previewBlueprint,
@@ -37,9 +39,11 @@ function StatusPill({ artifact }) {
 export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDirty, clientEmail, onCorrectionsSaved, onClose }) {
   const [artifact, setArtifact] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [previewBytes, setPreviewBytes] = useState(null);
   const [busy, setBusy] = useState('loading');
   const [error, setError] = useState(null);
   const [sent, setSent] = useState(false);
+  const [recipientEmail, setRecipientEmail] = useState(clientEmail || '');
   const [subject, setSubject] = useState('Your Credit Comeback Club Recovery Blueprint is Ready');
   const [bodyText, setBodyText] = useState(() => defaultMessage(audit));
 
@@ -47,6 +51,10 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
     name: audit.client?.name,
     reportDate: audit.client?.reportDate,
   }), [audit.client?.name, audit.client?.reportDate]);
+
+  useEffect(() => {
+    setRecipientEmail(clientEmail || '');
+  }, [clientEmail]);
 
   useEffect(() => {
     let active = true;
@@ -82,28 +90,51 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
     if (!(await saveIfNeeded())) return;
     const data = await previewBlueprint(audit);
     if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(base64PdfUrl(data.pdfBase64));
+    const bytes = base64ToPdfBytes(data.pdfBase64);
+    setPreviewBytes(bytes);
+    setPreviewUrl(URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })));
   });
 
   const handleApprove = () => run('approve', async () => {
     if (!(await saveIfNeeded())) return;
     const data = await approveBlueprint(audit);
     setArtifact(data.artifact);
+    if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
+    // Keep in-memory bytes from Preview when available so canvas never has to
+    // fetch(blob:) under CSP. Fall back to the archived signed URL.
     setPreviewUrl(data.artifact.signedUrl);
   });
 
   const handleSave = () => run('save', saveIfNeeded);
 
+  const trimmedRecipient = recipientEmail.trim();
+  const recipientLooksValid = /^\S+@\S+\.\S+$/.test(trimmedRecipient);
+
   const handleSend = () => run('send', async () => {
     if (!artifact) throw new Error('Approve the Blueprint before sending it.');
+    if (!recipientLooksValid) throw new Error('Enter a valid recipient email before sending.');
     const data = await sendBlueprint(audit, {
       artifactId: artifact.id,
-      clientEmail,
+      clientEmail: trimmedRecipient,
       subject,
       bodyText,
     });
     setArtifact(data.artifact);
     setSent(true);
+  });
+
+  const handleDelete = () => run('delete', async () => {
+    if (!artifact) throw new Error('No Blueprint version to delete.');
+    const sentWarn = artifact.status === 'sent'
+      ? ' This version was already emailed — clients may lose this PDF in history.'
+      : '';
+    if (!window.confirm(`Delete Recovery Blueprint v${artifact.version}?${sentWarn}`)) return;
+    const data = await deleteBlueprint(audit, artifact.id);
+    setArtifact(data.artifact || null);
+    setSent(false);
+    if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setPreviewBytes(null);
   });
 
   return (
@@ -121,17 +152,26 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
         </div>
 
         <div className="grid lg:grid-cols-[1fr_360px] flex-1 min-h-0">
-          <div className="bg-slate-200/70 min-h-[360px] flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-slate-200/70 min-h-[360px] flex flex-col p-3 sm:p-5">
             {previewUrl ? (
-              <iframe title="Recovery Blueprint preview" src={previewUrl} className="w-full h-full bg-white rounded-lg shadow-lg" />
+              <>
+                <div className="flex justify-end mb-2 shrink-0">
+                  <a href={previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-semibold text-slate-600 hover:text-slate-900">
+                    <Download size={12} /> Open PDF in new tab
+                  </a>
+                </div>
+                <PdfCanvasPreview data={previewBytes} src={previewBytes ? null : previewUrl} className="flex-1 min-h-0" />
+              </>
             ) : (
-              <div className="text-center max-w-sm">
-                <FileCheck2 size={42} className="mx-auto text-slate-400 mb-4" strokeWidth={1.4} />
-                <div className="font-semibold text-slate-900">Preview the reviewed Blueprint</div>
-                <p className="text-sm text-slate-500 mt-2">Preview uses the saved forensic audit and your persisted account corrections. Claude does not run again.</p>
-                <button onClick={handlePreview} disabled={!!busy} className="mt-5 inline-flex items-center gap-2 bg-[#121F38] text-[#C9A84C] px-5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider disabled:opacity-50">
-                  <Eye size={14} /> Generate Preview
-                </button>
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center max-w-sm">
+                  <FileCheck2 size={42} className="mx-auto text-slate-400 mb-4" strokeWidth={1.4} />
+                  <div className="font-semibold text-slate-900">Preview the reviewed Blueprint</div>
+                  <p className="text-sm text-slate-500 mt-2">Preview uses the saved forensic audit and your persisted account corrections. Claude does not run again.</p>
+                  <button onClick={handlePreview} disabled={!!busy} className="mt-5 inline-flex items-center gap-2 bg-[#121F38] text-[#C9A84C] px-5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider disabled:opacity-50">
+                    <Eye size={14} /> Generate Preview
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -162,24 +202,39 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
                     <Download size={13} /> Download Approved PDF
                   </a>
                 )}
+                {artifact && (
+                  <button onClick={handleDelete} disabled={!!busy} className="mt-2 w-full flex items-center justify-center gap-2 border border-red-200 text-red-700 rounded-lg py-2.5 text-[10px] uppercase tracking-wider font-bold disabled:opacity-50 hover:bg-red-50">
+                    <Trash2 size={13} /> Delete Version v{artifact.version}
+                  </button>
+                )}
               </div>
 
               <div className="border-t border-slate-100 pt-5">
                 <div className="text-[10px] uppercase tracking-[.14em] text-slate-400 font-bold mb-3">Email approved file</div>
                 <label className="block text-[10px] text-slate-400 uppercase mb-1">To</label>
-                <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-600 mb-3">{clientEmail || 'No client email on file'}</div>
+                <input
+                  type="email"
+                  value={recipientEmail}
+                  onChange={(event) => setRecipientEmail(event.target.value)}
+                  placeholder="client@email.com"
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs mb-1"
+                />
+                {!clientEmail && (
+                  <p className="text-[10px] text-amber-700 mb-3">No email on the client record — enter the recipient above to send.</p>
+                )}
+                {clientEmail && <div className="mb-3" />}
                 <label className="block text-[10px] text-slate-400 uppercase mb-1">Subject</label>
                 <input value={subject} onChange={(event) => setSubject(event.target.value)} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs mb-3" />
                 <label className="block text-[10px] text-slate-400 uppercase mb-1">Message</label>
                 <textarea value={bodyText} onChange={(event) => setBodyText(event.target.value)} rows={9} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs leading-relaxed" />
-                <button onClick={handleSend} disabled={!!busy || !artifact || !artifact.isCurrent || correctionsDirty || !clientEmail || !subject.trim() || !bodyText.trim()} className="mt-3 w-full flex items-center justify-center gap-2 bg-[#C9A84C] text-[#121F38] rounded-lg py-2.5 text-[10px] uppercase tracking-wider font-bold disabled:opacity-40">
+                <button onClick={handleSend} disabled={!!busy || !artifact || !artifact.isCurrent || correctionsDirty || !recipientLooksValid || !subject.trim() || !bodyText.trim()} className="mt-3 w-full flex items-center justify-center gap-2 bg-[#C9A84C] text-[#121F38] rounded-lg py-2.5 text-[10px] uppercase tracking-wider font-bold disabled:opacity-40">
                   <Mail size={13} /> Send Approved Blueprint
                 </button>
               </div>
 
               {busy && <div className="flex items-center gap-2 text-xs text-slate-500"><Loader2 size={14} className="animate-spin" /> Working…</div>}
               {error && <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-xs"><AlertCircle size={14} className="shrink-0 mt-0.5" /> {error}</div>}
-              {sent && <div className="flex items-start gap-2 bg-green-50 border border-green-200 text-green-700 rounded-lg p-3 text-xs"><CheckCircle2 size={14} className="shrink-0 mt-0.5" /> The exact approved PDF was emailed to {clientEmail}.</div>}
+              {sent && <div className="flex items-start gap-2 bg-green-50 border border-green-200 text-green-700 rounded-lg p-3 text-xs"><CheckCircle2 size={14} className="shrink-0 mt-0.5" /> The exact approved PDF was emailed to {trimmedRecipient}.</div>}
             </div>
           </aside>
         </div>

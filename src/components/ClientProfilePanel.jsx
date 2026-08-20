@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { readClientSensitiveData, writeClientSensitiveData } from '../utils/clientSensitiveData';
+import { canMailLetter } from '../utils/letterGeneration.js';
 import { ExternalLink, Edit2, Check, X } from 'lucide-react';
 
 // Brand tokens — matches the dashboard / clients card system
@@ -321,6 +322,10 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
           <Field label="date of birth" value={client.dateOfBirth} placeholder="MM/DD/YYYY"
             onSave={(v) => save({ date_of_birth: v })} />
         </Row>
+        <Row label="Current employer">
+          <Field label="current employer" value={client.currentEmployer} placeholder="Employer name"
+            onSave={(v) => save({ current_employer: v.trim() || null })} />
+        </Row>
         <Row label="SSN last 4">
           <PasswordField clientName={client.name} clientId={client.id} field="ssnLast4" onSaved={onChanged} />
         </Row>
@@ -329,7 +334,7 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
       <Section title="Credit Monitoring">
         <Row label="Service">
           <Field label="service" value={client.monitoringService} placeholder="Privacy Guard"
-            options={['PrivacyGuard', 'MyScoreIQ', 'Smart Credit', 'IdentityIQ', 'My Free Score Now', 'Experian']}
+            options={['PrivacyGuard', 'MyScoreIQ', 'Smart Credit', 'IdentityIQ', 'My Free Score Now', 'Experian', 'MyFICO']}
             onSave={(v) => save({ monitoring_service: v })} />
         </Row>
         <Row label="Login email">
@@ -394,12 +399,12 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
         <Row label="Letters">
           <div className="flex items-center gap-3">
             <span className="text-[12px]" style={{ color: T.ink }}>{client.letters ? client.letters.length : 0} total</span>
-            {client.letters && client.letters.filter(l => !l.mailed_date && !l.mailedDate).length > 0 && (
+            {client.letters && client.letters.filter(l => !l.mailed_date && !l.mailedDate && canMailLetter(l)).length > 0 && (
               <button 
-                onClick={() => onBatchMail(client.letters.filter(l => !l.mailed_date && !l.mailedDate))}
+                onClick={() => onBatchMail(client.letters.filter(l => !l.mailed_date && !l.mailedDate && canMailLetter(l)))}
                 className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm hover:opacity-90"
               >
-                Mail {client.letters.filter(l => !l.mailed_date && !l.mailedDate).length} Unmailed
+                Mail {client.letters.filter(l => !l.mailed_date && !l.mailedDate && canMailLetter(l)).length} Unmailed
               </button>
             )}
           </div>
@@ -413,78 +418,13 @@ export default function ClientProfilePanel({ client, onChanged, onBatchMail }) {
 
       <Section title="Portal Access" span2>
         <div className="flex items-center gap-3 flex-wrap mt-1">
-          <OnboardingButton client={client} onChanged={onChanged} />
+          {(client.portalOnboarded || client.onboardingComplete) && (
+            <span className="text-[11px] px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">✓ Portal Active</span>
+          )}
           <ImpersonateButton client={client} />
         </div>
       </Section>
 
-    </div>
-  );
-}
-
-function OnboardingButton({ client, onChanged }) {
-  const [sending, setSending] = React.useState(false);
-  const [sent, setSent] = React.useState(false);
-  const [err, setErr] = React.useState(null);
-  const handleSend = async () => {
-    if (!client.email) { setErr('Add client email first.'); return; }
-    setSending(true);
-    setErr(null);
-    try {
-      const { supabase } = await import('../utils/supabase.js');
-      const normEmail = client.email.trim().toLowerCase();
-
-      // Provision the auth user + linked client_profiles row server-side
-      // (service role) BEFORE sending the magic link. Without this, first
-      // login can find a half-created account and misroute the client.
-      const { data: { session: adminSession } } = await supabase.auth.getSession();
-      const adminToken = adminSession?.access_token;
-      const authHeaders = {
-        'Content-Type': 'application/json',
-        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
-      };
-
-      const provRes = await fetch('/.netlify/functions/provision-user', {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({ email: normEmail, fullName: client.name, kind: 'client', clientId: client.id }),
-      });
-      if (!provRes.ok) {
-        const out = await provRes.json().catch(() => ({}));
-        throw new Error(out.error || 'Could not provision client account');
-      }
-
-      setSent(true);
-      setTimeout(() => setSent(false), 4000);
-    } catch (e) {
-      setErr(e.message || 'Could not send magic link');
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div>
-      {(client.portalOnboarded || client.onboardingComplete) ? (
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] px-2.5 py-1 rounded-full bg-green-50 text-green-700 border border-green-200">✓ Portal Active</span>
-          <button onClick={handleSend} disabled={sending}
-            className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-navy">
-            Resend Link
-          </button>
-        </div>
-      ) : (
-        <div>
-          <button onClick={handleSend} disabled={sending || !client.email}
-            className="flex items-center gap-2 px-4 py-2 text-[12px] uppercase tracking-wider rounded-lg transition-colors"
-            style={{ background: sending || !client.email ? '#B5BBC9' : T.navy, color: T.gold, cursor: !client.email ? 'not-allowed' : 'pointer' }}>
-            {sending ? 'Sending…' : sent ? '✓ Magic Link Sent!' : 'Start Onboarding'}
-          </button>
-          {!client.email && <div className="text-[11px] text-amber-600 mt-1">Add client email first.</div>}
-          {err && <div className="text-[11px] text-red-600 mt-1">{err}</div>}
-          {sent && <div className="text-[11px] text-green-600 mt-1">Magic link sent to {client.email}</div>}
-        </div>
-      )}
     </div>
   );
 }

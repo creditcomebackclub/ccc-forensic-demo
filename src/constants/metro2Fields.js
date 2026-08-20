@@ -35,33 +35,37 @@
 
 const B2003 = (pos) => `CRRG 2003 426 Base, pos. ${pos}`;
 
+// promptNote is optional, additive context for renderMetro2FieldTable() (the
+// text a letter-generation prompt shows alongside the field) — never
+// consulted by validateFieldCitations/autoFixFieldCitations, so getting a
+// note wrong can't create a false pass/fail, only a less helpful hint.
 export const METRO2_FIELDS = {
-  CONSUMER_ACCOUNT_NUMBER:   { num: '7',   name: 'Consumer Account Number',                        source: B2003('43-72'),   edition: '2003' }, // packed 37-66
-  PORTFOLIO_TYPE:            { num: '8',   name: 'Portfolio Type',                                 source: B2003('73'),      edition: '2003' }, // packed 67
-  ACCOUNT_TYPE:              { num: '9',   name: 'Account Type',                                   source: B2003('74-75'),   edition: '2003' }, // packed 68-69
-  DATE_OPENED:               { num: '10',  name: 'Date Opened',                                    source: B2003('76-83'),   edition: '2003' }, // packed 70-74
+  CONSUMER_ACCOUNT_NUMBER:   { num: '7',   name: 'Consumer Account Number',                        source: B2003('43-72'),   edition: '2003', promptNote: 'Cross-bureau conflicts' }, // packed 37-66
+  PORTFOLIO_TYPE:            { num: '8',   name: 'Portfolio Type',                                 source: B2003('73'),      edition: '2003', promptNote: 'C=Line of credit, I=Installment, M=Mortgage, O=Open, R=Revolving' }, // packed 67
+  ACCOUNT_TYPE:              { num: '9',   name: 'Account Type',                                   source: B2003('74-75'),   edition: '2003', promptNote: 'Two-digit code (e.g. 01 auto, 07 charge card, 48 collection)' }, // packed 68-69
+  DATE_OPENED:               { num: '10',  name: 'Date Opened',                                    source: B2003('76-83'),   edition: '2003', promptNote: 'Origination or placement date; not the start of a lifetime Field 18 demand' }, // packed 70-74
   CREDIT_LIMIT:              { num: '11',  name: 'Credit Limit',                                   source: B2003('84-92'),   edition: '2003' }, // packed 75-79
-  HIGHEST_CREDIT:            { num: '12',  name: 'Highest Credit or Original Loan Amount',         source: B2003('93-101'),  edition: '2003' }, // packed 80-84
-  TERMS_DURATION:            { num: '13',  name: 'Terms Duration',                                 source: B2003('102-104'), edition: '2003' }, // packed 85-87
+  HIGHEST_CREDIT:            { num: '12',  name: 'Highest Credit or Original Loan Amount',         source: B2003('93-101'),  edition: '2003', promptNote: 'Impossible values (e.g. below current balance)' }, // packed 80-84
+  TERMS_DURATION:            { num: '13',  name: 'Terms Duration',                                 source: B2003('102-104'), edition: '2003', promptNote: 'Must match agreement' }, // packed 85-87
 
   TERMS_FREQUENCY:           { num: '14',  name: 'Terms Frequency',                                source: B2003('105'),     edition: '2003' }, // packed 88
-  SCHEDULED_MONTHLY_PMT:     { num: '15',  name: 'Scheduled Monthly Payment Amount',               source: B2003('106-114'), edition: '2003' }, // packed 89-93
+  SCHEDULED_MONTHLY_PMT:     { num: '15',  name: 'Scheduled Monthly Payment Amount',               source: B2003('106-114'), edition: '2003', promptNote: 'Apply the portfolio-type rule; do not assume every charge-off must report $0' }, // packed 89-93
   ACTUAL_PAYMENT_AMOUNT:     { num: '16',  name: 'Actual Payment Amount',                          source: B2003('115-123'), edition: '2003' }, // packed 94-98
 
-  ACCOUNT_STATUS:            { num: '17A', name: 'Account Status',                                 source: B2003('124-125'), edition: '2003' }, // packed 99-100
-  PAYMENT_RATING:            { num: '17B', name: 'Payment Rating',                                 source: B2003('126'),     edition: '2003' }, // packed 101
-  PAYMENT_HISTORY_PROFILE:   { num: '18',  name: 'Payment History Profile',                        source: B2003('127-150'), edition: '2003' }, // packed 102-125
-  SPECIAL_COMMENT:           { num: '19',  name: 'Special Comment',                                source: B2003('151-152'), edition: '2003' }, // packed 126-127
-  COMPLIANCE_CONDITION_CODE: { num: '20',  name: 'Compliance Condition Code',                      source: 'CRRG Dec. 2024, Exhibit 8, p. 5-32',  edition: '2024' },
-  CURRENT_BALANCE:           { num: '21',  name: 'Current Balance',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024' },
-  AMOUNT_PAST_DUE:           { num: '22',  name: 'Amount Past Due',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024' },
-  ORIGINAL_CHARGE_OFF_AMT:   { num: '23',  name: 'Original Charge-off Amount',                     source: B2003('173-181'), edition: '2003' },
+  ACCOUNT_STATUS:            { num: '17A', name: 'Account Status',                                 source: B2003('124-125'), edition: '2003', promptNote: 'THE most-cited; see status code table' }, // packed 99-100
+  PAYMENT_RATING:            { num: '17B', name: 'Payment Rating',                                 source: B2003('126'),     edition: '2003', promptNote: 'Cross-check against 17A' }, // packed 101
+  PAYMENT_HISTORY_PROFILE:   { num: '18',  name: 'Payment History Profile',                        source: B2003('127-150'), edition: '2003', promptNote: 'Rolling 24-month history, not lifetime; suppression = gold' }, // packed 102-125
+  SPECIAL_COMMENT:           { num: '19',  name: 'Special Comment',                                source: B2003('151-152'), edition: '2003', promptNote: 'e.g. AU = paid in full for less than the full balance (settlement). Never Compliance Condition Code values (XA/XB/XC/etc.) — those are Field 20' }, // packed 126-127
+  COMPLIANCE_CONDITION_CODE: { num: '20',  name: 'Compliance Condition Code',                      source: 'CRRG Dec. 2024, Exhibit 8, p. 5-32',  edition: '2024', promptNote: 'XB = consumer disputes (Fair Credit Reporting Act)' },
+  CURRENT_BALANCE:           { num: '21',  name: 'Current Balance',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024', promptNote: '$0 on paid/settled' },
+  AMOUNT_PAST_DUE:           { num: '22',  name: 'Amount Past Due',                                source: 'CRRG Dec. 2024, Debt Buyer item 11',  edition: '2024', promptNote: '$0 on paid/settled; equals Current Balance is NORMAL on a collection account, not a violation by itself' },
+  ORIGINAL_CHARGE_OFF_AMT:   { num: '23',  name: 'Original Charge-off Amount',                     source: B2003('173-181'), edition: '2003', promptNote: 'No inflation; no continued reporting post-payment' },
   // Renamed "Date of Account Information" in later editions — keep the 2003
   // name while citing the 2003 edition.
-  BILLING_DATE:              { num: '24',  name: 'Billing Date',                                   source: B2003('182-189'), edition: '2003' },
-  DATE_FIRST_DELINQUENCY:    { num: '25',  name: 'FCRA Compliance/Date of First Delinquency',      source: B2003('190-197'), edition: '2003' },
+  BILLING_DATE:              { num: '24',  name: 'Billing Date',                                   source: B2003('182-189'), edition: '2003', promptNote: 'Cross-bureau conflicts; later editions rename this "Date of Account Information" — both labels mean Field 24' },
+  DATE_FIRST_DELINQUENCY:    { num: '25',  name: 'FCRA Compliance/Date of First Delinquency',      source: B2003('190-197'), edition: '2003', promptNote: '§623(a)(5); 7-yr clock — never assert a later date than reported' },
   DATE_CLOSED:               { num: '26',  name: 'Date Closed',                                    source: B2003('198-205'), edition: '2003' },
-  DATE_OF_LAST_PAYMENT:      { num: '27',  name: 'Date of Last Payment',                           source: 'CRRG Dec. 2024, Debt Buyer item 12',  edition: '2024' },
+  DATE_OF_LAST_PAYMENT:      { num: '27',  name: 'Date of Last Payment',                           source: 'CRRG Dec. 2024, Debt Buyer item 12',  edition: '2024', promptNote: 'Cross-bureau conflicts' },
 };
 
 // ─── Compliance Condition Codes (Field 20) ───────────────────────────────
@@ -329,6 +333,7 @@ const NAME_TOKENS = Object.values(METRO2_FIELDS).map((f) => ({
 
 const FIELD_LABEL_ALIASES = [
   { num: '23', normalized: 'chargeoff amount' },
+  { num: '24', normalized: 'date of account information' },
   { num: '25', normalized: 'date of first delinquency' },
   { num: '25', normalized: 'dofd' },
   { num: '27', normalized: 'last payment date' },
@@ -419,6 +424,118 @@ export function validateFieldCitations(html) {
     }
   }
   return problems;
+}
+
+// Deterministic companion to validateFieldCitations: rewrites a "Field N —
+// Label" citation in place when the label unambiguously belongs to a
+// different, valid field number (the exact same match validateFieldCitations
+// already uses to build its error message — reused here so "detected" and
+// "fixed" never disagree). Only touches the number, never the label, since
+// the label is what the writer actually meant to reference; the number is
+// what gets transposed (21/22, 23/27, 17A/21, etc.).
+//
+// Deliberately conservative on three axes, each closing a specific way this
+// was shown to corrupt or mask a citation error during review:
+// 1. Never touches text inside an HTML tag (attribute, tag name) — the
+//    label regex can't tell "Field 21" in prose from "Field 21" inside a
+//    title="..." attribute the way validateFieldCitations can (it strips
+//    tags first); this function instead checks, per match, whether the
+//    nearest unclosed angle bracket behind it is "<" and bails if so.
+// 2. Never lets the label capture swallow a SECOND "Field N" citation that
+//    follows shortly after in the same sentence (e.g. "Field 21 — Amount
+//    Past Due and Field 19 — Compliance Condition Code") — without this,
+//    the label group's greedy character class treats "and Field" as more
+//    label text, fusing the second citation into unparseable text
+//    ("Field19") that neither this function nor validateFieldCitations can
+//    see anymore, silently hiding a real citation error instead of fixing
+//    or flagging it.
+// 3. Never fixes a field number that's cited MORE than once anywhere in the
+//    document. A single occurrence is safe to correct outright. Multiple
+//    occurrences mean a bare back-reference elsewhere ("...as shown in
+//    Field 21 above") could easily exist alongside the labeled citation
+//    being fixed — rewriting only the labeled one would leave the letter
+//    internally contradictory (one place says Field 22, another still says
+//    Field 21) while validateFieldCitations reports it clean, since it has
+//    no way to resolve unlabeled back-references either. Multi-occurrence
+//    cases are left untouched so the full conversational retry/rebuild
+//    sees every mention at once and can fix them consistently.
+//
+// An unknown field number (no valid field to map to) or an unrecognized
+// label (e.g. "Date of Last Activity", which isn't a real Metro 2 field at
+// all) is also left untouched — those still surface via
+// validateFieldCitations for a human/model retry, never guessed at here.
+//
+// Only ever rewrites the field NUMBER, never the label text itself — the
+// label is reinserted verbatim (untrimmed, unmodified) from what was
+// actually captured, so no whitespace or wording is lost or altered.
+export function autoFixFieldCitations(html) {
+  if (!html) return { html, fixed: [] };
+  const fixed = [];
+  const raw = String(html);
+
+  const occurrences = {};
+  for (const m of raw.matchAll(/Field\s*(\d{1,2}[AB]?)\b/g)) {
+    const n = m[1].toUpperCase();
+    occurrences[n] = (occurrences[n] || 0) + 1;
+  }
+
+  const fixedHtml = raw.replace(
+    /Field\s*(\d{1,2}[AB]?)(\s*[—\-–:(]?\s*)((?:(?!Field\b)[A-Za-z '\/]){0,45})/g,
+    (full, num, sep, rawLabel, offset, string) => {
+      const lastOpen = string.lastIndexOf('<', offset);
+      const lastClose = string.lastIndexOf('>', offset);
+      if (lastOpen > lastClose) return full; // inside an unclosed HTML tag/attribute — never touch
+
+      const upperNum = num.toUpperCase();
+      const label = (rawLabel || '').trim().replace(/\s+/g, ' ');
+      const onlyOccurrence = occurrences[upperNum] === 1;
+
+      // CCC value cited under Field 19 belongs in Field 20.
+      if (upperNum === '19' && label && CCC_VALUE_RE.test(label)) {
+        if (!onlyOccurrence) return full;
+        fixed.push(`Field 19 → Field ${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.num} ("${label}" is a Compliance Condition Code value)`);
+        return `Field ${METRO2_FIELDS.COMPLIANCE_CONDITION_CODE.num}${sep}${rawLabel || ''}`;
+      }
+
+      if (!VALID_NUMS.has(upperNum) || !label) return full;
+
+      const normalizedLabel = normalizeFieldLabel(label);
+      if (normalizedLabel.startsWith('date of last activity')) return full;
+
+      const exactName = NAME_TOKENS.find((t) => normalizedLabel.startsWith(t.normalized));
+      const aliasName = FIELD_LABEL_ALIASES.find((t) => normalizedLabel.startsWith(t.normalized));
+      const claimedNum = exactName?.num || aliasName?.num;
+      if (claimedNum && claimedNum !== upperNum) {
+        if (!onlyOccurrence) return full;
+        const claimed = NAME_TOKENS.find((t) => t.num === claimedNum);
+        fixed.push(`Field ${upperNum} → Field ${claimedNum} ("${label}" is ${claimed?.name || `Field ${claimedNum}`})`);
+        return `Field ${claimedNum}${sep}${rawLabel || ''}`;
+      }
+      if (claimedNum === upperNum) return full;
+
+      const labelHead = normalizedLabel.split(' ')[0];
+      if (labelHead.length <= 4) return full;
+      const actual = NAME_TOKENS.find((t) => t.num === upperNum);
+      if (actual && labelHead === actual.head) return full;
+      // A truncated/abbreviated label (just the first word, e.g. "Account"
+      // instead of "Account Status" — whether the model wrote it that way
+      // or an inline tag split the phrase mid-label) can share its first
+      // word with MORE THAN ONE real field (Account Type vs. Account
+      // Status; Terms Duration vs. Terms Frequency; Payment Rating vs.
+      // Payment History Profile). Guessing which one via array order would
+      // silently mis-cite a different real field — only act when the head
+      // word identifies exactly one other field, never when it's ambiguous.
+      const headMatches = NAME_TOKENS.filter((t) => t.num !== upperNum && t.head === labelHead && t.head.length > 4);
+      if (actual && headMatches.length === 1) {
+        if (!onlyOccurrence) return full;
+        const claimsAnother = headMatches[0];
+        fixed.push(`Field ${upperNum} → Field ${claimsAnother.num} ("${label}" is ${claimsAnother.name})`);
+        return `Field ${claimsAnother.num}${sep}${rawLabel || ''}`;
+      }
+      return full;
+    }
+  );
+  return { html: fixedHtml, fixed };
 }
 
 function plainText(html) {
@@ -521,7 +638,47 @@ export function collectBureauFollowUpProblems(html) {
   return problems;
 }
 
+/**
+ * Deterministic presentation fixes for follow-up letters — catches the two
+ * most common non-Metro-2 lint fails ("Dear Sir or Madam", "Sincerely")
+ * without spending a model call. Does not invent enclosure lines.
+ */
+export function normalizeFollowUpPresentation(html) {
+  if (!html) return html;
+  let out = String(html);
+  // Strip courtesy closing words that block production lint.
+  out = out.replace(/\bSincerely,?\b/gi, '');
+  // Generic salutation → neutral CRA address lead-in (model rewrite still
+  // preferred for bureau-specific naming; this just clears the hard fail).
+  out = out.replace(
+    /<p[^>]*>\s*Dear Sir or Madam,?\s*<\/p>/gi,
+    '<p>To the Consumer Dispute Department:</p>'
+  );
+  out = out.replace(/\bDear Sir or Madam,?\b/gi, 'To the Consumer Dispute Department:');
+  return out;
+}
+
 export function formatMetro2Field(key) {
   const f = assertSourced(key);
   return `Field ${f.num} (${f.name})`;
+}
+
+// Single source of truth for the field-reference block every letter-
+// generation prompt needs. masterPrompt.js and phase3CitationRules.js used
+// to hand-type this table separately — meaning they could drift from each
+// other, AND from what validateFieldCitations/autoFixFieldCitations
+// actually enforce, since neither hardcoded copy was ever generated from
+// this file. A prompt that embeds this output can never cite a field
+// number/name pair the lint would then reject.
+export function renderMetro2FieldTable() {
+  const rows = Object.values(METRO2_FIELDS)
+    .map((f) => `| ${f.num} | ${f.name} | ${f.promptNote || '—'} |`)
+    .join('\n');
+  return `| Field | Name | Notes |\n|------|------|------|\n${rows}`;
+}
+
+export function renderMetro2StatusCodeTable() {
+  return Object.entries(METRO2_STATUS_CODES)
+    .map(([code, v]) => `${code}=${v.meaning}`)
+    .join(', ');
 }

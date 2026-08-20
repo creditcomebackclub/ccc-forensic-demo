@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle, Loader2, X } from 'lucide-react';
-import { collectBureauFollowUpProblems } from '../constants/metro2Fields';
+import { collectBureauFollowUpProblems, autoFixFieldCitations, normalizeFollowUpPresentation } from '../constants/metro2Fields';
 import { getRecentCompletedPhase2Result, runPhase2Job } from '../utils/phase2Jobs';
 import { hasInjectedSignature, injectSignatureImage } from '../utils/signatureInjection';
 import { saveLetter } from '../utils/storage';
 import { supabase } from '../utils/supabase';
+import { resolveSignatureViewUrl } from '../utils/storagePaths';
 
 const AUTO_OK = new Set(['VERIFIED_WITHOUT_SUBSTANCE', 'PARTIAL_CORRECTION']);
 
@@ -74,9 +75,13 @@ async function resolveCoveredFurnishers(letter, client) {
 
 async function resolveSignatureUrl(letter, client) {
   const existing = client?.signatureData
-    || client?.lpoaSignatureData?.signatureUrl
-    || client?.lpoa_signature_data?.signatureUrl;
-  if (existing) return existing;
+    || client?.lpoaSignatureData
+    || client?.lpoa_signature_data;
+  if (typeof existing === 'string') return existing;
+  if (existing && typeof existing === 'object') {
+    const url = await resolveSignatureViewUrl(supabase, existing);
+    if (url) return url;
+  }
 
   const clientId = client?.id || letter.clientId || letter.client_id;
   if (!clientId) return null;
@@ -86,7 +91,8 @@ async function resolveSignatureUrl(letter, client) {
   ]);
   if (profileError) throw profileError;
   if (clientError) throw clientError;
-  return profileRows?.[0]?.signature_data || clientRows?.[0]?.lpoa_signature_data?.signatureUrl || null;
+  if (profileRows?.[0]?.signature_data) return profileRows[0].signature_data;
+  return resolveSignatureViewUrl(supabase, clientRows?.[0]?.lpoa_signature_data);
 }
 
 /**
@@ -135,6 +141,9 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
         draft = null;
       }
       if (draft) {
+        draft.letterHtml = normalizeFollowUpPresentation(
+          autoFixFieldCitations(draft.letterHtml || '').html
+        );
         const currentProblems = collectBureauFollowUpProblems(draft.letterHtml);
         if (currentProblems.length) {
           throw new Error(
@@ -156,6 +165,9 @@ export default function BureauFollowUpPanel({ letter, client, evidence, onClose,
         const issues = (draft.enclosure_parse_issues || []).join(' ');
         throw new Error(issues || 'Follow-up letter failed quality/citation checks. Review the response and try again.');
       }
+      draft.letterHtml = normalizeFollowUpPresentation(
+        autoFixFieldCitations(draft.letterHtml).html
+      );
       const currentProblems = collectBureauFollowUpProblems(draft.letterHtml);
       if (currentProblems.length) {
         throw new Error('Follow-up letter failed current production-safety checks. ' + currentProblems.join(' '));

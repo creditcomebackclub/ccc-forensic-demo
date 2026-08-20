@@ -5,12 +5,25 @@ import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X,
 import { listClientSummaries, getClientDetails, findClientIdByLegacyReference, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, revertClientToLead, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage, markLeadViewed } from '../utils/storage';
 import { getReturnReceiptUrl } from '../utils/api';
 import { getSettings } from '../utils/settings';
-import { getTierPricing, describeTierFee } from '../utils/pricing';
-import { collectBureauFollowUpProblems, collectPhase3CitationProblems } from '../constants/metro2Fields';
+import { getTierPricing, describeTierFee, resolveClientFeeText, hasCustomServiceAgreement } from '../utils/pricing';
+import { autoFixFieldCitations, collectBureauFollowUpProblems, collectPhase3CitationProblems, normalizeFollowUpPresentation } from '../constants/metro2Fields';
 import { isPhase3FollowUpLetter } from '../utils/followUpEnclosures';
 import { hasInjectedSignature, injectSignatureImage } from '../utils/signatureInjection';
 import { supabase } from '../utils/supabase';
+import { affiliateLabel } from '../utils/affiliate';
 import { archiveHistoricalMailpiece, getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
+import { resolveLpoaViewUrl } from '../utils/storagePaths';
+import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
+import { extendLetterDeadline } from '../utils/rounds.js';
+import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
+import {
+  canMailLetter,
+  generationErrorMessage,
+  hasMailedContentWarning,
+  hasMailedDeliveryEvidence,
+  letterGenerationState,
+  letterSignatureState,
+} from '../utils/letterGeneration.js';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
 import BureauResponseAnalyzer from './BureauResponseAnalyzer';
@@ -19,14 +32,20 @@ import EscalationPanel from './EscalationPanel';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
 import ClientBillingPanel from './ClientBillingPanel';
+import ClientEmailComposer from './ClientEmailComposer';
 import LobMailer from './LobMailer';
+import ClientCommandHeader from './client-detail/ClientCommandHeader';
+import ClientStatusRail from './client-detail/ClientStatusRail';
+import ClientOverviewTab from './client-detail/ClientOverviewTab';
+import LetterWorkboard from './client-detail/LetterWorkboard';
+import MailStageRail from './client-detail/MailStageRail';
+import LeadsKanban from './LeadsKanban';
+import {
+  deriveNextAction,
+  summarizeCampaignPhases,
+  LIST_FILTER_TO_LETTER,
+} from './client-detail/clientDetailUtils';
 
-const WINDOW_DAYS = 30;
-// 15 U.S.C. §1681i(a)&(e): a CRA-directed CFPB complaint needs 45 days (or
-// a no-longer-pending dispute), not the 30 used for Phase 1 — see
-// DashboardPage.jsx's identical constant and the ccc-phase4-cfpb-filing-
-// rules memory this is built from.
-const CRA_WINDOW_DAYS = 45;
 const VIP_RESPONSE_DAYS = 1;
 const STD_RESPONSE_DAYS = 3;
 const CLIENT_PAGE_SIZE = 50;
@@ -90,16 +109,21 @@ function hoursBetween(aIso, bIso) {
   return Math.round((new Date(bIso) - new Date(aIso)) / 3600000);
 }
 
-function letterStatus(l, windowDays = WINDOW_DAYS) {
-  if (l.responseOutcome === 'received') return { code: 'received', label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
-  if (l.responseOutcome === 'no_response') return { code: 'no_response', label: 'No response confirmed', tone: 'red' };
-  if (!l.mailedDate) return { code: 'not_mailed', label: 'Not mailed', tone: 'neutral' };
-  if (!l.deliveredAt) return { code: 'in_transit', label: 'In Transit', tone: 'neutral' };
-  const clockStart = l.deliveredAt.slice(0, 10);
-  const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = windowDays - elapsed;
-  if (remaining > 0) return { code: 'awaiting', label: 'Awaiting · ' + remaining + 'd left', tone: 'amber' };
-  return { code: 'window_closed', label: 'Window elapsed · ready to escalate', tone: 'red' };
+function letterStatus(l) {
+  const generation = letterGenerationState(l);
+  if (generation === 'failed' && !hasMailedContentWarning(l)) return { code: 'generation_failed', label: 'Generation failed', tone: 'red' };
+  if (generation === 'generating') return { code: 'generating', label: 'Generating', tone: 'neutral' };
+  if (letterSignatureState(l) !== 'embedded' && !hasMailedDeliveryEvidence(l)) {
+    return { code: 'signature_required', label: 'Signature required', tone: 'red' };
+  }
+  const status = responseWindowStatus(l);
+  if (status.code === 'received') return { ...status, label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
+  if (status.code === 'no_response') return { ...status, label: 'No response confirmed', tone: 'red' };
+  if (status.code === 'deleted') return { ...status, tone: 'green' };
+  if (status.code === 'draft') return { ...status, code: 'not_mailed', label: 'Not mailed', tone: 'neutral' };
+  if (status.code === 'in_transit') return { ...status, label: 'In Transit', tone: 'neutral' };
+  if (status.code === 'awaiting' || status.code === 'due_soon') return { ...status, code: 'awaiting', remaining: status.daysRemaining, label: 'Awaiting · ' + status.daysRemaining + 'd left', tone: 'amber' };
+  return { ...status, code: 'window_closed', label: 'Window elapsed · review required', tone: 'red' };
 }
 
 function importDueInfo(c) {
@@ -118,37 +142,69 @@ function importDueInfo(c) {
 
 function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
   if (!filter) return true;
-  const openLetters = c.letters.filter((l) => !l.phase?.startsWith('Phase 3'));
+  const openLetters = (c.letters || []).filter((l) => l.roundId ? isOpenRoundLetter(c, l) : !l.phase?.startsWith('Phase 3'));
+  const lifecycle = c.billingStatus || 'Active';
   switch (filter) {
-    case 'active': return openLetters.length > 0;
-    case 'awaiting': return openLetters.some((l) => letterStatus(l).code === 'awaiting');
-    case 'escalate': return openLetters.some((l) => {
-      const st = letterStatus(l);
-      const hasPhase3 = c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && pl.furnisher === l.furnisher);
-      return (st.code === 'window_closed' || st.code === 'no_response') && !hasPhase3;
-    });
-    case 'phase3': return c.letters.some((l) => l.phase?.startsWith('Phase 3'));
-    case 'phase4': return c.letters.some((l) => {
-      if (!l.phase?.startsWith('Phase 3')) return false;
-      const st3 = letterStatus(l, CRA_WINDOW_DAYS);
-      const hasBureauDecision = l.bureauReviewStatus && l.bureauReviewStatus !== 'not_reviewed';
-      return !hasBureauDecision && (st3.code === 'window_closed' || st3.code === 'no_response');
-    });
-    case 'received': return openLetters.some((l) => l.responseOutcome === 'received');
-    case 'noemail': return !c.email;
-    case 'vip': return !!c.isVip;
-    case 'unanalyzed': return !!unanalyzedClientIds?.has(c.id) || !!unanalyzedNames?.has(c.name);
-    default: return true;
+    case 'open_rounds':
+      return (c.rounds || []).some((round) => round.status === 'open');
+    case 'active':
+      return ((c.rounds || []).some((round) => round.status === 'open') || openLetters.some((letter) => !letter.roundId))
+        && lifecycle !== 'Graduated' && lifecycle !== 'Inactive';
+    case 'awaiting':
+      return openLetters.some((l) => letterStatus(l).code === 'awaiting');
+    case 'escalate':
+      return (c.rounds || []).some((round) => round.status === 'closed' && round.final_disposition === 'escalate')
+        || (c.letters || []).some((letter) => !letter.roundId && letter.bureauNextAction === 'escalation');
+    case 'ready':
+      return openLetters.some((l) => letterStatus(l).code === 'received' && (!l.roundId || isPendingRoundReview(c, l)));
+    case 'phase3':
+      return (c.letters || []).some((l) => l.targetType === 'bureau' || l.phase?.startsWith('Phase 3'));
+    case 'phase4':
+      return (c.rounds || []).some((round) => round.status === 'closed' && round.final_disposition === 'escalate')
+        || (c.letters || []).some((letter) => !letter.roundId && letter.bureauNextAction === 'escalation');
+    case 'received':
+      return openLetters.some((l) => {
+        if (l.responseOutcome !== 'received') return false;
+        if (l.roundId) return isPendingRoundReview(c, l);
+        return !(c.letters || []).some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
+      });
+    case 'attention':
+      return (
+        openLetters.some((letter) => ['window_closed', 'no_response'].includes(letterStatus(letter).code) && (!letter.roundId || isPendingRoundReview(c, letter))) ||
+        clientMatchesFilter(c, 'escalate', unanalyzedNames, unanalyzedClientIds) ||
+        clientMatchesFilter(c, 'ready', unanalyzedNames, unanalyzedClientIds) ||
+        clientMatchesFilter(c, 'received', unanalyzedNames, unanalyzedClientIds) ||
+        !!(unanalyzedClientIds?.has(c.id) || unanalyzedNames?.has(c.name)) ||
+        (importDueInfo(c) && importDueInfo(c).code === 'due')
+      );
+    case 'completed':
+      return lifecycle === 'Graduated' || (
+        (c.letters || []).length > 0 &&
+        openLetters.length === 0 &&
+        (c.letters || []).every((l) => !!l.responseOutcome || (l.phase || '').startsWith('Phase 3'))
+      );
+    case 'noemail':
+      return !c.email;
+    case 'vip':
+      return !!c.isVip;
+    case 'unanalyzed':
+      return !!unanalyzedClientIds?.has(c.id) || !!unanalyzedNames?.has(c.name);
+    default:
+      return true;
   }
 }
 
 const FILTER_LABELS = {
+  open_rounds: 'Clients With Open Rounds',
   active: 'Active Campaigns',
   awaiting: 'Awaiting Response',
-  escalate: 'Ready to Escalate',
-  phase3: 'Phase 3 Active',
-  phase4: 'Ready for CFPB/AG',
-  received: 'Response Received',
+  escalate: 'Escalation Approved',
+  ready: 'Responses to Analyze',
+  attention: 'Needs Attention',
+  completed: 'Completed',
+  phase3: 'Bureau Disputes',
+  phase4: 'Escalation Approved',
+  received: 'Needs Response Review',
   noemail: 'No Email',
   vip: 'VIP',
   unanalyzed: 'Needs Analysis',
@@ -196,8 +252,8 @@ function primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
   const clientUploaded = c.letters.some(l => l.responseOutcome === 'received' && (l.responseFileUrl || l.hasResponseFile));
   if (clientUploaded) return { label: 'Response Uploaded', tone: 'green' };
 
-  if (ripe > 0) return { label: ripe + ' to escalate', tone: 'red' };
-  if (needsPhase3 > 0) return { label: needsPhase3 + ' need Phase 3', tone: 'amber' };
+  if (ripe > 0) return { label: ripe + ' need review', tone: 'red' };
+  if (needsPhase3 > 0) return { label: needsPhase3 + ' need response review', tone: 'amber' };
   
   const importDue = importDueInfo(c);
   if (importDue && importDue.code === 'due') return importDue;
@@ -209,6 +265,41 @@ function primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
   
   if (c.letters.length === 0) return { label: 'No letters yet', tone: 'neutral' };
   return { label: 'On track', tone: 'green' };
+}
+
+const CAMPAIGN_STAGE_LABELS = {
+  select_disputes: 'Select disputes', configure_letters: 'Build letters', letter_review: 'Review letters',
+  mailing: 'Ready to mail', awaiting_responses: 'Awaiting responses', response_review: 'Review responses',
+};
+
+function clientRosterStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
+  const lifecycle = c.billingStatus || 'Active';
+  if (lifecycle !== 'Active') {
+    return { label: lifecycle, tone: lifecycle === 'Paused' ? 'amber' : lifecycle === 'Graduated' ? 'green' : 'neutral' };
+  }
+  if (c.activeCampaign) {
+    return {
+      label: `Active · Campaign ${c.activeCampaign.round_number} · ${CAMPAIGN_STAGE_LABELS[c.activeCampaign.stage] || 'In progress'}`,
+      tone: c.activeCampaign.stage === 'response_review' ? 'amber' : 'neutral',
+    };
+  }
+
+  const openRounds = (c.rounds || []).filter((round) => round.status === 'open');
+  const roundNumbers = [...new Set(openRounds.map((round) => Number(round.round_number)).filter(Boolean))].sort((a, b) => a - b);
+  const roundLabel = roundNumbers.length === 1
+    ? `Round ${roundNumbers[0]}`
+    : roundNumbers.length > 1 ? `Rounds ${roundNumbers[0]}–${roundNumbers[roundNumbers.length - 1]}` : null;
+  const prefix = roundLabel ? `Active · ${roundLabel} · ` : 'Active · ';
+  const openLetters = (c.letters || []).filter((letter) => !letter.roundId || isOpenRoundLetter(c, letter));
+  const unmailed = openLetters.filter((letter) => letterStatus(letter).code === 'not_mailed').length;
+
+  if (ripe > 0 || needsPhase3 > 0) return { label: `${prefix}Response review`, tone: ripe > 0 ? 'red' : 'amber' };
+  if (unmailed > 0) return { label: `${prefix}Ready to mail`, tone: 'amber' };
+  if (awaiting > 0) return { label: `${prefix}Awaiting response`, tone: 'neutral' };
+  if (inTransit > 0) return { label: `${prefix}In transit`, tone: 'neutral' };
+  if (openRounds.length > 0) return { label: `${prefix}In progress`, tone: 'neutral' };
+  if (c.letters.length === 0) return { label: 'Active · Ready for audit', tone: 'neutral' };
+  return { label: 'Active · On track', tone: 'green' };
 }
 
 function Avatar({ name, isVip, size = 34 }) {
@@ -225,13 +316,18 @@ function Avatar({ name, isVip, size = 34 }) {
   );
 }
 
-function Menu({ items }) {
+function Menu({ items, dark }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
       <button onClick={() => setOpen(!open)} title="More actions"
-        className="flex items-center justify-center rounded-md transition-colors hover:bg-gray-100"
-        style={{ width: 26, height: 26, color: T.faint, background: open ? '#EEF1F7' : 'transparent' }}>
+        className="flex items-center justify-center rounded-md transition-colors"
+        style={{
+          width: 26,
+          height: 26,
+          color: dark ? 'rgba(247,244,237,0.7)' : T.faint,
+          background: open ? (dark ? 'rgba(255,255,255,0.12)' : '#EEF1F7') : 'transparent',
+        }}>
         <MoreHorizontal size={15} strokeWidth={2} />
       </button>
       {open && (
@@ -254,30 +350,6 @@ function Menu({ items }) {
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-// Where a letter is in its lifecycle: Generated → Mailed → Delivered → Outcome
-const LETTER_STAGES = ['Generated', 'Mailed', 'Delivered', 'Outcome logged'];
-function letterStageIndex(l) {
-  if (l.responseOutcome) return 3;
-  if (l.trackingStatus === 'Delivered' || l.deliveredAt) return 2;
-  if (l.mailedDate) return 1;
-  return 0;
-}
-
-function StageTracker({ l }) {
-  const idx = letterStageIndex(l);
-  return (
-    <div className="flex items-center shrink-0" title={'Stage: ' + LETTER_STAGES[idx]}>
-      {LETTER_STAGES.map((s, i) => (
-        <React.Fragment key={s}>
-          {i > 0 && <div style={{ width: 13, height: 2, background: i <= idx ? T.navy : '#E5E9F0' }} />}
-          <div title={s}
-            style={{ width: 8, height: 8, borderRadius: '50%', background: i <= idx ? T.navy : '#fff', border: i <= idx ? 'none' : '1.5px solid #D6DCE6', boxSizing: 'border-box' }} />
-        </React.Fragment>
-      ))}
     </div>
   );
 }
@@ -323,11 +395,19 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
-  const isPhase3 = l.phase && l.phase.startsWith('Phase 3');
+  const generation = letterGenerationState(l);
+  const mailedContentWarning = hasMailedContentWarning(l);
+  const mailEvidence = hasMailedDeliveryEvidence(l);
+  const signatureState = generation === 'ready' ? letterSignatureState(l) : null;
+  const signatureRequired = !!signatureState && signatureState !== 'embedded' && !mailEvidence;
+  const historicalSignatureWarning = !!signatureState && signatureState !== 'embedded' && mailEvidence;
+  const mailReady = canMailLetter(l);
+  const archivedMailpiece = (l.mailArtifacts || []).find((artifact) => artifact.artifact_type === 'mailpiece_pdf');
+  const isPhase3 = l.targetType === 'bureau' || (l.phase && l.phase.startsWith('Phase 3'));
   const isCccDispute = String(l.phase || '').startsWith('CCC Dispute —');
   // Phase 3's own escalation-readiness uses the 45-day CRA clock, not the
   // 30-day one — same reasoning as DashboardPage.jsx's identical gate.
-  const status3 = isPhase3 ? letterStatus(l, CRA_WINDOW_DAYS) : null;
+  const status3 = isPhase3 ? letterStatus(l) : null;
 
   const urgency = (() => {
     if (hasPhase3) return null;
@@ -359,18 +439,31 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     } catch (e) { toast.error('Could not delete: ' + (e.message || e)); }
   };
 
+  const handleExtendDeadline = async () => {
+    const reason = window.prompt('Document the reason for this one-time 15-day extension:');
+    if (!reason?.trim()) return;
+    try {
+      await extendLetterDeadline(l.id, reason.trim());
+      toast.success('Response deadline extended by 15 days.');
+      onChange();
+    } catch (e) {
+      toast.error('Could not extend deadline: ' + (e.message || e));
+    }
+  };
+
   const canAnalyze = !isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response');
   const needsBureauReview = isPhase3 && status3 && (status3.code === 'received' || status3.code === 'window_closed' || status3.code === 'no_response');
 
   // One visible action per letter; the rest live in the ⋯ menu
   const primaryAction = (() => {
-    if (!l.mailedDate) return (
+    if (!mailReady && !mailedContentWarning && !historicalSignatureWarning) return null;
+    if (!l.mailedDate) return mailReady ? (
       <button onClick={() => onLobMail(l)}
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border transition-colors shrink-0"
         style={{ borderColor: T.navy, color: T.navy }}>
         <Send size={10} strokeWidth={2} /> Send
       </button>
-    );
+    ) : null;
     if (canAnalyze) return (
       <button onClick={() => onAnalyze(l)}
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0"
@@ -396,11 +489,14 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   })();
 
   const menuItems = [
-    { label: 'View letter', onClick: () => onView(l) },
-    onEdit && { label: 'Edit letter', onClick: () => onEdit(l) },
+    (mailReady || mailedContentWarning || signatureRequired || historicalSignatureWarning) && {
+      label: mailReady ? 'View letter' : 'View stored letter',
+      onClick: () => onView(l),
+    },
+    mailReady && onEdit && { label: 'Edit letter', onClick: () => onEdit(l) },
     { label: 'Account history', onClick: () => onOpenAccount(l) },
     'divider',
-    !l.mailedDate && !l.lobId && { label: 'Mark as mailed…', onClick: () => { setDateVal(todayISO()); setMode('mailing'); } },
+    mailReady && !l.mailedDate && !l.lobId && { label: 'Mark as mailed…', onClick: () => { setDateVal(todayISO()); setMode('mailing'); } },
     l.mailedDate && !l.lobId && { label: 'Clear mail date', onClick: () => save({ mailedDate: null }) },
     l.mailedDate && l.lobId && {
       label: 'Resend requires reviewed revision',
@@ -409,52 +505,135 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     },
     l.mailedDate && !l.responseOutcome && { label: 'Log response…', onClick: () => { setDateVal(todayISO()); setMode('responding'); } },
     l.mailedDate && !l.responseOutcome && { label: 'Mark no response', onClick: () => save({ responseOutcome: 'no_response' }) },
+    l.roundId && l.deliveredAt && !l.responseOutcome && !l.responseWindowExtensionDays && { label: 'Extend response window +15 days…', onClick: handleExtendDeadline },
     isPhase3 && l.responseOutcome === 'received' && { label: 'Analyze bureau response…', onClick: () => onAnalyzeBureau(l) },
     isPhase3 && l.responseOutcome && { label: 'Review bureau response…', onClick: () => onReviewBureau(l) },
-    isPhase3 && needsBureauReview && { label: 'Prepare CFPB / State AG escalation…', onClick: () => onEscalate(l) },
+    isPhase3 && !l.roundId && needsBureauReview && { label: 'Prepare CFPB / State AG escalation…', onClick: () => onEscalate(l) },
+    l.roundId && l.roundNextAction === 'escalate' && { label: 'Open approved CFPB / State AG escalation…', onClick: () => onEscalate(l) },
     l.mailedDate && { label: 'Edit mail date…', onClick: () => { setDateVal(l.mailedDate); setMode('mailing'); } },
     l.responseOutcome && { label: 'Reset response', onClick: () => save({ responseOutcome: null, responseDate: null }) },
     'divider',
-    { label: 'Delete letter…', danger: true, onClick: handleDelete },
+    (l.mailArtifacts || []).some((a) => a.artifact_type === 'mailpiece_pdf') && {
+      label: 'Exact Lob PDF',
+      onClick: async () => {
+        const artifact = (l.mailArtifacts || []).find((a) => a.artifact_type === 'mailpiece_pdf');
+        if (!artifact) return;
+        try {
+          const url = await getMailArtifactUrl(artifact);
+          window.open(url, '_blank', 'noopener,noreferrer');
+        } catch (e) {
+          toast.error('Could not open the archived Lob PDF: ' + (e.message || e));
+        }
+      },
+    },
+    l.lobId && !(l.mailArtifacts || []).some((a) => a.artifact_type === 'mailpiece_pdf') && {
+      label: 'Archive Lob PDF…',
+      onClick: async () => {
+        try {
+          const result = await archiveHistoricalMailpiece({ letterId: l.id, lobId: l.lobId });
+          if (result.archived) {
+            toast.success('Exact Lob PDF archived');
+            onChange();
+          } else toast('Lob has not made the rendered PDF available yet. Try again shortly.');
+        } catch (e) {
+          toast.error('Could not archive the Lob PDF: ' + (e.message || e));
+        }
+      },
+    },
+    l.trackingStatus === 'Delivered' && l.lobId && l.mailService !== 'usps_first_class' && {
+      label: 'Signed receipt…',
+      onClick: async () => {
+        if (l.returnReceiptUrl) {
+          window.open(l.returnReceiptUrl, '_blank');
+          return;
+        }
+        try {
+          const url = await getReturnReceiptUrl(l.lobId);
+          if (url) window.open(url, '_blank');
+          else toast('USPS has not uploaded the signed receipt yet. This typically takes 24-48 hours after delivery.', { icon: '📬' });
+        } catch (e) {
+          toast.error(e.message || 'Failed to fetch return receipt');
+        }
+      },
+    },
+    'divider',
+    l.campaignRouteId
+      ? { label: 'Managed in Campaign workspace', disabled: true, title: 'Campaign letters must be retried or managed from the client campaign so route history stays intact.' }
+      : { label: 'Delete letter…', danger: true, onClick: handleDelete },
   ];
+
+  const metaBits = [
+    fmtTime(l.savedAt),
+    l.mailedDate ? 'mailed ' + fmt(l.mailedDate) : null,
+    l.mailedDate && l.mailService === 'usps_first_class' ? 'First Class' : null,
+    l.trackingStatus || null,
+  ].filter(Boolean);
 
   return (
     <div className="py-2.5 border-b last:border-b-0" style={{ borderColor: T.grid }}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="text-[12px] min-w-0" style={{ color: T.ink }}>
           <span className={isPhase3 ? 'font-medium' : ''} style={{ color: isPhase3 ? '#8F7524' : T.ink }}>{l.phase || 'Letter'}</span>
-          <span className="text-ink-muted"> · {fmtTime(l.savedAt)}</span>
-          {l.mailedDate && <span className="text-ink-muted"> · mailed {fmt(l.mailedDate)}</span>}
-          {l.mailedDate && l.mailService === 'usps_first_class' && <span className="text-[10px] text-ink-faint ml-1">· First Class</span>}
+          {metaBits.length > 0 && (
+            <span className="text-ink-muted"> · {metaBits.join(' · ')}</span>
+          )}
           {l.trackingNumber && (
             <a href={"https://tools.usps.com/go/TrackConfirmAction?tLabels=" + l.trackingNumber} target="_blank" rel="noopener noreferrer" className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2">USPS #{l.trackingNumber.slice(-8)}</a>
           )}
-          {l.trackingStatus === 'Delivered' && l.lobId && l.mailService !== 'usps_first_class' && (
-            <ReturnReceiptButton lobId={l.lobId} returnReceiptUrl={l.returnReceiptUrl} />
-          )}
-          <MailpieceLink artifact={(l.mailArtifacts || []).find((artifact) => artifact.artifact_type === 'mailpiece_pdf')} />
-          <ArchiveMailpieceButton letter={l} onArchived={onChange} />
-          {l.lobId && !l.trackingNumber && (
-            <span className="text-[10px] text-ink-faint ml-2">Lob: {l.lobId.slice(0, 12)}</span>
-          )}
           {l.responseFileUrl && (
-            <a href={l.responseFileUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] uppercase tracking-wider text-green-700 hover:text-green-800 ml-2 font-medium">📄 View Client Upload</a>
-          )}
-          {l.trackingStatus && (
-            <span className={'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm ml-1 ' + (l.trackingStatus === 'Delivered' ? 'bg-green-50 text-green-700' : l.trackingStatus.includes('Returned') ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700')}>
-              {l.trackingStatus}
-            </span>
+            <a href={l.responseFileUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] uppercase tracking-wider text-green-700 hover:text-green-800 ml-2 font-medium">Client upload</a>
           )}
           {isAdmin && l.auditorName && <span className="text-[10px] text-ink-faint ml-2">· {l.auditorName}</span>}
         </div>
         <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
-          <StageTracker l={l} />
+          <MailStageRail letter={l} />
+          {mailedContentWarning && <StatusBadge label="Content warning" tone="amber" />}
+          {signatureRequired && <StatusBadge label="Signature required" tone="red" />}
+          {historicalSignatureWarning && <StatusBadge label="Historical preview" tone="amber" />}
           {urgency && <StatusBadge label={urgency.label} tone={urgency.tone} />}
-          <StatusBadge label={status.label} tone={status.tone} />
           {primaryAction}
           <Menu items={menuItems} />
         </div>
       </div>
+
+      {mailedContentWarning ? (
+        <div className="mt-2 text-[10px] rounded-lg px-3 py-2 flex items-center justify-between gap-3 flex-wrap" style={{ color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+          <span className="leading-relaxed">
+            <strong>{l.deliveredAt || l.trackingStatus === 'Delivered' ? 'Delivered letter' : 'Mailed letter'} · content warning.</strong>{' '}
+            {generationErrorMessage(l)} This historical mailing remains immutable and stays in delivery and response tracking. It cannot be retried or overwritten; review the exact mailed PDF before deciding whether a new reviewed revision is needed.
+          </span>
+          <span className="shrink-0">
+            {archivedMailpiece
+              ? <MailpieceLink artifact={archivedMailpiece} />
+              : <ArchiveMailpieceButton letter={l} onArchived={onChange} />}
+          </span>
+        </div>
+      ) : signatureRequired ? (
+        <div className="mt-2 text-[10px] rounded-lg px-3 py-2" style={{ color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA' }}>
+          <strong>Signature required · mailing blocked.</strong>{' '}
+          {signatureState === 'missing'
+            ? 'No client signature is stored in this letter. Wait for the signed LPOA/signature capture, then regenerate or save a reviewed draft with the canonical signature embedded.'
+            : signatureState === 'remote'
+              ? 'This draft uses a remote or expiring signature URL. Rebuild it with the canonical signature embedded before mailing.'
+              : 'The embedded signature is invalid. Rebuild it from the canonical signature before mailing.'}
+        </div>
+      ) : historicalSignatureWarning ? (
+        <div className="mt-2 text-[10px] rounded-lg px-3 py-2 flex items-center justify-between gap-3 flex-wrap" style={{ color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+          <span className="leading-relaxed">
+            <strong>Historical signature preview unavailable.</strong>{' '}
+            This already-mailed record uses a retired or expiring image link in its stored HTML. Do not rewrite the evidence record; use the exact Lob PDF to verify what was mailed.
+          </span>
+          <span className="shrink-0">
+            {archivedMailpiece
+              ? <MailpieceLink artifact={archivedMailpiece} />
+              : <ArchiveMailpieceButton letter={l} onArchived={onChange} />}
+          </span>
+        </div>
+      ) : generation !== 'ready' && (
+        <div className="mt-2 text-[10px] rounded-lg px-3 py-2" style={{ color: generation === 'failed' ? '#B91C1C' : T.muted, background: generation === 'failed' ? '#FEF2F2' : '#F3F4F6', border: `1px solid ${generation === 'failed' ? '#FECACA' : T.border}` }}>
+          {generation === 'failed' ? `${generationErrorMessage(l)} ${l.campaignRouteId ? 'Retry this route from the Campaign tab.' : 'Open this account round to retry only the failed draft.'}` : 'Claude is still generating this letter. Mailing remains blocked until the final draft is saved.'}
+        </div>
+      )}
 
       {mode === 'mailing' && (
         <div className="mt-2 flex items-center gap-2">
@@ -546,7 +725,7 @@ function parseFurnisherAddress(furnisher) {
   }
   return null;
 }
-export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, forceTab, unanalyzedNames, unanalyzedClientIds, onLeadsChanged }) {
+export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: initialFilter, navigationKey, forceTab, unanalyzedNames, unanalyzedClientIds, onLeadsChanged }) {
   const [clients, setClients] = useState(null);
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [selectedClient, setSelectedClient] = useState(null);
@@ -575,22 +754,62 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   }, [search]);
   const [refreshing, setRefreshing] = useState(false);
   const [editingEmail, setEditingEmail] = useState(null);
+  const [emailingClient, setEmailingClient] = useState(null);
   const [activeTab, setActiveTab] = useState({});
+  const [letterMailFilter, setLetterMailFilter] = useState('all');
+  const [phaseProgressRows, setPhaseProgressRows] = useState([]);
   const [emailVal, setEmailVal] = useState('');
-  const [sendingLpoa, setSendingLpoa] = useState(null);
   const [showCreateClient, setShowCreateClient] = useState(false);
   const [viewTab, setViewTab] = useState(forceTab || 'clients'); // 'clients' | 'leads'
-  // Retention Build 3 — lifecycle status filter. Defaults to the "working
-  // view" (Active + Paused); Graduated/Inactive are one click away rather
-  // than cluttering the default list. Composes with search/dispute-workflow
-  // chips (AND), doesn't replace them.
-  const [lifecycleSelected, setLifecycleSelected] = useState(['Active', 'Paused']);
+  // The roster opens to every client. Lifecycle and work-queue filters are
+  // deliberate drill-downs rather than the default landing state.
+  const [lifecycleFilter, setLifecycleFilter] = useState(null);
   const [showAddLead, setShowAddLead] = useState(false);
   const [convertingLead, setConvertingLead] = useState(null);
+  // Affiliate roster for Lead card / Add Lead dropdowns. `clients.referred_by`
+  // is a UUID pointing at affiliates.id; the Lead card needs the full list so
+  // staff can see which affiliate a lead came in under (or reassign when a
+  // lead was captured with a free-text source but really came from a partner).
+  //
+  // A load failure (RLS denial, dropped table, network error) has to be
+  // distinguishable from "no affiliates exist yet" — otherwise a
+  // partner-referred lead could get saved as unattributed without anyone
+  // noticing. `affiliatesError` drives a disabled-select fallback downstream.
+  const [affiliates, setAffiliates] = useState([]);
+  const [affiliatesError, setAffiliatesError] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    supabase.from('affiliates').select('id, name, company').order('name')
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error('Could not load the affiliate roster', error);
+          setAffiliatesError(true);
+          return;
+        }
+        setAffiliates(data || []);
+        setAffiliatesError(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error('Could not load the affiliate roster', e);
+        setAffiliatesError(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
   const clientRefs = useRef({});
   const listRequestRef = useRef(0);
   const detailRequestRef = useRef(0);
   const jumpResolutionRef = useRef(null);
+
+  const queueLettersForMail = (letters) => {
+    const requested = (Array.isArray(letters) ? letters : [letters]).filter(Boolean);
+    const ready = requested.filter(canMailLetter);
+    if (ready.length !== requested.length) {
+      toast.error('One or more letters are still generating or failed generation. Nothing invalid was added to the mail queue.');
+    }
+    if (ready.length) setLobMailerQueue(ready);
+  };
 
   const load = async ({ append = false, cursor = null, searchTerm = debouncedSearch, throwOnError = false } = {}) => {
     const requestId = ++listRequestRef.current;
@@ -688,17 +907,54 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   }, [selectedClientId]);
 
   useEffect(() => {
+    if (!selectedClientId || !selectedClient || selectedClient.id !== selectedClientId) {
+      setPhaseProgressRows([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('progress_updates')
+          .select('phase_progress')
+          .eq('client_id', selectedClientId)
+          .order('to_report_date', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!cancelled) setPhaseProgressRows(Array.isArray(data?.phase_progress) ? data.phase_progress : []);
+      } catch (_) {
+        if (!cancelled) setPhaseProgressRows([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedClientId, selectedClient?.id, selectedClient?.audits?.length]);
+
+  const openClient = (clientId, { fromListFilter } = {}) => {
+    const listFilter = fromListFilter !== undefined ? fromListFilter : activeFilter;
+    const letterFilter = LIST_FILTER_TO_LETTER[listFilter];
+    if (letterFilter) {
+      setLetterMailFilter(letterFilter);
+      setActiveTab((p) => ({ ...p, [clientId]: 'Letters' }));
+    } else {
+      setLetterMailFilter('all');
+      setActiveTab((p) => ({ ...p, [clientId]: 'Overview' }));
+    }
+    setSelectedClientId(clientId);
+  };
+
+  useEffect(() => {
     if (!jumpTo || !clients) return;
     if (jumpTo.startsWith('lead:')) return;
-    if (jumpResolutionRef.current === jumpTo) return;
-    jumpResolutionRef.current = jumpTo;
+    const resolutionKey = `${navigationKey ?? 'initial'}:${jumpTo}`;
+    if (jumpResolutionRef.current === resolutionKey) return;
+    jumpResolutionRef.current = resolutionKey;
     let cancelled = false;
     findClientIdByLegacyReference(jumpTo).then(({ id, ambiguous }) => {
       if (cancelled) return;
       if (ambiguous) {
         toast.error('More than one client has that name. Open the correct client from the Clients list.');
       } else if (id) {
-        setSelectedClientId(id);
+        openClient(id, { fromListFilter: null });
       } else {
         toast.error('That client could not be found.');
       }
@@ -706,15 +962,30 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       if (!cancelled) toast.error('Could not open client: ' + (e.message || e));
     });
     return () => { cancelled = true; };
-  }, [jumpTo, clients]);
+  }, [jumpTo, clients, navigationKey]);
 
   useEffect(() => {
-    if (initialFilter) setActiveFilter(initialFilter);
-  }, [initialFilter]);
+    setActiveFilter(initialFilter || null);
+    setLifecycleFilter(null);
+    setSearch('');
+    if (!jumpTo) {
+      detailRequestRef.current += 1;
+      setSelectedClientId(null);
+      setSelectedClient(null);
+      setSelectedClientError(null);
+      setLetterMailFilter('all');
+    }
+  }, [initialFilter, jumpTo, navigationKey]);
 
 
 
   const openLetter = (letter) => {
+    if (letterGenerationState(letter) !== 'ready') {
+      toast.error(letterGenerationState(letter) === 'generating'
+        ? 'This letter is still generating.'
+        : `This letter failed generation: ${generationErrorMessage(letter)}`);
+      return;
+    }
     if (!letter.html) {
       toast.error('This letter has no HTML content to view.');
       return;
@@ -760,36 +1031,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     }
   };
 
-  const handleSendInvite = async (c) => {
-    if (!c.email) { toast.error('Add client email first'); return; }
-    setSendingLpoa(c.id || c.name);
-    try {
-      const { supabase } = await import('../utils/supabase.js');
-      const { data: { session: _cpSess } } = await supabase.auth.getSession();
-      const _cpTok = _cpSess?.access_token;
-      
-      // Provision the auth user
-      const provRes = await fetch('/.netlify/functions/provision-user', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(_cpTok ? { Authorization: `Bearer ${_cpTok}` } : {}),
-        },
-        body: JSON.stringify({ email: c.email.trim().toLowerCase(), fullName: c.name.trim(), kind: 'client', clientId: c.id }),
-      });
-      if (!provRes.ok) {
-        const out = await provRes.json().catch(() => ({}));
-        throw new Error(out.error || 'Could not provision client account');
-      }
-
-      toast.success('Portal invite link sent to ' + c.email);
-    } catch (e) {
-      toast.error('Could not send invite: ' + e.message);
-    } finally {
-      setSendingLpoa(null);
-    }
-  };
-
   // For clients with no email/portal account — e.g. Swiftedly referrals,
   // where staff don't run the normal LPOA + portal signup flow — this is
   // the only path to a signature. Every client row has a sign_token
@@ -803,18 +1044,26 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       // record on demand keeps the board payload free of reusable tokens.
       const detail = c.signToken ? c : await getClientDetails(c.id);
       if (!detail.signToken) { toast.error('No signing token on this client yet — refresh and try again.'); return; }
-      
+
+      const settings = await getSettings();
+      // Custom service agreement always wins — including over the legacy
+      // inquiry menu item — so the signed LPOA matches Billing.
       let feeParam = '';
-      if (lpoaType !== 'inquiry') {
-        const settings = await getSettings();
+      let typeParam = '';
+      if (hasCustomServiceAgreement(detail)) {
+        const feeText = resolveClientFeeText(detail, settings, { lpoaType: 'standard' });
+        feeParam = '&feeText=' + encodeURIComponent(feeText);
+      } else if (lpoaType === 'inquiry') {
+        typeParam = '&type=inquiry';
+      } else {
         const tierPricing = getTierPricing(settings);
         const feeText = describeTierFee(detail.billingTier || 'Standard', tierPricing);
         feeParam = '&feeText=' + encodeURIComponent(feeText);
       }
-      
+
       const url = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(detail.name) + '&token=' + detail.signToken
-        + (lpoaType === 'inquiry' ? '&type=inquiry' : feeParam);
-        
+        + typeParam + feeParam;
+
       await navigator.clipboard.writeText(url);
       toast.success('Signature link copied');
     } catch (e) {
@@ -825,7 +1074,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const viewSignedLpoa = async (c) => {
     try {
       const detail = c.lpoaSignatureData ? c : await getClientDetails(c.id);
-      const url = detail.lpoaSignatureData?.lpoaUrl;
+      const url = await resolveLpoaViewUrl(supabase, detail.lpoaSignatureData);
       if (!url) { toast.error('No signed LPOA is available for this client.'); return; }
       window.open(url, '_blank');
     } catch (e) {
@@ -843,6 +1092,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   const leadModal = showAddLead ? (
     <AddLeadModal
+      affiliates={affiliates}
+      affiliatesError={affiliatesError}
       onClose={() => setShowAddLead(false)}
       onCreated={() => { setShowAddLead(false); load(); }}
     />
@@ -882,23 +1133,27 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     }
     const c = selectedClient;
     
-    const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
-    const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
-    const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;
-    const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))).length;
+    const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || isPendingRoundReview(c, l))).length;
+    const activeStatusLetters = c.letters.filter((l) => !l.roundId || isOpenRoundLetter(c, l));
+    const awaiting = activeStatusLetters.filter((l) => letterStatus(l).code === 'awaiting').length;
+    const inTransit = activeStatusLetters.filter((l) => letterStatus(l).code === 'in_transit').length;
+    const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
+      ? isPendingRoundReview(c, l)
+      : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;
     const auditors = isAdmin ? [...new Set([
       ...c.audits.map((a) => a.auditorName),
       ...c.letters.map((l) => l.auditorName),
     ].filter(Boolean))] : [];
     const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
-    const lpoaUrl = c.lpoaSignatureData && c.lpoaSignatureData.lpoaUrl;
+    const hasLpoa = !!(c.lpoaSignatureData && (c.lpoaSignatureData.lpoaPath || c.lpoaSignatureData.lpoaUrl));
     
     const clientMenu = [
+      { label: 'Email client…', onClick: () => setEmailingClient(c) },
       { label: 'Edit email', onClick: () => { setEditingEmail(c.id); setEmailVal(c.email || ''); } },
       'divider',
       { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
       { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
-      c.lpoaSigned && lpoaUrl && { label: 'View signed LPOA', onClick: () => viewSignedLpoa(c) },
+      c.lpoaSigned && hasLpoa && { label: 'View signed LPOA', onClick: () => viewSignedLpoa(c) },
       'divider',
       {
         label: 'Revert to lead…', onClick: async () => {
@@ -911,218 +1166,170 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       { label: 'Delete client…', danger: true, onClick: () => setConfirmDelete(c.id) },
     ].filter(Boolean);
 
+    const nextAction = deriveNextAction(c);
+    const campaignSummary = summarizeCampaignPhases(phaseProgressRows);
+    const currentTab = activeTab[c.id] || 'Overview';
+
+    const goTab = (tab) => setActiveTab((p) => ({ ...p, [c.id]: tab }));
+    const goLettersWithFilter = (filterKey) => {
+      setLetterMailFilter(filterKey || 'all');
+      goTab('Letters');
+    };
+
+    const runCompare = async () => {
+      setDiffLoading(c.id);
+      try {
+        const result = await runProgressDiff(c.name, c.id);
+        setDiffResult({ clientName: c.name, letters: c.letters, ...result });
+        if (Array.isArray(result.phaseProgress)) setPhaseProgressRows(result.phaseProgress);
+      } catch (e) {
+        toast.error('Could not run comparison: ' + e.message);
+      } finally {
+        setDiffLoading(null);
+      }
+    };
+
+    const openAccount = (letter) => {
+      const clientLetters = c.letters.filter((pl) => pl.accountId === letter.accountId && pl.furnisher === letter.furnisher);
+      const latestAudit = [...c.audits].sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''))[0];
+      const accountData = latestAudit && latestAudit.audit && latestAudit.audit.accounts
+        ? latestAudit.audit.accounts.find((a) => a.id === letter.accountId)
+        : null;
+      setAccountTimeline({ accountId: letter.accountId, furnisher: letter.furnisher, letters: clientLetters, accountData, clientName: c.name });
+    };
+
+    const renderLetter = (l) => (
+      <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
+        hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
+        onView={openLetter} onChange={refreshSelectedClient} onAnalyze={setAnalyzingLetter} onLobMail={(letter) => queueLettersForMail([letter])}
+        onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount}
+        onEscalate={(letter) => setEscalatingLetter({ letter, client: c })}
+        onAnalyzeBureau={(letter) => setAnalyzingBureauLetter({ letter, client: c })}
+        onReviewBureau={(letter) => setReviewingBureauLetter({ letter, client: c })} />
+    );
+
+    const detailTabs = ['Overview', 'Letters', 'Profile', 'Billing', 'Documents'];
+
     return (
       <div className="max-w-5xl mx-auto" style={{ padding: '20px 32px 32px' }}>
-        <button onClick={() => { detailRequestRef.current += 1; setSelectedClientId(null); setSelectedClient(null); }} className="flex items-center gap-1.5 text-[12px] font-medium mb-6 hover:underline underline-offset-2" style={{ color: T.navy }}>
-          ← Back to Clients
-        </button>
-        
-        <div className="bg-white p-6 mb-6" style={{ borderRadius: 14, border: '1px solid ' + (c.isVip ? T.gold : T.border), boxShadow: T.cardShadow }}>
-          <div className="flex items-center gap-5 flex-wrap">
-            <Avatar name={c.name} isVip={c.isVip} />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <h1 className="ccc-display text-[24px] font-medium leading-tight truncate" style={{ color: T.ink }}>{c.name}</h1>
-                {c.isVip && <Star size={16} strokeWidth={2} fill={T.gold} style={{ color: T.gold, flexShrink: 0 }} title="VIP client" />}
-                {c.lpoaSigned && (
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-green-50 text-green-700 shrink-0" title="LPOA signed">✓ LPOA</span>
-                )}
-                {c.billingStatus === 'Active' && (
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-blue-50 text-blue-700 shrink-0" title="Billing Active">Active</span>
-                )}
-                {c.billingStatus === 'Paused' && (
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-amber-50 text-amber-700 shrink-0" title={'Billing Paused' + (c.exitReason ? ' — ' + c.exitReason : '')}>Paused</span>
-                )}
-                {c.billingStatus === 'Graduated' && (
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-green-50 text-green-700 shrink-0" title="Graduated — arc complete">Graduated</span>
-                )}
-                {c.billingStatus === 'Inactive' && (
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm bg-red-50 text-red-700 shrink-0" title={'Inactive' + (c.exitReason ? ' — ' + c.exitReason : '')}>Inactive</span>
-                )}
-              </div>
-              <div className="text-[13px] truncate" style={{ color: T.muted }}>
-                {c.email || <span className="text-amber-600">No email</span>}
-                {c.address && <span> · {c.address}</span>}
-                {isAdmin && auditors.length > 0 && <span style={{ color: T.faint }}> · {auditors.join(', ')}</span>}
-              </div>
-            </div>
-            
-            <div className="flex flex-col items-end gap-2 shrink-0">
-               <div className="flex items-center gap-3">
-                <StatusBadge label={primary.label} tone={primary.tone} />
-                <span className="flex items-center gap-1.5 text-[12px]" style={{ color: T.faint }} title={c.audits.length + ' audits'}>
-                  <FileText size={14} strokeWidth={1.75} />{c.audits.length}
-                </span>
-                <span className="flex items-center gap-1.5 text-[12px]" style={{ color: T.faint }} title={c.letters.length + ' letters'}>
-                  <Mail size={14} strokeWidth={1.75} />{c.letters.length}
-                </span>
-               </div>
-               
-               <div className="flex items-center gap-2 mt-2">
-                 <button onClick={() => handleVipToggle(c.name, c.isVip, c.id)} disabled={togglingVip === c.id} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md border transition-colors hover:bg-gray-50 disabled:opacity-50" style={{ borderColor: T.border, color: T.ink }}>
-                   {togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP' : 'Set as VIP')}
-                 </button>
-                 {!c.portalOnboarded && (
-                   <button onClick={() => handleSendInvite(c)} disabled={!c.email || sendingLpoa === c.id} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-50" style={{ backgroundColor: T.navy, color: T.gold }}>
-                     {sendingLpoa === c.id ? 'Sending…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Invite & LPOA')}
-                   </button>
-                 )}
-                 <Menu items={clientMenu} />
-               </div>
-            </div>
-          </div>
-          
-          {editingEmail === c.id && (
-            <div className="pt-4 mt-4 flex items-center gap-2" style={{ borderTop: '1px solid ' + T.grid }}>
-              <input type="email" value={emailVal} onChange={(e) => setEmailVal(e.target.value)}
-                className="text-[11px] border border-border rounded-sm px-2 py-1 w-56"
-                placeholder="client@email.com" autoFocus
-                onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal, c.id).then(refreshSelectedClient); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
-              <button onClick={() => { updateClientEmail(c.name, emailVal, c.id).then(refreshSelectedClient); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm">Save</button>
-              <button onClick={() => setEditingEmail(null)} className="text-[10px] text-ink-muted">Cancel</button>
-            </div>
-          )}
+        <ClientCommandHeader
+          client={c}
+          isAdmin={isAdmin}
+          auditors={auditors}
+          primaryStatus={primary}
+          nextAction={nextAction}
+          onBack={() => { detailRequestRef.current += 1; setSelectedClientId(null); setSelectedClient(null); setLetterMailFilter('all'); }}
+          onNextAction={() => goLettersWithFilter(nextAction.letterFilter || 'all')}
+          vipButton={
+            <button
+              onClick={() => handleVipToggle(c.name, c.isVip, c.id)}
+              disabled={togglingVip === c.id}
+              className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-50"
+              style={{ border: '1px solid rgba(255,255,255,0.18)', color: '#F7F4ED', background: 'rgba(255,255,255,0.06)' }}
+            >
+              {togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP' : 'Set as VIP')}
+            </button>
+          }
+          emailButton={<button type="button" onClick={() => setEmailingClient(c)} className="text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md" style={{ border: '1px solid rgba(255,255,255,0.18)', color: '#F7F4ED', background: 'rgba(255,255,255,0.06)' }}>Email client</button>}
+          menu={<Menu items={clientMenu} dark />}
+        >
+          <ClientStatusRail
+            letters={c.letters || []}
+            rounds={c.rounds || []}
+            mailFilter={letterMailFilter}
+            onMailFilter={goLettersWithFilter}
+            onRoundsClick={() => goTab('Letters')}
+          />
+        </ClientCommandHeader>
 
-          {confirmDelete === c.id && (
-            <div className="pt-4 mt-4 flex items-center gap-3" style={{ borderTop: '1px solid ' + T.grid }}>
-              <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
-              <button onClick={() => handleDelete(c.name, c.id)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
-              <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
-            </div>
-          )}
+        {editingEmail === c.id && (
+          <div className="mb-4 flex items-center gap-2 bg-white px-4 py-3 rounded-xl" style={{ border: '1px solid ' + T.border }}>
+            <input type="email" value={emailVal} onChange={(e) => setEmailVal(e.target.value)}
+              className="text-[11px] border border-border rounded-sm px-2 py-1 w-56"
+              placeholder="client@email.com" autoFocus
+              onKeyDown={(e) => { if (e.key === 'Enter') { updateClientEmail(c.name, emailVal, c.id).then(refreshSelectedClient); setEditingEmail(null); } if (e.key === 'Escape') setEditingEmail(null); }} />
+            <button onClick={() => { updateClientEmail(c.name, emailVal, c.id).then(refreshSelectedClient); setEditingEmail(null); }} className="text-[10px] uppercase tracking-wider text-white bg-navy px-2 py-1 rounded-sm">Save</button>
+            <button onClick={() => setEditingEmail(null)} className="text-[10px] text-ink-muted">Cancel</button>
+          </div>
+        )}
+
+        {confirmDelete === c.id && (
+          <div className="mb-4 flex items-center gap-3 bg-white px-4 py-3 rounded-xl" style={{ border: '1px solid ' + T.border }}>
+            <span className="text-[12px] text-red-600">Delete all records for {c.name}?</span>
+            <button onClick={() => handleDelete(c.name, c.id)} className="text-[11px] uppercase tracking-wider text-white bg-red-600 px-3 py-1 rounded-sm">Confirm Delete</button>
+            <button onClick={() => setConfirmDelete(null)} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Cancel</button>
+          </div>
+        )}
+
+        <div className="flex gap-1 mb-5 border-b" style={{ borderColor: T.border }}>
+          {detailTabs.map((tab) => {
+            const isActiveTab = currentTab === tab;
+            return (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => goTab(tab)}
+                className="relative px-4 py-2.5 text-[11px] uppercase tracking-wider transition-colors"
+                style={{
+                  color: isActiveTab ? T.navy : T.muted,
+                  fontWeight: isActiveTab ? 600 : 400,
+                }}
+              >
+                {tab}{tab === 'Letters' ? ` ${c.letters.length}` : ''}
+                {isActiveTab && (
+                  <motion.span
+                    layoutId="client-detail-tab"
+                    className="absolute left-2 right-2 bottom-0 h-0.5 rounded-full"
+                    style={{ background: T.gold }}
+                  />
+                )}
+              </button>
+            );
+          })}
         </div>
-        
-        <div className="px-1 space-y-6">
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span style={{ width: 3, height: 14, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
-                <div className="text-[11px] uppercase tracking-wider font-medium" style={{ color: T.muted }}>Audits</div>
-              </div>
-              {c.audits.length >= 2 && (
-                <button onClick={async () => {
-                    setDiffLoading(c.id);
-                    try {
-                      const result = await runProgressDiff(c.name, c.id);
-                      setDiffResult({ clientName: c.name, letters: c.letters, ...result });
-                    } catch (e) {
-                      toast.error('Could not run comparison: ' + e.message);
-                    } finally {
-                      setDiffLoading(null);
-                    }
-                  }} disabled={diffLoading === c.id} className="text-[10px] uppercase tracking-wider text-navy hover:text-gold disabled:opacity-50">
-                  {diffLoading === c.id ? 'Comparing…' : 'Compare Latest Reports'}
-                </button>
-              )}
-            </div>
-            {c.audits.length === 0 && <div className="text-[12px] text-ink-muted">None</div>}
-            <div className="bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>
-              {c.audits.map((a, i) => (
-                <div key={a.id} className="flex items-center justify-between py-3 px-4 flex-wrap gap-2" style={{ borderBottom: i < c.audits.length - 1 ? '1px solid ' + T.grid : 'none' }}>
-                  <div className="text-[12.5px] text-ink">
-                    Report {a.reportDate}
-                    <span className="text-ink-muted"> · {(a.audit && a.audit.accountsTargeted) || 0} accounts · {(a.audit && a.audit.totalViolations) || 0} violations</span>
-                    {isAdmin && a.auditorName && <span className="text-[11px] text-ink-faint ml-2">· {a.auditorName}</span>}
-                    <span className="text-ink-faint text-[11px] ml-2">{fmtTime(a.savedAt)}</span>
-                  </div>
-                  <button onClick={() => onOpenAudit(a.clientId ? { ...a.audit, client: { ...a.audit.client, id: a.clientId } } : a.audit)} className="text-[11px] uppercase tracking-wider text-navy hover:text-gold">Open</button>
-                </div>
-              ))}
-            </div>
-          </div>
 
-          <div>
-            <div className="flex gap-2 mb-4">
-              {['Letters', 'Profile', 'Billing', 'Documents'].map((tab) => {
-                const isActiveTab = (activeTab[c.id] || 'Letters') === tab;
-                return (
-                  <button key={tab}
-                    onClick={() => setActiveTab((p) => ({ ...p, [c.id]: tab }))}
-                    className="rounded-full px-4 py-1.5 text-[11px] uppercase tracking-wider transition-colors"
-                    style={{
-                      background: isActiveTab ? T.navy : 'transparent',
-                      color: isActiveTab ? T.gold : T.muted,
-                      border: '1px solid ' + (isActiveTab ? T.navy : T.border),
-                      fontWeight: isActiveTab ? 600 : 400,
-                    }}>
-                    {tab}{tab === 'Letters' ? ' ' + c.letters.length : ''}
-                  </button>
-                );
-              })}
-            </div>
+        {currentTab === 'Overview' && (
+          <ClientOverviewTab
+            client={c}
+            isAdmin={isAdmin}
+            campaignSummary={campaignSummary}
+            phaseRows={phaseProgressRows}
+            onOpenAudit={onOpenAudit}
+            onCompareReports={runCompare}
+            onGoTab={goTab}
+            fmtTime={fmtTime}
+          />
+        )}
 
-            {(activeTab[c.id] || 'Letters') === 'Letters' && (
-              <div>
-                {c.letters.length === 0 ? (
-                  <p className="text-[12.5px] text-ink-muted py-6 text-center bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>No letters yet — open the client audit and build the recommended R1 campaign.</p>
-                ) : (
-                  (() => {
-                    const openAccount = (letter) => {
-                      const clientLetters = c.letters.filter((pl) => pl.accountId === letter.accountId && pl.furnisher === letter.furnisher);
-                      const latestAudit = [...c.audits].sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''))[0];
-                      const accountData = latestAudit && latestAudit.audit && latestAudit.audit.accounts
-                        ? latestAudit.audit.accounts.find((a) => a.id === letter.accountId)
-                        : null;
-                      setAccountTimeline({ accountId: letter.accountId, furnisher: letter.furnisher, letters: clientLetters, accountData, clientName: c.name });
-                    };
-                    const groups = [];
-                    const seen = new Map();
-                    for (const l of c.letters) {
-                      const key = l.furnisher || 'Other';
-                      if (!seen.has(key)) { seen.set(key, []); groups.push([key, seen.get(key)]); }
-                      seen.get(key).push(l);
-                    }
-                    return groups.map(([furnisher, letters]) => (
-                      <div key={furnisher} className="mb-3 bg-white" style={{ border: '1px solid ' + T.border, borderRadius: 12, overflow: 'visible' }}>
-                        <div className="flex items-center justify-between px-4 py-2.5"
-                          style={{ background: '#FAFBFC', borderBottom: '1px solid ' + T.grid, borderRadius: '12px 12px 0 0' }}>
-                          <button onClick={() => openAccount(letters[0])}
-                            className="flex items-center gap-1.5 text-[12.5px] font-medium hover:text-navy hover:underline underline-offset-2 decoration-dotted"
-                            style={{ color: T.ink }}
-                            title="View account history">
-                            {furnisher}
-                            <span className="text-[10px] font-normal" style={{ color: T.faint }}>{letters.length} letter{letters.length === 1 ? '' : 's'}</span>
-                          </button>
-                          <span className="text-[10px]" style={{ color: T.faint }}>history →</span>
-                        </div>
-                        <div className="px-4 py-1">
-                          {letters.map((l) => (
-                            <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
-                              hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
-                              onView={openLetter} onChange={refreshSelectedClient} onAnalyze={setAnalyzingLetter} onLobMail={(l) => setLobMailerQueue([l])}
-                              onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount}
-                              onEscalate={(letter) => setEscalatingLetter({ letter, client: c })}
-                              onAnalyzeBureau={(letter) => setAnalyzingBureauLetter({ letter, client: c })}
-                              onReviewBureau={(letter) => setReviewingBureauLetter({ letter, client: c })} />
-                          ))}
-                        </div>
-                      </div>
-                    ));
-                  })()
-                )}
-              </div>
-            )}
+        {currentTab === 'Letters' && (
+          <LetterWorkboard
+            letters={c.letters || []}
+            mailFilter={letterMailFilter}
+            onMailFilter={setLetterMailFilter}
+            renderLetter={renderLetter}
+            onOpenAccount={openAccount}
+            rounds={c.rounds || []}
+          />
+        )}
 
-            {(activeTab[c.id] || 'Letters') === 'Profile' && (
-              <ClientProfilePanel client={c} onChanged={refreshSelectedClient} onBatchMail={setLobMailerQueue} />
-            )}
+        {currentTab === 'Profile' && (
+          <ClientProfilePanel client={c} onChanged={refreshSelectedClient} onBatchMail={queueLettersForMail} />
+        )}
 
-            {(activeTab[c.id] || 'Letters') === 'Billing' && (
-              <ClientBillingPanel client={c} onChanged={refreshSelectedClient} />
-            )}
+        {currentTab === 'Billing' && (
+          <ClientBillingPanel client={c} onChanged={refreshSelectedClient} />
+        )}
 
-            {(activeTab[c.id] || 'Letters') === 'Documents' && (
-              <DocumentManager clientId={c.id} clientName={c.name} letters={c.letters || []} onChanged={refreshSelectedClient} setAnalyzingLetter={setAnalyzingLetter} />
-            )}
-          </div>
-        </div>
+        {currentTab === 'Documents' && (
+          <DocumentManager clientId={c.id} clientName={c.name} letters={c.letters || []} onChanged={refreshSelectedClient} setAnalyzingLetter={setAnalyzingLetter} />
+        )}
 
         {lobMailerQueue.length > 0 && (() => {
           const currentLetter = lobMailerQueue[0];
           return (
             <LobMailer
               letter={currentLetter}
-              furnisherAddress={currentLetter ? ((currentLetter.phase && (currentLetter.phase.startsWith('Phase 3') || currentLetter.phase.startsWith('CCC Dispute —'))) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+              furnisherAddress={currentLetter ? ((currentLetter.targetType === 'bureau' || (currentLetter.phase && (currentLetter.phase.startsWith('Phase 3') || currentLetter.phase.startsWith('CCC Dispute —')))) ? parseBureauAddress(currentLetter.targetBureau || currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
               batchRemaining={lobMailerQueue.length - 1}
               onNext={() => setLobMailerQueue(prev => prev.slice(1))}
               onClose={() => setLobMailerQueue([])}
@@ -1145,9 +1352,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           <ResponseAnalyzer
             letter={analyzingLetter}
             onClose={() => setAnalyzingLetter(null)}
-            onSaved={() => { setAnalyzingLetter(null); refreshSelectedClient(); }}
+            onSaved={() => { setAnalyzingLetter(null); refreshSelectedClient(); if (onLeadsChanged) onLeadsChanged(); }}
           />
         )}
+        {emailingClient && <ClientEmailComposer client={emailingClient} onClose={() => setEmailingClient(null)} onSent={() => toast.success('Client email sent')} />}
         {analyzingBureauLetter && (
           <BureauResponseAnalyzer
             letter={analyzingBureauLetter.letter}
@@ -1214,7 +1422,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const lifecycleOf = (c) => c.billingStatus || 'Active';
   const LIFECYCLE_STATUSES = ['Active', 'Paused', 'Graduated', 'Inactive'];
   const lifecycleCounts = Object.fromEntries(LIFECYCLE_STATUSES.map((s) => [s, nonLeadClients.filter((c) => lifecycleOf(c) === s).length]));
-  const activeClients = nonLeadClients.filter((c) => lifecycleSelected.includes(lifecycleOf(c)));
+  const activeClients = lifecycleFilter ? nonLeadClients.filter((c) => lifecycleOf(c) === lifecycleFilter) : nonLeadClients;
   const tabClients = viewTab === 'leads' ? leadClients : activeClients;
 
   const stageRank = { ready: 3, audit: 2, contacted: 1, new: 0 };
@@ -1231,7 +1439,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
   const baseFiltered = activeFilter
     ? sortedClients.filter((c) => viewTab === 'leads'
-        ? (activeFilter === 'unviewed' ? !c.leadViewedAt : activeFilter === 'recent' ? isLeadRecent(c) : activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6) : true)
+        ? (activeFilter === 'unviewed' ? !c.leadViewedAt
+          : activeFilter === 'recent' ? isLeadRecent(c)
+          : activeFilter.startsWith('stage:') ? leadStage(c) === activeFilter.slice(6)
+          : true)
         : clientMatchesFilter(c, activeFilter, unanalyzedNames, unanalyzedClientIds))
     : sortedClients;
   const q = debouncedSearch.trim().toLowerCase();
@@ -1249,25 +1460,24 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const filterChips = viewTab === 'clients'
     ? [
         { key: null, label: 'All', count: activeClients.length },
-        { key: 'ready', label: 'Phase 2 Ready', count: activeClients.filter((c) => clientMatchesFilter(c, 'ready')).length },
+        { key: 'ready', label: 'Responses to Analyze', count: activeClients.filter((c) => clientMatchesFilter(c, 'ready')).length },
         { key: 'awaiting', label: 'Awaiting', count: activeClients.filter((c) => clientMatchesFilter(c, 'awaiting')).length },
         { key: 'escalate', label: 'To escalate', count: activeClients.filter((c) => clientMatchesFilter(c, 'escalate')).length },
-        { key: 'received', label: 'Needs Phase 3', count: activeClients.filter((c) => clientMatchesFilter(c, 'received')).length },
+        { key: 'received', label: 'Needs Response Review', count: activeClients.filter((c) => clientMatchesFilter(c, 'received')).length },
         { key: 'unanalyzed', label: 'Action Items', count: activeClients.filter((c) => !!unanalyzedClientIds?.has(c.id) || !!unanalyzedNames?.has(c.name)).length },
-        { key: 'attention', label: 'Needs attention', count: activeClients.filter((c) => c.status === 'attention').length },
-        { key: 'active', label: 'Active', count: activeClients.filter((c) => c.status === 'active').length },
-        { key: 'completed', label: 'Completed', count: activeClients.filter((c) => c.status === 'completed').length },
+        { key: 'attention', label: 'Needs attention', count: activeClients.filter((c) => clientMatchesFilter(c, 'attention', unanalyzedNames, unanalyzedClientIds)).length },
+        { key: 'active', label: 'Active', count: activeClients.filter((c) => clientMatchesFilter(c, 'active')).length },
+        { key: 'completed', label: 'Completed', count: activeClients.filter((c) => clientMatchesFilter(c, 'completed')).length },
         { key: 'vip', label: 'VIP / PIF', count: activeClients.filter((c) => c.isVip).length },
       ]
     : [
         { key: null, label: 'All', count: leadClients.length },
         { key: 'unviewed', label: 'Unviewed', count: leadClients.filter((c) => !c.leadViewedAt).length },
         { key: 'recent', label: 'New (48h)', count: leadClients.filter(isLeadRecent).length },
-        ...LEAD_STAGES.map((s) => ({ key: 'stage:' + s.key, label: s.label, count: leadClients.filter((c) => leadStage(c) === s.key).length })),
       ];
 
   return (
-    <div className="max-w-5xl mx-auto" style={{ padding: '20px 32px 32px' }}>
+    <div className={viewTab === 'leads' ? 'mx-auto' : 'max-w-5xl mx-auto'} style={{ padding: '20px 32px 32px', maxWidth: viewTab === 'leads' ? 1400 : undefined }}>
       {/* Branded page header */}
       <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
         <div className="flex items-center gap-3">
@@ -1312,37 +1522,46 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         </div>
       </div>
 
-      {/* Lifecycle status filter (Retention Build 3) — multi-select, composes
-          with the dispute-workflow chips and search below rather than
-          replacing them. Graduated/Inactive start deselected. */}
+      {/* The roster defaults to every client. Lifecycle is a single optional
+          lens so the page never opens as an implicit work queue. */}
       {viewTab === 'clients' && (
         <div className="flex items-center gap-1.5 mb-3 flex-wrap">
-          {LIFECYCLE_STATUSES.map((s) => {
-            const isOn = lifecycleSelected.includes(s);
+          {[null, ...LIFECYCLE_STATUSES].map((s) => {
+            const isOn = lifecycleFilter === s;
+            const label = s || 'All clients';
+            const count = s ? lifecycleCounts[s] : nonLeadClients.length;
             const tone = { Active: '#1D4ED8', Paused: '#B45309', Graduated: '#15803D', Inactive: '#B91C1C' }[s];
-            return (
-              <button key={s}
-                onClick={() => setLifecycleSelected((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s])}
+            return <button key={label}
+                onClick={() => setLifecycleFilter(s)}
                 className="flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] transition-colors"
                 style={{
-                  background: isOn ? tone : '#fff',
-                  color: isOn ? '#fff' : T.muted,
-                  border: '1px solid ' + (isOn ? tone : T.border),
+                  background: isOn ? (tone || T.navy) : '#fff',
+                  color: isOn ? (s ? '#fff' : T.gold) : T.muted,
+                  border: '1px solid ' + (isOn ? (tone || T.navy) : T.border),
                   fontWeight: isOn ? 600 : 400,
                 }}>
-                {s}
-                <span style={{ fontSize: 10, opacity: isOn ? 0.85 : 0.7, fontVariantNumeric: 'tabular-nums' }}>{lifecycleCounts[s]}</span>
-              </button>
-            );
+                {label}
+                <span style={{ fontSize: 10, opacity: isOn ? 0.85 : 0.7, fontVariantNumeric: 'tabular-nums' }}>{count}</span>
+              </button>;
           })}
         </div>
       )}
 
-      {/* Quick-filter chips */}
-      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
-        {filterChips.map((chip) => {
-          const isActive = activeFilter === chip.key || (!activeFilter && chip.key === null);
-          return (
+      {/* Operational queues remain available without taking over the roster. */}
+      {viewTab === 'clients' ? (
+        <div className="flex items-center gap-2 mb-4">
+          <label className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: T.faint }} htmlFor="client-work-queue">Work queue</label>
+          <select id="client-work-queue" value={activeFilter || ''} onChange={(event) => setActiveFilter(event.target.value || null)} className="bg-white border rounded-lg px-3 py-1.5 text-[11px]" style={{ borderColor: T.border, color: T.navy }}>
+            {filterChips.map((chip) => <option key={chip.label} value={chip.key || ''}>{chip.label === 'All' ? 'All clients' : chip.label} ({chip.count})</option>)}
+            {activeFilter && !filterChips.some((chip) => chip.key === activeFilter) && <option value={activeFilter}>{FILTER_LABELS[activeFilter] || activeFilter}</option>}
+          </select>
+          {activeFilter && <button onClick={() => setActiveFilter(null)} className="text-[10px] uppercase tracking-wider" style={{ color: T.muted }}>Clear queue</button>}
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+          {filterChips.map((chip) => {
+            const isActive = activeFilter === chip.key || (!activeFilter && chip.key === null);
+            return (
             <button key={chip.label}
               onClick={() => setActiveFilter(chip.key)}
               disabled={chip.count === 0 && chip.key !== null && !pageInfo.nextCursor}
@@ -1357,15 +1576,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
               {chip.label}
               <span style={{ fontSize: 10, opacity: isActive ? 0.9 : 0.7, fontVariantNumeric: 'tabular-nums' }}>{chip.count}</span>
             </button>
-          );
-        })}
-        {activeFilter && !filterChips.some((ch) => ch.key === activeFilter) && (
-          <span className="flex items-center gap-1.5 text-[11px] rounded-full px-3 py-1" style={{ background: T.navy, color: T.gold }}>
-            {FILTER_LABELS[activeFilter] || activeFilter}
-            <button onClick={() => setActiveFilter(null)}><X size={11} strokeWidth={2.5} /></button>
-          </span>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {filteredClients.length === 0 && (
         <div className="text-center py-12 bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>
@@ -1373,67 +1587,71 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         </div>
       )}
 
-      <div className="space-y-3">
-        {filteredClients.map((c) => {
-          if (c.status === 'lead') {
-            return (
-              <LeadCard
-                key={c.id}
-                c={c}
-                isAdmin={isAdmin}
-                onOpenAudit={onOpenAudit}
-                onOpenSummaryAudit={openAuditFromSummary}
-                onViewed={async () => {
-                  if (c.leadViewedAt) return;
-                  try {
-                    await markLeadViewed(c.name, c.id);
-                    c.leadViewedAt = new Date().toISOString(); // avoid re-firing before the next full reload
-                    if (onLeadsChanged) onLeadsChanged();
-                  } catch (e) {
-                    console.error('Could not mark lead viewed:', e.message);
-                  }
-                }}
-                onConvert={async () => {
-                  setConvertingLead(c.id);
-                  try {
-                    await convertLeadToClient(c.name, c.id);
-                    await load();
-                  } catch (e) {
-                    toast.error('Could not convert lead: ' + e.message);
-                  } finally {
-                    setConvertingLead(null);
-                  }
-                }}
-                converting={convertingLead === c.id}
-                onDelete={async () => {
-                  if (!window.confirm('Delete lead ' + c.name + '? This cannot be undone.')) return;
-                  try {
-                    await deleteLead(c.name, c.id);
-                    await load();
-                  } catch (e) {
-                    toast.error('Could not delete lead: ' + e.message);
-                  }
-                }}
-              />
-            );
-          }
+      {viewTab === 'leads' && filteredClients.length > 0 && (
+        <LeadsKanban
+          leads={filteredClients}
+          stages={LEAD_STAGES}
+          leadStage={leadStage}
+          isLeadRecent={isLeadRecent}
+          isAdmin={isAdmin}
+          affiliates={affiliates}
+          affiliatesError={affiliatesError}
+          convertingId={convertingLead}
+          onOpenSummaryAudit={openAuditFromSummary}
+          onChanged={load}
+          onViewed={async (c) => {
+            if (c.leadViewedAt) return;
+            try {
+              await markLeadViewed(c.name, c.id);
+              c.leadViewedAt = new Date().toISOString();
+              if (onLeadsChanged) onLeadsChanged();
+            } catch (e) {
+              console.error('Could not mark lead viewed:', e.message);
+            }
+          }}
+          onConvert={async (c) => {
+            setConvertingLead(c.id);
+            try {
+              await convertLeadToClient(c.name, c.id);
+              await load();
+            } catch (e) {
+              toast.error('Could not convert lead: ' + e.message);
+            } finally {
+              setConvertingLead(null);
+            }
+          }}
+          onDelete={async (c) => {
+            if (!window.confirm('Delete lead ' + c.name + '? This cannot be undone.')) return;
+            try {
+              await deleteLead(c.name, c.id);
+              await load();
+            } catch (e) {
+              toast.error('Could not delete lead: ' + e.message);
+            }
+          }}
+        />
+      )}
 
-          const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed').length;
-          const awaiting = c.letters.filter((l) => letterStatus(l).code === 'awaiting').length;
-          const inTransit = c.letters.filter((l) => letterStatus(l).code === 'in_transit').length;
-          const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))).length;
-          const importDue = importDueInfo(c);
+      <div className="space-y-3">
+        {viewTab === 'clients' && filteredClients.map((c) => {
+          const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || isPendingRoundReview(c, l))).length;
+          const activeStatusLetters = c.letters.filter((l) => !l.roundId || isOpenRoundLetter(c, l));
+          const awaiting = activeStatusLetters.filter((l) => letterStatus(l).code === 'awaiting').length;
+          const inTransit = activeStatusLetters.filter((l) => letterStatus(l).code === 'in_transit').length;
+          const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
+            ? isPendingRoundReview(c, l)
+            : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;
           const auditors = isAdmin ? [...new Set([
             ...c.audits.map((a) => a.auditorName),
             ...c.letters.map((l) => l.auditorName),
           ].filter(Boolean))] : [];
 
-          const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
+          const rosterStatus = clientRosterStatus(c, { ripe, needsPhase3, awaiting, inTransit });
           const clientMenu = [
+            { label: 'Email client…', onClick: () => setEmailingClient(c) },
             { label: togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip, c.id), disabled: togglingVip === c.id },
             { label: 'Edit email', onClick: () => { setEditingEmail(c.id); setEmailVal(c.email || ''); } },
             'divider',
-            !c.portalOnboarded && { label: sendingLpoa === c.id ? 'Sending Invite…' : (c.lpoaSigned ? 'Send Portal Invite' : 'Send Portal Invite & LPOA'), onClick: () => handleSendInvite(c), disabled: !c.email || sendingLpoa === c.id, title: !c.email ? 'Add email first' : undefined },
             { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
       { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
             c.lpoaSigned && { label: 'View signed LPOA', onClick: () => viewSignedLpoa(c) },
@@ -1462,7 +1680,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             >
               {/* Row header — a div, not a button, so inner controls stay valid HTML */}
               <div className="flex items-center gap-3 px-4 py-3.5 cursor-pointer select-none" role="button"
-                onClick={() => setSelectedClientId(c.id)}>
+                onClick={() => openClient(c.id)}>
                 <Avatar name={c.name} isVip={c.isVip} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
@@ -1470,18 +1688,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                     {c.isVip && <Star size={12} strokeWidth={2} fill={T.gold} style={{ color: T.gold, flexShrink: 0 }} title="VIP client" />}
                     {c.lpoaSigned && (
                       <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-green-50 text-green-700 shrink-0" title="LPOA signed">✓ LPOA</span>
-                    )}
-                    {c.billingStatus === 'Active' && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-blue-50 text-blue-700 shrink-0" title="Billing Active">Active</span>
-                    )}
-                    {c.billingStatus === 'Paused' && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-amber-50 text-amber-700 shrink-0" title={'Billing Paused' + (c.exitReason ? ' — ' + c.exitReason : '')}>Paused</span>
-                    )}
-                    {c.billingStatus === 'Graduated' && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-green-50 text-green-700 shrink-0" title="Graduated — arc complete">Graduated</span>
-                    )}
-                    {c.billingStatus === 'Inactive' && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-red-50 text-red-700 shrink-0" title={'Inactive' + (c.exitReason ? ' — ' + c.exitReason : '')}>Inactive</span>
                     )}
                   </div>
                   <div className="text-[11px] truncate" style={{ color: T.muted }}>
@@ -1491,13 +1697,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   </div>
                 </div>
                 <div className="flex items-center gap-2.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <StatusBadge label={primary.label} tone={primary.tone} />
-                  <span className="flex items-center gap-1 text-[11px]" style={{ color: T.faint }} title={c.audits.length + ' audits'}>
-                    <FileText size={12} strokeWidth={1.75} />{c.audits.length}
-                  </span>
-                  <span className="flex items-center gap-1 text-[11px]" style={{ color: T.faint }} title={c.letters.length + ' letters'}>
-                    <Mail size={12} strokeWidth={1.75} />{c.letters.length}
-                  </span>
+                  <StatusBadge
+                    label={rosterStatus.label}
+                    tone={rosterStatus.tone}
+                  />
                   <Menu items={clientMenu} />
                 </div>
               </div>
@@ -1542,7 +1745,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         return (
           <LobMailer
             letter={currentLetter}
-            furnisherAddress={currentLetter ? ((currentLetter.phase && (currentLetter.phase.startsWith('Phase 3') || currentLetter.phase.startsWith('CCC Dispute —'))) ? parseBureauAddress(currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+            furnisherAddress={currentLetter ? ((currentLetter.targetType === 'bureau' || (currentLetter.phase && (currentLetter.phase.startsWith('Phase 3') || currentLetter.phase.startsWith('CCC Dispute —')))) ? parseBureauAddress(currentLetter.targetBureau || currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
             batchRemaining={lobMailerQueue.length - 1}
             onNext={() => setLobMailerQueue(prev => prev.slice(1))}
             onClose={() => setLobMailerQueue([])}
@@ -1566,9 +1769,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         <ResponseAnalyzer
           letter={analyzingLetter}
           onClose={() => setAnalyzingLetter(null)}
-          onSaved={() => { setAnalyzingLetter(null); load(); }}
+          onSaved={() => { setAnalyzingLetter(null); load(); if (onLeadsChanged) onLeadsChanged(); }}
         />
       )}
+      {emailingClient && <ClientEmailComposer client={emailingClient} onClose={() => setEmailingClient(null)} onSent={() => toast.success('Client email sent')} />}
       {createModal}
       {leadModal}
       <AccountTimelineModal data={accountTimeline} onClose={() => setAccountTimeline(null)} />
@@ -1582,6 +1786,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 function CreateClientModal({ onClose, onCreated }) {
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
+  const [currentEmployer, setCurrentEmployer] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [success, setSuccess] = React.useState(false);
@@ -1609,7 +1814,13 @@ function CreateClientModal({ onClose, onCreated }) {
       if (!clientId) {
         const { data: createdClient, error: clientError } = await supabase
           .from('clients')
-          .insert({ user_id: adminUser.id, name: name.trim(), email: normEmail, status: 'active' })
+          .insert({
+            user_id: adminUser.id,
+            name: name.trim(),
+            email: normEmail,
+            current_employer: currentEmployer.trim() || null,
+            status: 'active',
+          })
           .select('id')
           .single();
         if (clientError) throw new Error(clientError.message || 'Could not create client record');
@@ -1671,6 +1882,13 @@ function CreateClientModal({ onClose, onCreated }) {
                   className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
                   onKeyDown={e => e.key === 'Enter' && handleCreate()} />
               </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Current Employer <span className="normal-case tracking-normal font-normal">(optional)</span></label>
+                <input type="text" value={currentEmployer} onChange={e => setCurrentEmployer(e.target.value)}
+                  placeholder="Employer name"
+                  className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
+                  onKeyDown={e => e.key === 'Enter' && handleCreate()} />
+              </div>
               {error && <div className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
               <div className="text-[11px] text-ink-muted">Client will receive a magic link to set up their password and complete enrollment.</div>
               <button onClick={handleCreate} disabled={loading}
@@ -1685,11 +1903,12 @@ function CreateClientModal({ onClose, onCreated }) {
     </div>
   );
 }
-function AddLeadModal({ onClose, onCreated }) {
+function AddLeadModal({ affiliates = [], affiliatesError = false, onClose, onCreated }) {
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [phone, setPhone] = React.useState('');
   const [source, setSource] = React.useState('');
+  const [referredBy, setReferredBy] = React.useState('');
   const [notes, setNotes] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -1699,7 +1918,7 @@ function AddLeadModal({ onClose, onCreated }) {
     setLoading(true);
     setError(null);
     try {
-      await createLead({ name, email, phone, source, notes });
+      await createLead({ name, email, phone, source, notes, referredBy: referredBy || null });
       onCreated();
     } catch (e) {
       setError(e.message || 'Could not create lead');
@@ -1735,13 +1954,28 @@ function AddLeadModal({ onClose, onCreated }) {
               className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy" />
           </div>
           <div>
-            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Source</label>
+            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Affiliate Partner</label>
+            <select value={affiliatesError ? '' : referredBy}
+              disabled={affiliatesError}
+              onChange={e => setReferredBy(e.target.value)}
+              className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy bg-white disabled:opacity-60">
+              {affiliatesError ? (
+                <option value="">Affiliate list unavailable — retry after reload</option>
+              ) : (
+                <>
+                  <option value="">No affiliate partner</option>
+                  {affiliates.map((a) => (
+                    <option key={a.id} value={a.id}>{affiliateLabel(a)}</option>
+                  ))}
+                </>
+              )}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wider text-ink-faint font-medium block mb-1">Marketing Source</label>
             <select value={source} onChange={e => setSource(e.target.value)}
               className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy bg-white">
               <option value="">Select source…</option>
-              <option value="Razu Referral">Razu Referral</option>
-              <option value="Swiftedly">Swiftedly</option>
-              <option value="Fundhub">Fundhub</option>
               <option value="Facebook">Facebook</option>
               <option value="Website">Website</option>
               <option value="Word of Mouth">Word of Mouth</option>
@@ -1825,9 +2059,12 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
 
   return (
     <div className="bg-white" style={{ borderRadius: 14, border: '1px solid ' + T.border, boxShadow: T.cardShadow }}>
-      <div className="flex items-center gap-3 px-4 py-3.5">
+      <div
+        className="flex items-center gap-3 px-4 py-3.5 cursor-pointer"
+        onClick={() => { if (onViewed) onViewed(); }}
+      >
         {hasAudits && (
-          <button onClick={() => { if (!isOpen && onViewed) onViewed(); setIsOpen(!isOpen); }} className="shrink-0" title={isOpen ? 'Collapse' : 'View audits'}>
+          <button onClick={(e) => { e.stopPropagation(); if (!isOpen && onViewed) onViewed(); setIsOpen(!isOpen); }} className="shrink-0" title={isOpen ? 'Collapse' : 'View audits'}>
             <ChevronRight size={15} strokeWidth={2} className="transition-transform" style={{ color: T.faint, transform: isOpen ? 'rotate(90deg)' : 'none' }} />
           </button>
         )}
@@ -1835,7 +2072,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="ccc-display text-[14px] text-ink font-medium">{c.name}</div>
-            {isLeadRecent(c) && (
+            {isLeadRecent(c) && !c.leadViewedAt && (
               <span className="px-1.5 py-0.5 rounded-[3px] text-[9px] uppercase tracking-wider font-bold bg-red-100 text-red-700">
                 NEW
               </span>
@@ -1843,6 +2080,7 @@ function LeadCard({ c, isAdmin, onConvert, converting, onDelete, onOpenAudit, on
             <select
               value={stage}
               disabled={savingStage || !isAdmin}
+              onClick={(e) => e.stopPropagation()}
               onChange={(e) => handleStageChange(e.target.value)}
               title="Pipeline stage"
               className="text-[10px] uppercase tracking-wider rounded-full px-2 py-0.5 font-medium cursor-pointer focus:outline-none disabled:opacity-60"
@@ -2130,13 +2368,56 @@ function ViolationDetail({ a }) {
 function DiffResultModal({ result, onClose, onOpenAudit }) {
   const [expandedKey, setExpandedKey] = React.useState(null);
   if (!result) return null;
-  const { clientName, fromReportDate, toReportDate, diff, phaseProgress = [], newerAudit } = result;
+  const { clientName, fromReportDate, toReportDate, diff, phaseProgress = [], newerAudit, letters } = result;
 
-  // The comparison carries lightweight account summaries. The complete
-  // report findings remain on the newer audit for drill-down and R1 review.
+  // The diff only carries a lightweight summary per account (furnisher,
+  // masked number, balance, status) — letter generation needs the full
+  // record (violations, batch, strategy, addressStatus...), which lives on
+  // newerAudit.accounts. Matched the same way the diff engine itself
+  // identifies an account within one report: furnisher + masked number.
   const findFullAccount = (a) => (newerAudit?.accounts || []).find(
     (fa) => fa.furnisher === a.furnisher && fa.accountNumberMasked === a.accountNumberMasked
   ) || null;
+
+  // Safety net for the shortcut below: match by furnisher name only (the
+  // one identifier every mailed Phase 1 letter and every diffed account
+  // both reliably carry) against any already-mailed, non-Phase-3 letter.
+  // Not perfectly precise if a client has two distinct accounts with the
+  // same furnisher, but the point is to stop an accidental re-send, not to
+  // silently allow one on a technicality.
+  const normFurnisher = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const alreadyDisputed = (furnisher) => {
+    const target = normFurnisher(furnisher);
+    return (letters || []).some((l) => l.mailedDate && !l.phase?.startsWith('Phase 3') && normFurnisher(l.furnisher) === target);
+  };
+
+  // Reuses the existing, unmodified letter-generation flow exactly as if
+  // the account were opened normally from this audit's own results page —
+  // just skips the navigation. Never touches how a letter is generated.
+  const disputeAccount = (a) => {
+    const full = findFullAccount(a);
+    if (!full || !newerAudit || !onOpenAudit) return;
+    onOpenAudit(newerAudit, full);
+    onClose();
+  };
+
+  const DisputeAction = ({ a, tone }) => {
+    const full = findFullAccount(a);
+    if (!full) return null;
+    if (alreadyDisputed(a.furnisher)) {
+      return (
+        <span className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-gray-100 text-ink-faint" title="A letter has already been mailed to this furnisher — check the Letters tab before disputing again">
+          Already Disputed
+        </span>
+      );
+    }
+    const toneClass = tone === 'amber' ? 'border-amber-300 text-amber-700 hover:bg-amber-100' : 'border-blue-300 text-blue-700 hover:bg-blue-100';
+    return (
+      <button onClick={() => disputeAccount(a)} className={`shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm border transition-colors ${toneClass}`}>
+        Generate Letter
+      </button>
+    );
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={onClose}>
@@ -2147,21 +2428,14 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
               <h2 className="ccc-display text-[18px] text-ink font-medium">Report Comparison</h2>
               <p className="text-[12px] text-ink-muted mt-0.5">{clientName} · {fromReportDate} → {toReportDate}</p>
             </div>
-            <div className="flex items-center gap-2">
-              {newerAudit && onOpenAudit && (
-                <button onClick={() => { onOpenAudit(newerAudit); onClose(); }} className="rounded-sm bg-navy px-3 py-1.5 text-[10px] uppercase tracking-wider text-gold">
-                  Open R1 plan
-                </button>
-              )}
-              <button onClick={onClose} className="text-ink-faint hover:text-ink text-lg leading-none">✕</button>
-            </div>
+            <button onClick={onClose} className="text-ink-faint hover:text-ink text-lg leading-none">✕</button>
           </div>
         </div>
 
         <div className="p-5 space-y-5">
           {phaseProgress.length > 0 && (
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-navy font-medium mb-2">Historical campaign status</div>
+              <div className="text-[10px] uppercase tracking-wider text-navy font-medium mb-2">Campaign status across phases</div>
               <div className="overflow-hidden rounded-sm border border-border bg-white">
                 {phaseProgress.map((item) => (
                   <div key={item.accountKey} className="flex items-start justify-between gap-3 px-3 py-2.5 border-t border-border first:border-t-0">
@@ -2169,7 +2443,7 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
                       <div className="text-[12px] font-medium text-ink truncate">{item.furnisher} {item.accountNumberMasked && <span className="text-ink-faint font-normal">{item.accountNumberMasked}</span>}</div>
                       <div className="text-[11px] text-ink-muted mt-0.5">{item.reportLabel} · {item.label}</div>
                     </div>
-                    <span className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-blue-50 text-navy">Legacy phase {item.phase}</span>
+                    <span className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-blue-50 text-navy">Phase {item.phase}</span>
                   </div>
                 ))}
               </div>
@@ -2209,6 +2483,7 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
                             {(a.oldViolationCount !== a.newViolationCount || (a.violationsResolved || []).length > 0) && <span className="text-navy"> · view detail</span>}
                           </div>
                         </button>
+                        <DisputeAction a={a} tone="amber" />
                       </div>
                       {isOpen && <ViolationDetail a={a} />}
                     </div>
@@ -2236,6 +2511,7 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
                             {full?.violations?.length > 0 && <span className="text-navy"> · view {full.violations.length} violation{full.violations.length === 1 ? '' : 's'}</span>}
                           </div>
                         </button>
+                        <DisputeAction a={a} tone="blue" />
                       </div>
                       {isOpen && full?.violations?.length > 0 && (
                         <div className="mt-2 pt-2 border-t border-black/5 space-y-1">
@@ -2280,6 +2556,8 @@ function LetterEditModal({ letter, onClose, onSaved }) {
     try {
       let html = editorRef.current?.innerHTML || '';
       if (String(letter.phase || '').startsWith('Phase 3')) {
+        html = autoFixFieldCitations(html).html;
+        if (isPhase3FollowUpLetter(letter)) html = normalizeFollowUpPresentation(html);
         const problems = isPhase3FollowUpLetter(letter)
           ? collectBureauFollowUpProblems(html)
           : collectPhase3CitationProblems(html);

@@ -8,6 +8,7 @@ import { getUnanalyzedResponseStats } from './utils/actionItems';
 import { computeClientCommission } from './utils/affiliateCommission';
 import { getSettings } from './utils/settings';
 import AffiliateProfilePanel from './components/AffiliateProfilePanel';
+import AffiliateApplicationsPanel from './components/AffiliateApplicationsPanel';
 
 const UploadZone = lazy(() => import('./components/UploadZone'));
 const AuditProgress = lazy(() => import('./components/AuditProgress'));
@@ -179,6 +180,11 @@ function AffiliatesPage() {
 
       {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-[12px] text-red-700">{error}</div>}
 
+      <AffiliateApplicationsPanel
+        defaultCommissionRate={Number(defaultCommissionRate) || 0.20}
+        onAffiliateCreated={loadData}
+      />
+
       {affiliates.length === 0 ? (
         <div className="border border-border rounded p-12 text-center">
           <Handshake size={28} className="text-ink-faint mx-auto mb-3" strokeWidth={1.5} />
@@ -304,9 +310,11 @@ export default function App() {
   const [profileLoadFailed, setProfileLoadFailed] = useState(false);
   const [view, setView] = useState(VIEW.DASHBOARD);
   const [clientsContext, setClientsContext] = useState(null);
+  const [clientsNavigationKey, setClientsNavigationKey] = useState(0);
   const [state, setState] = useState(STATE.IDLE);
   const [auditResult, setAuditResult] = useState(null);
   const [fileName, setFileName] = useState('');
+  const [auditMode, setAuditMode] = useState(null);
   const [auditProgress, setAuditProgress] = useState(null);
   const [error, setError] = useState(null);
   const [auditClientName, setAuditClientName] = useState(null);
@@ -316,6 +324,7 @@ export default function App() {
   const [clientOnboarded, setClientOnboarded] = useState(false);
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
   const [actionItemCount, setActionItemCount] = useState(0);
+  const [ackedActionItems, setAckedActionItems] = useState(0);
   const [newLeadsCount, setNewLeadsCount] = useState(0);
   const [unanalyzedClientNames, setUnanalyzedClientNames] = useState(new Set());
   const [unanalyzedClientIds, setUnanalyzedClientIds] = useState(new Set());
@@ -484,13 +493,12 @@ export default function App() {
         }
 
         setClientOnboarded(effectivelyOnboarded);
-        // Only require password setup if they haven't completed onboarding
-        // and haven't set a password yet — avoids loop for existing clients
+        // Always require a password on first portal login (or recovery), even if
+        // LPOA was signed out-of-band. Skipping this left clients who never set
+        // a password stuck on "forgot password" later.
         const passwordSet = session.user.user_metadata?.password_set;
         const fromRecovery = _event === 'PASSWORD_RECOVERY';
-        // Require password setup only if: explicitly recovering password, OR first-ever login (no password set and not effectively onboarded)
-        const needsSetup = fromRecovery || (!passwordSet && !effectivelyOnboarded);
-        setNeedsPasswordSetup(needsSetup);
+        setNeedsPasswordSetup(fromRecovery || !passwordSet);
         if (!cp.user_id) {
           const wireRes = await fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email), {
             method: 'PATCH',
@@ -568,12 +576,18 @@ export default function App() {
   // Client portal routing
   if (isClient) {
     if (needsPasswordSetup) {
-      return <ClientSetupFlow session={session} onComplete={async () => {
-        setNeedsPasswordSetup(false);
-        setClientOnboarded(true);
-        try { await supabase.auth.updateUser({ data: { password_set: true } }); }
-        catch (e) { console.warn('Could not persist password_set flag:', e); }
-      }} />;
+      return (
+        <ClientSetupFlow
+          session={session}
+          requireOnboarding={!clientOnboarded}
+          onComplete={async () => {
+            setNeedsPasswordSetup(false);
+            setClientOnboarded(true);
+            try { await supabase.auth.updateUser({ data: { password_set: true } }); }
+            catch (e) { console.warn('Could not persist password_set flag:', e); }
+          }}
+        />
+      );
     }
     if (!clientOnboarded) {
       return <ClientSetupFlow session={session} initialStep="onboarding" onComplete={() => setClientOnboarded(true)} />;
@@ -586,7 +600,25 @@ export default function App() {
   const displayName = (profile && profile.full_name) || (user.user_metadata && user.user_metadata.full_name) || user.email || 'Auditor';
   const initials = displayName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 
-  const handleNavigate = (viewName, context = null) => {
+  const handleNavigate = async (viewName, context = null) => {
+    // Sidebar red badges: treat click as "I've seen these."
+    // Leads → persist viewed so the count actually drops.
+    // Clients action items → acknowledge current count for this session; badge
+    // returns only if new unanalyzed responses arrive (or after refresh + work left
+    // if they never ack — analyzing still lowers the raw count).
+    if (viewName === 'leads' && newLeadsCount > 0) {
+      try {
+        const { markAllLeadsViewed } = await import('./utils/storage');
+        await markAllLeadsViewed();
+        setNewLeadsCount(0);
+      } catch (e) {
+        console.warn('Could not mark leads viewed:', e.message || e);
+      }
+    }
+    if (viewName === 'clients' && actionItemCount > 0) {
+      setAckedActionItems(actionItemCount);
+    }
+
     setClientsContext(context);
     // auditClientName is a one-time "jump to the client whose audit I just
     // opened" signal (set in handleOpenSavedAudit) — it must be cleared on
@@ -595,7 +627,10 @@ export default function App() {
     // context whenever there's a pending unanalyzed response). Otherwise
     // that context is unrelated to the stale jump target, which then keeps
     // re-surfacing the same old client indefinitely.
-    if (viewName === 'clients') setAuditClientName(null);
+    if (viewName === 'clients') {
+      setAuditClientName(null);
+      setClientsNavigationKey((current) => current + 1);
+    }
     setView(viewName);
     refreshActionItems();
   };
@@ -605,6 +640,7 @@ export default function App() {
     setState(STATE.PROCESSING);
     setError(null);
     setAuditProgress(null);
+    setAuditMode(payload.mode || 'combined');
     try {
       let res;
       if (!payload.mode || payload.mode === 'combined') {
@@ -665,7 +701,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-bg flex">
       <Toaster position="bottom-right" />
-      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={actionItemCount} newLeadsCount={newLeadsCount} hasUnanalyzed={unanalyzedClientIds.size > 0 || unanalyzedClientNames.size > 0} />
+      <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={Math.max(0, actionItemCount - ackedActionItems)} newLeadsCount={newLeadsCount} />
       <main className="flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
         <div className="flex-1 overflow-auto p-8">
@@ -678,7 +714,7 @@ export default function App() {
               <DashboardPage isAdmin={isAdmin} onNavigate={handleNavigate} displayName={displayName} />
             )}
             {view === VIEW.CLIENTS && (
-              <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} forceTab="clients" unanalyzedNames={unanalyzedClientNames} unanalyzedClientIds={unanalyzedClientIds} />
+              <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={clientsContext?.jumpTo || auditClientName || null} filter={clientsContext?.filter || null} navigationKey={clientsNavigationKey} forceTab="clients" unanalyzedNames={unanalyzedClientNames} unanalyzedClientIds={unanalyzedClientIds} onLeadsChanged={refreshActionItems} />
             )}
             {view === VIEW.LEADS && (
               <ClientsPage onOpenAudit={handleOpenSavedAudit} isAdmin={isAdmin} jumpTo={null} filter={clientsContext?.filter || null} forceTab="leads" onLeadsChanged={refreshActionItems} />
@@ -693,7 +729,7 @@ export default function App() {
             {view === VIEW.AUDIT && (
               <>
                 {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
-                {state === STATE.PROCESSING && <AuditProgress fileName={fileName} progress={auditProgress} />}
+                {state === STATE.PROCESSING && <AuditProgress fileName={fileName} progress={auditProgress} mode={auditMode} />}
                 {state === STATE.RESULTS && auditResult?.kind === 'bureau_parse' && (
                   <BureauParseStatus
                     result={auditResult}
@@ -719,7 +755,7 @@ export default function App() {
   );
 }
 
-function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, onSettings, actionItemCount, newLeadsCount, hasUnanalyzed }) {
+function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, onSettings, actionItemCount, newLeadsCount }) {
   return (
     <aside className="w-60 flex flex-col border-r border-navy-light bg-navy-dark">
       <div className="px-5 py-5 border-b border-navy-light">
@@ -741,8 +777,8 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
           <NavItem icon={Activity} label="Operations" active={view === 'operations'} onClick={() => onNavigate('operations')} />
         )}
         <NavItem icon={LayoutDashboard} label="New Audit" active={view === 'audit'} onClick={() => onNavigate('audit')} />
-        <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients', hasUnanalyzed ? { filter: 'unanalyzed' } : null)} badge={actionItemCount} badgeTitle="unanalyzed client response(s) — click to view" />
-        <NavItem icon={UserPlus} label="Leads" active={view === 'leads'} onClick={() => onNavigate('leads', newLeadsCount > 0 ? { filter: 'unviewed' } : null)} badge={newLeadsCount} badgeTitle="unviewed lead(s) — click to view" />
+        <NavItem icon={Users} label="Clients" active={view === 'clients'} onClick={() => onNavigate('clients')} badge={actionItemCount} badgeTitle="unanalyzed client response(s)" />
+        <NavItem icon={UserPlus} label="Leads" active={view === 'leads'} onClick={() => onNavigate('leads', newLeadsCount > 0 ? { filter: 'unviewed' } : null)} badge={newLeadsCount} badgeTitle="unviewed lead(s) — click to open & clear badge" />
         <NavItem icon={BookOpen} label="Methodology" active={view === 'methodology'} onClick={() => onNavigate('methodology')} />
         {isAdmin && (
           <NavItem icon={DollarSign} label="Billing" active={view === 'billing'} onClick={() => onNavigate('billing')} />

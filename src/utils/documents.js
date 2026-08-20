@@ -1,4 +1,11 @@
 import { supabase } from './supabase';
+import { DOCUMENTS_BUCKET, identityDocPath } from './storagePaths';
+
+// Canonical layout (documents bucket):
+//   {firmUid}/{clientId}/identity/{docType}.{ext}
+//   {firmUid}/{clientId}/lpoa/…          (see storagePaths.js / ClientSetupFlow)
+//   {firmUid}/mail-artifacts/{lobId}/…
+//   {firmUid}/temp/{kind}/{batchId}/…
 
 async function getUserId() {
   const { data: { user } } = await supabase.auth.getUser();
@@ -20,10 +27,10 @@ export async function uploadDocument(clientId, clientName, docType, file, ownerU
   const userId = ownerUserId || await getUserId();
   if (!clientId) throw new Error('uploadDocument requires a clientId');
   const ext = file.name.split('.').pop().toLowerCase();
-  const storagePath = `${userId}/${clientId}/${docType}.${ext}`;
+  const storagePath = identityDocPath(userId, clientId, docType, ext);
 
   const { error: uploadError } = await supabase.storage
-    .from('documents')
+    .from(DOCUMENTS_BUCKET)
     .upload(storagePath, file, { upsert: true });
   if (uploadError) throw uploadError;
 
@@ -53,10 +60,10 @@ export async function uploadArbitraryDocument(clientId, clientName, label, file,
   if (!label) throw new Error('uploadArbitraryDocument requires a label');
   const ext = file.name.split('.').pop().toLowerCase();
   const docType = 'other-' + crypto.randomUUID();
-  const storagePath = `${userId}/${clientId}/${docType}.${ext}`;
+  const storagePath = identityDocPath(userId, clientId, docType, ext);
 
   const { error: uploadError } = await supabase.storage
-    .from('documents')
+    .from(DOCUMENTS_BUCKET)
     .upload(storagePath, file, { upsert: true });
   if (uploadError) throw uploadError;
 
@@ -96,7 +103,7 @@ export async function getDocuments(clientName, clientId) {
 
 export async function getDocumentUrl(storagePath) {
   const { data, error } = await supabase.storage
-    .from('documents')
+    .from(DOCUMENTS_BUCKET)
     .createSignedUrl(storagePath, 3600);
   if (error) throw error;
   return data.signedUrl;
@@ -104,7 +111,7 @@ export async function getDocumentUrl(storagePath) {
 
 export async function getDocumentBase64(storagePath) {
   const { data, error } = await supabase.storage
-    .from('documents')
+    .from(DOCUMENTS_BUCKET)
     .download(storagePath);
   if (error) throw error;
   return new Promise((resolve, reject) => {
@@ -129,7 +136,7 @@ export async function deleteDocument(clientId, docType, ownerUserId) {
     .eq('doc_type', docType);
 
   if (docs && docs[0]) {
-    await supabase.storage.from('documents').remove([docs[0].storage_path]);
+    await supabase.storage.from(DOCUMENTS_BUCKET).remove([docs[0].storage_path]);
   }
 
   const { error } = await supabase

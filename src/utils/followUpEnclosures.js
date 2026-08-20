@@ -1,3 +1,5 @@
+import { responseEvidencePrefixes } from './storagePaths.js';
+
 function value(record, camel, snake) {
   return record?.[camel] ?? record?.[snake] ?? null;
 }
@@ -120,10 +122,12 @@ export function validateFollowUpSourceRelationships({ followUp, priorLetter, evi
 
   const paths = Array.isArray(evidence.storage_paths) ? evidence.storage_paths : [];
   const names = Array.isArray(evidence.file_names) ? evidence.file_names : [];
-  const expectedPrefix = `${followUpUserId}/response-evidence/${evidence.id}/`;
+  const expectedPrefixes = responseEvidencePrefixes(followUpUserId, followUpClientId, evidence.id);
   requireValue(
     paths.length > 0
-      && paths.every((path) => typeof path === 'string' && path.startsWith(expectedPrefix)),
+      && expectedPrefixes.some((expectedPrefix) =>
+        paths.every((path) => typeof path === 'string' && path.startsWith(expectedPrefix))
+      ),
     'FOLLOW-UP EXHIBIT B FILES INVALID — one or more recorded response files are missing or outside the evidence archive. Nothing was sent.'
   );
   requireValue(

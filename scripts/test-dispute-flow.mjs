@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import {
   buildR1CampaignPlan,
+  cccTransitionStartRound,
   classifyAccountForR1,
   FLOW_SEQUENCES,
   REPO_SEQUENCE,
 } from '../src/utils/disputeFlow.js';
+
+assert.equal(cccTransitionStartRound([
+  { phase: 'Phase 3', roundNumber: 9 },
+  { phase: 'Dispute Fox', roundNumber: 6 },
+]), 1, 'legacy campaign history must never advance the CCC transition beyond R1');
 import {
   extractTemplateTokens,
   normalizeCourseStyleTemplate,

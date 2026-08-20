@@ -4,10 +4,52 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, toast } from 'react-hot-toast';
 import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-react';
 import { getSettings } from '../utils/settings';
-import { getTierPricing, describeTierFee } from '../utils/pricing';
-import { uploadDocument } from '../utils/documents';
+import { getTierPricing, describeTierFee, resolveClientFeeText } from '../utils/pricing';
+import {
+  DOCUMENTS_BUCKET,
+} from '../utils/storagePaths';
+import { notifyStaff } from '../utils/notifyStaff';
 
-export default function ClientSetupFlow({ session, onComplete, initialStep = 'password' }) {
+// The signed LPOA this wizard builds is stored and later served as a real HTML
+// document by portal-agreement-view.cjs, from our own origin — so any
+// client-supplied text interpolated into it has to be escaped first. Mirrors
+// escapeHtml in netlify/functions/_email.cjs (that one is CJS, server-only).
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Server-side enrollment upload — bypasses brittle documents-bucket RLS. */
+async function portalEnrollUpload(accessToken, { kind, dataBase64, contentType, fileName }) {
+  const res = await fetch('/.netlify/functions/portal-enroll-upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ kind, dataBase64, contentType, fileName }),
+  });
+  let body = null;
+  try { body = await res.json(); } catch { /* ignore */ }
+  if (!res.ok) {
+    throw new Error((body && body.error) || `Upload failed (${res.status})`);
+  }
+  return body;
+}
+
+export default function ClientSetupFlow({ session, onComplete, initialStep = 'password', requireOnboarding = true }) {
   const [step, setStep] = useState(initialStep); // password | onboarding
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -23,7 +65,11 @@ export default function ClientSetupFlow({ session, onComplete, initialStep = 'pa
       const { error } = await supabase.auth.updateUser({ password, data: { password_set: true } });
       if (error) throw error;
       toast.success('Password created securely!', { id: toastId });
-      setStep('onboarding');
+      if (requireOnboarding) {
+        setStep('onboarding');
+      } else {
+        onComplete();
+      }
     } catch (e) {
       toast.error(e.message || 'Could not set password', { id: toastId });
     } finally {
@@ -95,6 +141,7 @@ function ClientOnboardingModal({ session, onComplete }) {
   const [settings, setSettings] = useState(null);
   const [billingTier, setBillingTier] = useState(null);
   const [monitoringService, setMonitoringService] = useState('Privacy Guard');
+  const [serviceAgreement, setServiceAgreement] = useState({ mode: 'tier', feeText: null });
   const canvasRef = React.useRef(null);
   const isDrawing = React.useRef(false);
 
@@ -117,14 +164,26 @@ function ClientOnboardingModal({ session, onComplete }) {
           const { data: auditRows, error: auditError } = await auditQuery;
           if (!auditError && auditRows?.length) setHasAudit(true);
 
-          const clientQuery = clientProfile.client_id
-            ? supabase.from('clients').select('billing_tier,monitoring_service').eq('id', clientProfile.client_id).limit(1)
-            : supabase.from('clients').select('billing_tier,monitoring_service').eq('name', clientProfile.full_name).limit(1);
-          const { data: clientRows } = await clientQuery;
-          const clientRow = clientRows && clientRows[0];
+          let clientRow = null;
+          const agreementSelect = 'billing_tier,monitoring_service,service_agreement_mode,service_agreement_fee_text';
+          const basicSelect = 'billing_tier,monitoring_service';
+          const byId = !!clientProfile.client_id;
+          let clientRes = byId
+            ? await supabase.from('clients').select(agreementSelect).eq('id', clientProfile.client_id).limit(1)
+            : await supabase.from('clients').select(agreementSelect).eq('name', clientProfile.full_name).limit(1);
+          if (clientRes.error) {
+            clientRes = byId
+              ? await supabase.from('clients').select(basicSelect).eq('id', clientProfile.client_id).limit(1)
+              : await supabase.from('clients').select(basicSelect).eq('name', clientProfile.full_name).limit(1);
+          }
+          clientRow = clientRes.data && clientRes.data[0];
           if (clientRow) {
             setBillingTier(clientRow.billing_tier || null);
             setMonitoringService(clientRow.monitoring_service || 'Privacy Guard');
+            setServiceAgreement({
+              mode: clientRow.service_agreement_mode || 'tier',
+              feeText: clientRow.service_agreement_fee_text || null,
+            });
           }
         }
       } catch (e) {
@@ -134,16 +193,30 @@ function ClientOnboardingModal({ session, onComplete }) {
     loadData();
   }, [session]);
 
-  // Real fee-schedule text for whichever tier this client was actually
-  // assigned. If staff hasn't set a tier yet, show all three rather than
-  // guessing a number that might not match — never state a single fee as
-  // fact unless it's actually the client's real assigned tier.
+  // Real fee-schedule text: custom service agreement wins; otherwise the
+  // assigned tier (or all three if staff hasn't set a tier yet).
   const tierPricing = settings ? getTierPricing(settings) : null;
-  const feeScheduleLine = tierPricing
-    ? (billingTier && tierPricing[billingTier]
-        ? `${billingTier} Plan: ${describeTierFee(billingTier, tierPricing)}`
-        : Object.keys(tierPricing).map((t) => `${t}: ${describeTierFee(t, tierPricing)}`).join(' '))
-    : '';
+  const feeScheduleLine = (() => {
+    const custom = resolveClientFeeText(
+      {
+        serviceAgreementMode: serviceAgreement.mode,
+        serviceAgreementFeeText: serviceAgreement.feeText,
+        billingTier,
+      },
+      settings,
+      { lpoaType: 'standard' }
+    );
+    if (serviceAgreement.mode === 'custom' && serviceAgreement.feeText) {
+      return custom;
+    }
+    if (tierPricing && billingTier && tierPricing[billingTier]) {
+      return `${billingTier} Plan: ${describeTierFee(billingTier, tierPricing)}`;
+    }
+    if (tierPricing) {
+      return Object.keys(tierPricing).map((t) => `${t}: ${describeTierFee(t, tierPricing)}`).join(' ');
+    }
+    return '';
+  })();
   const monitoringFeeAmount = settings?.pricing?.monitoringFee ?? 16;
 
   const startDraw = (e) => {
@@ -185,27 +258,6 @@ function ClientOnboardingModal({ session, onComplete }) {
     setSignature(null);
   };
 
-  const uploadFile = async (file, path) => {
-    const { error } = await supabase.storage.from('client-docs').upload(path, file, { upsert: true });
-    if (error) throw error;
-    const { data } = supabase.storage.from('client-docs').getPublicUrl(path);
-    return data.publicUrl;
-  };
-
-  const uploadSignature = async (dataUrl, path) => {
-    const arr = dataUrl.split(',');
-    const mime = arr[0].match(/:(.*?);/)[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
-    }
-    const blob = new Blob([u8arr], { type: mime });
-    const file = new File([blob], 'signature.png', { type: 'image/png' });
-    return uploadFile(file, path);
-  };
-
   const handleComplete = async () => {
     if (!signature) {
       toast.error('Please draw your signature in Step 3 before completing enrollment.');
@@ -215,7 +267,7 @@ function ClientOnboardingModal({ session, onComplete }) {
     setLoading(true);
     const toastId = toast.loading('Finalizing your enrollment...');
     const userId = session.user.id;
-    const userEmail = session.user.email;
+    const accessToken = session.access_token;
 
     // Helper to label errors with the step that failed
     const labeled = async (label, fn) => {
@@ -224,74 +276,66 @@ function ClientOnboardingModal({ session, onComplete }) {
     };
 
     try {
-      let sigUrl = null;
-      if (signature) {
-        sigUrl = await labeled('Upload signature', () => uploadSignature(signature, `${userId}/signature.png`));
-      }
-      // Resolve the client record so id/address docs land in the `documents`
-      // table too (not just storage) — otherwise they're invisible in the
-      // admin CRM's DocumentManager, which reads that table keyed on
-      // client_id + the owning staff user_id, not just a storage path.
-      let docsClientId = null, docsOwnerUserId = null, docsClientName = userEmail;
-      let docsResolveFailed = false;
-      try {
-        const { data: cpForDocs, error: cpErr } = await supabase
-          .from('client_profiles')
-          .select('full_name,client_id')
-          .eq('email', userEmail)
-          .maybeSingle();
-        if (cpErr) throw cpErr;
-        if (cpForDocs) {
-          docsClientName = cpForDocs.full_name || userEmail;
-          const clientRowQuery = cpForDocs.client_id
-            ? supabase.from('clients').select('id,user_id').eq('id', cpForDocs.client_id).limit(1)
-            : supabase.from('clients').select('id,user_id').eq('name', cpForDocs.full_name).limit(1);
-          const { data: clientRows, error: clientErr } = await clientRowQuery;
-          if (clientErr) throw clientErr;
-          const clientRow = clientRows && clientRows[0];
-          if (clientRow) { docsClientId = clientRow.id; docsOwnerUserId = clientRow.user_id; }
-        }
-      } catch (e) {
-        docsResolveFailed = true;
-        console.warn('Could not resolve client record for document upload:', e);
-      }
+      // Signature / ID / address / LPOA go through portal-enroll-upload so we
+      // don't depend on documents-bucket storage RLS from the browser session.
+      // The function returns firm/client ids used for the rest of enrollment.
+      const sigUpload = await labeled('Upload signature', () =>
+        portalEnrollUpload(accessToken, {
+          kind: 'signature',
+          dataBase64: signature,
+          contentType: 'image/png',
+          fileName: 'signature.png',
+        })
+      );
 
-      // Never fall back to client-docs for ID/address — those uploads leave no
-      // documents row and are invisible in the admin CRM. Fail closed so the
-      // client can retry once their profile is linked to a clients row.
-      if ((idFile || addressFile) && (!docsClientId || !docsOwnerUserId)) {
-        throw new Error(
-          docsResolveFailed
-            ? 'Could not look up your client record (temporary network or server error). Please try finishing enrollment again in a moment.'
-            : 'Could not resolve your client record for identity documents. Contact Credit Comeback Club before finishing enrollment so your ID and address files are saved correctly.'
-        );
-      }
+      let docsClientId = sigUpload.clientId;
+      let docsOwnerUserId = sigUpload.firmUserId;
+
       if (idFile) {
+        const idData = await fileToBase64(idFile);
         await labeled('Upload ID', () =>
-          uploadDocument(docsClientId, docsClientName, 'id', idFile, docsOwnerUserId)
+          portalEnrollUpload(accessToken, {
+            kind: 'id',
+            dataBase64: idData,
+            contentType: idFile.type || 'image/jpeg',
+            fileName: idFile.name,
+          })
         );
       }
       if (addressFile) {
+        const addrData = await fileToBase64(addressFile);
         await labeled('Upload address doc', () =>
-          uploadDocument(docsClientId, docsClientName, 'address', addressFile, docsOwnerUserId)
+          portalEnrollUpload(accessToken, {
+            kind: 'address',
+            dataBase64: addrData,
+            contentType: addressFile.type || 'image/jpeg',
+            fileName: addressFile.name,
+          })
         );
       }
 
-      // Always mark onboarding complete in DB — do this even if subsequent steps fail
-      await labeled('Save enrollment record', () =>
-        supabase.from('client_profiles').update({
-          signature_data: sigUrl,
-          signature_signed_at: new Date().toISOString(),
-          agreement_signed_at: new Date().toISOString(),
-          onboarding_complete: true,
-          user_id: userId,
-        }).eq('email', userEmail)
-      );
+      if (!docsClientId || !docsOwnerUserId) {
+        throw new Error(
+          'Could not resolve your client record for enrollment documents. Contact Credit Comeback Club before finishing enrollment so your files are saved correctly.'
+        );
+      }
 
-      const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('email', userEmail).single();
+      // The portal no longer has broad direct UPDATE access to profile/client
+      // rows. Completion is recorded by a server-side, client-bound endpoint.
+
+      const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('user_id', userId).single();
       const signedAt = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
       const clientFullName = (cp && cp.full_name) || session.user.email;
+      // Attorney signature is applied server-side in portal-enrollment-complete
+      // (service-role storage read). Calling loadAttorneySignatureDataUrl in the
+      // browser throws "Can't find variable" on Safari/iOS.
+      const attorneySignatureDataUrl = null;
+      const attorneySigImg = attorneySignatureDataUrl
+        ? '<img src="' + attorneySignatureDataUrl + '" style="max-height:56px;max-width:220px;" />'
+        : '<span style="font-size:14px;font-weight:bold;">Christopher Holland</span>';
 
+      // Embed the canvas signature data URL so the stored HTML is self-contained
+      // (signed URLs expire; public client-docs URLs are being retired).
       const lpoaHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
         + 'body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;margin:0;padding:40px;color:#000;}'
         + '.header{background:#0f172a;color:#fbbf24;padding:20px 32px;margin:-40px -40px 32px;}'
@@ -309,7 +353,7 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '</style></head><body>'
         + '<div class="header"><h1>Credit Comeback Club — Limited Power of Attorney</h1><p>Credit Dispute Authorization | Executed ' + signedAt + '</p></div>'
         + '<h2>1. Parties</h2>'
-        + '<p>This Limited Power of Attorney is executed between <strong>' + clientFullName + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO, 970-644-0063 ("Attorney-in-Fact").</p>'
+        + '<p>This Limited Power of Attorney is executed between <strong>' + escapeHtml(clientFullName) + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO, 970-644-0063 ("Attorney-in-Fact").</p>'
         + '<h2>2. Grant of Authority</h2>'
         + '<p>Principal authorizes Credit Comeback Club to act exclusively for credit dispute activities, including:</p>'
         + '<ul><li>Prepare and submit dispute letters to data furnishers under 15 U.S.C. §1681s-2(b)</li>'
@@ -330,8 +374,8 @@ function ClientOnboardingModal({ session, onComplete }) {
         + '<p>This document was executed electronically. The drawn signature below constitutes a legally binding electronic signature under the ESIGN Act (15 U.S.C. §7001). Execution timestamp, IP address, and user agent are recorded.</p>'
         + '<div class="sig-block">'
         + '<div class="sig-row">'
-        + '<div class="sig-col"><div class="sig-line">' + (sigUrl ? '<img src="' + sigUrl + '" style="max-height:56px;max-width:220px;" />' : '') + '</div><div class="sig-label">Principal Signature — ' + clientFullName + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
-        + '<div class="sig-col"><div class="sig-line"><img src="https://mlsbdmewxocgweotcdud.supabase.co/storage/v1/object/public/client-docs/standalone/Christopher%20Holland/chris_signature.png" style="max-height:56px;max-width:220px;" /></div><div class="sig-label">Christopher Holland — Attorney-in-Fact, Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
+        + '<div class="sig-col"><div class="sig-line"><img src="' + escapeHtml(signature) + '" style="max-height:56px;max-width:220px;" /></div><div class="sig-label">Principal Signature — ' + escapeHtml(clientFullName) + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
+        + '<div class="sig-col"><div class="sig-line">' + attorneySigImg + '</div><div class="sig-label">Christopher Holland — Attorney-in-Fact, Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
         + '</div></div>'
         + '<div class="footer">Credit Comeback Club | Grand Junction, CO | 970-644-0063 | creditcomebackclub.com | Executed under ESIGN Act 15 U.S.C. §7001</div>'
         + '</body></html>';
@@ -341,31 +385,33 @@ function ClientOnboardingModal({ session, onComplete }) {
       const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(lpoaHtml));
       const documentHash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
 
-      const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });
-      const lpoaFile = new File([lpoaBlob], 'lpoa-signed.html', { type: 'text/html' });
-      // LPOA upload — non-fatal if storage fails (enrollment is already marked complete above)
-      let lpoaUrl = null;
+      const documentPath = `${docsOwnerUserId}/${docsClientId}/lpoa/lpoa-signed.html`;
+      let lpoaUploaded = false;
       try {
-        const { error: lpoaErr } = await supabase.storage.from('client-docs').upload(userId + '/lpoa-signed.html', lpoaFile, { upsert: true });
-        if (!lpoaErr) {
-          const { data: lpoaData } = supabase.storage.from('client-docs').getPublicUrl(userId + '/lpoa-signed.html');
-          lpoaUrl = lpoaData.publicUrl;
-        }
+        const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });
+        const lpoaFile = new File([lpoaBlob], 'lpoa-signed.html', { type: 'text/html' });
+        const lpoaData = await fileToBase64(lpoaFile);
+        await labeled('Upload LPOA', () =>
+          portalEnrollUpload(accessToken, {
+            kind: 'lpoa',
+            dataBase64: lpoaData,
+            contentType: 'text/html',
+            fileName: 'lpoa-signed.html',
+          })
+        );
+        lpoaUploaded = true;
       } catch (lpoaUploadErr) {
         console.warn('LPOA upload failed (non-fatal):', lpoaUploadErr);
       }
 
-      if (lpoaUrl) {
-        await supabase.from('client_profiles').update({ lpoa_url: lpoaUrl }).eq('email', userEmail);
-      }
-
-      if (cp) {
-        await supabase.from('clients').update({
-          lpoa_signed: true,
-          lpoa_signed_at: new Date().toISOString(),
-          lpoa_signature_data: { signatureUrl: sigUrl, lpoaUrl, signedAt: new Date().toISOString(), method: 'Canvas drawn signature + ESIGN Act', documentHash },
-          lpoa_document_hash: documentHash,
-        }).eq('name', cp.full_name);
+      if (lpoaUploaded) {
+        await labeled('Save enrollment record', async () => {
+          const res = await fetch('/.netlify/functions/portal-enrollment-complete', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` }, body: '{}',
+          });
+          const out = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(out.error || 'Could not save portal enrollment.');
+        });
       }
 
       // Append-only audit trail entry (lpoa_audit_log) — captures a
@@ -381,11 +427,21 @@ function ClientOnboardingModal({ session, onComplete }) {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${session.access_token}`,
           },
-          body: JSON.stringify({ documentHash, documentUrl: lpoaUrl, signerName: clientFullName, lpoaType: 'standard' }),
+          body: JSON.stringify({
+            documentHash,
+            documentUrl: null,
+            storageBucket: DOCUMENTS_BUCKET,
+            storagePath: documentPath,
+            signerName: clientFullName,
+            lpoaType: 'standard',
+          }),
         });
       } catch (auditErr) {
         console.warn('LPOA audit log entry failed (non-fatal):', auditErr);
       }
+
+      // Staff alert — fire-and-forget; never blocks enrollment success UI
+      notifyStaff('onboarding_complete');
 
       toast.success('Agreements signed securely!', { id: toastId });
       setStep(5);

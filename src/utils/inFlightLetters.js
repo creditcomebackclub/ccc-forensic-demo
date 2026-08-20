@@ -3,23 +3,21 @@
 // (a Netlify function, hence this module has zero Supabase/browser
 // dependency — pure functions over already-fetched data, importable from
 // either side exactly like diffEngine.js).
-import { cccReviewClock, isFirstClassCccLetter } from './cccMailRules.js';
 //
 // Display and navigation only — nothing here triggers Phase 2 analysis or
 // any other action; it only reads letters/accounts that already exist.
 
-const RESPONSE_WINDOW_DAYS = 30; // Furnisher disputes (Phase 1 / 2)
-const CRA_RESPONSE_WINDOW_DAYS = 45; // Direct CRA disputes (Phase 3)
+import { responseDeadline, responseWindowDays } from './responseWindow.js';
 
-function isPhase3(phase) {
-  return String(phase || '').startsWith('Phase 3');
+function isBureauDispute(letter) {
+  return (letter?.targetType || letter?.target_type) === 'bureau'
+    || String(letter?.phase || '').startsWith('Phase 3');
 }
 
-function responseWindowDays(phase) {
-  return isPhase3(phase) ? CRA_RESPONSE_WINDOW_DAYS : RESPONSE_WINDOW_DAYS;
-}
-
-function bureauFromPhase(phase) {
+function bureauFromLetter(letter) {
+  const structured = letter?.targetBureau || letter?.target_bureau;
+  if (structured) return structured.charAt(0).toUpperCase() + structured.slice(1);
+  const phase = letter?.phase;
   if (!phase) return null;
   const lower = phase.toLowerCase();
   if (lower.includes('equifax')) return 'Equifax';
@@ -54,20 +52,20 @@ export function inFlightLettersForClient(clientName, letters, latestAuditAccount
       // path is selected. Once that decision is recorded, it is no longer an
       // unresolved mailing-clock item even if its original response field is
       // intentionally retained for audit history.
-      return !isPhase3(l.phase) || !l.bureauReviewStatus || l.bureauReviewStatus === 'not_reviewed';
+      return !isBureauDispute(l) || !(l.roundReviewStatus || l.bureauReviewStatus) || (l.roundReviewStatus || l.bureauReviewStatus) === 'not_reviewed';
     })
     .map((l) => {
+      // Deadline computes from delivery date, not mail date — the
+      // statutory basis of the whole non-response argument. No delivery
+      // yet means no deadline yet either (still in transit).
       const deliveryDate = l.deliveredAt || null;
-      const windowDays = responseWindowDays(l.phase);
-      const firstClassClock = cccReviewClock(l);
-      const scheduleStart = isFirstClassCccLetter(l) ? firstClassClock.start : deliveryDate;
-      const scheduleBasis = isFirstClassCccLetter(l) ? firstClassClock.basis : (deliveryDate ? 'delivered' : null);
-      const deadline = scheduleStart ? new Date(new Date(scheduleStart).getTime() + windowDays * 86400000) : null;
+      const windowDays = responseWindowDays(l);
+      const deadline = responseDeadline(l);
       const daysRemaining = deadline ? Math.ceil((deadline - now) / 86400000) : null;
 
       let status;
       if (!deliveryDate) status = 'in_transit';
-      else if (daysRemaining <= 0) status = 'overdue'; // §1681s-2(b) non-response — Phase 3 eligible
+      else if (daysRemaining <= 0) status = 'overdue';
       else if (daysRemaining <= 5) status = 'due_soon';
       else status = 'awaiting';
 
@@ -80,12 +78,9 @@ export function inFlightLettersForClient(clientName, letters, latestAuditAccount
         furnisher: l.furnisher,
         accountLast4: account ? lastFour(account.accountNumberMasked) : null,
         phase: l.phase,
-        bureau: bureauFromPhase(l.phase),
+        bureau: bureauFromLetter(l),
         mailDate: l.mailedDate,
         deliveryDate,
-        expectedDeliveryDate: l.expectedDeliveryDate || null,
-        mailService: l.mailService || null,
-        scheduleBasis,
         deadline: deadline ? deadline.toISOString().slice(0, 10) : null,
         responseWindowDays: windowDays,
         daysRemaining,

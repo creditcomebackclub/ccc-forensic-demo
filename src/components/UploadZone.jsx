@@ -179,7 +179,7 @@ export default function UploadZone({ onAuditStart }) {
       </button>
       {showInfo && (
         <div className="mb-5 rounded-xl p-4 text-[12px] leading-relaxed" style={{ background: '#F8FAFC', border: '1px solid ' + T.border, color: T.muted }}>
-          <p style={{ color: T.faint }}>Estimates vary with report size. The shared audit doctrine is cached between calls, so multi-call runs cost less than 4× a single call. Audits run server-side — once started, you can close this tab and the finished audit lands in the client&apos;s record.</p>
+          <p style={{ color: T.faint }}>Estimates vary with report size. Extraction instructions are cached between calls, and deterministic rules run locally without model tokens. Audits run server-side — once started, you can close this tab and the finished audit lands in the client&apos;s record.</p>
           <p className="mt-2" style={{ color: T.faint }}>For 100+ page bureau PDFs, use Single Bureau → Merge so each file fits the 15-minute server window, then merge without re-uploading.</p>
         </div>
       )}

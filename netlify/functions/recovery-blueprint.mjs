@@ -1,11 +1,21 @@
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 import { buildRecoveryBlueprintModel, RECOVERY_BLUEPRINT_TEMPLATE_VERSION, recoveryBlueprintFilename } from '../../src/utils/recoveryBlueprintModel.js';
 import { buildRecoveryBlueprintPdf } from '../../src/utils/recoveryBlueprintPdf.js';
 import authHelpers from './_requireAuth.cjs';
+import storagePaths from './_storagePaths.cjs';
+import emailHelpers from './_email.cjs';
+
+// Netlify's Node runtime (and any pin below 22) has no reliable global
+// WebSocket. supabase-js always constructs a RealtimeClient in createClient()
+// even for pure REST/storage — pass `ws` via realtime.transport. Do NOT use
+// createRequire(import.meta.url): Netlify esbuild emits CJS where
+// import.meta.url is undefined and the function 502s on cold start.
 
 const { requireStaff } = authHelpers;
-const BUCKET = 'recovery-blueprints';
+const { BLUEPRINTS_BUCKET: BUCKET, recoveryBlueprintPath } = storagePaths;
+const { sendEmail } = emailHelpers;
 const ACCOUNT_KINDS = new Set(['charge_off', 'collection', 'repossession', 'bankruptcy', 'student_loan', 'late_payment', 'positive', 'other']);
 const LATE_PAYMENT_BANDS = new Set(['none', 'two_or_fewer', 'three_or_more', 'mixed', 'unclear']);
 
@@ -17,7 +27,7 @@ function serverClient() {
   const url = process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error('Supabase server environment is not configured.');
-  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false }, realtime: { transport: ws } });
 }
 
 async function loadAudit(db, payload, caller) {
@@ -89,26 +99,26 @@ function pdfBuffer(audit, clientId, reportDate) {
   return { model, buffer: Buffer.from(doc.output('arraybuffer')) };
 }
 
-async function sendGridEmail({ to, subject, bodyText, fileName, buffer, artifactId }) {
-  const key = process.env.SENDGRID_API_KEY;
-  if (!key) throw new Error('SENDGRID_API_KEY is not configured.');
-  const escape = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+async function sendBlueprintEmail({ to, subject, bodyText, fileName, buffer, artifactId }) {
+  const { wrapClientEmail, escapeHtml } = emailHelpers;
   const paragraphs = String(bodyText).split(/\n{2,}/).map((paragraph) =>
-    `<p style="margin:0 0 14px;">${paragraph.split('\n').map(escape).join('<br>')}</p>`).join('');
-  const html = `<!doctype html><html><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#111827"><div style="background:#1B2A4A;padding:24px 32px"><h1 style="color:#C9A84C;margin:0;font-size:20px">Credit Comeback Club</h1><p style="color:#fff;margin:5px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.08em">Your Recovery Blueprint</p></div><div style="border:1px solid #ddd;border-top:0;padding:26px 32px;font-size:14px;line-height:1.6">${paragraphs}<hr style="border:0;border-top:1px solid #eee;margin:24px 0"><p style="font-size:11px;color:#999">Credit Comeback Club | Grand Junction, CO | 970-644-0063</p></div></body></html>`;
-  const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      personalizations: [{ to: [{ email: to }], custom_args: { recovery_blueprint_id: artifactId } }],
-      from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
-      subject,
-      content: [{ type: 'text/html', value: html }],
-      attachments: [{ content: buffer.toString('base64'), filename: fileName, type: 'application/pdf', disposition: 'attachment' }],
-    }),
+    `<p style="margin:0 0 14px;">${paragraph.split('\n').map(escapeHtml).join('<br>')}</p>`).join('');
+  const html = wrapClientEmail({
+    eyebrow: 'Your Recovery Blueprint',
+    bodyHtml: paragraphs,
+    cta: null,
   });
-  if (!res.ok) throw new Error(`SendGrid error ${res.status}: ${await res.text()}`);
-  return res.headers.get('x-message-id');
+  return sendEmail({
+    to,
+    subject,
+    html,
+    attachments: [{
+      content: buffer.toString('base64'),
+      filename: fileName,
+      type: 'application/pdf',
+    }],
+    tags: [{ name: 'recovery_blueprint_id', value: String(artifactId) }],
+  });
 }
 
 export const handler = async (event) => {
@@ -150,7 +160,7 @@ export const handler = async (event) => {
         if (parsedLateCount !== null && (!Number.isInteger(parsedLateCount) || parsedLateCount < 0 || parsedLateCount > 500)) {
           throw Object.assign(new Error('Late-payment count must be a whole number from 0 to 500.'), { statusCode: 400 });
         }
-        return {
+        const next = {
           ...account,
           balance: Number.isFinite(Number(correction.balance)) ? Number(correction.balance) : account.balance,
           status: String(correction.status || account.status || '').trim(),
@@ -160,6 +170,16 @@ export const handler = async (event) => {
           latePaymentCount: parsedLateCount,
           latePaymentBand,
         };
+        // Staff adjudication of deterministic findings (Authorize / Suppress / Needs fact)
+        if (Array.isArray(correction.findings)) next.findings = correction.findings;
+        if (Array.isArray(correction.violations)) next.violations = correction.violations;
+        if (Array.isArray(correction.authorizedFindingIds)) next.authorizedFindingIds = correction.authorizedFindingIds;
+        if (correction.primaryViolation != null) next.primaryViolation = String(correction.primaryViolation);
+        if (correction.primaryChallengeStatement != null) next.primaryChallengeStatement = String(correction.primaryChallengeStatement);
+        if (correction.strategy != null) next.strategy = String(correction.strategy);
+        if (Number.isFinite(Number(correction.priorityScore))) next.priorityScore = Number(correction.priorityScore);
+        if (correction.batch === 1 || correction.batch === 2) next.batch = correction.batch;
+        return next;
       }) };
       const { error } = await db.from('audits').update({ audit: nextAudit }).eq('id', auditRow.id).eq('user_id', auditRow.user_id);
       if (error) throw error;
@@ -177,7 +197,10 @@ export const handler = async (event) => {
       const { model, buffer } = pdfBuffer(auditRow.audit, auditRow.client_id, auditRow.report_date);
       const sha = crypto.createHash('sha256').update(buffer).digest('hex');
       const fileName = recoveryBlueprintFilename(model);
-      const path = `${auditRow.user_id}/${auditRow.id}/v${version}-${sha.slice(0, 12)}.pdf`;
+      if (!auditRow.client_id) {
+        throw Object.assign(new Error('This audit is missing a client_id; link it before approving a Blueprint.'), { statusCode: 409 });
+      }
+      const path = recoveryBlueprintPath(auditRow.user_id, auditRow.client_id, auditRow.id, version, sha.slice(0, 12));
       const { error: uploadError } = await db.storage.from(BUCKET).upload(path, buffer, { contentType: 'application/pdf', upsert: false });
       if (uploadError) throw uploadError;
       const { data: artifact, error: insertError } = await db.from('recovery_blueprints').insert({
@@ -215,7 +238,7 @@ export const handler = async (event) => {
       const { data: file, error: downloadError } = await db.storage.from(BUCKET).download(artifact.storage_path);
       if (downloadError) throw downloadError;
       const buffer = Buffer.from(await file.arrayBuffer());
-      const messageId = await sendGridEmail({
+      const messageId = await sendBlueprintEmail({
         to,
         subject: String(payload.subject || 'Your Credit Comeback Club Recovery Blueprint is Ready'),
         bodyText: String(payload.bodyText || 'Your Recovery Blueprint is attached.'),
@@ -230,6 +253,35 @@ export const handler = async (event) => {
       }).eq('id', artifact.id).select('*').single();
       if (updateError) throw updateError;
       return response(200, { sent: true, artifact: safeArtifact(updated, await signedUrl(db, artifact.storage_path), auditHash(auditRow.audit)) });
+    }
+
+    if (action === 'delete') {
+      const artifactId = payload.artifactId;
+      if (!artifactId) throw Object.assign(new Error('artifactId is required to delete a Blueprint version.'), { statusCode: 400 });
+      const { data: artifact, error: loadError } = await db.from('recovery_blueprints')
+        .select('*').eq('id', artifactId).eq('audit_id', auditRow.id).maybeSingle();
+      if (loadError) throw loadError;
+      if (!artifact) throw Object.assign(new Error('Blueprint version not found for this audit.'), { statusCode: 404 });
+
+      const storagePath = artifact.storage_path;
+      const { error: deleteError } = await db.from('recovery_blueprints')
+        .delete().eq('id', artifact.id).eq('audit_id', auditRow.id);
+      if (deleteError) throw deleteError;
+
+      if (storagePath) {
+        const { error: removeError } = await db.storage.from(BUCKET).remove([storagePath]);
+        if (removeError) {
+          // DB row is already gone — log and continue so staff aren't stuck.
+          console.warn('[recovery-blueprint] storage remove failed after DB delete', removeError.message || removeError);
+        }
+      }
+
+      const next = await latestArtifact(db, auditRow.id);
+      return response(200, {
+        deleted: true,
+        deletedId: artifactId,
+        artifact: safeArtifact(next, next ? await signedUrl(db, next.storage_path) : null, auditHash(auditRow.audit)),
+      });
     }
 
     return response(400, { error: 'Unknown action' });

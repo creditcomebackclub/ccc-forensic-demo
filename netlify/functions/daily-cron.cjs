@@ -1,4 +1,6 @@
 const https = require('https');
+const { sendQueuedClientEmails } = require('./_roundEmail.cjs');
+const { leadNurtureContext, shouldSuppressGenericNurture } = require('./_leadNurture.cjs');
 
 function supabaseRequest(path, method, body, url, key, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
@@ -81,6 +83,104 @@ function chunks(values, size = 100) {
   return out;
 }
 
+const TEMP_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
+function storageList(bucket, prefix, url, key) {
+  return new Promise((resolve, reject) => {
+    const path = '/storage/v1/object/list/' + bucket;
+    const body = JSON.stringify({ prefix: prefix || '', limit: 100, offset: 0 });
+    const u = new URL(url + path);
+    const req = https.request({
+      hostname: u.hostname,
+      port: 443,
+      path: u.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: key,
+        Authorization: 'Bearer ' + key,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', (c) => { raw += c; });
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: raw ? JSON.parse(raw) : [] }); }
+        catch (e) { resolve({ status: res.statusCode, body: raw }); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+function storageRemove(bucket, paths, url, key) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ prefixes: paths });
+    const u = new URL(url + '/storage/v1/object/' + bucket);
+    const req = https.request({
+      hostname: u.hostname,
+      port: 443,
+      path: u.pathname,
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: key,
+        Authorization: 'Bearer ' + key,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', (c) => { raw += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: raw }));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function listStorageRecursive(bucket, prefix, url, key) {
+  const out = [];
+  const queue = [prefix || ''];
+  while (queue.length) {
+    const current = queue.shift();
+    const res = await storageList(bucket, current, url, key);
+    if (res.status < 200 || res.status >= 300 || !Array.isArray(res.body)) continue;
+    for (const item of res.body) {
+      const full = current ? current + '/' + item.name : item.name;
+      if (item.id == null && !item.metadata) queue.push(full);
+      else out.push({ path: full, updatedAt: item.updated_at || item.created_at });
+    }
+  }
+  return out;
+}
+
+/** Delete documents/{firm}/temp/** and legacy temp-letters piles older than 48h. */
+async function purgeExpiredMailTemps(supabaseUrl, supabaseKey) {
+  const cutoff = Date.now() - TEMP_MAX_AGE_MS;
+  // List top-level firm folders, then their temp trees.
+  const top = await storageList('documents', '', supabaseUrl, supabaseKey);
+  if (!Array.isArray(top.body)) return 0;
+  const toDelete = [];
+  for (const firm of top.body) {
+    if (!firm.name || firm.id) continue; // only folders
+    const firmId = firm.name;
+    for (const sub of ['temp', 'temp-letters', 'temp-letter-assets']) {
+      const objects = await listStorageRecursive('documents', firmId + '/' + sub, supabaseUrl, supabaseKey);
+      for (const obj of objects) {
+        const updated = obj.updatedAt ? Date.parse(obj.updatedAt) : 0;
+        if (!updated || updated <= cutoff) toDelete.push(obj.path);
+      }
+    }
+  }
+  for (const batch of chunks(toDelete, 50)) {
+    await storageRemove('documents', batch, supabaseUrl, supabaseKey);
+  }
+  return toDelete.length;
+}
+
 // PostgREST's `in.(...)` syntax needs quotes for names/emails. Encode the
 // complete parenthesized value so a comma, ampersand, or quote in an email
 // cannot change the surrounding REST query.
@@ -160,39 +260,85 @@ async function loadLatestAuditSummariesByClientIds(ids, url, key) {
   return latestByClientId;
 }
 
-function sendgridEmail(to, subject, html, apiKey) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      personalizations: [{ to: [{ email: to }] }],
-      from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
+function sendMailQuiet(to, subject, html) {
+  const { sendEmail } = require('./_email.cjs');
+  return sendEmail({ to, subject, html })
+    .then(() => ({ status: 200 }))
+    .catch((e) => {
+      console.error('Resend Error:', e.message || e);
+      return { status: 500 };
+    });
+}
+
+async function automatedEmailClaim(eventKey, eventType, recipient, clientId, supabaseUrl, supabaseKey) {
+  const response = await supabaseRequest('/rest/v1/rpc/claim_automated_email_send', 'POST', {
+    p_event_key: eventKey,
+    p_event_type: eventType,
+    p_recipient: recipient,
+    p_client_id: clientId || null,
+  }, supabaseUrl, supabaseKey);
+  if (!isSuccessful(response)) throw new Error('Could not claim automated email: ' + response.status);
+  return response.body || {};
+}
+
+async function updateAutomatedEmailSend(id, changes, supabaseUrl, supabaseKey) {
+  const response = await supabaseRequest('/rest/v1/automated_email_sends?id=eq.' + encodeURIComponent(id), 'PATCH', {
+    ...changes,
+    updated_at: new Date().toISOString(),
+  }, supabaseUrl, supabaseKey);
+  if (!isSuccessful(response)) throw new Error('Could not update automated email record: ' + response.status);
+}
+
+async function sendAutomatedEmail({ eventKey, eventType, recipient, clientId, subject, html }, supabaseUrl, supabaseKey) {
+  const claim = await automatedEmailClaim(eventKey, eventType, recipient, clientId, supabaseUrl, supabaseKey);
+  if (!claim.claimed) return { skipped: 'already_claimed' };
+  try {
+    const { sendEmail } = require('./_email.cjs');
+    const resendId = await sendEmail({
+      to: recipient,
       subject,
-      content: [{ type: 'text/html', value: html }],
+      html,
+      idempotencyKey: claim.idempotency_key,
+      tags: { automated_email_send_id: claim.id },
     });
-    const options = {
-      hostname: 'api.sendgrid.com', port: 443,
-      path: '/v3/mail/send', method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + apiKey,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data),
-      },
-    };
-    const req = https.request(options, (res) => {
-      let raw = '';
-      res.on('data', c => raw += c);
-      res.on('end', () => {
-        if (res.statusCode >= 400) {
-          console.error(`SendGrid Error (${res.statusCode}): ${raw}`);
-        }
-        resolve({ status: res.statusCode });
-      });
-    });
-    req.on('error', (e) => {
-      console.error('SendGrid Request Error:', e);
-      reject(e);
-    });
-    req.write(data);
-    req.end();
+    await updateAutomatedEmailSend(claim.id, {
+      send_status: 'sent', resend_email_id: resendId, sent_at: new Date().toISOString(), delivery_error: null,
+    }, supabaseUrl, supabaseKey);
+    return { sent: true, resendId };
+  } catch (error) {
+    // Keep the claim after an ambiguous failure: blindly retrying could send a
+    // second notice if the provider accepted the first request before timing out.
+    await updateAutomatedEmailSend(claim.id, {
+      send_status: 'failed', delivery_error: String(error.message || error).slice(0, 1000),
+    }, supabaseUrl, supabaseKey).catch((updateError) => console.error('Could not record automated email failure:', updateError.message));
+    console.error('Automated email failed:', error.message || error);
+    return { sent: false, error: String(error.message || error) };
+  }
+}
+
+async function claimBillingInvoice({ clientId, billingPeriod, amount, description }, supabaseUrl, supabaseKey) {
+  const response = await supabaseRequest('/rest/v1/rpc/claim_billing_invoice', 'POST', {
+    p_client_id: clientId,
+    p_billing_period: billingPeriod,
+    p_amount: amount,
+    p_description: description,
+  }, supabaseUrl, supabaseKey);
+  if (!isSuccessful(response)) throw new Error('Could not claim billing invoice: ' + response.status);
+  return response.body || {};
+}
+
+function billingNoticeHtml({ name, eyebrow, paragraphs, tone, ctaLabel }) {
+  const { wrapClientEmail, escapeHtml, BRAND } = require('./_email.cjs');
+  const safeName = escapeHtml(name || 'there');
+  const bodyHtml = `<p style="margin:0 0 14px;">Hi ${safeName},</p>`
+    + (paragraphs || []).map((p) => `<p style="margin:0 0 14px;">${p}</p>`).join('')
+    + `<p style="margin:0;">Thank you,<br/>Credit Comeback Club</p>`;
+  return wrapClientEmail({
+    eyebrow,
+    tone: tone || 'default',
+    bodyHtml,
+    cta: { href: BRAND.portalUrl, label: ctaLabel || 'Open your portal →' },
+    preheader: paragraphs && paragraphs[0] ? String(paragraphs[0]).replace(/<[^>]+>/g, '') : undefined,
   });
 }
 
@@ -209,7 +355,8 @@ function todayISO() {
 exports.handler = async () => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const sgKey = process.env.SENDGRID_API_KEY;
+  const { isConfigured } = require('./_email.cjs');
+  const mailReady = isConfigured();
   const ADMIN_EMAIL = 'chris@cccpartners.co'; // Updated to send directly to Chris
 
   if (!supabaseUrl || !supabaseKey) {
@@ -220,6 +367,7 @@ exports.handler = async () => {
   const yesterday = new Date(Date.now() - 86400000).toISOString();
   let leadsDrippedCount = 0;
   let clientUpdatesCount = 0;
+  let clientEmailRetries = { processed: 0, sent: 0 };
 
   // "Action Required Escalations" in Settings > Notifications previously had
   // no effect anywhere — the daily digest below always includes escalations
@@ -228,7 +376,8 @@ exports.handler = async () => {
   let emailEscalationsEnabled = true;
   try {
     const settingsRes = await new Promise((resolve, reject) => {
-      const u = new URL(supabaseUrl + '/storage/v1/object/client-docs/admin/settings.json');
+      // Authenticated object path — client-docs is private after storage reorg.
+      const u = new URL(supabaseUrl + '/storage/v1/object/authenticated/client-docs/admin/settings.json');
       https.get(u, { headers: { apikey: supabaseKey, Authorization: 'Bearer ' + supabaseKey } }, (res) => {
         let raw = ''; res.on('data', (c) => raw += c); res.on('end', () => resolve({ status: res.statusCode, body: raw }));
       }).on('error', reject);
@@ -238,6 +387,14 @@ exports.handler = async () => {
       if (parsed?.notifications?.emailEscalations === false) emailEscalationsEnabled = false;
     }
   } catch (e) { /* default to enabled if settings can't be read */ }
+
+  // Purge Lob mail temp objects older than 48h (canonical temp/ + legacy piles).
+  let tempsPurged = 0;
+  try {
+    tempsPurged = await purgeExpiredMailTemps(supabaseUrl, supabaseKey);
+  } catch (e) {
+    console.warn('temp mail purge failed (non-fatal):', e.message || e);
+  }
 
   async function fetch_send(action, payload) {
     const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
@@ -257,12 +414,12 @@ exports.handler = async () => {
 
   // --- 1. Process tracked delivery clocks and client updates ---
   const letters = await listAllRows(
-    '/rest/v1/letters?select=id,client_id,client_name,furnisher,phase,mailed_date,delivered_at,mail_service,expected_delivery_date,response_outcome,notifications_sent,bureau_review_status&response_outcome=is.null&order=id.asc',
+    '/rest/v1/letters?select=id,client_id,client_name,furnisher,phase,round_number,target_type,target_bureau,mailed_date,delivered_at,mail_service,expected_delivery_date,response_due_at,response_outcome,notifications_sent,bureau_review_status,round_review_status&response_outcome=is.null&order=id.asc',
     supabaseUrl,
     supabaseKey
   );
   let profilesByClientId = new Map();
-  if (sgKey) {
+  if (mailReady) {
     try {
       const profiles = await loadClientProfiles({ clientIds: letters.map((letter) => letter.client_id) }, supabaseUrl, supabaseKey);
       profilesByClientId = profiles.byClientId;
@@ -275,12 +432,9 @@ exports.handler = async () => {
   const adminDigestItems = [];
 
   for (const letter of letters) {
-    const isPhase3 = String(letter.phase || '').startsWith('Phase 3');
+    const isBureauDispute = letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3');
     const isCccDispute = String(letter.phase || '').startsWith('CCC Dispute —');
     const isCccFirstClass = isCccDispute && letter.mail_service === 'usps_first_class';
-    // Lob's normal First Class events can still provide a delivery scan. If
-    // one has not arrived, its own expected-delivery date drives an internal
-    // review target. It is never represented as proof of actual delivery.
     const clockStart = letter.delivered_at
       ? letter.delivered_at.slice(0, 10)
       : isCccFirstClass && letter.expected_delivery_date
@@ -288,15 +442,19 @@ exports.handler = async () => {
         : null;
     if (!clockStart) continue;
     const clockBasis = letter.delivered_at ? 'confirmed delivery' : 'Lob expected delivery';
-    const windowDays = isPhase3 ? 45 : 30;
-    const adminNotificationKey = isPhase3 ? 'admin45' : 'admin30';
+    const isStructuredRound = !!letter.target_type;
+    const baseWindowDays = isStructuredRound ? 30 : (isBureauDispute ? 45 : 30);
+    const adminNotificationKey = isStructuredRound ? 'adminDue' : (isBureauDispute ? 'admin45' : 'admin30');
     const daysElapsed = daysBetween(clockStart, today);
+    const windowDays = letter.response_due_at
+      ? Math.max(baseWindowDays, daysBetween(clockStart, String(letter.response_due_at).slice(0, 10)))
+      : baseWindowDays;
     const sent = letter.notifications_sent || [];
     let newSent = [...sent];
     let touched = false;
 
     let clientEmail = null;
-    if (sgKey) {
+    if (mailReady) {
       const profile = letter.client_id ? profilesByClientId.get(letter.client_id) : null;
       // Legacy rows without client_id deliberately do not use full_name as a
       // fallback. `client_profiles` is not firm-scoped by name, and choosing
@@ -304,7 +462,10 @@ exports.handler = async () => {
       clientEmail = profile && profile.email || null;
     }
 
-    if (sgKey && clientEmail && daysElapsed >= 7 && daysElapsed < 8 && !sent.includes('day7')) {
+    // Structured rounds use the durable client_emails milestones. Keep these
+    // campaign drips only for unreconciled legacy phase rows so clients do not
+    // receive duplicate or contradictory status messages.
+    if (!isStructuredRound && mailReady && clientEmail && daysElapsed >= 7 && daysElapsed < 8 && !sent.includes('day7')) {
       try {
         await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: isCccDispute ? 'ccc_day7_checkin' : 'day7_checkin', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day7'); touched = true;
@@ -312,7 +473,7 @@ exports.handler = async () => {
       } catch(e) { console.error('day7 email failed:', e); }
     }
 
-    if (!isPhase3 && sgKey && clientEmail && daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
+    if (!isStructuredRound && !isBureauDispute && mailReady && clientEmail && daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
       try {
         await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: isCccDispute ? 'ccc_day30_review' : 'day30_approaching', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day30'); touched = true;
@@ -330,22 +491,21 @@ exports.handler = async () => {
       });
       newSent.push(adminNotificationKey); touched = true;
 
-      if (sgKey && emailEscalationsEnabled) {
+      if (mailReady && emailEscalationsEnabled) {
         try {
-          await sendgridEmail(
-            ADMIN_EMAIL,
-            (isPhase3 ? 'Bureau Response Review: ' : isCccDispute ? 'CCC Round Review: ' : 'Escalation Ready: ') + letter.client_name + ' / ' + letter.furnisher,
-            `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
-              <div style="background:#1B2A4A;padding:20px 28px;border-radius:4px 4px 0 0;">
-                <h2 style="color:#C9A84C;margin:0;font-size:18px;">${isCccDispute ? 'CCC Round Ready for Review' : 'Escalation Ready for Review'}</h2>
-              </div>
-              <div style="border:1px solid #ddd;border-top:none;padding:20px 28px;border-radius:0 0 4px 4px;">
-                <p><strong>${letter.client_name}</strong> — ${letter.furnisher} (${letter.phase || 'Phase 1'})</p>
-                <p>${daysElapsed} days since ${clockBasis} with no logged response. This has crossed the ${windowDays}-day operational review window and is ready for ${isCccDispute ? 'result recording and next-round review' : 'staff review'}.</p>
-              </div>
-            </div>`,
-            sgKey
-          );
+          await sendMailQuiet(ADMIN_EMAIL, (isBureauDispute ? 'Bureau Response Review: ' : isCccDispute ? 'CCC Round Review: ' : 'Response Review: ') + letter.client_name + ' / ' + letter.furnisher, (() => {
+            const { wrapStaffEmail } = require('./_email.cjs');
+            return wrapStaffEmail({
+              eyebrow: isBureauDispute ? 'Bureau Response Review' : isCccDispute ? 'CCC Round Ready for Review' : 'Response Review',
+              title: letter.client_name + ' — ' + letter.furnisher,
+              rows: [
+                ['Phase', letter.phase || 'Phase 1'],
+                ['Days elapsed', String(daysElapsed)],
+                ['Clock start', String(clockStart || '—')],
+              ],
+              footer: `<p style="font-size:13px;color:#4B5563;margin:0;">${daysElapsed} days since ${clockBasis} with no logged response. This has crossed the ${windowDays}-day operational review window and is ready for ${isCccDispute ? 'result recording and next-round review' : 'staff review'}.</p>`,
+            });
+          })());
         } catch (e) { console.error('Escalation alert email failed:', e.message); }
       }
     }
@@ -360,7 +520,7 @@ exports.handler = async () => {
 
   // --- 1.5 Process 35-Day Report Reminders ---
   let reportRefreshDripsCount = 0;
-  if (sgKey) {
+  if (mailReady) {
     try {
       const audits = await listAllRows(
         '/rest/v1/audits?select=id,client_id,client_name,user_id,saved_at,report_date&order=saved_at.desc,id.asc',
@@ -450,9 +610,9 @@ exports.handler = async () => {
   // stages, so a long gap doesn't dump a backlog on someone at once.
   let onboardingDripsCount = 0;
   let nurtureDripsCount = 0;
-  if (sgKey) {
+  if (mailReady) {
     const leads = await listAllRows(
-      '/rest/v1/clients?select=id,user_id,name,email,lead_created_at,lead_drips_sent,tags&status=eq.lead&order=lead_created_at.asc,id.asc',
+      '/rest/v1/clients?select=id,user_id,name,email,lead_created_at,lead_drips_sent,tags,consultation_status&status=eq.lead&order=lead_created_at.asc,id.asc',
       supabaseUrl,
       supabaseKey
     );
@@ -524,13 +684,10 @@ exports.handler = async () => {
             break;
           }
         }
-      } else if ((lead.tags || []).includes('lead-stage:ready')) {
-        // "Ready to convert" is staff manually flagging that a human has
-        // taken over this lead personally — automated nurture stops so a
-        // generic drip email never lands mid-conversation with someone
-        // Chris (or Alex) is actively closing. Track B is untouched by
-        // stage on purpose: it's a concrete pending action (sign the LPOA),
-        // not persuasion, so it should keep reminding regardless.
+      } else if (shouldSuppressGenericNurture(lead)) {
+        // A Calendly booking or any staff-owned pipeline stage stops generic
+        // acquisition nurture. Track B is untouched: it is a concrete pending
+        // onboarding action, not persuasion.
       } else {
         for (const d of nurtureSchedule) {
           if (daysSince >= d.day && !sentDrips.includes(d.key)) {
@@ -547,7 +704,13 @@ exports.handler = async () => {
             }
 
             try {
-              await fetch_send('send_lead_nurture', { clientName: lead.name, clientEmail: lead.email, day: d.day, auditSummary });
+              await fetch_send('send_lead_nurture', {
+                clientName: lead.name,
+                clientEmail: lead.email,
+                day: d.day,
+                auditSummary,
+                leadContext: leadNurtureContext(lead),
+              });
               newDrips.push(d.key);
               touched = true;
               nurtureDripsCount++;
@@ -577,7 +740,7 @@ exports.handler = async () => {
   // which works from CommonJS) and Build 3's status_changed_at (the pause
   // clock the 21/45-day thresholds are measured from).
   let winbackSentCount = 0;
-  if (sgKey) {
+  if (mailReady) {
     try {
       const { inFlightLettersForClient } = await import('../../src/utils/inFlightLetters.js');
 
@@ -668,7 +831,7 @@ exports.handler = async () => {
           + '</div></body></html>';
 
         try {
-          await sendgridEmail(clientEmail, 'Status on your file — ' + inFlight.length + ' letter' + (inFlight.length === 1 ? '' : 's') + ' still active', html, sgKey);
+          await sendMailQuiet(clientEmail, 'Status on your file — ' + inFlight.length + ' letter' + (inFlight.length === 1 ? '' : 's') + ' still active', html);
           await supabaseRequest(
             '/rest/v1/clients?id=eq.' + c.id,
             'PATCH', { winback_notifications_sent: [...sentMarkers, 'step' + step + '@' + pausedDate] }, supabaseUrl, supabaseKey
@@ -694,7 +857,7 @@ exports.handler = async () => {
   let billingAlerts = [];
   try {
     const activeClients = await listAllRows(
-      '/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date,billing_tier&order=id.asc',
+      '/rest/v1/clients?billing_status=eq.Active&billing_type=eq.Automated%20Recurring&select=id,name,email,ledger,billing_start_date,billing_tier,billing_recurring_amount,referred_by&order=id.asc',
       supabaseUrl,
       supabaseKey
     );
@@ -729,10 +892,28 @@ exports.handler = async () => {
         const daysUntilDue = hasPriorBilling ? (30 - daysSinceLastBilling) : (0 - daysSinceLastBilling);
 
         if (c.billing_tier !== 'Paid In Full' || !hasPriorBilling) {
-          if (daysUntilDue === 5 && c.email && sgKey) {
-            await sendgridEmail(c.email, 'Upcoming Invoice in 5 Days', '<p>Hi ' + c.name + ',</p><p>This is a quick reminder that your service fee will be due in 5 days.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
-          } else if (daysUntilDue === 3 && c.email && sgKey) {
-            await sendgridEmail(c.email, 'Upcoming Invoice in 3 Days', '<p>Hi ' + c.name + ',</p><p>Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+          if (daysUntilDue === 5 && c.email && mailReady) {
+            await sendAutomatedEmail({
+              eventKey: `billing:${c.id}:${lastDateStr}:pre_due_5`,
+              eventType: 'billing_pre_due_5', recipient: c.email, clientId: c.id,
+              subject: 'Upcoming Invoice in 5 Days',
+              html: billingNoticeHtml({
+                name: c.name, eyebrow: 'Billing Reminder',
+                paragraphs: ['This is a quick reminder that your service fee will be due in 5 days.'],
+                ctaLabel: 'View billing in your portal →',
+              }),
+            }, supabaseUrl, supabaseKey);
+          } else if (daysUntilDue === 3 && c.email && mailReady) {
+            await sendAutomatedEmail({
+              eventKey: `billing:${c.id}:${lastDateStr}:pre_due_3`,
+              eventType: 'billing_pre_due_3', recipient: c.email, clientId: c.id,
+              subject: 'Upcoming Invoice in 3 Days',
+              html: billingNoticeHtml({
+                name: c.name, eyebrow: 'Billing Reminder',
+                paragraphs: ['Your service fee will be due in 3 days. Please ensure your payment method on file is up to date.'],
+                ctaLabel: 'Update payment in your portal →',
+              }),
+            }, supabaseUrl, supabaseKey);
           }
         }
 
@@ -742,8 +923,12 @@ exports.handler = async () => {
         if (isDue) {
           let amount = 99.00;
           let description = 'Monthly Service Fee';
+          const customRecurringAmount = Number(c.billing_recurring_amount);
 
-          if (!hasPriorBilling) {
+          if (Number.isFinite(customRecurringAmount) && customRecurringAmount > 0) {
+            amount = customRecurringAmount;
+            description = 'Custom Monthly Service Fee';
+          } else if (!hasPriorBilling) {
             if (c.billing_tier === 'Standard') { amount = 154.00; description = 'Initial Month & First Work Fee'; }
             else if (c.billing_tier === 'VIP') { amount = 248.00; description = 'VIP Initial Month & First Work Fee'; }
             else if (c.billing_tier === 'Paid In Full') { amount = 499.00; description = 'Paid In Full Service'; }
@@ -765,16 +950,33 @@ exports.handler = async () => {
               status: 'Due',
               created_at: new Date().toISOString()
             };
-            ledger.push(newTx);
+            const invoiceClaim = await claimBillingInvoice({
+              clientId: c.id,
+              billingPeriod: today,
+              amount,
+              description,
+            }, supabaseUrl, supabaseKey);
+            if (!invoiceClaim.created) continue;
+            const createdInvoice = invoiceClaim.invoice || newTx;
             balanceDue = round2(balanceDue + amount);
-            
-            await supabaseRequest(
-              '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),
-              'PATCH', { ledger }, supabaseUrl, supabaseKey
-            );
 
-            if (c.email && sgKey) {
-              await sendgridEmail(c.email, 'Invoice Due Today', '<p>Hi ' + c.name + ',</p><p>Your service fee of $' + amount.toFixed(2) + ' is due today. Please log in to your client portal to remit payment.</p><p>Thank you,<br/>Credit Comeback Club</p>', sgKey);
+            if (c.email && mailReady) {
+              await sendAutomatedEmail({
+                eventKey: `billing:${c.id}:${createdInvoice.id}:due_today`,
+                eventType: 'billing_invoice_due_today',
+                recipient: c.email,
+                clientId: c.id,
+                subject: 'Invoice Due Today',
+                html: billingNoticeHtml({
+                name: c.name,
+                eyebrow: 'Invoice Due',
+                paragraphs: [
+                  'Your service fee of <strong>$' + amount.toFixed(2) + '</strong> is due today.',
+                  'Please log in to your client portal to remit payment.',
+                ],
+                ctaLabel: 'Pay invoice →',
+                }),
+              }, supabaseUrl, supabaseKey);
             }
           }
         }
@@ -786,13 +988,62 @@ exports.handler = async () => {
       
       for (const inv of unpaidInvoices) {
         const daysPastDue = Math.floor((new Date(today) - new Date(inv.date)) / (1000 * 60 * 60 * 24));
-        if (daysPastDue === 1 && c.email && sgKey) {
-          await sendgridEmail(c.email, 'Invoice 1 Day Past Due', '<p>Hi ' + c.name + ',</p><p>Your invoice is 1 day past due. Please submit your payment to avoid service interruption.</p>', sgKey);
-        } else if (daysPastDue === 3 && c.email && sgKey) {
-          await sendgridEmail(c.email, 'Invoice 3 Days Past Due - Urgent', '<p>Hi ' + c.name + ',</p><p>Your invoice is 3 days past due. Your service will be paused in 2 days if payment is not received.</p>', sgKey);
+        const invoiceKey = String(inv.id || `${c.id}:${inv.date}:${inv.amount}:${inv.description || ''}`);
+        if (daysPastDue === 1 && c.email && mailReady) {
+          await sendAutomatedEmail({
+            eventKey: `billing:${c.id}:${invoiceKey}:past_due_1`,
+            eventType: 'billing_past_due_1',
+            recipient: c.email,
+            clientId: c.id,
+            subject: 'Invoice 1 Day Past Due',
+            html: billingNoticeHtml({
+            name: c.name,
+            eyebrow: 'Past Due Notice',
+            tone: 'warning',
+            paragraphs: [
+              'Your invoice is <strong>1 day past due</strong>.',
+              'Please submit your payment to avoid service interruption.',
+            ],
+            ctaLabel: 'Pay now →',
+            }),
+          }, supabaseUrl, supabaseKey);
+        } else if (daysPastDue === 3 && c.email && mailReady) {
+          await sendAutomatedEmail({
+            eventKey: `billing:${c.id}:${invoiceKey}:past_due_3`,
+            eventType: 'billing_past_due_3',
+            recipient: c.email,
+            clientId: c.id,
+            subject: 'Invoice 3 Days Past Due - Urgent',
+            html: billingNoticeHtml({
+            name: c.name,
+            eyebrow: 'Urgent — Past Due',
+            tone: 'urgent',
+            paragraphs: [
+              'Your invoice is <strong>3 days past due</strong>.',
+              'Your service will be paused in 2 days if payment is not received.',
+            ],
+            ctaLabel: 'Pay now to avoid pause →',
+            }),
+          }, supabaseUrl, supabaseKey);
         } else if (daysPastDue === 5 && !isPausedNow) {
-          if (c.email && sgKey) {
-            await sendgridEmail(c.email, 'Final Notice: Service Paused', '<p>Hi ' + c.name + ',</p><p>Your service has been paused due to non-payment. Please remit payment immediately to resume services.</p>', sgKey);
+          if (c.email && mailReady) {
+            await sendAutomatedEmail({
+              eventKey: `billing:${c.id}:${invoiceKey}:service_paused`,
+              eventType: 'billing_service_paused',
+              recipient: c.email,
+              clientId: c.id,
+              subject: 'Final Notice: Service Paused',
+              html: billingNoticeHtml({
+              name: c.name,
+              eyebrow: 'Service Paused',
+              tone: 'urgent',
+              paragraphs: [
+                'Your service has been paused due to non-payment.',
+                'Please remit payment immediately to resume services.',
+              ],
+              ctaLabel: 'Pay to resume →',
+              }),
+            }, supabaseUrl, supabaseKey);
           }
           await supabaseRequest(
             '/rest/v1/clients?id=eq.' + encodeURIComponent(c.id),
@@ -800,6 +1051,28 @@ exports.handler = async () => {
           );
           isPausedNow = true;
           billingAlerts.push({ client: c.name, type: 'PAUSED', balance: balanceDue });
+          if (c.referred_by && mailReady) {
+            try {
+              const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+              const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: 'Bearer ' + supabaseKey,
+                },
+                body: JSON.stringify({
+                  event: 'exited',
+                  clientId: c.id,
+                  affiliateId: c.referred_by,
+                  billingStatus: 'Paused',
+                  exitReason: 'non_payment',
+                }),
+              });
+              if (!partnerRes.ok) console.warn('daily-cron: affiliate exit email failed', await partnerRes.text());
+            } catch (err) {
+              console.warn('daily-cron: affiliate exit email error', err.message);
+            }
+          }
         }
       }
 
@@ -837,7 +1110,7 @@ exports.handler = async () => {
   }
 
   // --- 4. Send the Master Executive Briefing ---
-  if (sgKey) {
+  if (mailReady) {
     const escalationRows = adminDigestItems.length > 0 
       ? adminDigestItems.map(it => `<tr><td style="padding:6px 0;font-size:12px;border-bottom:1px solid #FEE2E2;"><strong>${it.client}</strong> - ${it.furnisher} (${it.phase}) - ${it.daysElapsed} days</td></tr>`).join('')
       : '<tr><td style="padding:6px 0;font-size:12px;color:#6B7280;">No new escalations today.</td></tr>';
@@ -899,12 +1172,67 @@ exports.handler = async () => {
       </div>
     </body></html>`;
 
-    await sendgridEmail(ADMIN_EMAIL, `CCC Executive Briefing: ${todayISO()}`, html, sgKey);
+    await sendAutomatedEmail({
+      eventKey: `executive_briefing:${todayISO()}`,
+      eventType: 'executive_briefing',
+      recipient: ADMIN_EMAIL,
+      clientId: null,
+      subject: `CCC Executive Briefing: ${todayISO()}`,
+      html,
+    }, supabaseUrl, supabaseKey);
+  }
+
+  // --- Partner monthly summary (1st of month) ---
+  let affiliateSummariesSent = 0;
+  if (mailReady && todayISO().slice(8, 10) === '01') {
+    try {
+      const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+      // Summarize the month that just ended.
+      const prior = new Date(Date.UTC(
+        Number(todayISO().slice(0, 4)),
+        Number(todayISO().slice(5, 7)) - 2,
+        1
+      ));
+      const monthKey = prior.toISOString().slice(0, 7);
+      const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + supabaseKey,
+        },
+        body: JSON.stringify({ event: 'monthly_summary', monthKey }),
+      });
+      if (partnerRes.ok) {
+        const body = await partnerRes.json().catch(() => ({}));
+        affiliateSummariesSent = body.count || 0;
+      } else {
+        console.warn('daily-cron: affiliate monthly summary failed', await partnerRes.text());
+      }
+    } catch (e) {
+      console.warn('daily-cron: affiliate monthly summary error', e.message);
+    }
+  }
+
+  if (mailReady) {
+    try {
+      clientEmailRetries = await sendQueuedClientEmails(25);
+    } catch (e) {
+      console.warn('daily-cron: queued client email retry failed', e.message || e);
+    }
   }
 
   return {
     statusCode: 200,
-    body: JSON.stringify({ success: true, onboardingRemindersSent: onboardingDripsCount, leadNurtureSent: nurtureDripsCount, updatesSent: clientUpdatesCount, winbackSent: winbackSentCount }),
+    body: JSON.stringify({
+      success: true,
+      onboardingRemindersSent: onboardingDripsCount,
+      leadNurtureSent: nurtureDripsCount,
+      updatesSent: clientUpdatesCount,
+      winbackSent: winbackSentCount,
+      affiliateSummariesSent,
+      clientEmailRetries,
+      tempsPurged,
+    }),
   };
 };
 

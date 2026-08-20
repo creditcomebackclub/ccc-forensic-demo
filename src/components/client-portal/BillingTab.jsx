@@ -1,5 +1,6 @@
 import React from 'react';
-import { CreditCard } from 'lucide-react';
+import { CreditCard, FileText } from 'lucide-react';
+import { useState } from 'react';
 
 const T = {
   navy: '#1B2A4A',
@@ -12,17 +13,33 @@ const T = {
   grid: '#EEF0F4',
 };
 
-export default function BillingTab({ clientMeta }) {
+export default function BillingTab({ clientMeta, signedAgreementAvailable, onViewAgreement }) {
   const ledger = Array.isArray(clientMeta?.ledger) ? clientMeta.ledger : [];
-  
+  const [loadingAgreement, setLoadingAgreement] = useState(false);
+
   // Balance is sum of all unpaid Invoices
   const balanceDue = ledger.reduce((sum, tx) => {
     if (tx.type === 'Invoice' && tx.status !== 'Paid') return sum + (parseFloat(tx.amount) || 0);
     return sum;
   }, 0);
 
+  const handleViewAgreement = async () => {
+    setLoadingAgreement(true);
+    try {
+      await onViewAgreement();
+    } finally {
+      setLoadingAgreement(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
+      <div className="bg-white rounded-xl p-5 border" style={{ borderColor: T.border }}>
+        <div className="flex items-center justify-between gap-4">
+          <div><h2 className="text-sm uppercase tracking-wider font-bold" style={{ color: T.navy }}>Service Agreement</h2><p className="text-xs text-ink-muted mt-1">{clientMeta?.lpoa_signed ? 'Your service agreement and limited authorization are completed.' : 'Your service agreement is pending. Contact Credit Comeback Club if you need a new signing link.'}</p></div>
+          {signedAgreementAvailable && <button disabled={loadingAgreement} onClick={handleViewAgreement} className="px-3 py-2 rounded text-[11px] uppercase tracking-wider border flex items-center gap-1.5" style={{ borderColor: T.navy, color: T.navy }}><FileText size={13} />{loadingAgreement ? 'Loading…' : 'View signed agreement'}</button>}
+        </div>
+      </div>
       
       {/* Balance Section */}
       <div className="bg-white rounded-xl p-6 md:p-8 flex flex-col md:flex-row items-center justify-between shadow-sm border" style={{ borderColor: T.border }}>

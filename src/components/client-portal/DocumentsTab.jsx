@@ -235,6 +235,7 @@ export default function DocumentsTab({
                       <option value="Smart Credit">Smart Credit</option>
                       <option value="IdentityIQ">IdentityIQ</option>
                       <option value="My Free Score Now">My Free Score Now</option>
+                      <option value="MyFICO">MyFICO</option>
                     </select>
                   ) : (
                     <input type={type || 'text'} placeholder={placeholder}
@@ -255,17 +256,19 @@ export default function DocumentsTab({
                     'experian': 'https://www.experian.com',
                     'identityiq': 'https://www.identityiq.com',
                     'my free score': 'https://www.myfreescorenow.com',
+                    'myfico': 'https://www.myfico.com',
                   };
                   const svcKey = (monitoringForm.service || '').toLowerCase();
                   const portalUrl = Object.entries(serviceUrls).find(([k]) => svcKey.includes(k))?.[1] || 'https://www.privacyguard.com';
                   try {
                     if (!clientMeta?.id) throw new Error('Could not identify client record.');
-                    await supabase.from('clients').update({
-                      monitoring_service: monitoringForm.service,
-                      monitoring_email: monitoringForm.email,
-                      monitoring_enrolled: true,
-                      monitoring_portal_url: portalUrl,
-                    }).eq('id', clientMeta.id);
+                    const { error: monitoringSaveError } = await supabase.rpc('update_own_client_monitoring', {
+                      p_client_id: clientMeta.id,
+                      p_monitoring_service: monitoringForm.service,
+                      p_monitoring_email: monitoringForm.email,
+                      p_monitoring_portal_url: portalUrl,
+                    });
+                    if (monitoringSaveError) throw monitoringSaveError;
                     const sensitive = {};
                     if (monitoringForm.password) sensitive.monitoringPassword = monitoringForm.password;
                     if (monitoringForm.ssnLast4) sensitive.ssnLast4 = monitoringForm.ssnLast4;
@@ -313,6 +316,7 @@ export default function DocumentsTab({
                   ['Smart Credit', 'https://www.smartcredit.com'],
                   ['IdentityIQ', 'https://www.identityiq.com'],
                   ['My Free Score Now', 'https://www.myfreescorenow.com'],
+                  ['MyFICO', 'https://www.myfico.com'],
                 ].map(([name, url]) => (
                   <a key={name} href={url} target="_blank" rel="noopener noreferrer"
                     className="text-[11px] px-3 py-1.5 border border-gray-200 rounded-md text-slate-900 font-medium hover:bg-gray-50 transition-colors">

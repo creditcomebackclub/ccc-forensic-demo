@@ -10,18 +10,24 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { MASTER_SYSTEM_PROMPT } from '../../src/prompts/masterPrompt.js';
-import { AUDIT_SCHEMA, BUREAU_SCHEMA, ACCOUNT_ENRICHMENT_SCHEMA } from '../../src/utils/auditSchemas.js';
+import { ACCOUNT_ENRICHMENT_SCHEMA } from '../../src/utils/auditSchemas.js';
+import { COMBINED_CREDIT_EXTRACTION_SCHEMA, CREDIT_BUREAU_EXTRACTION_SCHEMA } from '../../src/utils/creditExtractionSchemas.js';
+import { CREDIT_EXTRACTION_SYSTEM_PROMPT, bureauExtractionPrompt, combinedExtractionPrompt } from '../../src/prompts/extractionPrompts.js';
+import {
+  buildDeterministicAudit,
+  coerceBureauExtraction,
+  mergeBureauExtractions,
+  mergeCombinedExtractions,
+} from '../../src/utils/deterministicAudit.js';
 import { resolveAuditIdentities } from '../../src/utils/accountIdentity.js';
 import { normalizeFurnisher } from '../../src/utils/diffEngine.js';
 import { randomUUID } from 'crypto';
 import { requireStaff } from './_requireAuth.cjs';
 import {
-  buildReportContent, combinedAuditPrompt,
-  bureauParsePrompt, mergeAuditPrompt, accountEnrichmentPrompt, todayLong,
+  buildReportContent, accountEnrichmentPrompt, todayLong,
 } from '../../src/utils/auditPrompts.js';
 import { describePdfChunk, splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
-import { mergeAuditParseResults, mergeBureauParseResults } from '../../src/utils/mergePdfAuditChunks.js';
+import { logClaudeCall, preflightTokenCount, usageFromMessage } from './_claudeRuntime.mjs';
 
 // This is deliberately a pinned application choice, not an environment
 // fallback. A future model change must be reviewed in code and will be
@@ -35,7 +41,7 @@ const ANTHROPIC_OPTIONS = {
   maxRetries: 2,
   timeout: 8 * 60 * 1000,
 };
-const SYSTEM = [{ type: 'text', text: MASTER_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
+const SYSTEM = [{ type: 'text', text: CREDIT_EXTRACTION_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
 // Sonnet 5 intro pricing (per MTok) — valid through 2026-08-31
 const PRICE = { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 };
@@ -127,6 +133,14 @@ function textFromVerifiedModelMessage(message, operation) {
   const text = (message.content || []).filter((block) => block.type === 'text').map((block) => block.text).join('');
   if (!text.trim()) throw new Error(`${operation} returned no text output`);
   return text;
+}
+
+// Page-count splitting (pdfChunksForReport) only guards Anthropic's input
+// page cap. A report can sit well under that cap and still overflow the
+// output token budget purely from tradeline/violation density, so a single
+// unsplit call can hit this even though nothing was ever "too many pages."
+function isOutputLimitError(err) {
+  return err instanceof Error && /hit the output limit/i.test(err.message);
 }
 
 function normalizedMediaType(value) {
@@ -365,7 +379,7 @@ export const handler = async (event) => {
   // service-role mutation or model call.
   const { data: queuedJob, error: queuedJobErr } = await db
     .from('audit_jobs')
-    .select('id, mode, files')
+    .select('id, mode, files, selected_client_id')
     .eq('id', jobId)
     .eq('user_id', caller.userId)
     .eq('status', 'queued')
@@ -423,16 +437,18 @@ export const handler = async (event) => {
   const progress = (stage, pct) => (tokens) =>
     updateJob({ stage, pct, tokens: tokens || 0 }, tokens === 0);
 
-  async function claudeCall(userContent, { maxTokens = 64000, schema = null, onTokens = null } = {}) {
+  async function claudeCall(userContent, { maxTokens = 64000, schema = null, onTokens = null, effort = AUDIT_EFFORT, operation = 'audit.analysis' } = {}) {
     const params = {
       model: AUDIT_MODEL,
       max_tokens: maxTokens,
       system: SYSTEM,
       messages: [{ role: 'user', content: userContent }],
-      output_config: { effort: AUDIT_EFFORT },
+      output_config: { effort },
     };
     if (schema) params.output_config.format = { type: 'json_schema', schema };
+    await preflightTokenCount(anthropic, params, { operation: 'Credit report analysis' });
 
+    const startedAt = new Date();
     const stream = anthropic.messages.stream(params);
     if (onTokens) {
       let chars = 0;
@@ -448,10 +464,16 @@ export const handler = async (event) => {
     const msg = await stream.finalMessage();
     const text = textFromVerifiedModelMessage(msg, 'Audit analysis');
 
-    const u = msg.usage || {};
+    const u = usageFromMessage(msg);
+    await logClaudeCall(db, {
+      userId: caller.userId, operation, entityType: 'audit_job', entityId: jobId,
+      model: AUDIT_MODEL, effort, promptVersion: 'audit-v2', attempt: usageLog.length + 1,
+      status: 'completed', startedAt, requestId: msg._request_id, usage: u,
+      stopReason: msg.stop_reason,
+    });
     usageLog.push({
       model: msg.model,
-      effort: AUDIT_EFFORT,
+      effort,
       input: u.input_tokens || 0,
       output: u.output_tokens || 0,
       cache_read: u.cache_read_input_tokens || 0,
@@ -499,53 +521,83 @@ export const handler = async (event) => {
     return splitPdfByPages(pdfBytes);
   }
 
-  async function parseBureauReportChunked({ report, bureauName, stage, pct, today }) {
-    const chunks = await pdfChunksForReport(report);
-    if (!chunks || chunks.length <= 1) {
-      const raw = await claudeCall(
-        buildReportContent(report.base64, bureauParsePrompt(today, bureauName), report.mediaType),
-        { schema: BUREAU_SCHEMA, onTokens: progress(stage, pct) },
-      );
-      return assertBureauOutput(parseAuditJSON(raw), bureauName);
-    }
-
+  async function runBureauChunks(chunks, { bureauKey, bureauName, stage, pct }) {
     console.log(`[audit] ${bureauName} PDF is ${chunks[0].totalPages} pages — splitting into ${chunks.length} parts`);
     const parts = [];
     for (const chunk of chunks) {
       const chunkStage = `${stage} (${describePdfChunk(chunk)})`;
       await progress(chunkStage, pct)(0);
-      const prompt = bureauParsePrompt(today, bureauName, chunk);
+      const prompt = bureauExtractionPrompt(bureauKey, chunk);
       const raw = await claudeCall(
         buildReportContent(chunk.base64, prompt, 'application/pdf'),
-        { schema: BUREAU_SCHEMA, onTokens: progress(chunkStage, pct) },
+        { schema: CREDIT_BUREAU_EXTRACTION_SCHEMA, onTokens: progress(chunkStage, pct), operation: 'audit.report_extraction' },
       );
-      parts.push(assertBureauOutput(parseAuditJSON(raw), bureauName));
+      parts.push(assertBureauOutput(coerceBureauExtraction(parseAuditJSON(raw), bureauKey), bureauName));
     }
-    return assertBureauOutput(mergeBureauParseResults(parts, bureauName), bureauName);
+    return assertBureauOutput(mergeBureauExtractions(parts, bureauKey), bureauName);
   }
 
-  async function parseFullAuditChunked({ report, promptForChunk, stage }) {
+  async function parseBureauReportChunked({ report, bureauName, stage, pct, today }) {
+    const bureauKey = normalizeBureauKey(bureauName);
     const chunks = await pdfChunksForReport(report);
-    if (!chunks || chunks.length <= 1) {
-      const raw = await claudeCall(
-        buildReportContent(report.base64, promptForChunk(null), report.mediaType),
-        { schema: AUDIT_SCHEMA, onTokens: progress(stage, null) },
-      );
-      return assertAuditOutput(parseAuditJSON(raw));
+    if (chunks && chunks.length > 1) {
+      return runBureauChunks(chunks, { bureauKey, bureauName, stage, pct });
     }
 
+    try {
+      const raw = await claudeCall(
+        buildReportContent(report.base64, bureauExtractionPrompt(bureauKey), report.mediaType),
+        { schema: CREDIT_BUREAU_EXTRACTION_SCHEMA, onTokens: progress(stage, pct), operation: 'audit.report_extraction' },
+      );
+      return assertBureauOutput(coerceBureauExtraction(parseAuditJSON(raw), bureauKey), bureauName);
+    } catch (err) {
+      const totalPages = chunks?.[0]?.totalPages || 0;
+      if (!isOutputLimitError(err) || totalPages < 2) throw err;
+      console.warn(`[audit] ${bureauName} hit the output limit at ${totalPages} pages (under the page-split threshold) — forcing a split and retrying`);
+      const forcedChunks = await splitPdfByPages(report.bytes || Buffer.from(report.base64, 'base64'), {
+        maxPages: Math.max(1, Math.ceil(totalPages / 2)),
+      });
+      return runBureauChunks(forcedChunks, { bureauKey, bureauName, stage, pct });
+    }
+  }
+
+  async function runCombinedChunks(chunks, { stage }) {
     console.log(`[audit] report PDF is ${chunks[0].totalPages} pages — splitting into ${chunks.length} parts`);
     const parts = [];
     for (const chunk of chunks) {
       const chunkStage = `${stage} (${describePdfChunk(chunk)})`;
       await progress(chunkStage, null)(0);
-      const raw = await claudeCall(
-        buildReportContent(chunk.base64, promptForChunk(chunk), 'application/pdf'),
-        { schema: AUDIT_SCHEMA, onTokens: progress(chunkStage, null) },
-      );
-      parts.push(assertAuditOutput(parseAuditJSON(raw), chunkStage));
+      const raw = await claudeCall(buildReportContent(chunk.base64, combinedExtractionPrompt(chunk), 'application/pdf'), {
+        schema: COMBINED_CREDIT_EXTRACTION_SCHEMA,
+        onTokens: progress(chunkStage, null),
+        operation: 'audit.report_extraction',
+      });
+      parts.push(parseAuditJSON(raw));
     }
-    return assertAuditOutput(mergeAuditParseResults(parts));
+    return mergeCombinedExtractions(parts);
+  }
+
+  async function parseCombinedExtractionChunked({ report, stage }) {
+    const chunks = await pdfChunksForReport(report);
+    if (chunks && chunks.length > 1) {
+      return runCombinedChunks(chunks, { stage });
+    }
+
+    try {
+      const raw = await claudeCall(
+        buildReportContent(report.base64, combinedExtractionPrompt(null), report.mediaType),
+        { schema: COMBINED_CREDIT_EXTRACTION_SCHEMA, onTokens: progress(stage, null), operation: 'audit.report_extraction' },
+      );
+      return mergeCombinedExtractions([parseAuditJSON(raw)]);
+    } catch (err) {
+      const totalPages = chunks?.[0]?.totalPages || 0;
+      if (!isOutputLimitError(err) || totalPages < 2) throw err;
+      console.warn(`[audit] combined report hit the output limit at ${totalPages} pages (under the page-split threshold) — forcing a split and retrying`);
+      const forcedChunks = await splitPdfByPages(report.bytes || Buffer.from(report.base64, 'base64'), {
+        maxPages: Math.max(1, Math.ceil(totalPages / 2)),
+      });
+      return runCombinedChunks(forcedChunks, { stage });
+    }
   }
 
   async function resolveClientForParse(bureauParse) {
@@ -668,7 +720,7 @@ export const handler = async (event) => {
     for (const row of data || []) {
       const key = normalizeBureauKey(row.bureau);
       if (!key || byBureau[key]) continue;
-      byBureau[key] = assertBureauOutput(row.parse, bureauDisplayName(key));
+      byBureau[key] = assertBureauOutput(coerceBureauExtraction(row.parse, key), bureauDisplayName(key));
     }
     for (const key of ['equifax', 'experian', 'transunion']) {
       if (!byBureau[key]) {
@@ -681,22 +733,28 @@ export const handler = async (event) => {
   async function finalizeUnifiedAudit(audit, { skipEnrichment = false, files = [], today } = {}) {
     if (!audit || !audit.client) throw new Error('Audit produced no client data.');
 
-    const dofdSuppressions = applyDofdDirectionalGuard(audit.accounts);
+    const legacyEvaluation = audit.evaluationMode !== 'deterministic';
+    const dofdSuppressions = legacyEvaluation ? applyDofdDirectionalGuard(audit.accounts) : [];
     if (dofdSuppressions.length) {
       console.warn('[dofd-guard] suppressed adverse-direction DOFD violation(s):', JSON.stringify(dofdSuppressions));
       audit.dofdGuardSuppressions = dofdSuppressions;
       audit.totalViolations = Math.max(0, (audit.totalViolations || 0) - dofdSuppressions.length);
     }
-    const balanceSuppressions = applyCollectionBalanceGuard(audit.accounts);
+    const balanceSuppressions = legacyEvaluation ? applyCollectionBalanceGuard(audit.accounts) : [];
     if (balanceSuppressions.length) {
       console.warn('[balance-guard] suppressed collection-account balance==past-due violation(s):', JSON.stringify(balanceSuppressions));
       audit.collectionBalanceGuardSuppressions = balanceSuppressions;
       audit.totalViolations = Math.max(0, (audit.totalViolations || 0) - balanceSuppressions.length);
     }
 
+    audit.totalViolations = (audit.accounts || []).reduce((sum, account) => sum + (account.violations || []).length, 0);
+    audit.accountsTargeted = (audit.accounts || []).filter((account) => (account.violations || []).length > 0).length;
     audit.violationsByType = computeViolationsByType(audit.accounts);
 
-    if (!skipEnrichment) {
+    // Deterministic audits already carry extraction-backed field values. The
+    // legacy enrichment call remains available only for historical audit
+    // objects that predate the extraction schema.
+    if (!skipEnrichment && audit.evaluationMode !== 'deterministic') {
       await progress('Enriching account details', 90)(0);
       try {
         const enrichmentContent = [];
@@ -718,7 +776,11 @@ export const handler = async (event) => {
         enrichmentContent.push({ type: 'text', text: accountEnrichmentPrompt(today, audit.accounts) });
 
         const enrichRaw = await claudeCall(enrichmentContent, {
-          schema: ACCOUNT_ENRICHMENT_SCHEMA, maxTokens: 4000, onTokens: progress('Enriching account details', 90),
+          schema: ACCOUNT_ENRICHMENT_SCHEMA,
+          maxTokens: 8000,
+          effort: 'medium',
+          operation: 'audit.account_enrichment',
+          onTokens: progress('Enriching account details', 90),
         });
         const enrichment = assertEnrichmentOutput(parseAuditJSON(enrichRaw));
         const byId = new Map((enrichment?.accounts || []).map((e) => [e.id, e]));
@@ -1081,41 +1143,32 @@ export const handler = async (event) => {
     } else if (job.mode === 'merge') {
       await progress('Loading staged bureau parses', 10)(0);
       const parsed = await loadBureauParsesForMerge();
-      await progress('Cross-bureau reconciliation & ranking', 40)(0);
-      const mergeRaw = await claudeCall(
-        [{ type: 'text', text: mergeAuditPrompt(t, parsed.equifax, parsed.experian, parsed.transunion) }],
-        { schema: AUDIT_SCHEMA, onTokens: progress('Cross-bureau reconciliation & ranking', 40) },
-      );
-      audit = assertAuditOutput(parseAuditJSON(mergeRaw));
-      if (audit && audit.client) {
-        audit.client.scores = audit.client.scores || {};
-        if (parsed.equifax?.client?.score) audit.client.scores.equifax = parsed.equifax.client.score;
-        if (parsed.experian?.client?.score) audit.client.scores.experian = parsed.experian.client.score;
-        if (parsed.transunion?.client?.score) audit.client.scores.transunion = parsed.transunion.client.score;
-      }
+      await progress('Applying deterministic cross-bureau rules', 40)(0);
+      audit = assertAuditOutput(buildDeterministicAudit(
+        [parsed.equifax, parsed.experian, parsed.transunion],
+        { reportDate: todayISO() },
+      ));
       audit = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files: [], today: t });
       jobResult = audit;
     } else if (job.mode === 'combined') {
       const f = files[0];
       if (!f) throw new Error('No report file attached to this job.');
-      const stage = 'Analyzing 3-bureau report';
+      const stage = 'Extracting 3-bureau report';
       await progress(stage, null)(0);
       const report = await downloadReport(f);
-      audit = await parseFullAuditChunked({
-        report,
-        stage,
-        promptForChunk: (chunk) => combinedAuditPrompt(t, chunk),
-      });
-      audit = await finalizeUnifiedAudit(audit, { files, today: t });
+      const extracted = await parseCombinedExtractionChunked({ report, stage });
+      await progress('Applying deterministic report rules', 85)(0);
+      audit = assertAuditOutput(buildDeterministicAudit(extracted, { reportDate: todayISO() }));
+      audit = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files, today: t });
       jobResult = audit;
     } else if (job.mode === 'individual') {
       const byBureau = {};
       for (const f of files) byBureau[(f.bureau || '').toLowerCase()] = f;
       const parsed = {};
       const stages = [
-        ['equifax', 'Analyzing Equifax report', 5],
-        ['experian', 'Analyzing Experian report', 30],
-        ['transunion', 'Analyzing TransUnion report', 55],
+        ['equifax', 'Extracting Equifax report', 5],
+        ['experian', 'Extracting Experian report', 30],
+        ['transunion', 'Extracting TransUnion report', 55],
       ];
       for (const [key, stage, pct] of stages) {
         const f = byBureau[key];
@@ -1127,19 +1180,12 @@ export const handler = async (event) => {
           report, bureauName, stage, pct, today: t,
         });
       }
-      await progress('Cross-bureau reconciliation & ranking', 80)(0);
-      const mergeRaw = await claudeCall(
-        [{ type: 'text', text: mergeAuditPrompt(t, parsed.equifax, parsed.experian, parsed.transunion) }],
-        { schema: AUDIT_SCHEMA, onTokens: progress('Cross-bureau reconciliation & ranking', 80) },
-      );
-      audit = assertAuditOutput(parseAuditJSON(mergeRaw));
-      if (audit && audit.client) {
-        audit.client.scores = audit.client.scores || {};
-        if (parsed.equifax?.client?.score) audit.client.scores.equifax = parsed.equifax.client.score;
-        if (parsed.experian?.client?.score) audit.client.scores.experian = parsed.experian.client.score;
-        if (parsed.transunion?.client?.score) audit.client.scores.transunion = parsed.transunion.client.score;
-      }
-      audit = await finalizeUnifiedAudit(audit, { files, today: t });
+      await progress('Applying deterministic cross-bureau rules', 80)(0);
+      audit = assertAuditOutput(buildDeterministicAudit(
+        [parsed.equifax, parsed.experian, parsed.transunion],
+        { reportDate: todayISO() },
+      ));
+      audit = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files, today: t });
       jobResult = audit;
     } else {
       throw new Error('Unknown audit mode: ' + job.mode);
@@ -1163,6 +1209,11 @@ export const handler = async (event) => {
     }, true);
   } catch (e) {
     console.error('audit-run failed:', e);
+    await logClaudeCall(db, {
+      userId: caller.userId, operation: 'audit.pipeline', entityType: 'audit_job', entityId: jobId,
+      model: AUDIT_MODEL, effort: AUDIT_EFFORT, promptVersion: 'audit-v2', status: 'error',
+      startedAt: new Date(), errorType: e.name, errorMessage: e.message,
+    });
     try {
       await updateJob({
         status: 'error', error: e.message || 'Audit failed',

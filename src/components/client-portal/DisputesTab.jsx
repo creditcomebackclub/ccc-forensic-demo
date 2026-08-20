@@ -1,3 +1,4 @@
+import { buildAccountResults } from '../../utils/portalPlan.js';
 import React, { useState } from 'react';
 import { Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -5,10 +6,9 @@ import { getReturnReceiptUrl } from '../../utils/api';
 import {
   clientCampaignDetail,
   clientCampaignLabel,
-  isBureauCampaign,
   isCccDisputeCampaign,
-  isFileUpdateCampaign,
 } from '../../utils/clientCampaignCopy';
+import { buildPortalCampaignJourneys, isPortalBureauDispute, isPortalFileUpdate } from '../../utils/portalCampaigns';
 
 const RESPONSE_WINDOW_DAYS = 30;
 const BUREAU_RESPONSE_WINDOW_DAYS = 45;
@@ -20,9 +20,9 @@ function daysBetween(aIso, bIso) {
 }
 function responseCountdown(l) {
   if (l.response_outcome === 'deleted' || l.response_outcome === 'received' || l.response_outcome === 'no_response') return null;
-  const isPhase3 = isBureauCampaign(l.phase);
+  const isFileUpdate = isPortalFileUpdate(l);
+  const isPhase3 = isPortalBureauDispute(l);
   const isCccDispute = isCccDisputeCampaign(l.phase);
-  const isFileUpdate = isFileUpdateCampaign(l.phase);
   const windowDays = isPhase3 && !isCccDispute ? BUREAU_RESPONSE_WINDOW_DAYS : RESPONSE_WINDOW_DAYS;
   const usesEstimatedFirstClassClock = isCccDispute
     && l.mail_service === 'usps_first_class'
@@ -36,20 +36,17 @@ function responseCountdown(l) {
     : usesEstimatedFirstClassClock ? l.expected_delivery_date : l.mailed_date;
   if (!clockStart) return null;
   const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = windowDays - elapsed;
+  const remaining = l.response_due_at
+    ? daysBetween(todayISO(), String(l.response_due_at).slice(0, 10))
+    : windowDays - elapsed;
+
   if (usesEstimatedFirstClassClock && elapsed < 0) {
-    return {
-      label: 'USPS First Class — estimated delivery ' + new Date(clockStart + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      tone: 'text-gray-600 bg-gray-50 border-gray-200',
-    };
+    return { label: 'USPS First Class — estimated delivery ' + new Date(clockStart + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), tone: 'text-gray-600 bg-gray-50 border-gray-200' };
   }
   
   if (remaining > 0) {
     if (isCccDispute) {
-      return {
-        label: `CCC round review: day ${elapsed} of ${windowDays}${usesEstimatedFirstClassClock ? ' (estimated-delivery basis)' : ''}`,
-        tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200',
-      };
+      return { label: `CCC round review: day ${elapsed} of ${windowDays}${usesEstimatedFirstClassClock ? ' (estimated-delivery basis)' : ''}`, tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
     }
     if (isPhase3) {
       return { label: 'Day ' + elapsed + ' of ' + windowDays + ' — Bureau investigation in progress', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
@@ -69,21 +66,23 @@ function responseCountdown(l) {
   if (isFileUpdate) {
     return { label: 'File update window closed — staff review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
   }
-  return { label: 'Response window closed — ready for escalation', tone: 'text-red-700 bg-red-50 border-red-200' };
+  return { label: 'Response window closed — staff review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
 }
 
 function responseBadge(l) {
-  const isBureau = isBureauCampaign(l.phase);
+  const isFileUpdate = isPortalFileUpdate(l);
+  const isBureau = isPortalBureauDispute(l);
   const isCccDispute = isCccDisputeCampaign(l.phase);
-  const isFileUpdate = isFileUpdateCampaign(l.phase);
   if (l.response_outcome === 'deleted') return { label: '🏆 Deleted', tone: 'bg-green-50 text-green-700 border-green-200' };
+  if (l.round_review_status === 'resolved') return { label: 'Review Complete', tone: 'bg-green-50 text-green-700 border-green-200' };
+  if (l.round_review_status === 'follow_up') return { label: 'Next Round Approved', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
+  if (l.round_review_status === 'needs_documents') return { label: 'Documents Requested', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (l.round_review_status === 'escalated') return { label: 'Escalation Review Approved', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   if (l.response_outcome === 'no_response') {
-    const closedLabel = isCccDispute
-      ? 'CCC Round Ready for Review'
-      : isBureau ? 'Bureau window closed' : isFileUpdate ? 'File update window closed' : 'No Response — Escalated';
+    const closedLabel = isCccDispute ? 'CCC Round Ready for Review' : isBureau ? 'Bureau review pending' : isFileUpdate ? 'File update review pending' : 'Staff review pending';
     return { label: closedLabel, tone: 'bg-red-50 text-red-700 border-red-200' };
   }
-  if (l.response_outcome === 'received' && (isBureau || isCccDispute)) {
+  if (l.response_outcome === 'received' && isBureau) {
     if (l.bureau_response_status === 'analyzing') return { label: 'Bureau Response Under Review', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
     if (l.bureau_response_status === 'review_ready') return { label: 'Bureau Review Ready', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
     if (l.bureau_response_status === 'reviewed') return { label: 'Next Step Recorded', tone: 'bg-green-50 text-green-700 border-green-200' };
@@ -96,6 +95,52 @@ function responseBadge(l) {
   if (isCccDispute && l.mailed_date) return { label: 'Mailed First Class', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   if (l.mailed_date) return { label: 'In Transit', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   return { label: 'Pending', tone: 'bg-gray-50 text-gray-500 border-gray-200' };
+}
+
+function CampaignJourneyCards({ campaigns, letters, rounds }) {
+  const journeys = buildPortalCampaignJourneys(campaigns, letters, rounds);
+  if (!journeys.length) return null;
+  return (
+    <div className="space-y-3">
+      {journeys.map((journey) => (
+        <div key={journey.campaign_id} className="rounded-xl border border-slate-200 bg-white/80 p-4 shadow-sm">
+          <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-500">Adaptive campaign · Round {journey.round_number}</div>
+          <div className="mt-3 space-y-3">
+            {[
+              { number: 1, label: 'Credit-file cleanup', detail: journey.cleanup.status, counts: journey.cleanup },
+              { number: 2, label: `Round ${journey.round_number} account disputes`, detail: journey.account.status, counts: journey.account },
+            ].map((step, index) => (
+              <div key={step.number} className="flex gap-3">
+                <div className="flex flex-col items-center">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-amber-400">{step.number}</div>
+                  {index === 0 && <div className="mt-1 h-full min-h-4 w-px bg-slate-200" />}
+                </div>
+                <div className="min-w-0 pb-1">
+                  <div className="text-xs font-bold text-slate-900">{step.label}</div>
+                  <div className="mt-0.5 text-[11px] font-medium text-slate-600">{step.detail}</div>
+                  {step.counts.letterCount > 0 && (
+                    <div className="mt-0.5 text-[10px] text-slate-400">{step.counts.mailedCount}/{step.counts.letterCount} mailed · {step.counts.deliveredCount}/{step.counts.letterCount} delivered</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PacketCoverageSummary({ rows }) {
+  if (!rows?.length) return null;
+  const progress = {
+    resolved: 'Resolved', documents_requested: 'Documents requested',
+    next_step_being_prepared: 'Next step being prepared',
+  };
+  return <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-3">
+    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{rows.length} account{rows.length === 1 ? '' : 's'} in this packet</div>
+    <div className="mt-2 space-y-2">{rows.map((row) => <div key={row.coverage_id} className="text-[11px]"><div className="flex items-center justify-between gap-3"><span className="truncate font-medium text-slate-700">{row.account_label}{row.masked_account ? ` · ${row.masked_account}` : ''}</span><span className="shrink-0 text-slate-500">{progress[row.client_progress] || (row.response_status === 'not_received' ? 'Awaiting response' : 'Under review')}</span></div>{row.documents_requested && row.document_request && <div className="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] leading-relaxed text-amber-900">Requested: {row.document_request}</div>}</div>)}</div>
+  </div>;
 }
 
 function ReturnReceiptButton({ lobId, returnReceiptUrl }) {
@@ -132,6 +177,9 @@ function ReturnReceiptButton({ lobId, returnReceiptUrl }) {
 
 export default function DisputesTab({
   letters,
+  rounds = [],
+  campaigns = [],
+  packetCoverage = [],
   manualUploadUnlocked,
   setManualUploadUnlocked,
   uploadSuccess,
@@ -144,9 +192,33 @@ export default function DisputesTab({
   handleSubmitResponse,
   RESPONSE_ACCEPT
 }) {
+  const coverageByLetter = new Map();
+  for (const row of packetCoverage) coverageByLetter.set(row.letter_id, [...(coverageByLetter.get(row.letter_id) || []), row]);
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
       <h2 className="text-xl font-bold text-slate-900 mb-2">Your Campaign Letters</h2>
+      <CampaignJourneyCards campaigns={campaigns} letters={letters} rounds={rounds} />
+      {rounds.filter((round) => !round.campaign_id && round.status !== 'cancelled').length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {rounds.filter((round) => !round.campaign_id && round.status !== 'cancelled').map((round) => {
+            const target = round.target_type === 'bureau' ? 'Credit Bureau' : 'Direct Furnisher';
+            const status = round.status === 'open'
+              ? (round.reviewed_count > 0 ? 'Staff review in progress' : round.mailed_count === round.letter_count ? 'Response window in progress' : 'Preparation and mailing in progress')
+              : round.final_disposition === 'resolved'
+                ? 'Review complete · account campaign resolved'
+                : round.final_disposition === 'escalate'
+                  ? 'Ready for escalation review · no filing has been submitted'
+                  : 'Review complete · another round may be prepared';
+            return (
+              <div key={round.round_id} className="rounded-xl border border-slate-200 bg-white/80 px-4 py-3 shadow-sm">
+                <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-500">Round {round.round_number} · {target}</div>
+                <div className="mt-1 text-xs font-semibold text-slate-800">{status}</div>
+                <div className="mt-1 text-[10px] text-slate-400">{round.mailed_count}/{round.letter_count} mailed · {round.reviewed_count}/{round.letter_count} reviewed</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {letters.length === 0 ? (
         <div className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-10 text-center shadow-sm">
           <p className="text-sm text-gray-400">No campaign letters yet. Your campaign will begin shortly.</p>
@@ -157,11 +229,25 @@ export default function DisputesTab({
             <div key={l.id} className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
               {(() => {
                 const badge = responseBadge(l);
-                const isFileUpdate = isFileUpdateCampaign(l.phase);
-                const title = isBureauCampaign(l.phase)
-                  ? `Credit Bureau Review (re: ${l.furnisher})`
-                  : isFileUpdate
-                    ? `File update — ${l.furnisher}`
+                const isFileUpdate = isPortalFileUpdate(l);
+                const campaignRound = l.campaign_id
+                  ? campaigns.find((campaign) => campaign.campaign_id === l.campaign_id)?.round_number
+                  : null;
+                const displayRound = Number(l.packet_version || 1) === 2 ? (campaignRound || l.round_number) : l.round_number;
+                const structuredLabel = isFileUpdate
+                  ? 'Step 1 · Credit-file cleanup'
+                  : displayRound
+                  ? `Round ${displayRound} · ${l.target_type === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`
+                  : null;
+                const accountResults = useMemo(
+    () => buildAccountResults({ packetCoverage, letters }),
+    [packetCoverage, letters],
+  );
+
+  const title = isFileUpdate
+                  ? `Credit-file cleanup — ${l.furnisher}`
+                  : isPortalBureauDispute(l)
+                    ? `Credit Bureau Dispute (re: ${l.furnisher})`
                     : l.furnisher;
                 return <>
               <div className="flex items-start justify-between gap-4">
@@ -170,7 +256,7 @@ export default function DisputesTab({
                     {title}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5">
-                    {clientCampaignLabel(l.phase)} · {clientCampaignDetail(l.phase)}{l.type ? ' · Letter type ' + l.type : ''}
+                    {structuredLabel || `${clientCampaignLabel(l.phase)} · ${clientCampaignDetail(l.phase)}`}{l.target_bureau ? ` · ${l.target_bureau.charAt(0).toUpperCase() + l.target_bureau.slice(1)}` : ''}{l.type ? ' · Letter type ' + l.type : ''}
                   </div>
                 </div>
                 <span className={`text-[10px] px-2.5 py-1 rounded-md whitespace-nowrap uppercase tracking-[0.05em] font-semibold border ${badge.tone}`}>
@@ -183,6 +269,7 @@ export default function DisputesTab({
                   {l.summary}
                 </div>
               )}
+              <PacketCoverageSummary rows={coverageByLetter.get(l.id)} />
               
               {(() => {
                 const cd = responseCountdown(l);
@@ -224,7 +311,7 @@ export default function DisputesTab({
                 <div className="mt-4 pt-4 border-t border-gray-50">
                   {uploadSuccess === l.id ? (
                     <div className="text-xs text-green-700 font-bold flex items-center gap-1.5 bg-green-50 p-3 rounded-lg border border-green-200">
-                      <span>✓</span> Response uploaded — Credit Comeback Club has been notified.
+                      <span>✓</span> Response received — your specialist will log each account — Credit Comeback Club has been notified.
                     </div>
                   ) : (
                     <div>

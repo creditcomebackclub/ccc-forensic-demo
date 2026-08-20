@@ -1,5 +1,16 @@
 const https = require('https');
 const crypto = require('crypto');
+const {
+  DOCUMENTS_BUCKET,
+  lpoaSignaturePath,
+  lpoaDocumentPath,
+  buildLpoaSignatureRecord,
+} = require('./_storagePaths.cjs');
+const {
+  loadAttorneySignatureDataUrl,
+  attorneySignatureImgTag,
+} = require('./_attorneySig.cjs');
+const { escapeHtml } = require('./_email.cjs');
 
 function supabaseRequest(path, method, body, url, key) {
   return new Promise((resolve, reject) => {
@@ -31,8 +42,10 @@ function supabaseRequest(path, method, body, url, key) {
 
 // Section 4 (Fee Structure) receives the dynamically computed feeText
 // to ensure the signed record reflects exactly what the client agreed to.
-function buildLpoaHtml(clientName, signerName, signatureData, signedAt, feeText) {
+function buildLpoaHtml(clientName, signerName, signatureData, signedAt, feeText, attorneySigHtml) {
   const dateStr = new Date(signedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const attorneyBlock = attorneySigHtml
+    || '<span style="font-size:14px;font-weight:bold;">Christopher Holland</span>';
   return '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
     + 'body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;margin:0;padding:40px;color:#000;}'
     + '.header{background:#1B2A4A;color:#C9A84C;padding:20px 32px;margin:-40px -40px 32px;}'
@@ -46,7 +59,7 @@ function buildLpoaHtml(clientName, signerName, signatureData, signedAt, feeText)
     + '</style></head><body>'
     + '<div class="header"><h1>Credit Dispute Authorization — Limited Power of Attorney</h1><p>Executed ' + dateStr + '</p></div>'
     + '<h2>1. Parties</h2>'
-    + '<p>This LPOA is between <strong>' + clientName + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO ("Attorney-in-Fact").</p>'
+    + '<p>This LPOA is between <strong>' + escapeHtml(clientName) + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO ("Attorney-in-Fact").</p>'
     + '<h2>2. Grant of Authority</h2>'
     + '<ul><li>Prepare and submit dispute letters to data furnishers under 15 U.S.C. §1681s-2(b)</li>'
     + '<li>Prepare and submit dispute letters to Equifax, Experian, and TransUnion</li>'
@@ -61,10 +74,10 @@ function buildLpoaHtml(clientName, signerName, signatureData, signedAt, feeText)
     + '<h2>6. Duration &amp; Revocation</h2><p>Effective until written revocation or dispute completion. To revoke: email creditcomebackclub@gmail.com with "LPOA REVOCATION — [Your Name]."</p>'
     + '<h2>7. ESIGN Disclosure</h2><p>Executed electronically under the ESIGN Act (15 U.S.C. §7001). Drawn signature, timestamp, and IP recorded as evidence of consent.</p>'
     + '<div class="sig-row">'
-    + '<div class="sig-col"><div class="sig-line">' + (signatureData ? '<img src="' + signatureData + '" style="max-height:56px;max-width:200px;" />' : '') + '</div>'
-    + '<div class="sig-label"><strong>' + signerName + '</strong> — Principal</div>'
+    + '<div class="sig-col"><div class="sig-line">' + (signatureData ? '<img src="' + escapeHtml(signatureData) + '" style="max-height:56px;max-width:200px;" />' : '') + '</div>'
+    + '<div class="sig-label"><strong>' + escapeHtml(signerName) + '</strong> — Principal</div>'
     + '<div class="sig-label">Date: ' + dateStr + '</div></div>'
-    + '<div class="sig-col"><div class="sig-line" style="align-items:center;"><span style="font-size:14px;font-weight:bold;">Christopher Holland</span></div>'
+    + '<div class="sig-col"><div class="sig-line" style="align-items:center;">' + attorneyBlock + '</div>'
     + '<div class="sig-label"><strong>Christopher Holland</strong> — Attorney-in-Fact, Credit Comeback Club</div>'
     + '<div class="sig-label">Date: ' + dateStr + '</div></div>'
     + '</div>'
@@ -99,7 +112,7 @@ exports.handler = async (event) => {
     // 20260725), so this now requires possession of the exact link Chris
     // generated for this specific client, not just knowledge of their name.
     const tokenCheck = await supabaseRequest(
-      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,sign_token,billing_tier',
+      '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&select=id,user_id,sign_token,billing_tier,service_agreement_mode,service_agreement_fee_text,referred_by',
       'GET', null, supabaseUrl, supabaseKey
     );
     const matchedRow = Array.isArray(tokenCheck.body) && tokenCheck.body[0];
@@ -107,14 +120,23 @@ exports.handler = async (event) => {
       return { statusCode: 403, body: JSON.stringify({ error: 'Invalid or expired signing link.' }) };
     }
     const clientId = matchedRow.id;
+    const firmUserId = matchedRow.user_id;
+    if (!firmUserId) {
+      return { statusCode: 409, body: JSON.stringify({ error: 'Client is not linked to a firm account; cannot store LPOA.' }) };
+    }
     
     // Fetch settings to get any admin-overridden tier pricing
     const settingsReq = await supabaseRequest('/rest/v1/settings?id=eq.1&select=pricing', 'GET', null, supabaseUrl, supabaseKey);
     const settings = Array.isArray(settingsReq.body) && settingsReq.body[0] ? settingsReq.body[0] : {};
     
-    // Dynamically compute the exact fee string based on the client's tier
+    // Custom service agreement (Billing tab) is the source of truth when set.
+    // Inquiry hardcoded text applies only when still on tier mode + inquiry type.
+    const customFee = String(matchedRow.service_agreement_fee_text || '').trim();
+    const useCustom = matchedRow.service_agreement_mode === 'custom' && !!customFee;
     let backendFeeText = '';
-    if (resolvedLpoaType === 'inquiry') {
+    if (useCustom) {
+      backendFeeText = customFee;
+    } else if (resolvedLpoaType === 'inquiry') {
       backendFeeText = 'Personal Information / Inquiry Removal Fee: $50 per bureau, one-time. No monthly service fee. No deletion = no charge.';
     } else {
       const DEFAULT_TIER_PRICING = {
@@ -148,15 +170,13 @@ exports.handler = async (event) => {
       }
     }
 
-    // Upload signature PNG to Supabase Storage via base64
+    // Upload signature PNG to private documents bucket under the firm/client tree.
     const base64Data = signatureData.replace(/^data:image\/png;base64,/, '');
     const sigBuffer = Buffer.from(base64Data, 'base64');
+    const signaturePath = lpoaSignaturePath(firmUserId, clientId);
 
-    // Upload via Supabase Storage API. Keyed by clientId, not clientName —
-    // clients.name has no unique constraint, so two same-named clients
-    // would otherwise silently overwrite each other's signature/LPOA.
     const storageRes = await new Promise((resolve, reject) => {
-      const path = '/storage/v1/object/client-docs/standalone/' + clientId + '/signature.png';
+      const path = '/storage/v1/object/' + DOCUMENTS_BUCKET + '/' + signaturePath;
       const u = new URL(supabaseUrl + path);
       const options = {
         hostname: u.hostname, port: 443, path: u.pathname, method: 'POST',
@@ -182,20 +202,32 @@ exports.handler = async (event) => {
       throw new Error('Signature upload failed: ' + storageRes.status + ' ' + storageRes.body);
     }
 
-    // Get public URL
-    const sigUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + clientId + '/signature.png';
-
     // Generate signed LPOA HTML with the verified backend fee text
-    const lpoaHtml = buildLpoaHtml(clientName, signerName || clientName, signatureData, signedAtTime, backendFeeText);
+    let attorneySigHtml = null;
+    try {
+      const dataUrl = await loadAttorneySignatureDataUrl(supabaseUrl, supabaseKey);
+      attorneySigHtml = attorneySignatureImgTag(dataUrl);
+    } catch (e) {
+      console.warn('sign-lpoa: attorney signature missing, using text fallback:', e.message);
+    }
+    const lpoaHtml = buildLpoaHtml(
+      clientName,
+      signerName || clientName,
+      signatureData,
+      signedAtTime,
+      backendFeeText,
+      attorneySigHtml
+    );
     const lpoaBuffer = Buffer.from(lpoaHtml, 'utf8');
     // Hashed from the exact bytes about to be uploaded — this is what lets
     // anyone later confirm the stored lpoa-signed.html hasn't been altered
     // since the moment of signing.
     const documentHash = crypto.createHash('sha256').update(lpoaBuffer).digest('hex');
+    const documentPath = lpoaDocumentPath(firmUserId, clientId);
 
-    // Upload LPOA HTML
+    // Upload LPOA HTML to private documents bucket
     const lpoaUploadRes = await new Promise((resolve, reject) => {
-      const path = '/storage/v1/object/client-docs/standalone/' + clientId + '/lpoa-signed.html';
+      const path = '/storage/v1/object/' + DOCUMENTS_BUCKET + '/' + documentPath;
       const u = new URL(supabaseUrl + path);
       const options = {
         hostname: u.hostname, port: 443, path: u.pathname, method: 'POST',
@@ -219,18 +251,29 @@ exports.handler = async (event) => {
       throw new Error('LPOA upload failed: ' + lpoaUploadRes.status + ' ' + lpoaUploadRes.body);
     }
 
-    const lpoaUrl = supabaseUrl + '/storage/v1/object/public/client-docs/standalone/' + clientId + '/lpoa-signed.html';
+    // Create a short-lived signed URL for the response payload / audit log only.
+    // Durable identity is storage paths on clients.lpoa_signature_data.
+    const signedLpoa = await supabaseRequest(
+      '/storage/v1/object/sign/' + DOCUMENTS_BUCKET + '/' + documentPath,
+      'POST',
+      { expiresIn: 60 * 60 * 24 * 7 },
+      supabaseUrl,
+      supabaseKey
+    );
+    const lpoaUrl = signedLpoa.body && signedLpoa.body.signedURL
+      ? (supabaseUrl + '/storage/v1' + signedLpoa.body.signedURL)
+      : null;
 
-    // Update clients table
-    const signatureRecord = {
-      signatureUrl: sigUrl,
-      lpoaUrl,
+    const signatureRecord = buildLpoaSignatureRecord({
+      firmUserId,
+      clientId,
       signedAt: signedAtTime,
       ip,
       method: 'Canvas drawn signature — standalone LPOA signing page',
       lpoaType: resolvedLpoaType,
       documentHash,
-    };
+      lpoaUrl,
+    });
 
     const patchRes = await supabaseRequest(
       '/rest/v1/clients?name=eq.' + encodeURIComponent(clientName) + '&sign_token=eq.' + encodeURIComponent(token),
@@ -272,7 +315,51 @@ exports.handler = async (event) => {
       console.warn('lpoa_audit_log insert failed (non-fatal):', e.message);
     }
 
-    return { statusCode: 200, body: JSON.stringify({ signed: true, sigUrl, lpoaUrl }) };
+    // Also record storage paths on client_profiles when linked
+    try {
+      await supabaseRequest(
+        '/rest/v1/client_profiles?client_id=eq.' + encodeURIComponent(clientId),
+        'PATCH',
+        {
+          lpoa_storage_bucket: DOCUMENTS_BUCKET,
+          lpoa_storage_path: documentPath,
+          lpoa_url: lpoaUrl,
+        },
+        supabaseUrl,
+        supabaseKey
+      );
+    } catch (e) {
+      console.warn('client_profiles LPOA path update failed (non-fatal):', e.message);
+    }
+
+    // Partner milestone when LPOA is signed outside portal onboarding.
+    if (matchedRow.referred_by) {
+      try {
+        const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+        const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer ' + supabaseKey,
+          },
+          body: JSON.stringify({
+            event: 'enrolled',
+            clientId,
+            affiliateId: matchedRow.referred_by,
+          }),
+        });
+        if (!partnerRes.ok) console.warn('sign-lpoa: affiliate enrolled email failed', await partnerRes.text());
+      } catch (e) {
+        console.warn('sign-lpoa: affiliate enrolled email error', e.message);
+      }
+    }
+
+    return { statusCode: 200, body: JSON.stringify({
+      signed: true,
+      signaturePath,
+      lpoaPath: documentPath,
+      lpoaUrl,
+    }) };
   } catch (e) {
     console.error('sign-lpoa error:', e);
     return { statusCode: 500, body: JSON.stringify({ error: e.message || 'Signing failed' }) };

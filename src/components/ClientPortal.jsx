@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../utils/supabase';
+import { DOCUMENTS_BUCKET } from '../utils/storagePaths';
 import { inferMediaType, isAnalyzable, transcodeImageToJpeg, validateBatch, RESPONSE_ACCEPT } from '../utils/responseFiles';
 import { uploadResponseEvidence } from '../utils/responseEvidence';
 import { LogOut } from 'lucide-react';
@@ -20,20 +21,24 @@ import {
   isAccountDisputeCampaign,
   isBureauCampaign,
   isCccDisputeCampaign,
-  isFileUpdateCampaign,
 } from '../utils/clientCampaignCopy';
+import { notifyStaff } from '../utils/notifyStaff';
+import { isPortalBureauDispute, isPortalFileUpdate } from '../utils/portalCampaigns';
 
 export default function ClientPortal({ session, onSignOut }) {
   const [profile, setProfile] = useState(null);
   const [clientMeta, setClientMeta] = useState(null);
   const [letters, setLetters] = useState([]);
+  const [rounds, setRounds] = useState([]);
+  const [campaigns, setCampaigns] = useState([]);
+  const [packetCoverage, setPacketCoverage] = useState([]);
   const [loading, setLoading] = useState(true);
   const [auditHistory, setAuditHistory] = useState([]);
   const [progressUpdates, setProgressUpdates] = useState([]);
   const [recoveryBlueprints, setRecoveryBlueprints] = useState([]);
   const [activeTab, setActiveTab] = useState('overview');
   const [uploadingLetter, setUploadingLetter] = useState(null);
-  const [clientDocs, setClientDocs] = useState({ id: null, address: null, other: [] });
+  const [clientDocs, setClientDocs] = useState({ id: null, address: null, lpoa: null, other: [] });
   const [uploadingDoc, setUploadingDoc] = useState(null);
   
   const [monitoringForm, setMonitoringForm] = useState({ service: '', email: '', password: '', ssnLast4: '' });
@@ -74,30 +79,50 @@ export default function ClientPortal({ session, onSignOut }) {
           ? supabase.from('clients').select('*').eq('id', cp.client_id).limit(1)
           : supabase.from('clients').select('*').eq('name', cp.full_name).limit(1);
         const documentsQuery = cp.client_id
-          ? supabase.from('documents').select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_id', cp.client_id)
-          : supabase.from('documents').select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_name', cp.full_name);
+          ? supabase.from(DOCUMENTS_BUCKET).select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_id', cp.client_id)
+          : supabase.from(DOCUMENTS_BUCKET).select('id,doc_type,label,file_name,storage_path,uploaded_at').eq('client_name', cp.full_name);
         // The client portal needs campaign state, not staff-only model output
         // or response-review notes. Keep the browser query intentionally
         // narrow; raw response evidence remains private to the staff UI.
-        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,mail_service,expected_delivery_date,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status';
+        const portalLetterColumns = 'id,client_id,client_name,furnisher,account_id,phase,type,saved_at,date,summary,mailed_date,response_outcome,response_date,lob_id,tracking_number,tracking_status,delivered_at,mail_service,expected_delivery_date,return_receipt_url,bureau_response_status,bureau_response_received_at,bureau_response_analyzed_at,bureau_review_status,round_id,round_number,letter_kind,target_type,target_bureau,response_due_at,response_window_extension_days,round_review_status,campaign_id,packet_version';
         const lettersQuery = cp.client_id
           ? supabase.from('letters').select(portalLetterColumns).eq('client_id', cp.client_id).order('saved_at', { ascending: true })
           : supabase.from('letters').select(portalLetterColumns).eq('client_name', cp.full_name).order('saved_at', { ascending: true });
+        const roundsQuery = cp.client_id
+          ? supabase.from('client_dispute_round_status').select('round_id,client_id,client_account_id,round_number,target_type,status,final_disposition,opened_at,closed_at,cancelled_at,letter_count,mailed_count,reviewed_count,campaign_id').eq('client_id', cp.client_id).order('round_number', { ascending: false })
+          : Promise.resolve({ data: [], error: null });
+        const campaignsQuery = cp.client_id
+          ? supabase.from('client_campaign_status').select('campaign_id,client_id,round_number,stage,opened_at,closed_at,selected_cleanup_count,selected_account_count').eq('client_id', cp.client_id).order('round_number', { ascending: false })
+          : Promise.resolve({ data: [], error: null });
+        const packetCoverageQuery = cp.client_id
+          ? supabase.from('client_packet_account_status').select('*').eq('client_id', cp.client_id).order('coverage_order')
+          : Promise.resolve({ data: [], error: null });
         const auditsQuery = cp.client_id
           ? supabase.from('audits').select('audit,saved_at').eq('client_id', cp.client_id).order('saved_at', { ascending: false }).limit(5)
           : supabase.from('audits').select('audit,saved_at').eq('client_name', cp.full_name).order('saved_at', { ascending: false }).limit(5);
+        // Only staff-sent updates (Progress Update Studio). Drafts stay
+        // invisible until Send. emailed_at covers rows sent before status existed.
         const progressQuery = cp.client_id
-          ? supabase.from('progress_updates').select('*').eq('client_id', cp.client_id).order('to_report_date', { ascending: false })
-          : supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).order('to_report_date', { ascending: false });
+          ? supabase.from('progress_updates').select('*').eq('client_id', cp.client_id).or('status.eq.sent,emailed_at.not.is.null').order('to_report_date', { ascending: false })
+          : supabase.from('progress_updates').select('*').eq('client_name', cp.full_name).or('status.eq.sent,emailed_at.not.is.null').order('to_report_date', { ascending: false });
 
-        const [lettersRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
+        const [lettersRes, roundsRes, campaignsRes, packetCoverageRes, metaRes, auditsRes, progressRes, docsRes] = await Promise.all([
           lettersQuery,
+          roundsQuery,
+          campaignsQuery,
+          packetCoverageQuery,
           clientsQuery,
           auditsQuery,
           progressQuery,
           documentsQuery,
         ]);
         setLetters(lettersRes.data || []);
+        if (roundsRes.error) console.warn('Client round status unavailable:', roundsRes.error.message);
+        else setRounds(roundsRes.data || []);
+        if (campaignsRes.error) console.warn('Client campaign status unavailable:', campaignsRes.error.message);
+        else setCampaigns(campaignsRes.data || []);
+        if (packetCoverageRes.error) console.warn('Client packet status unavailable:', packetCoverageRes.error.message);
+        else setPacketCoverage(packetCoverageRes.data || []);
         setClientMeta(metaRes.data && metaRes.data.length > 0 ? metaRes.data[0] : null);
         setAuditHistory(auditsRes.data || []);
         setProgressUpdates(progressRes.data || []);
@@ -118,7 +143,8 @@ export default function ClientPortal({ session, onSignOut }) {
           setClientDocs({
             id: docRows.find(d => d.doc_type === 'id') || null,
             address: docRows.find(d => d.doc_type === 'address') || null,
-            other: docRows.filter(d => d.doc_type !== 'id' && d.doc_type !== 'address'),
+            lpoa: docRows.find(d => d.doc_type === 'lpoa' || d.doc_type === 'agreement' || (d.label || '').toLowerCase().includes('lpoa') || (d.label || '').toLowerCase().includes('agreement')) || null,
+            other: docRows.filter(d => d.doc_type !== 'id' && d.doc_type !== 'address' && d.doc_type !== 'lpoa' && d.doc_type !== 'agreement'),
           });
         }
       }
@@ -146,6 +172,7 @@ export default function ClientPortal({ session, onSignOut }) {
       const { uploadDocument } = await import('../utils/documents.js');
       const internalDocType = docType === 'government_id' ? 'id' : 'address';
       await uploadDocument(clientId, profile.full_name, internalDocType, file, adminUserId);
+      notifyStaff('document_upload', { docLabel: docType === 'government_id' ? 'Government ID' : 'Proof of Address' });
       await loadData();
       toast.success('Document uploaded successfully!', { id: toastId });
     } catch(e) {
@@ -164,6 +191,7 @@ export default function ClientPortal({ session, onSignOut }) {
       if (!adminUserId || !clientId) throw new Error('Could not identify client record.');
       const { uploadArbitraryDocument } = await import('../utils/documents.js');
       await uploadArbitraryDocument(clientId, profile.full_name, label, file, adminUserId);
+      notifyStaff('document_upload', { docLabel: label || 'Other document' });
       await loadData();
       toast.success('Document uploaded successfully!', { id: toastId });
     } catch (e) {
@@ -224,6 +252,9 @@ export default function ClientPortal({ session, onSignOut }) {
       // portal never receives a public file URL or general letter update
       // permission.
       const evidence = await uploadResponseEvidence(letter.id, files);
+      notifyStaff('document_upload', {
+        docLabel: 'Dispute response' + (letter.furnisher ? ' — ' + letter.furnisher : ''),
+      });
 
       setStagedFiles(prev => ({ ...prev, [letter.id]: [] }));
       setUploadSuccess(letter.id);
@@ -239,7 +270,51 @@ export default function ClientPortal({ session, onSignOut }) {
     }
   };
 
-  if (loading) return (
+
+  const viewSignedAgreement = async () => {
+    try {
+      const token = session?.access_token;
+      if (!token) {
+        toast.error('Your session expired. Please sign in again.');
+        return;
+      }
+      const res = await fetch('/.netlify/functions/portal-agreement-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: '{}',
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out.error || 'Could not open signed agreement.');
+      if (!out.signedUrl) throw new Error('No download link returned.');
+      const opened = window.open(out.signedUrl, '_blank', 'noopener,noreferrer');
+      if (!opened) throw new Error('Popup blocked — allow popups for this site and try again.');
+    } catch (e) {
+      console.error('Signed agreement open failed:', e);
+      toast.error(e.message || 'Could not open signed agreement.');
+    }
+  };
+
+
+  const openRecoveryBlueprint = async (blueprint) => {
+    const target = blueprint || recoveryBlueprints?.[0];
+    if (!target?.storage_path) {
+      toast.error('Blueprint file is not available yet.');
+      return;
+    }
+    try {
+      const { data, error } = await supabase.storage
+        .from('recovery-blueprints')
+        .createSignedUrl(target.storage_path, 60 * 10);
+      if (error) throw error;
+      if (!data?.signedUrl) throw new Error('Could not create blueprint link.');
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      console.error('Blueprint open failed:', e);
+      toast.error(e.message || 'Could not open blueprint.');
+    }
+  };
+
+    if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-12 h-12 border-4 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
     </div>
@@ -267,12 +342,14 @@ export default function ClientPortal({ session, onSignOut }) {
   const delivered = letters.filter(l => l.tracking_status === 'Delivered');
   const responded = letters.filter(l => l.response_outcome);
   const deletions = letters.filter(l => l.response_outcome === 'deleted');
+  const totalDisputes = letters.filter((l) => isAccountDisputeCampaign(l) && !isPortalFileUpdate(l)).length;
+  const fileUpdateCount = letters.filter((l) => isPortalFileUpdate(l)).length;
   const isVip = clientMeta && clientMeta.is_vip;
 
   // Onboarding timeline (Overview tab) — stage from earliest account-dispute mail.
   // File-update letters (PI / inquiries) do not start the dispute journey clock.
   const phase1Mailed = letters
-    .filter(l => isAccountDisputeCampaign(l.phase) && l.mailed_date)
+    .filter(l => !isPortalFileUpdate(l) && (l.target_type || isAccountDisputeCampaign(l.phase)) && l.mailed_date)
     .sort((a, b) => new Date(a.mailed_date) - new Date(b.mailed_date));
   const earliestPhase1MailDate = phase1Mailed[0]?.mailed_date || null;
   const earliestCampaignLetter = phase1Mailed[0] || null;
@@ -281,12 +358,15 @@ export default function ClientPortal({ session, onSignOut }) {
     : isCccDisputeCampaign(earliestCampaignLetter?.phase) && earliestCampaignLetter?.expected_delivery_date
       ? earliestCampaignLetter.expected_delivery_date
       : earliestPhase1MailDate;
-  const accountDisputeLetters = letters.filter(l => isAccountDisputeCampaign(l.phase) || isBureauCampaign(l.phase));
-  const fileUpdateLetters = letters.filter(l => isFileUpdateCampaign(l.phase));
+  const accountDisputeLetters = letters.filter(l => !isPortalFileUpdate(l) && (l.target_type || isAccountDisputeCampaign(l.phase) || isBureauCampaign(l.phase)));
+  const packetLetterIds = new Set(packetCoverage.map((entry) => entry.letter_id));
+  const accountDisputeCount = packetCoverage.length
+    + accountDisputeLetters.filter((letter) => !packetLetterIds.has(letter.id)).length;
+  const fileUpdateLetters = letters.filter(isPortalFileUpdate);
   const windowCloseDate = earliestReviewStart
     ? new Date(new Date(earliestReviewStart + 'T00:00:00').getTime() + 30 * 86400000).toISOString()
     : null;
-  const phase3Mailed = letters.some(l => l.phase?.startsWith('Phase 3') && l.mailed_date);
+  const phase3Mailed = letters.some(l => isPortalBureauDispute(l) && l.mailed_date);
   const firstDeletionDate = deletions
     .map(d => d.response_date)
     .filter(Boolean)
@@ -305,11 +385,14 @@ export default function ClientPortal({ session, onSignOut }) {
 
   const timeline = [];
   letters.forEach(l => {
-    const fileUpdate = isFileUpdateCampaign(l.phase);
+    const fileUpdate = isPortalFileUpdate(l);
     const preparedTitle = fileUpdate
       ? 'File update prepared — ' + l.furnisher
       : 'Dispute letter prepared — ' + l.furnisher;
-    if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: preparedTitle, subtitle: clientCampaignLabel(l.phase), tone: 'blue' });
+    const roundLabel = l.round_number
+      ? `Round ${l.round_number} · ${l.target_type === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`
+      : clientCampaignLabel(l.phase);
+    if (l.saved_at) timeline.push({ date: l.saved_at, icon: '📄', title: preparedTitle, subtitle: roundLabel, tone: 'blue' });
     if (l.mailed_date) {
       const firstClassCcc = isCccDisputeCampaign(l.phase) && l.mail_service === 'usps_first_class';
       timeline.push({
@@ -334,14 +417,14 @@ export default function ClientPortal({ session, onSignOut }) {
     if (l.tracking_status === 'Delivered') {
       const responseWindow = isCccDisputeCampaign(l.phase)
         ? '30-day CCC round review'
-        : isBureauCampaign(l.phase) ? '45-day bureau review' : '30-day response';
+        : fileUpdate ? '30-day file update' : (isPortalBureauDispute(l) ? '45-day bureau review' : '30-day response');
       timeline.push({ date: l.delivered_at || l.mailed_date, icon: '✅', title: 'Delivered — ' + l.furnisher, subtitle: responseWindow + ' response window started', tone: 'green', lobId: l.lob_id, trackingNumber: l.mail_service === 'usps_first_class' ? null : l.tracking_number });
     }
     if (l.tracking_status === 'Returned to Sender') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '↩️', title: 'Returned to Sender — ' + l.furnisher, subtitle: 'Letter returned — address may need to be verified', tone: 'red' });
     if (l.tracking_status === 'Available for Pickup') timeline.push({ date: l.delivered_at || l.mailed_date, icon: '🏢', title: 'Available for Pickup — ' + l.furnisher, subtitle: 'Awaiting pickup at post office', tone: 'gold' });
 
     if (l.response_outcome === 'received') {
-      const bureauUpdate = isBureauCampaign(l.phase);
+      const bureauUpdate = isPortalBureauDispute(l);
       const bureauStatus = l.bureau_response_status;
       const subtitle = bureauUpdate
         ? (bureauStatus === 'analyzing' ? 'Staff is reviewing the bureau response' : bureauStatus === 'review_ready' ? 'Staff review is ready for the next decision' : bureauStatus === 'reviewed' ? 'Next campaign step recorded' : 'Response received and queued for staff review')
@@ -357,8 +440,8 @@ export default function ClientPortal({ session, onSignOut }) {
     }
     if (l.response_outcome === 'no_response') {
       const closedTitle = fileUpdate
-        ? 'File update window closed — next action underway'
-        : 'Response window closed — next action underway';
+        ? 'File update window closed — staff review pending'
+        : 'Response window closed — staff review pending';
       timeline.push({ date: l.response_date || l.mailed_date, icon: '⚠️', title: closedTitle, subtitle: l.furnisher, tone: 'red' });
     }
     if (l.response_outcome === 'deleted') {
@@ -367,6 +450,15 @@ export default function ClientPortal({ session, onSignOut }) {
         : 'Account removed from your credit report';
       timeline.push({ date: l.response_date, icon: '🏆', title: 'DELETED — ' + l.furnisher, subtitle: deletedSubtitle, tone: 'green', responseUrl: l.response_file_url || null });
     }
+  });
+
+  rounds.filter((round) => round.status === 'closed' && round.closed_at).forEach((round) => {
+    const outcome = round.final_disposition === 'resolved'
+      ? { title: `Round ${round.round_number} review complete`, subtitle: 'Account campaign resolved', tone: 'green', icon: '✅' }
+      : round.final_disposition === 'escalate'
+        ? { title: `Round ${round.round_number} ready for escalation review`, subtitle: 'No complaint or legal filing has been submitted', tone: 'gold', icon: '⚖️' }
+        : { title: `Round ${round.round_number} review complete`, subtitle: 'Another round may be prepared', tone: 'blue', icon: '📋' };
+    timeline.push({ date: round.closed_at, ...outcome });
   });
 
   if (clientMeta?.created_at) timeline.push({ date: clientMeta.created_at, icon: '👋', title: 'Enrolled in Credit Comeback Club', tone: 'blue' });
@@ -442,20 +534,29 @@ export default function ClientPortal({ session, onSignOut }) {
           >
             {activeTab === 'overview' && (
               <OverviewTab
-                profile={profile}
-                clientMeta={clientMeta}
-                firstName={firstName}
-                mailed={mailed}
-                delivered={delivered}
-                responded={responded}
-                deletions={deletions}
-                totalDisputes={accountDisputeLetters.length}
-                fileUpdateCount={fileUpdateLetters.length}
-                latestScores={latestScores}
-                auditHistory={auditHistory}
-                onboardingStage={onboardingStage}
-                onboardingDates={onboardingDates}
-              />
+              profile={profile}
+              clientMeta={clientMeta}
+              firstName={firstName}
+              mailed={mailed}
+              delivered={delivered}
+              responded={responded}
+              deletions={deletions}
+              totalDisputes={totalDisputes}
+              fileUpdateCount={fileUpdateCount}
+              latestScores={latestScores}
+              auditHistory={auditHistory}
+              onboardingStage={onboardingStage}
+              onboardingDates={onboardingDates}
+              recoveryBlueprints={recoveryBlueprints}
+              rounds={rounds}
+              campaigns={campaigns}
+              packetCoverage={packetCoverage}
+              letters={letters}
+              clientDocs={clientDocs}
+              stagedFiles={stagedFiles}
+              uploadSuccess={uploadSuccess}
+              onNavigate={setActiveTab}
+            />
             )}
 
             {activeTab === 'progress' && (
@@ -463,7 +564,7 @@ export default function ClientPortal({ session, onSignOut }) {
             )}
 
             {activeTab === 'recovery-plan' && (
-              <RecoveryPlanTab blueprints={recoveryBlueprints} />
+              <RecoveryPlanTab blueprints={recoveryBlueprints} session={session} />
             )}
 
             {activeTab === 'documents' && (
@@ -489,6 +590,9 @@ export default function ClientPortal({ session, onSignOut }) {
             {activeTab === 'disputes' && (
               <DisputesTab 
                 letters={letters}
+                rounds={rounds}
+                campaigns={campaigns}
+                packetCoverage={packetCoverage}
                 manualUploadUnlocked={manualUploadUnlocked}
                 setManualUploadUnlocked={setManualUploadUnlocked}
                 uploadSuccess={uploadSuccess}
@@ -504,11 +608,13 @@ export default function ClientPortal({ session, onSignOut }) {
             )}
             
             {activeTab === 'timeline' && (
-              <TimelineTab timeline={timeline} letters={letters} accessToken={session?.access_token} />
+              <TimelineTab timeline={timeline} letters={letters} campaigns={campaigns} accessToken={session?.access_token} />
             )}
             
             {activeTab === 'billing' && (
-              <BillingTab clientMeta={clientMeta} />
+              <BillingTab
+              signedAgreementAvailable={true}
+              onViewAgreement={viewSignedAgreement} clientMeta={clientMeta} />
             )}
             
             {activeTab === 'vip' && isVip && (

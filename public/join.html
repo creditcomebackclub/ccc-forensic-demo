@@ -57,7 +57,7 @@ body {
   font-weight: 600;
 }
 .partner-logo {
-  max-height: 40px;
+  max-height: 56px;
   max-width: 150px;
   object-fit: contain;
 }
@@ -203,7 +203,7 @@ input:focus { outline: none; border-color: var(--navy); }
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
     <h2>Choose Your Consultation Time</h2>
     <p>Book below. Once Calendly confirms your appointment, we'll email your preparation steps.</p>
-    <div class="calendly-inline-widget" data-url="https://calendly.com/creditcomebackclub/30min?hide_event_type_details=1&hide_gdpr_banner=1"></div>
+    <div class="calendly-inline-widget" data-url="https://calendly.com/creditcomebackclub/consultation"></div>
     <script type="text/javascript" src="https://assets.calendly.com/assets/external/widget.js" async></script>
   </div>
 </div>
@@ -260,6 +260,26 @@ const submitBtn = document.getElementById('submitBtn');
 const errorMsg = document.getElementById('errorMsg');
 let intakeLeadId = null;
 
+function initializeIntakeCalendly(name, email) {
+  const mount = successStep.querySelector('.calendly-inline-widget');
+  if (!mount) return;
+  const url = 'https://calendly.com/creditcomebackclub/consultation';
+  const prefill = { name: String(name || '').trim(), email: String(email || '').trim().toLowerCase() };
+  const init = () => {
+    if (!window.Calendly?.initInlineWidget) return;
+    mount.innerHTML = '';
+    window.Calendly.initInlineWidget({ url, parentElement: mount, prefill });
+  };
+  if (window.Calendly?.initInlineWidget) init();
+  else {
+    const fallbackUrl = new URL(url);
+    fallbackUrl.searchParams.set('name', prefill.name);
+    fallbackUrl.searchParams.set('email', prefill.email);
+    mount.dataset.url = fallbackUrl.toString();
+    document.querySelector('script[src*="assets.calendly.com/assets/external/widget.js"]')?.addEventListener('load', init, { once: true });
+  }
+}
+
 leadForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   errorMsg.textContent = '';
@@ -283,6 +303,7 @@ leadForm.addEventListener('submit', async (e) => {
     if (!res.ok) throw new Error('Something went wrong — please try again.');
     const intake = await res.json();
     intakeLeadId = intake.leadId || null;
+    initializeIntakeCalendly(payload.name, payload.email);
     formStep.style.display = 'none';
     successStep.style.display = 'block';
   } catch (err) {

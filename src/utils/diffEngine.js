@@ -72,9 +72,9 @@ function balanceClose(a, b) {
 }
 
 function isNegativeAccount(acct) {
-  // Type A/C are "original creditor, any derogatory status" / "third-party
-  // collector" per the audit classification table (masterPrompt.js §4); Type
-  // B is paid/current-with-errors and isn't itself a negative item.
+  // Type A/C are original-creditor derogatory / third-party collector classes
+  // produced by deterministicAudit.js; Type B is paid/current-with-errors and
+  // isn't itself a negative item.
   return acct.type === 'A' || acct.type === 'C';
 }
 

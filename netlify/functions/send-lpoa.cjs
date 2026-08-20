@@ -1,24 +1,19 @@
-const https = require('https');
+const { sendEmail, isConfigured, wrapClientEmail, escapeHtml, BRAND } = require('./_email.cjs');
+const { sourceAwareNurtureBody } = require('./_leadNurture.cjs');
 
-async function sendViaSendGrid(sgKey, to, subject, htmlBody, attachments) {
-  const payload = {
-    personalizations: [{ to: [{ email: to }] }],
-    from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
-    subject,
-    content: [{ type: 'text/html', value: htmlBody }],
-  };
-  if (attachments && attachments.length) payload.attachments = attachments;
-  const body = JSON.stringify(payload);
-  const res = await new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'api.sendgrid.com', path: '/v3/mail/send', method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + sgKey, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    }, (res) => {
-      let raw = ''; res.on('data', c => raw += c); res.on('end', () => resolve({ status: res.statusCode, body: raw }));
-    });
-    req.on('error', reject); req.write(body); req.end();
+async function sendMail(to, subject, htmlBody, attachments) {
+  return sendEmail({ to, subject, html: htmlBody, attachments });
+}
+
+/** Branded shell for client-facing send-lpoa templates. */
+function branded(eyebrow, bodyHtml, cta) {
+  return wrapClientEmail({
+    eyebrow,
+    bodyHtml,
+    cta: cta === undefined
+      ? { href: BRAND.portalUrl, label: 'Open your portal →' }
+      : cta,
   });
-  if (res.status >= 400) throw new Error('SendGrid error ' + res.status + ': ' + res.body);
 }
 
 // An affiliate may request an internal "new referral" alert, but the email
@@ -52,7 +47,7 @@ async function loadVerifiedAffiliateReferral(userId, clientEmail) {
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
 
-  const sgKey = process.env.SENDGRID_API_KEY;
+  const emailConfigured = isConfigured();
 
   let payload;
   try { payload = JSON.parse(event.body); }
@@ -92,16 +87,21 @@ exports.handler = async (event) => {
   if (action === 'send') {
     const { clientName, clientEmail, tier } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured — add to Netlify env vars' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured — add to Netlify env vars' }) };
     const enrollment = tier && tier !== 'Consultation';
     const subject = enrollment ? 'Next Step: Choose Your Credit Comeback Club Consultation Time' : 'Your Free Consultation Request — Choose a Time';
     const intro = enrollment
       ? `Thanks for your interest in <strong>${tier}</strong>. Your request is in, and the next step is a free consultation so we can review your file, answer questions, and confirm the best path before enrollment.`
       : 'Thanks for requesting a free consultation. Choose a time below and we\'ll review your goals and the information on your credit report with you.';
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;"><div style="background:#1B2A4A;padding:20px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.1em;">Consultation Request Received</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px;border-radius:0 0 4px 4px;"><p>Hi ${clientName},</p><p>${intro}</p><div style="text-align:center;margin:32px 0;"><a href="https://calendly.com/creditcomebackclub/30min" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Choose Your Time &#8594;</a></div><p style="font-size:12px;color:#666;">No portal account, authorization, or payment is created from this request. We\'ll send secure onboarding steps only if you choose to move forward after the consultation.</p><p style="font-size:12px;color:#666;">Questions? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
+    const html = branded('Consultation Request Received',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(clientName)},</p>`
+      + `<p style="margin:0 0 14px;">${intro}</p>`
+      + `<p style="margin:0;font-size:12px;color:#6B7280;">No portal account, authorization, or payment is created from this request. We'll send secure onboarding steps only if you choose to move forward after the consultation.</p>`
+      + `<p style="margin:14px 0 0;font-size:12px;color:#6B7280;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
+      { href: 'https://calendly.com/creditcomebackclub/consultation', label: 'Choose Your Time →' });
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, subject, html);
+      await sendMail(clientEmail, subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       console.error('Email error:', e.message);
@@ -110,24 +110,21 @@ exports.handler = async (event) => {
   }
 
   if (action === 'send_consultation_booked') {
-    const { clientName, clientEmail, tier, portalInvited } = payload;
+    const { clientName, clientEmail } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
     const firstName = String(clientName || 'there').split(' ')[0];
-    const enrollment = tier && tier !== 'Consultation';
-    const subject = enrollment
-      ? `You're Booked, ${firstName} — Let's Get Your File Ready`
-      : `You're Booked, ${firstName} — How to Prepare for Your Credit Review`;
-    const preparation = enrollment
-      ? `<p>We know you&rsquo;re ready to get moving. Before any campaign begins, we first complete a detailed forensic audit so you can see the FCRA compliance issues, Metro 2 reporting errors, and the exact strategy we recommend.</p>
-         ${portalInvited ? `<p>We sent a separate secure portal invitation. If you want to hit the ground running before the call, you can:</p>
-         <ol style="line-height:1.8;"><li>Upload your newest three-bureau credit report.</li><li>Connect your credit-monitoring account so we can review current data and track future changes.</li><li>Review the Limited Power of Attorney (LPOA). It is a limited authorization allowing Credit Comeback Club to communicate and prepare dispute correspondence on your behalf if you choose to proceed; it does not give us control of your money, credit accounts, or financial decisions.</li></ol>
-         <p>These steps are optional before the call, but completing them early lets us spend more of the consultation on findings and strategy.</p>` : `<p>Please have your newest three-bureau credit report ready. We&rsquo;ll send secure portal-onboarding instructions separately.</p>`}`
-      : `<p>We&rsquo;re looking forward to reviewing your file. Please have a copy of your newest credit report available&mdash;ideally a current three-bureau report showing Equifax, Experian, and TransUnion.</p>
-         <p>During the consultation, we&rsquo;ll walk through the file at a forensic level: potential FCRA compliance issues, Metro 2 reporting errors, which items may warrant documented disputes, and how Credit Comeback Club may be able to help. Bring any questions and recent correspondence you&rsquo;ve received from creditors, collectors, or the bureaus.</p>`;
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#111827;"><div style="background:#1B2A4A;padding:24px 32px;border-radius:6px 6px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Your Consultation Is Booked</p></div><div style="border:1px solid #E5E7EB;border-top:none;padding:24px 32px;border-radius:0 0 6px 6px;font-size:14px;line-height:1.65;"><p>Hi ${firstName},</p><p>Your consultation is on the calendar, and we&rsquo;re eager to take a close look at your file.</p>${preparation}<p>Calendly&rsquo;s calendar invitation contains the confirmed date, time, and meeting details. If you need to reschedule, use the link in that invitation.</p><p>Questions before the call? Reply to this email or call 970-644-0063.</p><hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;"><p style="font-size:11px;color:#9CA3AF;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
+    const subject = `You're Booked, ${firstName} — How to Prepare for Your Credit Review`;
+    const html = branded('Your Consultation Is Booked',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
+      + `<p style="margin:0 0 14px;">Your consultation is on the calendar, and we&rsquo;re eager to take a close look at your file.</p>`
+      + `<p style="margin:0 0 14px;">Please have a copy of your newest credit report available&mdash;ideally a current three-bureau report showing Equifax, Experian, and TransUnion. Bring any relevant recent correspondence from creditors, collectors, or the credit bureaus.</p>`
+      + `<p style="margin:0 0 14px;">We&rsquo;ll use the consultation to understand your goals, review what is happening in your file, and explain the most appropriate next step. Booking does not create a payment, service agreement, or client portal. If you choose to move forward, we&rsquo;ll send the secure agreement and onboarding steps afterward.</p>`
+      + `<p style="margin:14px 0;">Calendly&rsquo;s calendar invitation contains the confirmed date, time, and meeting details. If you need to reschedule, use the link in that invitation.</p>`
+      + `<p style="margin:0;">Questions before the call? Reply to this email or call ${BRAND.phone}.</p>`,
+      null);
     try {
-      await sendViaSendGrid(sgKey, clientEmail, subject, html);
+      await sendMail(clientEmail, subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -137,13 +134,14 @@ exports.handler = async (event) => {
   if (action === 'send_onboarding_welcome') {
     const { clientName, clientEmail, magicLink } = payload;
     if (!clientEmail || !magicLink) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail and magicLink required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#111827;">
-      <div style="background:#1B2A4A;padding:20px 24px;border-radius:6px 6px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Welcome to your client portal</p></div>
-      <div style="border:1px solid #E5E7EB;border-top:none;padding:24px;border-radius:0 0 6px 6px;"><p>Hi ${clientName},</p><p>Your client portal is ready. Use the secure sign-in link below to complete onboarding, review your audit, and follow your campaign.</p><p style="text-align:center;margin:28px 0;"><a href="${magicLink}" style="background:#1B2A4A;color:#fff;padding:12px 22px;border-radius:4px;text-decoration:none;font-weight:700;">Open Your Portal</a></p><p style="font-size:12px;color:#6B7280;">For your security, access is protected by a sign-in link sent to this email address.</p><hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;"><p style="font-size:11px;color:#9CA3AF;">Credit Comeback Club | creditcomebackclub.com</p></div>
-    </body></html>`;
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
+    const html = branded('Welcome to your client portal',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(clientName)},</p>`
+      + `<p style="margin:0 0 14px;">Your client portal is ready. Use the secure sign-in link below to complete onboarding, review your audit, and follow your campaign.</p>`
+      + `<p style="margin:0;font-size:12px;color:#6B7280;">For your security, access is protected by a sign-in link sent to this email address.</p>`,
+      { href: magicLink, label: 'Open Your Portal →' });
     try {
-      await sendViaSendGrid(sgKey, clientEmail, 'Welcome to Your Credit Comeback Club Portal', html);
+      await sendMail(clientEmail, 'Welcome to Your Credit Comeback Club Portal', html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -156,7 +154,7 @@ exports.handler = async (event) => {
     const { clientEmail, subject, bodyText, attachmentBase64, attachmentFilename } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
     if (!subject || !bodyText) return { statusCode: 400, body: JSON.stringify({ error: 'subject and bodyText required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     // Auditor-edited plain text, wrapped in the same branded shell as every
     // other CCC email — paragraphs split on blank lines, single line breaks
@@ -165,17 +163,7 @@ exports.handler = async (event) => {
       `<p style="margin:0 0 14px;">${p.split('\n').map((l) => l.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')).join('<br>')}</p>`
     ).join('');
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Your Forensic Audit is Ready</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;font-size:14px;line-height:1.6;">
-        ${paragraphs}
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = branded('Your Forensic Audit is Ready', paragraphs, null);
 
     const attachments = attachmentBase64 ? [{
       content: attachmentBase64,
@@ -185,7 +173,7 @@ exports.handler = async (event) => {
     }] : undefined;
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, subject, html, attachments);
+      await sendMail(clientEmail, subject, html, attachments);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -196,47 +184,37 @@ exports.handler = async (event) => {
   if (action === 'send_phase_notification') {
     const { clientName, clientEmail, phase, furnisher, trackingNumber, details } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const subjects = {
       ccc_dispute_mailed: 'Your CCC Dispute Letter Has Been Mailed — ' + furnisher,
       phase1_mailed: 'Your Dispute Letter Has Been Mailed — ' + furnisher,
       phase1_delivered: 'Dispute Letter Delivered — ' + furnisher + ' Has 30 Days to Respond',
       phase2_analyzed: 'Response Analysis Complete — ' + furnisher,
-      phase3_mailed: 'Phase 3 Escalation Mailed to Credit Bureaus — ' + furnisher,
+      phase3_mailed: 'Credit Bureau Dispute Mailed — ' + furnisher,
     };
 
     const bodies = {
       ccc_dispute_mailed: `<p>Your <strong>${details || 'CCC dispute letter'}</strong> to <strong>${furnisher}</strong> has been mailed via USPS First Class.</p>
         <p>First Class mail does not create a Certified tracking number or signed return receipt. CCC will monitor Lob's mailpiece scans, record the bureau's result, and move any surviving accounts according to the saved CCC round sequence.</p>`,
-      phase1_mailed: `<p>Your Phase 1 dispute letter to <strong>${furnisher}</strong> has been mailed via USPS Certified Mail.</p>
+      phase1_mailed: `<p>Your direct dispute letter to <strong>${furnisher}</strong> has been mailed via USPS Certified Mail.</p>
         ${trackingNumber ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}" style="color:#1B2A4A;">USPS Tracking ${trackingNumber.slice(-8)}</a></p>` : ''}
         <p>The furnisher has 30 days from delivery to respond. We will monitor the response and notify you of next steps.</p>`,
       phase1_delivered: `<p>Your dispute letter to <strong>${furnisher}</strong> has been delivered. Their 30-day response window has begun.</p>
-        <p>We will monitor for their response and prepare Phase 3 escalation letters in advance.</p>`,
+        <p>We will monitor for a response. A trained reviewer will evaluate the evidence and decide the appropriate next step.</p>`,
       phase2_analyzed: `<p>We have analyzed <strong>${furnisher}</strong>'s response to your dispute letter.</p>
-        <p>${details || 'Phase 3 escalation letters have been prepared and will be mailed to the credit bureaus shortly.'}</p>`,
-      phase3_mailed: `<p>Phase 3 escalation letters have been mailed to Equifax, Experian, and TransUnion regarding <strong>${furnisher}</strong>.</p>
-        <p>The bureaus now have 45 days to investigate and respond. We will track the outcome and document the next campaign step.</p>`,
+        <p>${details || 'A trained reviewer is documenting the result and the appropriate next campaign step.'}</p>`,
+      phase3_mailed: `<p>Credit bureau dispute letters have been mailed to the bureaus selected for this account regarding <strong>${furnisher}</strong>.</p>
+        <p>We will track each response window and review the evidence before choosing another step.</p>`,
     };
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Campaign Update</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p>Hi ${clientName},</p>
-        ${bodies[phase] || '<p>' + (details || 'Your dispute campaign has been updated.') + '</p>'}
-        <p>Log in to your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a> to see full details and mailpiece status.</p>
-        <p>Questions? Reply to this email or call 970-644-0063.</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = branded('Campaign Update',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(clientName)},</p>`
+      + (bodies[phase] || '<p style="margin:0 0 14px;">' + (details || 'Your dispute campaign has been updated.') + '</p>')
+      + `<p style="margin:0 0 14px;">Questions? Reply to this email or call ${BRAND.phone}.</p>`);
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, subjects[phase] || 'Credit Comeback Club Update', html);
+      await sendMail(clientEmail, subjects[phase] || 'Credit Comeback Club Update', html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -247,10 +225,26 @@ exports.handler = async (event) => {
   if (action === 'send_onboarding_reminder') {
     const { clientName, clientEmail, day } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = clientName.split(' ')[0] || clientName;
     const configs = {
+      ccc_day7_checkin: {
+        subject: 'Your CCC Dispute Campaign — Week 1 Update',
+        headline: 'Your bureau letter is in progress.',
+        body: 'Your USPS First Class CCC dispute letter to ' + (furnisher || 'the credit bureau') + ' is in its review window. No action is needed from you right now.',
+        action: 'Keep any bureau mail or updated credit report you receive and upload it to your CCC portal.',
+        tone: '#EFF6FF',
+        borderColor: '#BFDBFE',
+      },
+      ccc_day30_review: {
+        subject: 'Your CCC Round Is Ready for Review',
+        headline: 'CCC is reviewing the documented result.',
+        body: 'The 30-day operational review target for ' + (furnisher || 'this bureau letter') + ' has arrived. CCC will not assume a result that is not documented.',
+        action: 'Upload every page of any bureau response or updated report so the team can record wins, failures, and the correct next round.',
+        tone: '#FFFBEB',
+        borderColor: '#FDE68A',
+      },
       1: {
         subject: 'Next Step: Finish Setting Up Your CCC Account',
         body: `<p>Your Credit Comeback Club portal is ready. The only thing standing between you and your forensic audit is two quick steps: sign your LPOA and connect your credit monitoring so we can pull your report.</p>`,
@@ -271,25 +265,14 @@ exports.handler = async (event) => {
 
     const config = configs[day] || configs[1];
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Onboarding Action Required</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p>Hi ${firstName},</p>
-        ${config.body}
-        <div style="text-align:center;margin:32px 0;">
-          <a href="https://ccc-forensic-demo.netlify.app/login" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Access Client Portal &#8594;</a>
-        </div>
-        <p>Questions? Reply to this email or call 970-644-0063.</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = branded('Onboarding Action Required',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
+      + config.body
+      + `<p style="margin:0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
+      { href: BRAND.portalUrl + '/login', label: 'Access Client Portal →' });
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, config.subject, html);
+      await sendMail(clientEmail, config.subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -301,9 +284,9 @@ exports.handler = async (event) => {
   // Unlike send_onboarding_reminder (Track B), this never tells someone to
   // "log in" or "finish signing" — they have nothing to log into yet.
   if (action === 'send_lead_nurture') {
-    const { clientName, clientEmail, day, auditSummary } = payload;
+    const { clientName, clientEmail, day, auditSummary, leadContext } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = (clientName || '').split(' ')[0] || clientName;
     const hasAudit = !!(auditSummary && auditSummary.totalViolations != null);
@@ -312,7 +295,7 @@ exports.handler = async (event) => {
     const scanned = hasAudit ? auditSummary.accountsScanned : null;
 
     const bookBtn = (label) => `<div style="text-align:center;margin:32px 0;">
-        <a href="https://calendly.com/creditcomebackclub/30min" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">${label} &#8594;</a>
+        <a href="https://calendly.com/creditcomebackclub/consultation" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">${label} &#8594;</a>
       </div>`;
 
     const testimonial = (quote, name, result) => `<div style="background:#F5F9FD;border-left:3px solid #C9A84C;padding:16px 20px;margin:20px 0;border-radius:0 4px 4px 0;">
@@ -328,14 +311,11 @@ exports.handler = async (event) => {
         body: hasAudit
           ? `<p>Good news — our team has already started reviewing the credit report you shared. So far we've flagged ${v} potential furnisher-level issue${v === 1 ? '' : 's'} worth a closer look.</p>
              <p>Before we go further, we'd like to walk you through exactly what we found and what your options are — no cost, no obligation.</p>`
-          : `<p>Thanks for downloading our free dispute guide and reaching out. Here's exactly what happens next: we'll review your credit report for furnisher-level reporting errors — the kind that can be legally challenged directly with the company that reported them, not just the credit bureau.</p>
-             <p>The fastest way to find out what's on your file is a free 15-minute call. No pressure, no cost.</p>`,
+          : sourceAwareNurtureBody(1, leadContext),
       },
       3: {
         subject: 'Why We Go After the Furnisher, Not the Bureau',
-        body: `<p>Most people think disputing a credit report means arguing with Equifax, Experian, or TransUnion. That's rarely where the real leverage is.</p>
-             <p>Every account on your report is reported by a furnisher — a bank, collector, or lender — who is legally required to report it accurately under the Fair Credit Reporting Act. When they don't (wrong balance, wrong status, mismatched dates between bureaus), that's a direct violation we can challenge at the source.</p>
-             <p>That's the entire strategy behind our free guide, and it's what we look for on every report we review.</p>`,
+        body: sourceAwareNurtureBody(3, leadContext),
       },
       6: {
         subject: `${firstName}, Here's What Results Actually Look Like`,
@@ -381,24 +361,16 @@ exports.handler = async (event) => {
 
     const config = configs[day] || configs[1];
 
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Strategic Credit Repair</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p>Hi ${firstName},</p>
-        ${config.body}
-        ${bookBtn(config.cta || 'Book Your Free Consultation')}
-        <p>Questions? Just reply to this email or call 970-644-0063.</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        ${complianceFooter}
-        <p style="font-size:11px;color:#999;margin-top:12px;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = branded('Strategic Credit Repair',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
+      + config.body
+      + bookBtn(config.cta || 'Book Your Free Consultation')
+      + `<p style="margin:14px 0 0;">Questions? Just reply to this email or call ${BRAND.phone}.</p>`
+      + complianceFooter,
+      null);
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, config.subject, html);
+      await sendMail(clientEmail, config.subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -409,30 +381,19 @@ exports.handler = async (event) => {
   if (action === 'send_report_refresh') {
     const { clientName, clientEmail } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = clientName.split(' ')[0] || clientName;
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Action Required: New Credit Report Due</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p>Hi ${firstName},</p>
-        <p>It's been 35 days since your last credit report audit! To keep your dispute campaign moving forward and check for any deleted negative items, we need you to upload your newest credit report.</p>
-        <p>Please log into your SmartCredit or IdentityIQ account, download your new 3-bureau report, and upload it directly into your client portal.</p>
-        <div style="text-align:center;margin:32px 0;">
-          <a href="https://ccc-forensic-demo.netlify.app/login" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Open Client Portal to Upload &#8594;</a>
-        </div>
-        <p>If you're having trouble downloading your report, you can also update your credentials in the portal and we will pull it for you.</p>
-        <p>Questions? Reply to this email or call 970-644-0063.</p>
-        <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-        <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-      </div>
-    </body></html>`;
+    const html = branded('Action Required: New Credit Report Due',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
+      + `<p style="margin:0 0 14px;">It's been 35 days since your last credit report audit! To keep your dispute campaign moving forward and check for any deleted negative items, we need you to upload your newest credit report.</p>`
+      + `<p style="margin:0 0 14px;">Please log into your SmartCredit or IdentityIQ account, download your new 3-bureau report, and upload it directly into your client portal.</p>`
+      + `<p style="margin:0 0 14px;">If you're having trouble downloading your report, you can also update your credentials in the portal and we will pull it for you.</p>`
+      + `<p style="margin:0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
+      { href: BRAND.portalUrl + '/login', label: 'Open Client Portal to Upload →' });
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, 'Action Required: Upload your new credit report', html);
+      await sendMail(clientEmail, 'Action Required: Upload your new credit report', html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -442,31 +403,24 @@ exports.handler = async (event) => {
   // Admin Notification: New Lead
   if (action === 'admin_new_lead') {
     const { leadName, leadEmail, leadPhone, tier } = payload;
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
     
     const adminEmail = 'chris@cccpartners.co';
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-      <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-        <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-        <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">New Lead Alert</p>
-      </div>
-      <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-        <p><strong>You have a new lead from the website!</strong></p>
-        <ul style="line-height:1.8;">
-          <li><strong>Name:</strong> ${leadName}</li>
-          <li><strong>Email:</strong> ${leadEmail}</li>
-          <li><strong>Phone:</strong> ${leadPhone || 'Not provided'}</li>
-          <li><strong>Tier:</strong> ${tier || 'Not provided'}</li>
-        </ul>
-        <p>They have been added to your CRM. Their preparation email will send after Calendly confirms the booking.</p>
-        <div style="text-align:center;margin:32px 0;">
-          <a href="https://ccc-forensic-demo.netlify.app" style="background:#1B2A4A;color:#C9A84C;padding:14px 32px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Open CRM Dashboard &#8594;</a>
-        </div>
-      </div>
-    </body></html>`;
+    const { wrapStaffEmail } = require('./_email.cjs');
+    const html = wrapStaffEmail({
+      eyebrow: 'New Lead Alert',
+      title: 'You have a new lead from the website!',
+      rows: [
+        ['Name', leadName],
+        ['Email', leadEmail],
+        ['Phone', leadPhone || 'Not provided'],
+        ['Tier', tier || 'Not provided'],
+      ],
+      footer: '<p style="font-size:13px;color:#4B5563;margin:0;">They have been added to your CRM. Their preparation email will send after Calendly confirms the booking.</p>',
+    });
 
     try {
-      await sendViaSendGrid(sgKey, adminEmail, `🚨 New Lead: ${leadName}`, html);
+      await sendMail(adminEmail, `🚨 New Lead: ${leadName}`, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -477,26 +431,10 @@ exports.handler = async (event) => {
   if (action === 'send_campaign_update') {
     const { clientName, clientEmail, updateType, furnisher, details, daysElapsed } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = clientName.split(' ')[0] || clientName;
     const configs = {
-      ccc_day7_checkin: {
-        subject: 'Your CCC Dispute Campaign — Week 1 Update',
-        headline: 'Your bureau letter is in progress.',
-        body: 'Your USPS First Class CCC dispute letter to ' + (furnisher || 'the credit bureau') + ' is in its review window. No action is needed from you right now.',
-        action: 'Keep any bureau mail or updated credit report you receive and upload it to your CCC portal.',
-        tone: '#EFF6FF',
-        borderColor: '#BFDBFE',
-      },
-      ccc_day30_review: {
-        subject: 'CCC Round Review Due — ' + (furnisher || 'Your Dispute'),
-        headline: 'It is time to review this round.',
-        body: 'The review window for your letter to ' + (furnisher || 'the credit bureau') + ' is closing. CCC will record the documented result and determine the next saved round for any account that remains.',
-        action: 'Upload the bureau response and latest report if you have received them. CCC will not assume a result that is not documented.',
-        tone: '#FFFBEB',
-        borderColor: '#FDE68A',
-      },
       day7_checkin: {
         subject: 'Your Dispute Campaign — Week 1 Update',
         headline: 'Your letters are in transit.',
@@ -508,16 +446,16 @@ exports.handler = async (event) => {
       day30_approaching: {
         subject: 'Response Deadline Approaching — ' + (furnisher || 'Your Dispute'),
         headline: 'The 30-day response window is closing.',
-        body: furnisher + ' has approximately ' + (30 - (daysElapsed || 28)) + ' days remaining to respond to your dispute. If they fail to respond or provide an inadequate investigation, we will escalate to the credit bureaus with Phase 3 letters.',
-        action: 'Continue doing nothing. We are monitoring for their response and have Phase 3 letters prepared.',
+        body: furnisher + ' has approximately ' + Math.max(0, 30 - (daysElapsed || 28)) + ' days remaining in the tracked response window. If no response is logged, staff will document the nonresponse and review the account evidence.',
+        action: 'No action is needed unless you receive correspondence. If you do, send us every page so it can be reviewed with the original dispute.',
         tone: '#FFFBEB',
         borderColor: '#FDE68A',
       },
       day35_escalation: {
-        subject: 'No Response Confirmed — Phase 3 Escalation Triggered',
-        headline: furnisher + ' failed to respond.',
-        body: furnisher + ' did not conduct a reasonable investigation within the 30-day statutory window required by 15 U.S.C. §1681s-2(b). This is an automatic federal law violation. We are now escalating to Equifax, Experian, and TransUnion with Phase 3 letters documenting their failure.',
-        action: 'Phase 3 letters are being prepared and will be mailed to all three credit bureaus. Deletions typically occur within 30 days of bureau-level escalation.',
+        subject: 'Response Window Closed — Review Underway',
+        headline: 'No response has been logged from ' + furnisher + '.',
+        body: 'The tracked response window has closed without a response in your file. We are documenting that nonresponse and reviewing the original dispute, delivery record, and account evidence before selecting any next step.',
+        action: 'No action is needed unless you received correspondence we do not have. If so, send us every page so the review is complete.',
         tone: '#F0FDF4',
         borderColor: '#BBF7D0',
       },
@@ -526,26 +464,16 @@ exports.handler = async (event) => {
     const cfg = configs[updateType];
     if (!cfg) return { statusCode: 400, body: JSON.stringify({ error: 'Unknown updateType: ' + updateType }) };
 
-    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-      + '<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F8F9FA;">'
-      + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:10px;">'
-      + '<div style="background:#C9A84C;border-radius:5px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;"><span style="color:#1B2A4A;font-weight:800;font-size:12px;">CC</span></div>'
-      + '<div style="color:#C9A84C;font-weight:700;font-size:14px;">Credit Comeback Club</div></div>'
-      + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:28px;border-radius:0 0 8px 8px;">'
-      + '<p style="color:#6B7280;font-size:12px;margin:0 0 4px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Campaign Update</p>'
-      + '<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 16px;">' + cfg.headline + '</h1>'
-      + '<p style="font-size:13px;color:#374151;margin:0 0 16px;">' + cfg.body + '</p>'
-      + '<div style="background:' + cfg.tone + ';border:1px solid ' + cfg.borderColor + ';border-radius:6px;padding:14px 16px;margin:0 0 20px;">'
-      + '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#374151;font-weight:600;margin-bottom:4px;">Your Action</div>'
-      + '<p style="font-size:12px;color:#374151;margin:0;">' + cfg.action + '</p></div>'
-      + '<p style="font-size:12px;color:#6B7280;">Track your full campaign in your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;font-weight:600;">client portal</a>.</p>'
-      + '<p style="font-size:12px;color:#6B7280;">Questions? Reply to this email or call 970-644-0063.</p>'
-      + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:20px 0;">'
-      + '<p style="font-size:11px;color:#9CA3AF;margin:0;">Credit Comeback Club | creditcomebackclub.com | 970-644-0063</p>'
-      + '</div></body></html>';
+    const html = branded('Campaign Update',
+      `<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 16px;">${escapeHtml(cfg.headline)}</h1>`
+      + `<p style="font-size:13px;color:#374151;margin:0 0 16px;">${cfg.body}</p>`
+      + `<div style="background:${cfg.tone};border:1px solid ${cfg.borderColor};border-radius:6px;padding:14px 16px;margin:0 0 8px;">`
+      + `<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#374151;font-weight:600;margin-bottom:4px;">Your Action</div>`
+      + `<p style="font-size:12px;color:#374151;margin:0;">${cfg.action}</p></div>`
+      + `<p style="font-size:12px;color:#6B7280;margin:16px 0 0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`);
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, cfg.subject, html);
+      await sendMail(clientEmail, cfg.subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -556,7 +484,7 @@ exports.handler = async (event) => {
   if (action === 'send_lead_drip') {
     const { leadName, leadEmail, emailNumber } = payload;
     if (!leadEmail) return { statusCode: 400, body: JSON.stringify({ error: 'leadEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = leadName.split(' ')[0] || leadName;
 
@@ -564,26 +492,26 @@ exports.handler = async (event) => {
       1: {
         subject: 'Thanks for reaching out to Credit Comeback Club',
         headline: 'We received your request — here\'s what happens next.',
-        content: '<p>Hi ' + firstName + ', thank you for your interest in Credit Comeback Club. We specialize in forensic credit disputes built on federal law, not generic dispute templates.</p>'
-          + '<p>Most credit repair companies send the same boilerplate letters to the credit bureaus for every client. We do something different: we perform a line-by-line forensic audit of your credit report against the Metro 2 reporting standard that creditors are legally required to follow, then build a dispute strategy around the specific violations we find in your file.</p>'
+        content: '<p>Hi ' + firstName + ', thank you for your interest in Credit Comeback Club. We prepare evidence-specific credit disputes rather than generic templates.</p>'
+          + '<p>We perform a line-by-line forensic review of your credit report, including consistency checks informed by the Metro 2 industry reporting standard. A Metro 2 difference is not automatically a legal violation, so staff reviews the report facts and applicable law before building a dispute strategy.</p>'
           + '<p><strong>What\'s next:</strong> If you haven\'t already, upload your 3-bureau credit report and we\'ll walk you through what we find — no cost, no obligation.</p>'
           + '<p>Reply to this email or call 970-644-0063 with any questions.</p>',
       },
       2: {
         subject: 'What Makes a Dispute Actually Work',
         headline: 'Why most credit repair fails — and what we do differently.',
-        content: '<p>Here\'s something most people don\'t know: when you dispute an account through the credit bureaus, your dispute is processed by an automated system called e-OSCAR. No human reviews it. The creditor\'s computer confirms their own data matches what they submitted, and the dispute is marked "verified" — even if the underlying data is wrong.</p>'
-          + '<p>This is why the same dispute letter mailed to a bureau, over and over, rarely produces results.</p>'
-          + '<p><strong>Our approach is different.</strong> We dispute directly with the furnisher — the original creditor or collector — under 15 U.S.C. §1681s-2(b). This bypasses e-OSCAR entirely and triggers a legal obligation for the furnisher to conduct an actual investigation, not just an automated database check.</p>'
-          + '<p>The legal standard comes from a real federal case, <em>Johnson v. MBNA America Bank</em>, which held that automated verification does not satisfy a furnisher\'s investigation duty. That case is the foundation of every letter we send.</p>',
+        content: '<p>Credit-report disputes can follow different legal paths. A dispute sent to a consumer reporting agency and a direct dispute sent to the company furnishing the information are not interchangeable, and each path has its own duties and evidence requirements.</p>'
+          + '<p>Repeating a generic letter without addressing the account data or the recipient\'s response can weaken the record.</p>'
+          + '<p><strong>Our approach is evidence-first.</strong> We compare the reporting across bureaus, identify supported factual inconsistencies, and choose the recipient for each round based on the reviewed record. A direct furnisher dispute is framed under the direct-dispute rules; a bureau dispute is framed under the CRA reinvestigation rules.</p>'
+          + '<p>If a bureau later notifies a furnisher of a dispute, the furnisher\'s separate duties under 15 U.S.C. §1681s-2(b) may apply. We document what was sent, what came back, and what the evidence supports before recommending another step.</p>',
       },
       3: {
         subject: 'A Real Example: How the Process Works',
         headline: 'From audit to dispute to resolution.',
         content: '<p>Here\'s what the process actually looks like once you start:</p>'
           + '<p><strong>Step 1 — Forensic Audit.</strong> We analyze your 3-bureau report field by field, identifying specific Metro 2 violations — things like charge-off accounts still reporting active past-due balances (a logical impossibility), cross-bureau data conflicts, or missing dispute flags.</p>'
-          + '<p><strong>Step 2 — Direct Furnisher Dispute.</strong> We send certified letters directly to each creditor citing the exact violations and federal statutes involved. This establishes a legal record and starts a 30-day clock.</p>'
-          + '<p><strong>Step 3 — Escalation if needed.</strong> If a creditor fails to respond adequately within 30 days — which happens often — we escalate to the credit bureaus using their own inadequate response as evidence, citing Johnson v. MBNA.</p>'
+          + '<p><strong>Step 2 — Staff-selected dispute round.</strong> We prepare account-specific letters for the furnisher or selected credit bureaus, preserve the evidence sent, and track a 30-day review window.</p>'
+          + '<p><strong>Step 3 — Forensic response review.</strong> We compare any response or documented nonresponse with the exact letter and supporting record. Staff then decides whether the account is resolved, needs documents, warrants another round, or is ready for a separately reviewed escalation.</p>'
           + '<p>Every step is documented, tracked, and visible to you in a client portal built specifically for this process.</p>',
       },
       4: {
@@ -591,13 +519,13 @@ exports.handler = async (event) => {
         headline: 'Let\'s get your forensic audit built.',
         content: '<p>' + firstName + ', if you\'re ready to move forward, here\'s what we need:</p>'
           + '<ul><li>Your most recent 3-bureau credit report (Equifax, Experian, TransUnion)</li><li>A signed Limited Power of Attorney authorizing us to act on your behalf for credit dispute purposes only</li></ul>'
-          + '<p>Once we have both, we build your forensic audit, identify every actionable violation in your file, and begin Phase 1 direct-to-furnisher disputes — typically within days.</p>'
+          + '<p>Once we have both, we build your forensic audit, identify supported issues in your file, and prepare the first staff-selected dispute round.</p>'
           + '<p>Reply to this email or call 970-644-0063 and we\'ll get you started today.</p>',
       },
       5: {
         subject: 'Still Thinking It Over?',
         headline: 'No pressure — just here when you\'re ready.',
-        content: '<p>Hi ' + firstName + ', wanted to check in one more time. Credit disputes are time-sensitive in one specific way: the sooner accurate legal disputes are on record, the sooner the 30-day furnisher response clocks start running.</p>'
+        content: '<p>Hi ' + firstName + ', wanted to check in one more time. When a dispute round is mailed, we preserve the mailing record and track its response-review window so later decisions are based on a documented timeline.</p>'
           + '<p>There\'s no cost to get your forensic audit built and reviewed with you. If you have questions about the process, your specific accounts, or anything else — just reply to this email or call 970-644-0063.</p>'
           + '<p>We\'re here whenever you\'re ready.</p>',
       },
@@ -606,21 +534,13 @@ exports.handler = async (event) => {
     const drip = drips[emailNumber];
     if (!drip) return { statusCode: 400, body: JSON.stringify({ error: 'Unknown emailNumber: ' + emailNumber }) };
 
-    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-      + '<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F8F9FA;">'
-      + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:10px;">'
-      + '<div style="background:#C9A84C;border-radius:5px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;"><span style="color:#1B2A4A;font-weight:800;font-size:12px;">CC</span></div>'
-      + '<div><div style="color:#C9A84C;font-weight:700;font-size:14px;">Credit Comeback Club</div>'
-      + '<div style="color:rgba(255,255,255,0.5);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;">Forensic Credit Dispute Services</div></div></div>'
-      + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:28px;border-radius:0 0 8px 8px;">'
-      + '<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 20px;line-height:1.3;">' + drip.headline + '</h1>'
-      + '<div style="font-size:13px;color:#374151;line-height:1.7;">' + drip.content + '</div>'
-      + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;">'
-      + '<p style="font-size:11px;color:#9CA3AF;margin:8px 0 0;">Credit Comeback Club | 3088 Colorado Ave, Grand Junction, CO 81504 | 970-644-0063 | creditcomebackclub.com | Veteran-Owned</p>'
-      + '</div></body></html>';
+    const html = branded('Forensic Credit Dispute Services',
+      `<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 20px;line-height:1.3;">${drip.headline}</h1>`
+      + `<div style="font-size:13px;color:#374151;line-height:1.7;">${drip.content}</div>`,
+      null);
 
     try {
-      await sendViaSendGrid(sgKey, leadEmail, drip.subject, html);
+      await sendMail(leadEmail, drip.subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -630,7 +550,7 @@ exports.handler = async (event) => {
   if (action === 'send_educational') {
     const { clientName, clientEmail, emailNumber } = payload;
     if (!clientEmail) return { statusCode: 400, body: JSON.stringify({ error: 'clientEmail required' }) };
-    if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
+    if (!emailConfigured) return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
 
     const firstName = clientName.split(' ')[0] || clientName;
 
@@ -638,39 +558,36 @@ exports.handler = async (event) => {
       1: {
         subject: 'What Is Metro 2 and Why Does It Matter For Your Credit?',
         headline: 'The reporting standard creditors are supposed to follow — but often don\'t.',
-        content: '<p>Every piece of information on your credit report is supposed to follow a technical standard called Metro 2. It was created by the Consumer Data Industry Association and defines exactly how creditors must report account data to Equifax, Experian, and TransUnion.</p>'
-          + '<p>Metro 2 has over 400 data fields. Each one has specific rules — what values are valid, how dates must be formatted, which fields are mandatory, and how fields must relate to each other logically.</p>'
-          + '<p><strong>Here\'s the problem:</strong> Creditors frequently violate these rules. They report balances on closed accounts. They suppress payment history. They report charge-offs with incorrect dates. They use status codes that contradict each other across bureaus.</p>'
-          + '<p>These aren\'t minor clerical errors — they\'re violations of the Fair Credit Reporting Act. And they\'re what we look for in your forensic audit.</p>'
-          + '<p><strong>What this means for you:</strong> Every violation we identify in your credit file is a legally actionable inaccuracy. The creditor has a legal obligation to correct it when formally disputed.</p>',
+        content: '<p>Metro 2 is an industry reporting format used to organize account data furnished to Equifax, Experian, and TransUnion.</p>'
+          + '<p>Its fields and relationships help trained reviewers spot information that may be incomplete, internally inconsistent, or inconsistent across bureaus.</p>'
+          + '<p><strong>Why context matters:</strong> A Metro 2 formatting or consistency issue is not automatically an FCRA violation. We compare the reported fields with the rest of the file and any available account evidence before deciding whether a factual or legal dispute is supported.</p>'
+          + '<p><strong>What this means for you:</strong> Findings from the forensic audit are review leads. Staff verifies the support, selects the correct dispute route, and asks the recipient to investigate the specific information identified.</p>',
       },
       2: {
         subject: 'Why Generic Credit Repair Doesn\'t Work',
-        headline: 'The e-OSCAR problem — and why we bypass it entirely.',
-        content: '<p>Most credit repair companies send dispute letters to the credit bureaus. The bureaus receive millions of disputes and process them through an automated system called e-OSCAR.</p>'
-          + '<p>Here\'s what actually happens: e-OSCAR converts your dispute into a two-digit code and forwards it to the creditor. The creditor\'s computer looks at their database, confirms the data matches what they submitted, and responds "verified." The bureau marks it verified. Your dispute dies.</p>'
-          + '<p>No human ever looks at your case. No one examines whether the data is actually accurate. The entire process is a loop of automated confirmation.</p>'
-          + '<p><strong>What we do instead:</strong> We dispute directly with the furnisher — the creditor or collector — bypassing the bureaus entirely. Under 15 U.S.C. §1681s-2(b), a direct written dispute triggers independent legal obligations that cannot be processed through e-OSCAR.</p>'
-          + '<p>The furnisher must conduct a reasonable investigation — not just an automated database check. The legal standard comes from <em>Johnson v. MBNA America Bank</em>, a Fourth Circuit federal case that held automated verification is legally insufficient.</p>'
-          + '<p>That\'s the foundation of every letter we send on your behalf.</p>',
+        headline: 'Why evidence-specific disputes matter.',
+        content: '<p>Credit bureaus and furnishers process a high volume of disputes, and a generic letter may not clearly identify the account-level facts that require investigation.</p>'
+          + '<p>A useful record ties each issue to the reporting, states what is disputed, preserves the documents sent, and evaluates the recipient\'s actual response.</p>'
+          + '<p><strong>What we do:</strong> Staff chooses whether a round goes to the furnisher or selected credit bureaus. Direct disputes use the applicable direct-dispute framework; CRA disputes use the bureau reinvestigation framework. We do not treat those duties as interchangeable.</p>'
+          + '<p>Our forensic review compares the reporting, the account evidence, and the response received. We use the legal framework that applies to the actual dispute route and facts rather than promising a predetermined result.</p>'
+          + '<p>That evidence-first review is the foundation of every letter we send on your behalf.</p>',
       },
       3: {
         subject: 'Understanding Your 30-Day Window',
         headline: 'What happens after your letters are delivered.',
-        content: '<p>Once your certified dispute letters are delivered, the furnisher has 30 days to respond with a substantive investigation. This is a federal legal requirement under 15 U.S.C. §1681s-2(b).</p>'
-          + '<p><strong>A substantive investigation means:</strong></p>'
-          + '<ul><li>Reviewing original source documentation — not just their internal database</li><li>Addressing each specific violation you identified</li><li>Providing written explanation of how they verified the disputed information</li><li>Correcting or deleting inaccurate information and notifying all bureaus</li></ul>'
+        content: '<p>Once your certified dispute letters are delivered, we track a 30-day response-review window and preserve the delivery record with the account file.</p>'
+          + '<p><strong>Our response review asks:</strong></p>'
+          + '<ul><li>Did the response address the specific facts raised?</li><li>Does it identify meaningful support for the stated result?</li><li>Did any reported information change?</li><li>Is more documentation needed before staff can choose a next step?</li></ul>'
           + '<p><strong>What usually happens:</strong></p>'
-          + '<ul><li><strong>Form letter response:</strong> Generic "verified as accurate" language with no documentation. This fails the Johnson v. MBNA standard and sets up Phase 3 escalation.</li><li><strong>No response:</strong> An automatic violation. Triggers immediate Phase 3 escalation to all three bureaus.</li><li><strong>Partial correction:</strong> They fix some issues but not all. Remaining violations are still actionable.</li><li><strong>Full correction/deletion:</strong> The best outcome. Account corrected or removed.</li></ul>'
+          + '<ul><li><strong>Form letter response:</strong> We compare its statements and support to each issue raised in the dispute.</li><li><strong>No response:</strong> We document the closed response window and review the evidence before selecting any next step.</li><li><strong>Partial correction:</strong> We verify what changed and identify anything that still requires review.</li><li><strong>Full correction/deletion:</strong> We document the result and determine whether the account can be closed.</li></ul>'
           + '<p>We monitor every letter and will notify you when responses come in or when windows close.</p>',
       },
       4: {
         subject: 'Your Credit Score: What Moves It and What Doesn\'t',
         headline: 'The mechanics behind the number.',
         content: '<p>Your credit score is a snapshot — it reflects what\'s in your credit file at this exact moment. As inaccurate negative accounts are removed or corrected, the score recalculates.</p>'
-          + '<p><strong>What has the biggest impact:</strong></p>'
-          + '<ul><li><strong>Payment history (35%):</strong> Late payments, charge-offs, and collections weigh heavily. Deletion is more impactful than correction.</li><li><strong>Amounts owed (30%):</strong> Balances reporting on closed accounts or incorrectly high balances suppress your score artificially.</li><li><strong>Age of accounts (15%):</strong> Older positive accounts help. Negative accounts with incorrect dates may be reporting longer than legally allowed.</li><li><strong>Types of credit (10%) and new inquiries (10%):</strong> Less impactful during a dispute campaign.</li></ul>'
-          + '<p><strong>What to expect during your campaign:</strong> Scores may fluctuate as disputes are processed. This is normal. When a negative account is disputed, bureaus may temporarily mark it as "in dispute," which can cause minor score movement. Deletions produce the most significant and permanent score improvement.</p>'
+          + '<p><strong>What can affect a score:</strong> payment history, amounts owed, account age, account mix, recent applications, and the particular scoring model being used. The weight and effect of any one change vary by file and model.</p>'
+          + '<p><strong>What to expect during your campaign:</strong> Scores can fluctuate as reported data changes. A correction or deletion does not guarantee a particular score increase, and different lenders may use different reports or scoring models.</p>'
           + '<p>Keep pulling your reports monthly through Privacy Guard. Every deletion confirmed is a win.</p>',
       },
       5: {
@@ -690,23 +607,14 @@ exports.handler = async (event) => {
     const email = emails[emailNumber];
     if (!email) return { statusCode: 400, body: JSON.stringify({ error: 'Unknown emailNumber: ' + emailNumber }) };
 
-    const html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head>'
-      + '<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#F8F9FA;">'
-      + '<div style="background:#1B2A4A;padding:20px 28px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:10px;">'
-      + '<div style="background:#C9A84C;border-radius:5px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;"><span style="color:#1B2A4A;font-weight:800;font-size:12px;">CC</span></div>'
-      + '<div><div style="color:#C9A84C;font-weight:700;font-size:14px;">Credit Comeback Club</div>'
-      + '<div style="color:rgba(255,255,255,0.5);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;">Credit Education Series</div></div></div>'
-      + '<div style="background:#fff;border:1px solid #E5E7EB;border-top:none;padding:28px;border-radius:0 0 8px 8px;">'
-      + '<p style="color:#9CA3AF;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin:0 0 4px;">Hi ' + firstName + ',</p>'
-      + '<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 20px;line-height:1.3;">' + email.headline + '</h1>'
-      + '<div style="font-size:13px;color:#374151;line-height:1.7;">' + email.content + '</div>'
-      + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;">'
-      + '<p style="font-size:12px;color:#6B7280;">Track your campaign progress in your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;font-weight:600;">client portal</a>. Questions? Reply here or call 970-644-0063.</p>'
-      + '<p style="font-size:11px;color:#9CA3AF;margin:8px 0 0;">Credit Comeback Club | creditcomebackclub.com | Veteran-Owned</p>'
-      + '</div></body></html>';
+    const html = branded('Credit Education Series',
+      `<p style="color:#9CA3AF;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;margin:0 0 4px;">Hi ${escapeHtml(firstName)},</p>`
+      + `<h1 style="font-size:20px;color:#1B2A4A;margin:0 0 20px;line-height:1.3;">${email.headline}</h1>`
+      + `<div style="font-size:13px;color:#374151;line-height:1.7;">${email.content}</div>`
+      + `<p style="font-size:12px;color:#6B7280;margin:16px 0 0;">Questions? Reply here or call ${BRAND.phone}.</p>`);
 
     try {
-      await sendViaSendGrid(sgKey, clientEmail, email.subject, html);
+      await sendMail(clientEmail, email.subject, html);
       return { statusCode: 200, body: JSON.stringify({ sent: true }) };
     } catch (e) {
       return { statusCode: 500, body: JSON.stringify({ error: e.message }) };
@@ -715,12 +623,21 @@ exports.handler = async (event) => {
 
   if (action === 'affiliate_welcome') {
     const { affiliateName, affiliateEmail, companyName, commissionRate } = payload;
-    const sgKey = process.env.SENDGRID_API_KEY;
-    if (!sgKey || !affiliateEmail) return { statusCode: 400, body: JSON.stringify({ error: 'Missing fields' }) };
+    if (!emailConfigured || !affiliateEmail) return { statusCode: 400, body: JSON.stringify({ error: 'Missing fields' }) };
     const subject = 'Welcome to the Credit Comeback Club Partner Program';
     const commPct = Math.round((commissionRate || 0.20) * 100);
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;"><div style="background:#0C0C0C;padding:24px 32px;border-radius:4px 4px 0 0;"><h1 style="color:#22C55E;margin:0;font-size:20px;">Credit Comeback Club</h1><p style="color:rgba(255,255,255,0.5);margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Partner Program</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;"><p>Hi ${affiliateName},</p><p>Welcome to the Credit Comeback Club partner program${companyName ? ' on behalf of ' + companyName : ''}. We&rsquo;re excited to work with you.</p><h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">How it works:</h3><ol style="padding-left:18px;line-height:1.8;font-size:13px;color:#444;"><li>Log in to your partner portal to submit client referrals</li><li>We handle the full credit repair process &mdash; forensic audit, certified dispute letters, follow-up, and monitoring</li><li>You earn ${commPct}% of the First Work Fee AND every ongoing monthly payment for as long as your referred client remains active &mdash; not a one-time bonus</li><li>Track your referrals and commission status in real time from your portal</li></ol><h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">Client Plans:</h3><table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px;"><tr style="background:#f8f9fa;"><td style="padding:8px 12px;font-weight:600;">Standard</td><td style="padding:8px 12px;">$79/mo &mdash; Up to 3 letters/mo. $75 one-time First Work Fee.</td></tr><tr><td style="padding:8px 12px;font-weight:600;">VIP</td><td style="padding:8px 12px;">$149/mo &mdash; Up to 5 letters/mo, priority service &amp; strategy call. $99 First Work Fee.</td></tr><tr style="background:#f8f9fa;"><td style="padding:8px 12px;font-weight:600;">Paid in Full</td><td style="padding:8px 12px;">$499 flat for 6 months of Standard service (First Work Fee waived).</td></tr></table><p style="font-size:13px;color:#444;">Your commission is paid on the First Work Fee at enrollment, and again every month your referred client's recurring service payment clears. You will receive a commission statement whenever a payment is credited.</p><p style="font-size:13px;color:#444;">Your portal access link was sent separately via magic link. Use it to log in &mdash; no password needed.</p><p style="font-size:13px;color:#444;">Questions? Reply to this email or reach Chris at <a href="mailto:info@creditcomebackclub.com" style="color:#1B2A4A;">info@creditcomebackclub.com</a> or 480-913-9172.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com | 480-913-9172</p></div></body></html>`;
-    await sendViaSendGrid(sgKey, affiliateEmail, subject, html);
+    const html = branded('Partner Program',
+      `<p style="margin:0 0 14px;">Hi ${escapeHtml(affiliateName)},</p>`
+      + `<p style="margin:0 0 14px;">Welcome to the Credit Comeback Club partner program${companyName ? ' on behalf of ' + escapeHtml(companyName) : ''}. We&rsquo;re excited to work with you.</p>`
+      + `<h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">How it works:</h3>`
+      + `<ol style="padding-left:18px;line-height:1.8;font-size:13px;color:#444;"><li>Log in to your partner portal to submit client referrals</li><li>We handle the full credit repair process &mdash; forensic audit, certified dispute letters, follow-up, and monitoring</li><li>You earn ${commPct}% of the First Work Fee AND every ongoing monthly payment for as long as your referred client remains active &mdash; not a one-time bonus</li><li>Track your referrals and commission status in real time from your portal</li></ol>`
+      + `<h3 style="color:#1B2A4A;font-size:14px;margin:24px 0 8px;">Client Plans:</h3>`
+      + `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px;"><tr style="background:#f8f9fa;"><td style="padding:8px 12px;font-weight:600;">Standard</td><td style="padding:8px 12px;">$79/mo &mdash; Up to 3 letters/mo. $75 one-time First Work Fee.</td></tr><tr><td style="padding:8px 12px;font-weight:600;">VIP</td><td style="padding:8px 12px;">$149/mo &mdash; Up to 5 letters/mo, priority service &amp; strategy call. $99 First Work Fee.</td></tr><tr style="background:#f8f9fa;"><td style="padding:8px 12px;font-weight:600;">Paid in Full</td><td style="padding:8px 12px;">$499 flat for 6 months of Standard service (First Work Fee waived).</td></tr></table>`
+      + `<p style="font-size:13px;color:#444;margin:0 0 14px;">Your commission is paid on the First Work Fee at enrollment, and again every month your referred client's recurring service payment clears.</p>`
+      + `<p style="font-size:13px;color:#444;margin:0 0 14px;">Your portal access link was sent separately via magic link.</p>`
+      + `<p style="font-size:13px;color:#444;margin:0;">Questions? Reply to this email or reach Chris at <a href="mailto:info@creditcomebackclub.com" style="color:#1B2A4A;">info@creditcomebackclub.com</a> or 480-913-9172.</p>`,
+      null);
+    await sendMail(affiliateEmail, subject, html);
     return { statusCode: 200, body: JSON.stringify({ sent: true }) };
   }
 
@@ -732,10 +649,22 @@ exports.handler = async (event) => {
     const clientEmail = referral.client.email || '';
     const clientPhone = referral.client.phone || null;
     const clientNotes = referral.client.notes || null;
-    if (!sgKey) return { statusCode: 400, body: JSON.stringify({ error: 'Missing SendGrid key' }) };
+    if (!emailConfigured) return { statusCode: 400, body: JSON.stringify({ error: 'Missing RESEND_API_KEY' }) };
     const subject = 'New Referral from ' + (companyName || affiliateName) + ' — ' + clientName;
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;"><div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;"><h1 style="color:#C9A84C;margin:0;font-size:20px;">New Partner Referral</h1><p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">${companyName || affiliateName} → Credit Comeback Club</p></div><div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;"><p><strong>${affiliateName}${companyName ? ' (' + companyName + ')' : ''}</strong> just submitted a new client referral:</p><table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;"><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;width:140px;">Name</td><td style="padding:10px 14px;">${clientName}</td></tr><tr><td style="padding:10px 14px;font-weight:600;">Email</td><td style="padding:10px 14px;">${clientEmail}</td></tr><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Phone</td><td style="padding:10px 14px;">${clientPhone || '—'}</td></tr><tr style="background:#F8F9FA;"><td style="padding:10px 14px;font-weight:600;">Notes</td><td style="padding:10px 14px;">${clientNotes || '—'}</td></tr></table><p style="font-size:13px;color:#444;">Log in to your admin dashboard to run their audit and kick off onboarding.</p><hr style="border:none;border-top:1px solid #eee;margin:24px 0;"><p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p></div></body></html>`;
-    await sendViaSendGrid(sgKey, 'creditcomebackclub@gmail.com', subject, html);
+    const { wrapStaffEmail } = require('./_email.cjs');
+    const html = wrapStaffEmail({
+      eyebrow: (companyName || affiliateName) + ' → Credit Comeback Club',
+      title: 'New Partner Referral',
+      rows: [
+        ['From', affiliateName + (companyName ? ' (' + companyName + ')' : '')],
+        ['Name', clientName],
+        ['Email', clientEmail],
+        ['Phone', clientPhone || '—'],
+        ['Notes', clientNotes || '—'],
+      ],
+      footer: '<p style="font-size:13px;color:#444;margin:0;">Log in to your admin dashboard to run their audit and kick off onboarding.</p>',
+    });
+    await sendMail('creditcomebackclub@gmail.com', subject, html);
     return { statusCode: 200, body: JSON.stringify({ sent: true }) };
   }
 

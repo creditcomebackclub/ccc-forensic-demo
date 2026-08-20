@@ -101,11 +101,14 @@ LOB_MODE=test
 LOB_TEST_KEY=
 LOB_LIVE_KEY=
 LOB_WEBHOOK_SECRET=
-SENDGRID_API_KEY=
-SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY=
+RESEND_API_KEY=
+RESEND_WEBHOOK_SECRET=
+CALENDLY_ACCESS_TOKEN= # production Functions scope only
+# CALENDLY_WEBHOOK_URL= # optional; defaults to $URL/api/calendly-webhook
+# CALENDLY_EVENT_NAME_PREFIX= # optional; defaults to Credit Repair Consultation
 ```
 
-Never expose `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, SendGrid, or Lob keys in client code or public build variables. In particular, remove any legacy `VITE_LOB_*` variables from Netlify and local environment files: only browser-safe values may use the `VITE_` prefix.
+Never expose `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, Calendly, Resend, or Lob keys in client code or public build variables. In particular, remove any legacy `VITE_LOB_*` variables from Netlify and local environment files: only browser-safe values may use the `VITE_` prefix.
 
 ## Database and security
 
@@ -131,7 +134,7 @@ Before deploying to a new environment, verify:
 6. The scheduled `daily-cron` function, configured in `netlify.toml`.
 7. The `mail_artifacts` migration and private `documents` bucket access. A newly mailed letter should archive its exact Lob-rendered PDF; a return receipt is archived when Lob supplies it.
 8. Staff provisioning: create or invite each new team member through Supabase Auth, then use a trusted admin/backend path (or the Supabase dashboard) to create their `profiles` row with role `admin` or `auditor` before their first sign-in. Public signup never grants a staff role.
-9. Recovery Blueprint delivery: apply the `recovery_blueprints` migration, then configure SendGrid's signed Event Webhook to post delivery events to `/.netlify/functions/blueprint-email-events`. Store the SendGrid verification public key in `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY`.
+9. Recovery Blueprint delivery: apply the `recovery_blueprints` migration, then configure a Resend webhook (email.sent / delivered / delivery_delayed / bounced / failed / complained / suppressed) to post to `/.netlify/functions/blueprint-email-events`. Store the webhook signing secret in `RESEND_WEBHOOK_SECRET`. Verify `cccpartners.co` in Resend and set `RESEND_API_KEY` (separate Resend team from Fieldwork).
 
 ## Build and deploy
 

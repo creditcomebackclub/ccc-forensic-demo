@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, FileText, ImagePlus, Loader2, Save, Sparkles, X } from 'lucide-react';
 import { readClientSensitiveData, writeClientSensitiveData } from '../utils/clientSensitiveData.js';
-import { buildR1CampaignPlan, FLOW_LABELS, FLOW_LETTER_ROUNDS, flowRoundLabel } from '../utils/disputeFlow.js';
+import { buildR1CampaignPlan, CCC_TRANSITION_START_ROUND, FLOW_LABELS, FLOW_LETTER_ROUNDS, flowRoundLabel } from '../utils/disputeFlow.js';
 import {
   buildAutomaticTemplateValues,
   extractTemplateTokens,
@@ -79,7 +79,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
   const firstBureau = plan.bureaus.find((item) => item.recommendations.length)?.bureau.code || 'EQ';
   const [bureauCode, setBureauCode] = useState(firstBureau);
   const [flow, setFlow] = useState(() => plan.bureaus.find((item) => item.bureau.code === firstBureau)?.primary?.flow || 'accuracy');
-  const [round, setRound] = useState(1);
+  const [round, setRound] = useState(CCC_TRANSITION_START_ROUND);
   const [templates, setTemplates] = useState([]);
   const [templateId, setTemplateId] = useState('');
   const [identity, setIdentity] = useState(null);
@@ -407,6 +407,9 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
         ) : (
           <div className="grid min-h-0 flex-1 grid-cols-[430px_1fr]">
             <aside className="overflow-y-auto border-r border-gray-200 bg-white p-5">
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[10px] leading-relaxed text-amber-900">
+                <strong>New-system reset:</strong> this client starts the CCC method at a freshly classified R1. Historical letters remain in the record but do not advance this campaign to a later round.
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 {plan.bureaus.map((item) => (
                   <button key={item.bureau.code} onClick={() => selectBureau(item.bureau.code)} className={`rounded-lg border px-2 py-2 text-[10px] font-bold uppercase tracking-wider ${bureauCode === item.bureau.code ? 'border-navy bg-navy text-gold' : 'border-border text-gray-500'}`}>

@@ -1,6 +1,10 @@
-// Receives the Calendly inline embed's event_scheduled notification. The
-// opaque lead UUID returned by public-intake binds the browser event to one
-// CRM lead; the server loads all email/name/tier data itself.
+// Browser-side backup for the Calendly inline embed. The server webhook is
+// authoritative and fills the event URI/time, but this callback can send the
+// preparation message immediately. Both paths share the same atomic email
+// claim, so a race cannot send two copies.
+const { consultationTags } = require('./_calendly.cjs');
+const { sendConsultationBookedOnce } = require('./_consultationBooking.cjs');
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type',
@@ -24,58 +28,37 @@ exports.handler = async (event) => {
 
   const headers = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
   const leadRes = await fetch(
-    `${supabaseUrl}/rest/v1/clients?id=eq.${encodeURIComponent(leadId)}&status=eq.lead&select=id,name,email,lead_notes,lead_drips_sent&limit=1`,
+    `${supabaseUrl}/rest/v1/clients?id=eq.${encodeURIComponent(leadId)}&status=eq.lead&select=id,name,email,tags&limit=1`,
     { headers }
   );
   const rows = await leadRes.json();
   const lead = Array.isArray(rows) ? rows[0] : null;
   if (!lead?.email) return { statusCode: 404, headers: cors, body: JSON.stringify({ error: 'Lead not found' }) };
 
-  const marker = 'consultation_booked_confirmation';
-  const sent = Array.isArray(lead.lead_drips_sent) ? lead.lead_drips_sent : [];
-  if (sent.includes(marker)) return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, duplicate: true }) };
-
-  const tierMatch = String(lead.lead_notes || '').match(/^Selected Tier:\s*(.+)$/i);
-  const tier = tierMatch ? tierMatch[1].trim() : 'Consultation';
-  const enrollment = tier !== 'Consultation';
-  const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
-
-  let portalInvited = false;
-  if (enrollment) {
-    try {
-      const provisionRes = await fetch(base + '/.netlify/functions/provision-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
-        body: JSON.stringify({ email: lead.email, fullName: lead.name, kind: 'client', clientId: lead.id }),
-      });
-      portalInvited = provisionRes.ok;
-      if (!provisionRes.ok) console.error('Pre-call portal provisioning failed:', await provisionRes.text());
-    } catch (e) {
-      console.error('Pre-call portal provisioning failed:', e.message);
-    }
-  }
-
-  const emailRes = await fetch(base + '/.netlify/functions/send-lpoa', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
-    body: JSON.stringify({
-      action: 'send_consultation_booked',
-      clientName: lead.name,
-      clientEmail: lead.email,
-      tier,
-      portalInvited,
-    }),
-  });
-  if (!emailRes.ok) {
-    console.error('Booked consultation email failed:', await emailRes.text());
-    return { statusCode: 502, headers: cors, body: JSON.stringify({ error: 'Could not send booking confirmation' }) };
-  }
-
-  await fetch(`${supabaseUrl}/rest/v1/clients?id=eq.${encodeURIComponent(lead.id)}`, {
+  const patchRes = await fetch(`${supabaseUrl}/rest/v1/clients?id=eq.${encodeURIComponent(lead.id)}`, {
     method: 'PATCH',
     headers: { ...headers, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
-    body: JSON.stringify({ lead_drips_sent: [...sent, marker] }),
+    body: JSON.stringify({
+      consultation_status: 'scheduled',
+      tags: consultationTags(lead.tags, 'scheduled', true),
+    }),
   });
+  if (!patchRes.ok) {
+    console.error('Could not record browser Calendly booking:', await patchRes.text());
+    return { statusCode: 502, headers: cors, body: JSON.stringify({ error: 'Could not record booking' }) };
+  }
 
-  return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, portalInvited }) };
+  try {
+    const result = await sendConsultationBookedOnce({
+      clientId: lead.id,
+      name: lead.name,
+      email: lead.email,
+      supabaseUrl,
+      serviceKey,
+    });
+    return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, duplicate: Boolean(result.duplicate) }) };
+  } catch (error) {
+    console.error('Booked consultation email failed:', error.message || error);
+    return { statusCode: 502, headers: cors, body: JSON.stringify({ error: 'Could not send booking preparation email' }) };
+  }
 };

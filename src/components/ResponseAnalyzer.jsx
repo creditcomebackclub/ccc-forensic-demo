@@ -1,171 +1,22 @@
 import React, { useState } from 'react';
 import { X, Upload, FileText, AlertCircle, CheckCircle, Zap } from 'lucide-react';
 import { supabase } from '../utils/supabase';
-import { saveLetter } from '../utils/storage';
 import { runPhase2Job } from '../utils/phase2Jobs';
 import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED_TYPE_MESSAGE, validateBatch } from '../utils/responseFiles';
-import { normalizeFurnisher, lastFour } from '../utils/diffEngine';
 import { uploadResponseEvidence } from '../utils/responseEvidence';
-
-async function savePhase3Letters(analysis, clientName, furnisher, accountId, clientAccountId, clientId) {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-
-  // Resolve which bureaus this account actually reports on. A CRA can't
-  // reinvestigate a tradeline it doesn't carry, so Phase 3 letters must only
-  // go to bureaus with real evidence the account is there.
-  //
-  // AMBIGUITY MUST NOT EXPAND OUTPUT. The old code, on any lookup failure,
-  // fell back to generating for ALL THREE bureaus — responding to LESS
-  // information with MORE output, the same failure shape as the unparsed-
-  // ledger and DOFD-direction bugs. It also keyed on account_id (acct_N),
-  // which is POSITIONAL and reassigned every audit run, so a Phase 1
-  // letter's stored id resolved to whatever account now occupies that slot —
-  // a different account with a wrong bureau set. Now: match on stable
-  // identity, and if the account cannot be confidently resolved to a single
-  // audit account with a bureau list, BLOCK generation and surface to admin
-  // rather than guess.
-  //
-  // NOTE: furnisher-name matching is a stopgap. Name is unreliable for the
-  // exact accounts with the richest violations (cross-bureau entity-name
-  // conflicts) and for clients with multiple tradelines from one furnisher.
-  // The durable fix is a persistent client_accounts UUID per real tradeline
-  // (see the account-identity plan). Until that lands, the block-on-failure
-  // behavior here is what keeps a bad/ambiguous match from misrouting.
-  let account = null;
-  let resolutionError = null;
-  try {
-    // clientId preferred — client_name alone can resolve to the wrong
-    // client's latest audit if two clients share a name.
-    const auditsQuery = clientId
-      ? supabase.from('audits').select('audit').eq('client_id', clientId).order('saved_at', { ascending: false }).limit(1)
-      : supabase.from('audits').select('audit').eq('client_name', clientName).order('saved_at', { ascending: false }).limit(1);
-    const { data: audits } = await auditsQuery;
-    const accounts = (audits && audits.length > 0) ? (audits[0].audit?.accounts || []) : [];
-    if (accounts.length === 0) {
-      resolutionError = 'no audit on file for this client';
-    } else if (clientAccountId) {
-      // PRIMARY, stable path: the persistent tradeline UUID. The latest
-      // audit's accounts carry clientAccountId (injected at ingest), so this
-      // resolves the same real tradeline regardless of positional-id churn or
-      // furnisher-name drift.
-      account = accounts.find(a => a.clientAccountId && a.clientAccountId === clientAccountId) || null;
-      if (!account) resolutionError = `the linked account identity is not present in the latest audit (the tradeline may have dropped off the report, or needs re-linking)`;
-    } else {
-      // Legacy fallback for letters created before persistent identities
-      // existed. Never match on a.id (positional). Masked number first, then
-      // furnisher name narrowed by last-4.
-      account = accountId ? accounts.find(a => a.accountNumberMasked && a.accountNumberMasked === accountId) : null;
-      if (!account) {
-        const byFurnisher = accounts.filter(a => normalizeFurnisher(a.furnisher) === normalizeFurnisher(furnisher));
-        if (byFurnisher.length === 1) {
-          account = byFurnisher[0];
-        } else if (byFurnisher.length > 1) {
-          const l4 = lastFour(accountId);
-          account = l4 ? (byFurnisher.find(a => lastFour(a.accountNumberMasked) === l4) || null) : null;
-          if (!account) resolutionError = `${byFurnisher.length} accounts from "${furnisher}" and none could be disambiguated by account number`;
-        } else {
-          resolutionError = `no account matching "${furnisher}" in the latest audit (furnisher name may have changed since Phase 1, or the account was sold/rebranded)`;
-        }
-      }
-    }
-  } catch (e) {
-    resolutionError = 'the account lookup query failed (' + (e.message || e) + ')';
-  }
-
-  const bureauMap = { 'EQ': 'equifax', 'EXP': 'experian', 'TU': 'transunion' };
-  const activeBureaus = (account && account.bureaus)
-    ? account.bureaus.map(b => bureauMap[b]).filter(Boolean)
-    : [];
-
-  // BLOCK — do not generate any letter unless we have positive evidence of at
-  // least one reporting bureau. No default-to-all-three.
-  if (activeBureaus.length === 0) {
-    throw new Error(
-      `Cannot resolve reporting bureaus for "${furnisher}" — ${resolutionError || 'the matched account has no bureau list'}. ` +
-      `Re-link this account to its current audit entry before generating Phase 3 letters. No letters were created.`
-    );
-  }
-  console.log('Phase 3 bureau resolution — furnisher:', furnisher, 'matched:', account?.id, 'bureaus:', activeBureaus);
-
-  // Look up client signature
-  let signatureData = null;
-  try {
-    const cpQuery = clientId
-      ? supabase.from('client_profiles').select('signature_data').eq('client_id', clientId).limit(1)
-      : supabase.from('client_profiles').select('signature_data').eq('full_name', clientName).limit(1);
-    const { data: cp } = await cpQuery;
-    if (cp && cp.length > 0 && cp[0].signature_data) {
-      signatureData = cp[0].signature_data;
-    }
-    if (!signatureData) {
-      const clientsQuery = clientId
-        ? supabase.from('clients').select('lpoa_signature_data').eq('id', clientId).limit(1)
-        : supabase.from('clients').select('lpoa_signature_data').eq('name', clientName).limit(1);
-      const { data: cm } = await clientsQuery;
-      if (cm && cm.length > 0 && cm[0].lpoa_signature_data?.signatureUrl) {
-        signatureData = cm[0].lpoa_signature_data.signatureUrl;
-      }
-    }
-  } catch(e) { console.warn('Could not look up signature:', e); }
-
-  for (const bureau of activeBureaus) {
-    let html = analysis.letters[bureau];
-    if (!html) continue;
-    // Strip any Exhibit C references — only A and B are physically attached
-    html = html.replace(/\n?Exhibit C[^\n]*/gi, '').replace(/;?\s*Exhibit C[^;\n]*/gi, '');
-
-    // Inject signature image if available — replace ONLY the ___ underscore
-    // run, never the rest of the line. The previous pattern was
-    // /_{3,}[^\n]*/ , and when the model emitted the signature block on a
-    // single line (which the prompt's own conciseness rule encourages) that
-    // [^\n]* swallowed the printed name, "Consumer — All Rights Reserved",
-    // the certified-mail notation, the enclosures list, and </body></html>
-    // — producing letters that ended mid-signature-block with no closing
-    // tags. Six real letters were generated this way and three were mailed.
-    // Whether a letter survived depended entirely on where the model
-    // happened to place a newline.
-    if (signatureData) {
-      const sigHtml = '<img src="' + signatureData + '" style="max-height:60px;max-width:220px;display:block;" />';
-      html = html.replace(/_{3,}/, sigHtml);
-    }
-
-    // If the model output plain text instead of HTML (fallback safety), wrap it
-    if (!html.trim().startsWith('<!') && !html.trim().startsWith('<html')) {
-      const escaped = html.replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;max-width:750px;margin:40px auto;padding:0 40px;color:#1a1a1a;}pre{white-space:pre-wrap;font-family:Arial,sans-serif;}</style></head><body><pre>' + escaped + '</pre></body></html>';
-    }
-
-    // Route every new Phase 3 draft through the same immutable-mail guard as
-    // Phase 1. A retry may refresh an unmailed draft, but it can never reset
-    // a mailed letter's tracking, response state, or exact mailed HTML.
-    const phase3LetterId = await saveLetter(
-      { furnisher, id: accountId, clientAccountId: clientAccountId || null, type: null },
-      { id: clientId || null, name: clientName },
-      html,
-      analysis.summary || null,
-      'Phase 3 — ' + bureau.charAt(0).toUpperCase() + bureau.slice(1),
-      '__phase3-' + bureau
-    );
-    // This bureau letter was generated from exactly this Phase 1 furnisher.
-    // Persist the scope with the draft so LobMailer can attach only the
-    // matching original dispute and response, never the client's full file.
-    const { error: coverageError } = await supabase
-      .from('letters')
-      .update({ covered_furnishers: [furnisher] })
-      .eq('id', phase3LetterId)
-      .eq('user_id', user.id);
-    if (coverageError) throw new Error('Could not save Phase 3 furnisher coverage: ' + coverageError.message);
-  }
-}
+import { getLatestRound, markRoundClosePrompted, reviewRoundLetter } from '../utils/rounds.js';
+import { updateResponseEvidenceReview } from '../utils/responseEvidence.js';
+import RoundCloseModal from './RoundCloseModal.jsx';
+import PacketAccountResponseReview from './PacketAccountResponseReview.jsx';
 
 const CLASSIFICATION_CONFIG = {
-  FORM_LETTER: { label: 'Form Letter — Inadequate Investigation', tone: 'red' },
-  STATEMENT_COPY: { label: 'Statement Copies Only — No Source Substantiation', tone: 'red' },
-  PARTIAL_FIX: { label: 'Partial Fix — Remaining Violations Actionable', tone: 'amber' },
+  FORM_LETTER: { label: 'No Demand-Specific Statement Matched', tone: 'red' },
+  STATEMENT_COPY: { label: 'Documents Supplied — No Substantive Match Found', tone: 'red' },
+  PARTIAL_FIX: { label: 'Some Demands Matched — Others Need Review', tone: 'amber' },
   WRONG_FRAMEWORK: { label: 'Wrong Framework — Treated as e-OSCAR Dispute', tone: 'red' },
-  NON_RESPONSE: { label: 'Non-Response — Automatic Violation', tone: 'red' },
-  ADEQUATE: { label: 'Adequate Response — Violations Corrected', tone: 'green' },
+  NON_RESPONSE: { label: 'Non-Response — Window Closed', tone: 'red' },
+  ADEQUATE: { label: 'All Demands Matched — Verify Claimed Results', tone: 'green' },
+  INSUFFICIENT_EVIDENCE: { label: 'Insufficient Evidence — Staff Review Required', tone: 'amber' },
 };
 
 const OUTCOME_CONFIG = {
@@ -203,6 +54,12 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
+  const [activeEvidenceId, setActiveEvidenceId] = useState(letter._responseEvidenceId || storedAnalysis?.responseEvidenceId || null);
+  const [reviewChoice, setReviewChoice] = useState(null);
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [roundReady, setRoundReady] = useState(null);
+  const [showPacketReview, setShowPacketReview] = useState(false);
+  const isPacket = Number(letter.packetVersion || letter.packet_version || 1) === 2;
 
   // Accumulates onto the existing selection so a client/admin can add pages
   // across multiple picks (common on mobile, where multi-select galleries
@@ -252,6 +109,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
         const evidence = await uploadResponseEvidence(letter.id, files);
         analyzeFilePaths = evidence.storagePaths;
         evidenceId = evidence.id;
+        setActiveEvidenceId(evidence.id);
       }
 
       const basePath = analyzeFilePaths?.[0]
@@ -297,6 +155,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
         setProgressTokens
       );
       setAnalysis(result);
+      if (result?.responseEvidenceId) setActiveEvidenceId(result.responseEvidenceId);
       setViewingStored(false);
       setStep('results');
     } catch (e) {
@@ -308,12 +167,42 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
   };
 
   const handleSave = async () => {
-    if (!analysis) return;
+    if (!analysis || !reviewChoice) return;
     setSaving(true);
     try {
-      await savePhase3Letters(analysis, letter.clientName, letter.furnisher, letter.accountId || '', letter.clientAccountId || null, letter.clientId || null);
+      let evidenceId = activeEvidenceId || analysis.responseEvidenceId || null;
+      if (!evidenceId) {
+        const { data, error: evidenceError } = await supabase.from('response_evidence')
+          .select('id').eq('letter_id', letter.id).eq('analysis_status', 'analyzed')
+          .order('analyzed_at', { ascending: false }).limit(1).maybeSingle();
+        if (evidenceError) throw evidenceError;
+        evidenceId = data?.id || null;
+      }
+      if (!evidenceId) throw new Error('The analyzed response evidence could not be resolved.');
+      const decision = {
+        resolved: { reviewStatus: 'resolved', nextAction: 'resolved' },
+        next_round: { reviewStatus: 'follow_up', nextAction: 'next_round' },
+        needs_documents: { reviewStatus: 'needs_documents', nextAction: 'needs_documents' },
+        escalate: { reviewStatus: 'escalated', nextAction: 'escalate' },
+      }[reviewChoice];
+      if (letter.roundId) {
+        await reviewRoundLetter({ letterId: letter.id, responseEvidenceId: evidenceId, ...decision, notes: reviewNotes });
+      } else {
+        // Legacy evidence can still be reviewed, but it cannot silently create
+        // a new structured round until account reconciliation is complete.
+        await updateResponseEvidenceReview(evidenceId, { reviewStatus: decision.reviewStatus, reviewNotes });
+      }
       setSaved(true);
-      setTimeout(() => { onSaved(); onClose(); }, 1500);
+      if (letter.roundId && letter.clientAccountId) {
+        const latest = await getLatestRound(letter.clientAccountId);
+        if (latest?.round_id === letter.roundId && latest.ready_to_close && !latest.close_prompted_at) {
+          await markRoundClosePrompted(letter.roundId);
+          setRoundReady(latest);
+        }
+        else setTimeout(() => { onSaved?.(); onClose(); }, 700);
+      } else {
+        setTimeout(() => { onSaved?.(); onClose(); }, 700);
+      }
     } catch (e) {
       console.error('Save failed', e);
       setError('Could not save: ' + (e.message || e));
@@ -329,7 +218,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
       <div className="bg-white rounded border border-border w-full max-w-3xl max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-navy rounded-t">
           <div>
-            <div className="text-white text-[14px] font-medium ccc-display">Phase 2 Response Analyzer</div>
+            <div className="text-white text-[14px] font-medium ccc-display">Round Response Analyzer</div>
             <div className="text-gold text-[11px] uppercase tracking-wider mt-0.5">{letter.furnisher} · {letter.clientName}</div>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={18} strokeWidth={1.75} /></button>
@@ -341,7 +230,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               <div className="rounded p-4 border mb-5" style={{ backgroundColor: '#FEF2F2', borderColor: '#FECACA' }}>
                 <div className="text-[11px] uppercase tracking-wider font-medium text-red-600 mb-1">Non-Response Confirmed</div>
                 <div className="text-[13px] text-ink font-medium">{letter.furnisher} failed to respond within the 30-day statutory window</div>
-                <div className="text-[12px] text-ink-muted mt-1">This is an automatic 15 U.S.C. §1681s-2(b) violation. Claude will generate three Phase 3 CRA letters citing the non-response as the primary violation — no document upload needed.</div>
+                <div className="text-[12px] text-ink-muted mt-1">The recorded dates and response window will create a deterministic nonresponse record. Staff review determines the next action.</div>
               </div>
               {letter.mailedDate && (
                 <div className="text-[12px] text-ink-muted mb-4">
@@ -351,8 +240,8 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               {error && <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2 mb-4">{error}</div>}
               {analyzing && (
                 <div className="text-center py-4">
-                  <div className="text-[13px] text-ink-muted mb-1">Generating Phase 3 non-response letters…</div>
-                  <div className="text-[11px] text-ink-faint">Citing blown 30-day window · §1681s-2(b) automatic violation{progressTokens > 0 ? ` · ~${progressTokens.toLocaleString()} tokens` : ''}</div>
+                  <div className="text-[13px] text-ink-muted mb-1">Analyzing the documented nonresponse…</div>
+                  <div className="text-[11px] text-ink-faint">Applying the correct direct-dispute and CRA-notice standards{progressTokens > 0 ? ` · ~${progressTokens.toLocaleString()} tokens` : ''}</div>
                 </div>
               )}
             </div>
@@ -363,7 +252,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               <p className="text-[13px] text-ink-muted mb-5 max-w-xl">
                 Upload the furnisher response. If it's multiple pages or photos, add them all —
                 they'll be analyzed together as one document. The original Phase 1 letter is Exhibit A — attached automatically.
-                Claude will analyze against Johnson v. MBNA and generate three Phase 3 CRA letters.
+                AI extracts only the response&apos;s visible statements. Deterministic rules compare them with the original demands, and any later letter requires a reviewed disposition and explicit round target.
               </p>
               <div
                 onDrop={handleDrop}
@@ -396,8 +285,8 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               {error && <div className="mt-4 text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
               {analyzing && (
                 <div className="mt-6 text-center">
-                  <div className="text-[13px] text-ink-muted mb-1">Analyzing response against Phase 1 demands…</div>
-                  <div className="text-[11px] text-ink-faint">Applying Johnson v. MBNA standard · Generating Phase 3 letters{progressTokens > 0 ? ` · ~${progressTokens.toLocaleString()} tokens` : ''}</div>
+                  <div className="text-[13px] text-ink-muted mb-1">Extracting response evidence, then applying deterministic demand rules…</div>
+                  <div className="text-[11px] text-ink-faint">Applying the response and document-quality standards{progressTokens > 0 ? ` · ~${progressTokens.toLocaleString()} tokens` : ''}</div>
                 </div>
               )}
             </div>
@@ -432,7 +321,10 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
                   </div>
                   {(analysis.demandAnalysis || []).map((d, i) => (
                     <div key={i} className="grid grid-cols-12 px-4 py-2 border-t border-border" style={{ backgroundColor: i % 2 === 0 ? '#FFFFFF' : '#F9FAFB' }}>
-                      <div className="col-span-6 text-[12px] text-ink pr-3">{d.demand}</div>
+                      <div className="col-span-6 text-[12px] text-ink pr-3">
+                        <div>{d.demand}</div>
+                        {d.ruleId && <div className="ccc-mono text-[9px] text-ink-faint mt-0.5">{d.demandId || 'Demand'} · {d.ruleId}</div>}
+                      </div>
                       <div className="col-span-2">
                         <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-sm font-medium"
                           style={{ backgroundColor: (OUTCOME_CONFIG[d.outcome]?.color || '#666') + '20', color: OUTCOME_CONFIG[d.outcome]?.color || '#666' }}>
@@ -457,23 +349,26 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               )}
 
               <div className="bg-navy rounded p-4">
-                <div className="text-[10px] uppercase tracking-wider text-gold font-medium mb-1">Phase 3 Primary Argument</div>
+                <div className="text-[10px] uppercase tracking-wider text-gold font-medium mb-1">Strongest Reviewed-Round Leverage</div>
                 <div className="text-[12px] text-white leading-relaxed">{analysis.phase3Leverage}</div>
               </div>
 
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Phase 3 Letters Generated</div>
-                <div className="grid grid-cols-3 gap-3">
-                  {['equifax', 'experian', 'transunion'].map((b) => (
-                    <div key={b} className="border border-border rounded p-3 text-center">
-                      <div className="text-[11px] uppercase tracking-wider text-ink font-medium mb-1">{b.charAt(0).toUpperCase() + b.slice(1)}</div>
-                      <div className="text-[10px]" style={{ color: analysis.letters[b] ? '#15803D' : '#9CA3AF' }}>
-                        {analysis.letters[b] ? '✓ Ready' : '—'}
-                      </div>
-                    </div>
-                  ))}
+              {!isPacket && <div>
+                <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Staff disposition</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    ['resolved', 'Resolved', 'The response resolves this letter’s supported issues.'],
+                    ['next_round', 'Another round', 'Use this reviewed evidence in a newly targeted round.'],
+                    ['needs_documents', 'Need documents', 'Pause for specific missing client evidence.'],
+                    ['escalate', 'Escalation ready', 'Explicitly mark this reviewed letter for escalation.'],
+                  ].map(([value, label, description]) => <button key={value} onClick={() => setReviewChoice(value)} className={`p-3 rounded border text-left ${reviewChoice === value ? 'border-gold bg-amber-50' : 'border-border'}`}><span className="block text-[11px] font-medium text-ink">{label}</span><span className="block text-[10px] text-ink-muted mt-0.5">{description}</span></button>)}
                 </div>
-              </div>
+                <textarea value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} maxLength={2000} rows={3} placeholder="Internal review notes (optional)" className="mt-2 w-full border border-border rounded p-2 text-[11px]" />
+              </div>}
+
+              {isPacket && <div className="rounded border border-blue-200 bg-blue-50 px-3 py-3 text-[11px] text-blue-900">
+                This is the packet-level extraction. Use <strong>Review each account</strong> to confirm a separate disposition and next action for every covered account.
+              </div>}
 
               {error && <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
             </div>
@@ -509,7 +404,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
                 style={{ backgroundColor: analyzing ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}
               >
                 <Zap size={13} strokeWidth={2} />
-                {analyzing ? 'Generating…' : 'Generate Phase 3 Letters'}
+                {analyzing ? 'Analyzing…' : 'Analyze Nonresponse'}
               </button>
             )}
 
@@ -518,28 +413,34 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
                 className="flex items-center gap-2 px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
                 style={{ backgroundColor: (!files.length || analyzing) ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
                 <Zap size={13} strokeWidth={2} />
-                {analyzing ? 'Analyzing…' : `Run Phase 2 Analysis${files.length > 1 ? ` (${files.length} pages)` : ''}`}
+                {analyzing ? 'Analyzing…' : `Run Forensic Analysis${files.length > 1 ? ` (${files.length} pages)` : ''}`}
               </button>
             )}
             {step === 'results' && !saved && (
               <>
                 <button onClick={() => { setStep('upload'); setAnalysis(null); }}
                   className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">Re-analyze</button>
-                <button onClick={handleSave} disabled={saving}
+                {isPacket ? <button onClick={() => setShowPacketReview(true)}
                   className="px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                  style={{ backgroundColor: saving ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
-                  {saving ? 'Saving…' : 'Save Phase 3 Letters'}
-                </button>
+                  style={{ backgroundColor: '#1B2A4A', color: '#C9A84C' }}>
+                  Review each account
+                </button> : <button onClick={handleSave} disabled={saving || !reviewChoice}
+                  className="px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
+                  style={{ backgroundColor: (saving || !reviewChoice) ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
+                  {saving ? 'Saving…' : 'Save Review Decision'}
+                </button>}
               </>
             )}
             {saved && (
               <div className="flex items-center gap-2 text-[12px] text-green-700">
-                <CheckCircle size={14} strokeWidth={1.75} /> Phase 3 letters saved
+                <CheckCircle size={14} strokeWidth={1.75} /> Review decision saved
               </div>
             )}
           </div>
         </div>
       </div>
+      {showPacketReview && <PacketAccountResponseReview letter={letter} evidence={activeEvidenceId ? { id: activeEvidenceId } : null} onClose={() => setShowPacketReview(false)} onSaved={onSaved} />}
+      {roundReady && <RoundCloseModal roundId={roundReady.round_id} roundNumber={roundReady.round_number} onClose={() => setRoundReady(null)} onCompleted={() => { setRoundReady(null); onSaved?.(); onClose(); }} />}
     </div>
   );
 }

@@ -60,40 +60,24 @@ function supabaseRequest(path, method, body, url, key) {
   });
 }
 
-function sendgridEmail(to, subject, html, apiKey) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      personalizations: [{ to: [{ email: to }] }],
-      from: { email: 'chris@cccpartners.co', name: 'Credit Comeback Club' },
-      subject,
-      content: [{ type: 'text/html', value: html }],
+function sendMailQuiet(to, subject, html) {
+  const { sendEmail } = require('./_email.cjs');
+  return sendEmail({ to, subject, html })
+    .then(() => ({ status: 200 }))
+    .catch((e) => {
+      console.error('Resend Error:', e.message || e);
+      return { status: 500 };
     });
-    const options = {
-      hostname: 'api.sendgrid.com', port: 443,
-      path: '/v3/mail/send', method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + apiKey,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data),
-      },
-    };
-    const req = https.request(options, (res) => {
-      let raw = '';
-      res.on('data', c => raw += c);
-      res.on('end', () => {
-        if (res.statusCode >= 400) {
-          console.error(`SendGrid Error (${res.statusCode}): ${raw}`);
-        }
-        resolve({ status: res.statusCode });
-      });
-    });
-    req.on('error', (e) => {
-      console.error('SendGrid Request Error:', e);
-      reject(e);
-    });
-    req.write(data);
-    req.end();
-  });
+}
+
+async function updatePacketCoverage(letterIds, patch, supabaseUrl, serviceKey) {
+  const ids = [...new Set((letterIds || []).filter(Boolean))];
+  if (!ids.length) return;
+  const result = await supabaseRequest(
+    '/rest/v1/letter_account_coverage?letter_id=in.(' + ids.map(encodeURIComponent).join(',') + ')',
+    'PATCH', { ...patch, updated_at: new Date().toISOString() }, supabaseUrl, serviceKey
+  );
+  if (result.status < 200 || result.status >= 300) console.error('Could not propagate Lob status to packet coverage:', ids, result.status);
 }
 
 // Certified letters fire `letter.certified.*` event ids; plain letters fire
@@ -130,6 +114,7 @@ const RETURN_RECEIPT_EVENTS = new Set([
 // so _lobArtifacts retrieves the authoritative letter record with Lob's API.
 const RENDERED_PDF_EVENTS = new Set(['letter.rendered_pdf']);
 const FAILED_EVENTS = new Set(['letter.failed', 'letter.certified.failed']);
+const DELETED_EVENTS = new Set(['letter.deleted']);
 
 
 exports.handler = async (event) => {
@@ -139,7 +124,8 @@ exports.handler = async (event) => {
 
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const sendgridKey = process.env.SENDGRID_API_KEY;
+  const { isConfigured } = require('./_email.cjs');
+  const mailReady = isConfigured();
   // Lob issues a distinct signing secret PER WEBHOOK, and Test/Live are
   // fully separate webhooks in their dashboard — so a Test-mode event is
   // signed with a different secret than a Live one. LOB_WEBHOOK_SECRET can
@@ -294,7 +280,7 @@ exports.handler = async (event) => {
     );
     if (Array.isArray(rcptRes.body) && rcptRes.body.length === 0 && metaLetterId) {
       rcptRes = await supabaseRequest(
-        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId),
+        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null',
         'PATCH', { return_receipt_url: receiptUrl, lob_id: lobId }, supabaseUrl, supabaseKey
       );
     }
@@ -336,12 +322,17 @@ exports.handler = async (event) => {
     );
     if (Array.isArray(failedLetter.body) && failedLetter.body.length === 0 && metaLetterId) {
       failedLetter = await supabaseRequest(
-        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId),
+        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null',
         'PATCH',
         { tracking_status: 'Failed', mailed_date: null, tracking_number: null, delivered_at: null },
         supabaseUrl, supabaseKey
       );
     }
+    await updatePacketCoverage(
+      (Array.isArray(failedLetter.body) ? failedLetter.body : []).map((letter) => letter.id).concat(metaLetterId || []),
+      { mail_status: 'failed', tracking_status: 'Failed', delivered_at: null },
+      supabaseUrl, supabaseKey
+    );
     const failedSubmission = await supabaseRequest(
       '/rest/v1/mail_submissions?lob_id=eq.' + encodeURIComponent(lobId),
       'PATCH',
@@ -354,6 +345,46 @@ exports.handler = async (event) => {
     }
     console.warn('Lob mailpiece failed before mailing:', lobId, failureMessage);
     return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Failed', retryable: true }) };
+  }
+
+  // Lob emits `letter.deleted` when a mailpiece is successfully canceled
+  // before production. A cancellation is not a completed mailing: clear the
+  // operational dates/tracking data while retaining lob_id and the signed
+  // webhook ledger as the immutable record of the abandoned attempt.
+  if (DELETED_EVENTS.has(eventType)) {
+    const cancelledPatch = {
+      tracking_status: 'Cancelled',
+      mailed_date: null,
+      tracking_number: null,
+      delivered_at: null,
+    };
+    let cancelledLetter = await supabaseRequest(
+      '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId),
+      'PATCH', cancelledPatch, supabaseUrl, supabaseKey
+    );
+    if (Array.isArray(cancelledLetter.body) && cancelledLetter.body.length === 0 && metaLetterId) {
+      cancelledLetter = await supabaseRequest(
+        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null',
+        'PATCH', { ...cancelledPatch, lob_id: lobId }, supabaseUrl, supabaseKey
+      );
+    }
+    await updatePacketCoverage(
+      (Array.isArray(cancelledLetter.body) ? cancelledLetter.body : []).map((letter) => letter.id).concat(metaLetterId || []),
+      { mail_status: 'cancelled', tracking_status: 'Cancelled', delivered_at: null },
+      supabaseUrl, supabaseKey
+    );
+    const cancelledSubmission = await supabaseRequest(
+      '/rest/v1/mail_submissions?lob_id=eq.' + encodeURIComponent(lobId),
+      'PATCH', { status: 'cancelled', last_error: 'Cancelled in Lob before production.' },
+      supabaseUrl, supabaseKey
+    );
+    if (cancelledLetter.status < 200 || cancelledLetter.status >= 300
+      || cancelledSubmission.status < 200 || cancelledSubmission.status >= 300) {
+      console.error('Could not record Lob mail cancellation:', lobId, cancelledLetter.status, cancelledSubmission.status);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Could not record canceled Lob mailpiece' }) };
+    }
+    console.log('Lob mailpiece canceled before production:', lobId);
+    return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Cancelled', retryable: true }) };
   }
 
   const trackingStatus = statusMap[eventType];
@@ -375,7 +406,10 @@ exports.handler = async (event) => {
   // `delivered` webhooks harmless and keep a late in-transit event from
   // overwriting a confirmed delivery. The client notification is sent only
   // by the request that wins this transition.
-  const unresolvedFilter = '&delivered_at=is.null';
+  // A confirmed cancellation is terminal for that Lob ID. The id filter
+  // below is also constrained to rows without a Lob ID so a late event from
+  // an abandoned attempt can never overwrite a newer explicit re-mail.
+  const unresolvedFilter = '&delivered_at=is.null&or=(tracking_status.is.null,tracking_status.neq.Cancelled)';
   let updateRes = await supabaseRequest(
     '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId) + unresolvedFilter,
     'PATCH', patch, supabaseUrl, supabaseKey
@@ -384,7 +418,7 @@ exports.handler = async (event) => {
 
   if (updatedRows.length === 0 && metaLetterId) {
     updateRes = await supabaseRequest(
-      '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + unresolvedFilter,
+      '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null' + unresolvedFilter,
       'PATCH', { ...patch, lob_id: lobId }, supabaseUrl, supabaseKey
     );
     updatedRows = Array.isArray(updateRes.body) ? updateRes.body : [];
@@ -400,10 +434,30 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'no matching letter row' }) };
   }
 
+  const coverageMailStatus = isDelivered ? 'delivered'
+    : trackingStatus === 'Returned to Sender' ? 'returned'
+      : trackingStatus === 'Mailed' ? 'queued' : 'in_transit';
+  await updatePacketCoverage(updatedRows.map((letter) => letter.id), {
+    mail_status: coverageMailStatus,
+    tracking_status: trackingStatus,
+    ...(isDelivered ? { delivered_at: patch.delivered_at } : {}),
+  }, supabaseUrl, supabaseKey);
+
+  // Delivery starts the canonical 30-day clock for new adaptive rounds. The
+  // stored due date is authoritative and may later receive one documented +15.
+  if (isDelivered && updatedRows[0]?.target_type && !updatedRows[0]?.response_due_at) {
+    const dueAt = new Date(new Date(patch.delivered_at).getTime() + 30 * 86400000).toISOString();
+    const dueResult = await supabaseRequest(
+      '/rest/v1/letters?id=eq.' + encodeURIComponent(updatedRows[0].id) + '&response_due_at=is.null',
+      'PATCH', { response_due_at: dueAt }, supabaseUrl, supabaseKey
+    );
+    if (dueResult.status >= 200 && dueResult.status < 300) updatedRows[0].response_due_at = dueAt;
+  }
+
   console.log('Updated tracking for lob_id:', lobId, '->', trackingStatus);
 
   // Fire delivery email only on actual delivery
-  if (isDelivered && sendgridKey) {
+  if (isDelivered && mailReady) {
     try {
       const letter = updatedRows[0];
       if (letter && letter.client_name) {
@@ -419,35 +473,31 @@ exports.handler = async (event) => {
           const furnisher = letter.furnisher || 'your creditor';
           const clientName = letter.client_name.split(' ')[0];
           const tn = letter.tracking_number || trackingNumber;
-          const isBureauDispute = String(letter.phase || '').startsWith('Phase 3');
+          const isBureauDispute = letter.target_type === 'bureau' || String(letter.phase || '').startsWith('Phase 3');
           const isCccDispute = String(letter.phase || '').startsWith('CCC Dispute —');
-          const reviewDays = isBureauDispute && !isCccDispute ? 45 : 30;
+          const reviewDays = isCccDispute ? 30 : letter.target_type ? 30 : (isBureauDispute ? 45 : 30);
 
           const subject = isCccDispute
             ? 'CCC Letter Delivery Scan — ' + furnisher
             : 'Dispute Letter Delivered — ' + furnisher + ' Has ' + reviewDays + ' Days to Respond';
-          const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#000;">
-            <div style="background:#1B2A4A;padding:24px 32px;border-radius:4px 4px 0 0;">
-              <h1 style="color:#C9A84C;margin:0;font-size:20px;">Credit Comeback Club</h1>
-              <p style="color:#fff;margin:4px 0 0;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;">Campaign Update</p>
-            </div>
-            <div style="border:1px solid #ddd;border-top:none;padding:24px 32px;border-radius:0 0 4px 4px;">
-              <p>Hi ${clientName},</p>
-              <p>${isCccDispute
-                ? `Lob received a USPS delivery scan for your First Class CCC dispute letter to <strong>${furnisher}</strong>. CCC's ${reviewDays}-day operational round review is now underway.`
-                : `Your dispute letter to <strong>${furnisher}</strong> has been delivered. Its ${reviewDays}-day review window has begun.`}</p>
-              ${tn && !isCccDispute ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${tn}" style="color:#1B2A4A;">USPS Tracking ${tn.slice(-8)}</a></p>` : ''}
-              <p>${isCccDispute
+          const { wrapClientEmail, escapeHtml, BRAND } = require('./_email.cjs');
+          const html = wrapClientEmail({
+            eyebrow: 'Campaign Update',
+            bodyHtml: `<p style="margin:0 0 14px;">Hi ${escapeHtml(clientName)},</p>`
+              + `<p style="margin:0 0 14px;">${isCccDispute
+                ? `Lob received a USPS delivery scan for your First Class CCC dispute letter to <strong>${escapeHtml(furnisher)}</strong>. CCC's ${reviewDays}-day operational round review is now underway.`
+                : `Your dispute letter to <strong>${escapeHtml(furnisher)}</strong> has been delivered. Its ${reviewDays}-day review window has begun.`}</p>`
+              + (tn && !isCccDispute
+                ? `<p style="margin:0 0 14px;">Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${escapeHtml(tn)}" style="color:#1B2A4A;">USPS Tracking ${escapeHtml(String(tn).slice(-8))}</a></p>`
+                : '')
+              + `<p style="margin:0 0 14px;">${isCccDispute
                 ? 'We will record the documented result and determine the next saved CCC round for any account that remains.'
-                : 'We will monitor for their response and prepare Phase 3 escalation letters in advance.'}</p>
-              <p>Log in to your <a href="https://ccc-forensic-demo.netlify.app" style="color:#1B2A4A;">client portal</a> to see full details and mailpiece status.</p>
-              <p>Questions? Reply to this email or call 970-644-0063.</p>
-              <hr style="border:none;border-top:1px solid #eee;margin:24px 0;">
-              <p style="font-size:11px;color:#999;">Credit Comeback Club | Grand Junction, CO | creditcomebackclub.com</p>
-            </div>
-          </body></html>`;
+                : 'We will monitor the response window and review any result before deciding the next step.'}</p>`
+              + `<p style="margin:0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
+            cta: { href: BRAND.portalUrl, label: 'View in your portal →' },
+          });
 
-          const emailRes = await sendgridEmail(clientEmail, subject, html, sendgridKey);
+          const emailRes = await sendMailQuiet(clientEmail, subject, html);
           console.log('Delivery email sent to', clientEmail, '- status:', emailRes.status);
         } else {
           console.log('No client email found for', letter.client_name);

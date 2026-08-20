@@ -8,6 +8,8 @@ import {
   validateFollowUpSourceRelationships,
 } from '../src/utils/followUpEnclosures.js';
 import {
+  embedCanonicalSignatureInHistoricalHtml,
+  embeddedSignatureSource,
   hasInjectedSignature,
   injectSignatureImage,
 } from '../src/utils/signatureInjection.js';
@@ -56,7 +58,7 @@ const evidence = {
   response_kind: 'bureau',
   storage_bucket: 'responses',
   storage_paths: [
-    'firm-1/response-evidence/11111111-1111-4111-8111-111111111111/response_01_results.pdf',
+    'firm-1/client-1/response-evidence/11111111-1111-4111-8111-111111111111/response_01_results.pdf',
   ],
   file_names: ['results.pdf'],
   upload_status: 'received',
@@ -78,7 +80,16 @@ throwsMessage(
 );
 
 const valid = validateFollowUpSourceRelationships({ followUp, priorLetter, evidence });
-assert(valid.paths.length === 1 && valid.names[0] === 'results.pdf', 'valid exact source relationships pass');
+assert(valid.paths.length === 1 && valid.names[0] === 'results.pdf', 'canonical client-scoped response path passes');
+const legacyValid = validateFollowUpSourceRelationships({
+  followUp,
+  priorLetter,
+  evidence: {
+    ...evidence,
+    storage_paths: ['firm-1/response-evidence/11111111-1111-4111-8111-111111111111/response_01_results.pdf'],
+  },
+});
+assert(legacyValid.paths.length === 1, 'legacy response path remains readable');
 
 throwsMessage(
   () => validateFollowUpSourceRelationships({
@@ -139,6 +150,13 @@ assert(
   'signature injection is idempotent'
 );
 
+const structuredLetter = '<div class="signature-block"><p>ROBERT KERSTNER</p></div>';
+const injectedStructured = injectSignatureImage(structuredLetter, signatureUrl, 'Robert Kerstner');
+assert(
+  injectedStructured.indexOf('data-ccc-signature') < injectedStructured.indexOf('ROBERT KERSTNER'),
+  'structured signature block injection does not depend on printed-name capitalization'
+);
+
 const legacyLetter = '<p>Thomas Andrew Kilpatrick</p><p>Address</p><p>Sincerely,</p><p>Thomas Andrew Kilpatrick</p>';
 const injectedLegacy = injectSignatureImage(legacyLetter, signatureUrl, 'Thomas Andrew Kilpatrick');
 assert(
@@ -148,6 +166,30 @@ assert(
 assert(
   injectedLegacy.indexOf('Thomas Andrew Kilpatrick') < injectedLegacy.indexOf('data-ccc-signature'),
   'legacy address name remains before injected signature'
+);
+
+const durableSignature = 'data:image/png;base64,Y2Fub25pY2FsLXNpZ25hdHVyZQ==';
+const embeddedSignature = embeddedSignatureSource(injectSignatureImage(structuredLetter, durableSignature, 'Robert Kerstner'));
+assert(embeddedSignature === durableSignature, 'embedded signature source is available to packet assembly');
+// A real retired link: the public client-docs URL shape that stopped
+// resolving when that bucket was made private.
+const retiredSignatureUrl = 'https://mlsbdmewxocgweotcdud.supabase.co/storage/v1/object/public/client-docs/307b398b-ffc5-4e11-b9b6-64a7f281b136/signature.png';
+const historicalRemoteSignature = `<p>Prior letter</p><img src="${retiredSignatureUrl}" style="max-height:60px" />`;
+const repairedHistoricalSignature = embedCanonicalSignatureInHistoricalHtml(historicalRemoteSignature, durableSignature);
+assert(repairedHistoricalSignature.includes(durableSignature), 'historical enclosure uses the canonical embedded signature');
+assert(!repairedHistoricalSignature.includes(retiredSignatureUrl), 'retired historical signature URL is removed from the packet');
+throwsMessage(
+  () => embedCanonicalSignatureInHistoricalHtml(
+    '<p>Prior letter</p><img src="https://archive.example/Client/signature.png" />',
+    durableSignature
+  ),
+  'will not reliably render in physical mail',
+  'a historical image hosted outside our storage fails closed instead of being overwritten with the client signature'
+);
+throwsMessage(
+  () => embedCanonicalSignatureInHistoricalHtml(historicalRemoteSignature, null),
+  'no canonical embedded signature',
+  'historical enclosure fails closed when its retired signature cannot be replaced'
 );
 
 if (failed) {

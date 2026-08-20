@@ -3,15 +3,19 @@ import autoTable from 'jspdf-autotable';
 import { buildRecoveryBlueprintModel, recoveryBlueprintFilename } from './recoveryBlueprintModel.js';
 
 const C = {
-  navy: [18, 31, 56],
-  navy2: [27, 42, 74],
-  gold: [201, 168, 76],
-  cream: [247, 244, 237],
-  ink: [20, 27, 40],
-  muted: [99, 107, 121],
-  line: [223, 226, 232],
+  navy: [11, 28, 51],
+  navy2: [18, 38, 63],
+  navyDeep: [7, 21, 37],
+  gold: [201, 162, 39],
+  goldSoft: [232, 212, 139],
+  cream: [247, 244, 238],
+  pale: [240, 244, 248],
+  ink: [26, 35, 50],
+  muted: [92, 107, 122],
+  line: [217, 210, 197],
   white: [255, 255, 255],
-  green: [34, 105, 82],
+  badge: [232, 238, 245],
+  soft: [168, 184, 200],
 };
 
 const PAGE_W = 612;
@@ -37,359 +41,619 @@ function fitText(doc, text, maxWidth, startSize, minSize = 9) {
   return size;
 }
 
-function pageHeader(doc, kicker, title, dark = false) {
-  const bg = dark ? C.navy : C.cream;
-  setColor(doc, bg, true);
-  doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
-  setColor(doc, C.gold, true);
-  doc.rect(M, 40, 34, 3, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setCharSpace(1.6);
-  setColor(doc, dark ? C.gold : C.muted);
-  doc.text(kicker.toUpperCase(), M, 64);
-  doc.setCharSpace(0);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(27);
-  setColor(doc, dark ? C.white : C.navy);
-  doc.text(title, M, 105);
+function footerLight(doc, model, page, total) {
+  setColor(doc, C.muted);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.text('CREDIT COMEBACK CLUB  ·  PRIVATE CLIENT AUDIT', M, 770);
+  doc.text(`${page} / ${total}`, PAGE_W - M, 770, { align: 'right' });
 }
 
-function footer(doc, model, page, total) {
-  setColor(doc, C.line, true);
-  doc.rect(M, 750, PAGE_W - M * 2, 1, 'F');
+function footerDark(doc, model, page, total) {
+  setColor(doc, [138, 155, 176]);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  setColor(doc, C.muted);
-  doc.text('CREDIT COMEBACK CLUB  /  RECOVERY BLUEPRINT', M, 770);
-  doc.text(`${model.client.name}  /  ${page} OF ${total}`, PAGE_W - M, 770, { align: 'right' });
+  doc.setFontSize(7);
+  doc.text('CREDIT COMEBACK CLUB  ·  PRIVATE CLIENT AUDIT', M, 770);
+  doc.text(`${page} / ${total}`, PAGE_W - M, 770, { align: 'right' });
+}
+
+function scoreBand(score) {
+  if (score == null || !Number.isFinite(Number(score))) return '-';
+  const n = Number(score);
+  if (n >= 800) return 'Exceptional';
+  if (n >= 740) return 'Very Good';
+  if (n >= 670) return 'Good';
+  if (n >= 580) return 'Fair';
+  return 'Poor';
 }
 
 function addCover(doc, model) {
-  setColor(doc, C.navy, true);
+  setColor(doc, C.navyDeep, true);
   doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
   setColor(doc, C.gold, true);
-  doc.circle(520, 90, 110, 'F');
-  setColor(doc, C.navy2, true);
-  doc.circle(520, 90, 82, 'F');
-  setColor(doc, C.gold, true);
-  doc.rect(M, 72, 54, 4, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  doc.setCharSpace(2.2);
+  doc.rect(0, PAGE_H - 3.5, PAGE_W, 3.5, 'F');
+
   setColor(doc, C.gold);
-  doc.text('CREDIT COMEBACK CLUB', M, 106);
-  doc.setCharSpace(0);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(18);
-  setColor(doc, C.white);
-  doc.text('YOUR PERSONAL', M, 232);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(46);
-  doc.text('RECOVERY', M, 286);
-  doc.text('BLUEPRINT', M, 336);
-  setColor(doc, C.gold, true);
-  doc.rect(M, 368, 172, 3, 'F');
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(12);
-  setColor(doc, [207, 214, 226]);
-  doc.text('A forensic roadmap built from your three-bureau file.', M, 404);
-  doc.setFont('helvetica', 'bold');
-  fitText(doc, model.client.name, 500, 25, 17);
-  setColor(doc, C.white);
-  doc.text(model.client.name, M, 638);
-  doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
+  doc.text('CREDIT COMEBACK CLUB', M, 56);
+  setColor(doc, [138, 155, 176]);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.text('FORENSIC CREDIT RECOVERY', M, 70);
+
   setColor(doc, C.gold);
-  doc.text(`PREPARED ${model.client.reportDateLabel.toUpperCase()}`, M, 666);
-  doc.setFontSize(7.5);
-  setColor(doc, [151, 163, 181]);
-  doc.text('PRIVATE & CONFIDENTIAL', M, 742);
-  doc.text(model.templateVersion.toUpperCase(), PAGE_W - M, 742, { align: 'right' });
-}
+  doc.setFontSize(8);
+  doc.text(`PRIVATE CLIENT AUDIT  ·  ${model.client.reportDateLabel.toUpperCase()}`, M, 130);
 
-function metricCard(doc, x, y, width, label, value, accent = false) {
-  setColor(doc, C.white, true);
-  doc.roundedRect(x, y, width, 92, 5, 5, 'F');
-  setColor(doc, accent ? C.gold : C.navy, true);
-  doc.rect(x, y, 4, 92, 'F');
-  doc.setFont('helvetica', 'bold');
-  fitText(doc, value, width - 28, 22, 13);
-  setColor(doc, C.navy);
-  doc.text(String(value), x + 18, y + 39);
-  doc.setFontSize(7.5);
-  doc.setCharSpace(0.8);
-  setColor(doc, C.muted);
-  doc.text(label.toUpperCase(), x + 18, y + 66);
-  doc.setCharSpace(0);
-}
-
-function addSnapshot(doc, model) {
-  doc.addPage();
-  pageHeader(doc, '01 / The file', 'Your file, at a glance');
+  setColor(doc, C.white);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10.5);
-  setColor(doc, C.muted);
-  const summary = doc.splitTextToSize(model.executiveSummary, 500).slice(0, 4);
-  doc.text(summary, M, 140, { lineHeightFactor: 1.45 });
+  doc.setFontSize(26);
+  doc.text(model.client.name, M, 190);
+  setColor(doc, C.gold);
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(22);
+  doc.text('Forensic Credit Audit', M, 222);
 
-  metricCard(doc, M, 218, 160, 'Priority targets', model.metrics.priorityTargetCount);
-  metricCard(doc, 226, 218, 160, 'Accuracy issues', model.metrics.accuracyIssueCount);
-  metricCard(doc, 404, 218, 160, 'Targeted balance', money(model.metrics.targetedNegativeBalance), true);
+  setColor(doc, C.soft);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text('Three-bureau disclosure analyzed for accuracy, leverage,', M, 260);
+  doc.text('and the exact sequence that moves the needle first.', M, 276);
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  setColor(doc, C.navy);
-  doc.text('CURRENT SCORE SNAPSHOT', M, 354);
   const scoreEntries = [
     ['EQUIFAX', model.scores.equifax],
     ['EXPERIAN', model.scores.experian],
     ['TRANSUNION', model.scores.transunion],
   ];
   scoreEntries.forEach(([label, score], index) => {
-    const x = M + index * 172;
-    setColor(doc, C.navy, true);
-    doc.roundedRect(x, 374, 154, 78, 5, 5, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(23);
-    setColor(doc, C.white);
-    doc.text(score == null ? '—' : String(score), x + 18, 410);
+    const x = M + index * 168;
+    setColor(doc, C.navy2, true);
+    doc.roundedRect(x, 310, 152, 78, 5, 5, 'F');
+    setColor(doc, [138, 155, 176]);
+    doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
-    setColor(doc, C.gold);
-    doc.text(label, x + 18, 434);
+    doc.text(label, x + 76, 332, { align: 'center' });
+    setColor(doc, C.white);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.text(score == null ? '-' : String(score), x + 76, 360, { align: 'center' });
+    setColor(doc, C.goldSoft);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.text(scoreBand(score), x + 76, 378, { align: 'center' });
   });
 
-  setColor(doc, C.navy, true);
-  doc.roundedRect(M, 492, PAGE_W - M * 2, 142, 6, 6, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.setCharSpace(1.3);
-  setColor(doc, C.gold);
-  doc.text('BATCH 1 STRIKE ZONE', M + 24, 524);
-  doc.setCharSpace(0);
-  doc.setFontSize(33);
+  setColor(doc, [138, 155, 176]);
+  doc.setFontSize(9);
+  if (model.scoreGap?.narrative) {
+    const gapLines = doc.splitTextToSize(model.scoreGap.narrative, PAGE_W - M * 2).slice(0, 3);
+    doc.text(gapLines, M, 420, { lineHeightFactor: 1.4 });
+  } else {
+    doc.text('Priority is the documented accuracy conflicts on the file.', M, 420);
+  }
+
+  setColor(doc, [42, 63, 85], true);
+  doc.rect(M, 700, PAGE_W - M * 2, 1, 'F');
+  setColor(doc, [138, 155, 176]);
+  doc.setFontSize(7);
+  doc.text('CLIENT', M, 720);
+  doc.text('FILE DATE', M + 170, 720);
+  doc.text('BUREAUS', M + 340, 720);
   setColor(doc, C.white);
-  doc.text(money(model.metrics.batch1StrikeZone), M + 24, 570);
+  doc.setFontSize(9);
+  doc.text(model.client.location || '-', M, 738);
+  doc.text(model.client.reportDateLabel, M + 170, 738);
+  doc.text('EQ · EXP · TU', M + 340, 738);
+}
+
+function addSnapshot(doc, model) {
+  doc.addPage();
+  setColor(doc, C.cream, true);
+  doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+  setColor(doc, C.gold);
   doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('EXECUTIVE SNAPSHOT', M, 48);
+
+  setColor(doc, C.ink);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(24);
+  doc.text("What's actually", M, 82);
+  doc.text('moving the score.', M, 112);
+
+  setColor(doc, C.muted);
   doc.setFontSize(10);
-  setColor(doc, [198, 207, 221]);
-  doc.text(`${model.batch1Accounts.length} account${model.batch1Accounts.length === 1 ? '' : 's'} selected for the opening campaign`, M + 24, 598);
+  doc.text("We don't list every negative. We isolate the accounts and accuracy failures", M, 142);
+  doc.text('that create the score gap and the highest cost of credit.', M, 158);
+
+  setColor(doc, C.ink);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(42);
+  doc.text(money(model.metrics.targetedNegativeBalance), M, 220);
+  setColor(doc, C.muted);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('TARGETED NEGATIVE BALANCES & COLLECTIONS', M, 240);
+
+  const mets = [
+    [String(model.metrics.priorityTargetCount), 'PRIORITY TARGETS'],
+    [String(model.metrics.accuracyIssueCount), 'ACCURACY ISSUES'],
+    [money(model.metrics.batch1StrikeZone), 'BATCH 1 ZONE'],
+  ];
+  mets.forEach(([value, label], index) => {
+    const x = M + index * 170;
+    setColor(doc, C.ink);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(26);
+    doc.text(value, x, 300);
+    setColor(doc, C.muted);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.text(label, x, 318);
+  });
+
+  setColor(doc, C.line, true);
+  doc.rect(M, 340, PAGE_W - M * 2, 1, 'F');
+
+  setColor(doc, C.ink);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('THE GAP IN ONE SENTENCE', M, 368);
+  setColor(doc, C.muted);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9.5);
+  const gapText = model.scoreGap?.narrative
+    || model.executiveSummary
+    || 'Documented reporting issues on the highest-priority accounts are the primary drag on this file.';
+  const gapLines = doc.splitTextToSize(gapText, PAGE_W - M * 2).slice(0, 4);
+  doc.text(gapLines, M, 390, { lineHeightFactor: 1.45 });
+
+  setColor(doc, C.navy, true);
+  doc.roundedRect(M, 480, PAGE_W - M * 2, 110, 6, 6, 'F');
+  setColor(doc, C.gold);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text('WHAT THIS AUDIT GIVES YOU', M + 18, 510);
+  setColor(doc, [197, 208, 220]);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.text('Ranked targets with reasons · Recommended routes (bureau / direct / FDCPA)', M + 18, 535);
+  doc.text('Cross-bureau inconsistencies · Identity cleanup queue · Exact Batch 1 sequence', M + 18, 552);
+  doc.text('No generic "dispute everything." Every line has a documented why.', M + 18, 569);
+}
+
+function addCostOfGap(doc, model) {
+  doc.addPage();
+  setColor(doc, C.cream, true);
+  doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+  setColor(doc, C.gold);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('WHY THE GAP MATTERS', M, 48);
+
+  setColor(doc, C.ink);
+  doc.setFontSize(22);
+  const pts = model.scoreGap?.points || 0;
+  if (pts >= 15) {
+    doc.text(`A ${pts}-point spread`, M, 84);
+    doc.text('is not academic.', M, 112);
+  } else {
+    doc.text('Score alignment', M, 84);
+    doc.text('does not mean clean.', M, 112);
+  }
+
+  setColor(doc, C.muted);
+  doc.setFontSize(10);
+  doc.text('Lenders pull different bureaus. The weaker read is the one that prices you higher -', M, 148);
+  doc.text('on cars, insurance, and especially housing.', M, 164);
+
+  setColor(doc, C.ink);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('ILLUSTRATIVE AUTO LOAN - $28,500 / 60 MONTHS', M, 200);
+
+  const cards = [
+    { title: 'Mid-600s band', rate: '~ 9-12%', pmt: '$590-$635', note: 'Higher payment' },
+    { title: 'National avg ~680', rate: '~ 6-7%', pmt: '$550-$565', note: 'Better' },
+    { title: 'Mid-700s territory', rate: '~ 4-5%', pmt: '$520-$535', note: 'Best pricing' },
+  ];
+  cards.forEach((card, index) => {
+    const x = M + index * 168;
+    setColor(doc, C.white, true);
+    doc.setDrawColor(...C.line);
+    doc.setLineWidth(0.8);
+    doc.roundedRect(x, 220, 156, 130, 5, 5, 'FD');
+    setColor(doc, C.muted);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.text(card.title, x + 78, 245, { align: 'center' });
+    setColor(doc, C.ink);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text(card.rate, x + 78, 275, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(card.pmt, x + 78, 300, { align: 'center' });
+    setColor(doc, C.muted);
+    doc.setFontSize(7);
+    doc.text('est. monthly', x + 78, 318, { align: 'center' });
+    setColor(doc, index === 2 ? C.gold : C.muted);
+    doc.setFontSize(7.5);
+    doc.text(card.note, x + 78, 338, { align: 'center' });
+  });
+
+  setColor(doc, C.muted);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('Numbers are illustrative of rate bands, not a quote. Direction matters: the weaker bureau read is the expensive one.', M, 375);
+  doc.text('Closing documented accuracy gaps is how we change that read.', M, 390);
+
+  setColor(doc, C.navy, true);
+  doc.roundedRect(M, 430, PAGE_W - M * 2, 120, 6, 6, 'F');
+  setColor(doc, C.gold);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text('MORTGAGE CONTEXT', M + 18, 460);
+  setColor(doc, [197, 208, 220]);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.text('On a $250k 30-year note, moving from a mid-600s rate band into the mid-700s', M + 18, 485);
+  doc.text('territory is routinely five figures in lifetime interest - often more. That is why', M + 18, 502);
+  doc.text('we treat the weaker bureau file as the primary battlefield, not a side project.', M + 18, 519);
+  doc.text('We are not promising a score. We are removing the documented reasons it is suppressed.', M + 18, 536);
 }
 
 function addOpeningMove(doc, model) {
   doc.addPage();
-  pageHeader(doc, '02 / Priority', 'The opening move', true);
+  setColor(doc, C.navy, true);
+  doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+  setColor(doc, C.gold);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('THE OPENING MOVE', M, 48);
+
+  setColor(doc, C.white);
+  doc.setFontSize(22);
+  doc.text("We don't spray and pray.", M, 88);
+  doc.text('We open with power.', M, 116);
+
+  setColor(doc, C.soft);
+  doc.setFontSize(9.5);
+  doc.text('Month one is built around the single highest-leverage conflict on the file.', M, 148);
+
   const account = model.openingMove;
   if (!account) {
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(15);
-    setColor(doc, [203, 211, 224]);
-    doc.text('No Batch 1 account was assigned in the reviewed audit.', M, 180);
+    setColor(doc, C.soft);
+    doc.setFontSize(14);
+    doc.text('No Batch 1 account was assigned in the reviewed audit.', M, 220);
     return;
   }
-  doc.setFont('helvetica', 'bold');
-  fitText(doc, account.furnisher, 500, 34, 21);
-  setColor(doc, C.white);
-  doc.text(account.furnisher, M, 172);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(11);
-  setColor(doc, C.gold);
-  doc.text(`${money(account.balance)}  /  ${account.bureauLabel}`, M, 202);
 
   setColor(doc, C.navy2, true);
-  doc.roundedRect(M, 242, PAGE_W - M * 2, 154, 6, 6, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
+  doc.roundedRect(M, 175, PAGE_W - M * 2, 280, 6, 6, 'F');
+  setColor(doc, C.gold, true);
+  doc.rect(M, 175, 4, 280, 'F');
+
   setColor(doc, C.gold);
-  doc.text('WHY THIS ACCOUNT LEADS', M + 22, 272);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(12);
+  doc.setFontSize(8);
+  const headerLine = `${account.furnisher.toUpperCase()}  ·  ${account.status.toUpperCase()}  ·  ${account.bureauLabel.toUpperCase()}`;
+  fitText(doc, headerLine, PAGE_W - M * 2 - 40, 8, 6);
+  doc.text(headerLine, M + 18, 200);
+
   setColor(doc, C.white);
-  const why = doc.splitTextToSize(account.primaryViolation, PAGE_W - M * 2 - 44).slice(0, 5);
-  doc.text(why, M + 22, 304, { lineHeightFactor: 1.45 });
-
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  setColor(doc, C.gold);
-  doc.text('THE DOCUMENTED APPROACH', M, 452);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(12);
-  setColor(doc, [218, 224, 234]);
-  const strategy = doc.splitTextToSize(account.strategy, PAGE_W - M * 2).slice(0, 8);
-  doc.text(strategy, M, 486, { lineHeightFactor: 1.55 });
+  doc.setFontSize(32);
+  doc.text(money(account.balance), M + 18, 245);
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  setColor(doc, C.gold);
-  doc.text('ALSO IN BATCH 1', M, 648);
+  setColor(doc, [197, 208, 220]);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9.5);
-  setColor(doc, C.white);
-  const others = model.batch1Accounts.slice(1).map((item) => item.furnisher).join('  •  ') || 'This is the sole opening target.';
-  const otherLines = doc.splitTextToSize(others, PAGE_W - M * 2).slice(0, 3);
-  doc.text(otherLines, M, 674, { lineHeightFactor: 1.4 });
-}
+  doc.setFontSize(9);
+  const whySource = account.primaryChallengeStatement || account.primaryViolation;
+  const why = doc.splitTextToSize(whySource, PAGE_W - M * 2 - 40).slice(0, 4);
+  doc.text(why, M + 18, 275, { lineHeightFactor: 1.4 });
 
-function addRecoveryPath(doc, model) {
-  doc.addPage();
-  pageHeader(doc, '04 / The system', 'Your four-step recovery path');
-  model.recoveryPath.forEach((step, index) => {
-    const y = 154 + index * 132;
-    setColor(doc, index === 0 ? C.gold : C.navy, true);
-    doc.circle(70, y + 26, 22, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    setColor(doc, index === 0 ? C.navy : C.gold);
-    doc.text(step.number, 70, y + 30, { align: 'center' });
-    doc.setFontSize(15);
-    setColor(doc, C.navy);
-    doc.text(step.title, 112, y + 17);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9.5);
-    setColor(doc, C.muted);
-    const lines = doc.splitTextToSize(step.body, 430).slice(0, 4);
-    doc.text(lines, 112, y + 42, { lineHeightFactor: 1.45 });
-    if (index < model.recoveryPath.length - 1) {
-      setColor(doc, C.line, true);
-      doc.rect(70, y + 56, 1, 74, 'F');
-    }
+  setColor(doc, C.goldSoft);
+  doc.setFontSize(8);
+  let y = 340;
+  const bullets = [
+    `Field pressure - ${account.violations[0]?.field || 'Account status / balance'} requires documented investigation`,
+    `Route - ${account.routeLabel}`,
+    `Why first - Highest priority on the reviewed audit${account.priorityScore ? ` (score ${account.priorityScore})` : ''}`,
+  ];
+  bullets.forEach((line) => {
+    const wrapped = doc.splitTextToSize(`■  ${line}`, PAGE_W - M * 2 - 40).slice(0, 2);
+    doc.text(wrapped, M + 18, y, { lineHeightFactor: 1.3 });
+    y += 18 * wrapped.length;
   });
+
+  setColor(doc, [138, 155, 176]);
+  doc.setFontSize(8);
+  const others = model.batch1Accounts.slice(1).map((item) => item.furnisher);
+  const also = others.length
+    ? `Also in Batch 1:  ${others.join('  ·  ')}`
+    : 'This is the sole opening target for Batch 1.';
+  const alsoLines = doc.splitTextToSize(also, PAGE_W - M * 2).slice(0, 2);
+  doc.text(alsoLines, M, 500, { lineHeightFactor: 1.35 });
 }
 
 function addStrikeList(doc, model) {
   doc.addPage();
-  pageHeader(doc, '05 / Month one', 'The Batch 1 strike list');
+  setColor(doc, C.pale, true);
+  doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+  setColor(doc, C.gold);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
+  doc.setFontSize(8);
+  doc.text('PRIORITY TARGETS', M, 48);
+
+  setColor(doc, C.ink);
+  doc.setFontSize(22);
+  doc.text('Ranked. Not random.', M, 84);
+
   setColor(doc, C.muted);
-  doc.text("These are the opening targets selected in the reviewed forensic audit, shown in Claude's original priority order.", M, 137);
+  doc.setFontSize(9.5);
+  doc.text('Every account below has a documented reason and a recommended route.', M, 112);
+  doc.text('This is the Batch 1 strike list that feeds the campaign engine.', M, 128);
 
   if (!model.batch1Accounts.length) {
+    setColor(doc, C.ink);
     doc.setFontSize(13);
-    setColor(doc, C.navy);
     doc.text('No Batch 1 accounts were assigned.', M, 200);
     return;
   }
 
   autoTable(doc, {
-    startY: 166,
+    startY: 150,
     margin: { left: M, right: M, bottom: 58 },
-    head: [['Target', 'Balance', 'Bureau(s)', 'Primary documented issue']],
+    head: [['Balance', 'Account', 'Why it matters', 'Route']],
     body: model.batch1Accounts.map((account) => [
-      account.furnisher,
       money(account.balance),
-      account.bureauLabel,
-      account.primaryViolation,
+      account.furnisher,
+      account.primaryChallengeStatement || account.primaryViolation,
+      account.routeLabel,
     ]),
     theme: 'plain',
-    headStyles: { fillColor: C.navy, textColor: C.gold, fontStyle: 'bold', fontSize: 7.5, cellPadding: 8 },
-    bodyStyles: { textColor: C.ink, fontSize: 8.2, cellPadding: 8, lineColor: C.line, lineWidth: { bottom: 0.5 } },
+    headStyles: {
+      fillColor: C.navy,
+      textColor: C.white,
+      fontStyle: 'bold',
+      fontSize: 7.5,
+      cellPadding: 7,
+    },
+    bodyStyles: {
+      textColor: C.ink,
+      fontSize: 8,
+      cellPadding: 7,
+      lineColor: C.line,
+      lineWidth: { bottom: 0.4 },
+      valign: 'top',
+    },
     alternateRowStyles: { fillColor: [252, 251, 248] },
     columnStyles: {
-      0: { cellWidth: 122, fontStyle: 'bold' },
-      1: { cellWidth: 66 },
-      2: { cellWidth: 82 },
-      3: { cellWidth: 246 },
+      0: { cellWidth: 58, fontStyle: 'bold' },
+      1: { cellWidth: 120, fontStyle: 'bold' },
+      2: { cellWidth: 230 },
+      3: { cellWidth: 88 },
     },
+  });
+
+  const finalY = doc.lastAutoTable?.finalY || 520;
+  setColor(doc, C.muted);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  const later = model.batch2Accounts.length
+    ? `Later wave: ${model.batch2Accounts.map((a) => a.furnisher).slice(0, 4).join(' · ')}${model.batch2Accounts.length > 4 ? ' · …' : ''}`
+    : 'Later wave sequenced after Batch 1 responses so leverage is preserved.';
+  doc.text(later, M, Math.min(finalY + 28, 720));
+}
+
+function addForensicLayer(doc, model) {
+  doc.addPage();
+  setColor(doc, C.cream, true);
+  doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+  setColor(doc, C.gold);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('FORENSIC LAYER', M, 48);
+
+  setColor(doc, C.ink);
+  doc.setFontSize(22);
+  doc.text('Where the file', M, 84);
+  doc.text('contradicts itself.', M, 112);
+
+  setColor(doc, C.muted);
+  doc.setFontSize(9.5);
+  doc.text('These are not opinions. These are accuracy conflicts the bureaus and furnishers', M, 142);
+  doc.text('are required to investigate when properly challenged.', M, 158);
+
+  const issues = model.accuracyIssues.length
+    ? model.accuracyIssues
+    : [{ title: 'No discrete accuracy issues ranked', body: 'The reviewed audit did not surface authorized findings for the client packet.' }];
+
+  let y = 185;
+  issues.slice(0, 10).forEach((issue, index) => {
+    if (y > 700) return;
+    setColor(doc, C.gold);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text(String(index + 1).padStart(2, '0'), M, y);
+    setColor(doc, C.ink);
+    doc.setFontSize(9);
+    const title = doc.splitTextToSize(issue.title, PAGE_W - M * 2 - 36).slice(0, 1);
+    doc.text(title, M + 28, y);
+    setColor(doc, C.muted);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    const body = doc.splitTextToSize(issue.body, PAGE_W - M * 2 - 36).slice(0, 2);
+    doc.text(body, M + 28, y + 14, { lineHeightFactor: 1.3 });
+    y += 14 + (body.length * 12) + 14;
   });
 }
 
-function addR1Plan(doc, model) {
+function addIdentity(doc, model) {
   doc.addPage();
-  pageHeader(doc, '03 / Classification', 'Your recommended R1 flow');
+  setColor(doc, C.cream, true);
+  doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+  setColor(doc, C.gold);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
+  doc.setFontSize(8);
+  doc.text('IDENTITY & FILE HYGIENE', M, 48);
+
+  setColor(doc, C.ink);
+  doc.setFontSize(22);
+  doc.text('Clean the address', M, 84);
+  doc.text('before the letters.', M, 112);
+
   setColor(doc, C.muted);
-  doc.text('Each bureau is classified independently from the account facts in the reviewed three-bureau report.', M, 137);
+  doc.setFontSize(9.5);
+  doc.text('Dispute letters fail quietly when the header data is wrong. We fix identity first.', M, 142);
 
-  model.r1CampaignPlan.bureaus.forEach((item, index) => {
-    const y = 172 + index * 164;
+  const flags = model.identity?.flags || [];
+  flags.slice(0, 2).forEach((flag, index) => {
+    const x = M + index * 250;
     setColor(doc, C.white, true);
-    doc.roundedRect(M, y, PAGE_W - M * 2, 136, 6, 6, 'F');
-    setColor(doc, C.navy, true);
-    doc.rect(M, y, 5, 136, 'F');
+    doc.setDrawColor(...C.line);
+    doc.setLineWidth(0.8);
+    doc.roundedRect(x, 170, 236, 120, 5, 5, 'FD');
+    setColor(doc, C.ink);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(12);
-    setColor(doc, C.navy);
-    doc.text(item.bureau.name, M + 20, y + 28);
+    doc.setFontSize(10);
+    doc.text(flag.title.toUpperCase(), x + 14, 198);
+    setColor(doc, C.muted);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    const body = doc.splitTextToSize(flag.body, 208).slice(0, 5);
+    doc.text(body, x + 14, 222, { lineHeightFactor: 1.4 });
+  });
 
-    if (item.recommendations.length) {
-      item.recommendations.forEach((recommendation, recIndex) => {
-        const recY = y + 50 + recIndex * 35;
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9.5);
-        setColor(doc, C.green);
-        doc.text(`${recommendation.label} R1`, M + 20, recY);
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8.5);
-        setColor(doc, C.muted);
-        const law = doc.splitTextToSize(`${recommendation.law} · ${recommendation.accounts.length} routed account${recommendation.accounts.length === 1 ? '' : 's'}`, 454).slice(0, 1);
-        doc.text(law, M + 20, recY + 15);
-      });
-    } else {
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9.5);
-      setColor(doc, C.muted);
-      doc.text('No R1 letter is recommended from the currently classified accounts.', M + 20, y + 62);
-    }
+  setColor(doc, C.ink);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text('INQUIRIES', M, 330);
+  setColor(doc, C.muted);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text('Hard pulls are secondary to the tradeline conflicts above.', M, 352);
+  doc.text('We do not open the campaign with inquiry disputes. We open with the accounts', M, 368);
+  doc.text('that are actively pricing the file. Inquiry cleanup is sequenced later if needed.', M, 384);
 
-    if (item.needsReview.length) {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      setColor(doc, [180, 83, 9]);
-      doc.text(`${item.needsReview.length} ACCOUNT${item.needsReview.length === 1 ? '' : 'S'} REQUIRE STAFF CLASSIFICATION REVIEW`, PAGE_W - M - 16, y + 28, { align: 'right' });
+  setColor(doc, C.navy, true);
+  doc.roundedRect(M, 430, PAGE_W - M * 2, 110, 6, 6, 'F');
+  setColor(doc, C.gold);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text('OPERATING RULE', M + 18, 460);
+  setColor(doc, [197, 208, 220]);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.text('No new credit applications during active dispute cycles unless we specifically', M + 18, 485);
+  doc.text('clear them. New hard pulls while we are cleaning the file add noise and can', M + 18, 502);
+  doc.text('undercut the score recovery we are working to create.', M + 18, 519);
+}
+
+function addRecoveryPath(doc, model) {
+  doc.addPage();
+  setColor(doc, C.cream, true);
+  doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+  setColor(doc, C.gold);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('THE PATH', M, 48);
+
+  setColor(doc, C.ink);
+  doc.setFontSize(22);
+  doc.text('A clear plan.', M, 84);
+  doc.text('Not a mystery box.', M, 112);
+
+  model.recoveryPath.forEach((step, index) => {
+    const y = 155 + index * 115;
+    setColor(doc, C.gold);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text(step.number, M, y);
+    setColor(doc, C.ink);
+    doc.setFontSize(11);
+    doc.text(step.title, M + 42, y);
+    setColor(doc, C.muted);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    const body = doc.splitTextToSize(step.body, PAGE_W - M * 2 - 42).slice(0, 4);
+    doc.text(body, M + 42, y + 18, { lineHeightFactor: 1.4 });
+    if (index < model.recoveryPath.length - 1) {
+      setColor(doc, C.line, true);
+      doc.rect(M + 8, y + 55, 1.2, 40, 'F');
     }
   });
 }
 
 function addClosing(doc, model) {
   doc.addPage();
-  setColor(doc, C.navy, true);
+  setColor(doc, C.navyDeep, true);
   doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
   setColor(doc, C.gold, true);
-  doc.rect(M, 66, 48, 4, 'F');
+  doc.rect(0, PAGE_H - 3.5, PAGE_W, 3.5, 'F');
+
+  setColor(doc, C.gold);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('READY WHEN YOU ARE', M, 56);
+
+  setColor(doc, C.white);
+  doc.setFontSize(22);
+  doc.text('Your file already has', M, 100);
+  setColor(doc, C.gold);
+  doc.setFont('helvetica', 'italic');
+  doc.text('a battle plan.', M, 130);
+  setColor(doc, C.white);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Now it needs a team.', M, 160);
+
+  setColor(doc, C.soft);
+  doc.setFontSize(10);
+  doc.text('Most people stare at a tri-merge and feel stuck. You do not have to.', M, 200);
+  doc.text('We already know the Opening Move, the Batch 1 list, the routes,', M, 218);
+  doc.text('and the sequence that follows.', M, 236);
+
+  doc.setDrawColor(...C.gold);
+  doc.setLineWidth(1.2);
+  doc.roundedRect(M, 280, PAGE_W - M * 2, 90, 4, 4, 'S');
+  setColor(doc, C.white);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text('Start Month One - Batch 1 letters', M + 18, 315);
+  setColor(doc, C.soft);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.text('We prepare and mail the opening disputes on the highest-leverage accounts,', M + 18, 338);
+  doc.text('track bureau responses, and keep you in the loop. You focus on life. We focus on the file.', M + 18, 354);
+
+  setColor(doc, C.gold);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
-  doc.setCharSpace(1.8);
-  setColor(doc, C.gold);
-  doc.text('YOUR NEXT MOVE', M, 103);
-  doc.setCharSpace(0);
-  doc.setFontSize(38);
-  setColor(doc, C.white);
-  doc.text("Let's turn the", M, 198);
-  doc.text('findings into action.', M, 242);
+  doc.text('Credit Comeback Club', M, 620);
+  setColor(doc, [138, 155, 176]);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(13);
-  setColor(doc, [207, 214, 226]);
-  const intro = doc.splitTextToSize(
-    `${model.client.firstName}, this Blueprint identifies the opening priorities. Your consultation is where we verify the file, answer your questions, and map the right next step for you.`,
-    480,
-  );
-  doc.text(intro, M, 304, { lineHeightFactor: 1.55 });
-
-  setColor(doc, C.gold, true);
-  doc.roundedRect(M, 414, 242, 50, 5, 5, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  setColor(doc, C.navy);
-  doc.text('REVIEW YOUR BLUEPRINT WITH US', M + 18, 445);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(11);
-  setColor(doc, C.white);
-  doc.text('970-644-0063', M, 510);
-  doc.text('creditcomebackclub.com', M, 532);
-
-  setColor(doc, C.navy2, true);
-  doc.roundedRect(M, 592, PAGE_W - M * 2, 108, 5, 5, 'F');
-  doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
-  setColor(doc, C.gold);
-  doc.text('IMPORTANT', M + 18, 618);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.3);
-  setColor(doc, [190, 200, 216]);
-  const disclaimer = doc.splitTextToSize(model.disclaimer, PAGE_W - M * 2 - 36);
-  doc.text(disclaimer, M + 18, 640, { lineHeightFactor: 1.45 });
+  doc.text('FORENSIC CREDIT RECOVERY', M, 636);
+
+  setColor(doc, [138, 155, 176]);
+  doc.setFontSize(8);
+  doc.text(`Prepared for ${model.client.name}`, PAGE_W - M, 620, { align: 'right' });
+  doc.text(`Report date ${model.client.reportDate || '-'}`, PAGE_W - M, 636, { align: 'right' });
+  doc.text('creditcomebackclub.com', PAGE_W - M, 652, { align: 'right' });
+
+  setColor(doc, [107, 124, 144]);
+  doc.setFontSize(6.5);
+  const disc = doc.splitTextToSize(model.disclaimer, PAGE_W - M * 2).slice(0, 4);
+  doc.text(disc, M, 700, { lineHeightFactor: 1.35 });
 }
 
 export function buildRecoveryBlueprintPdf(auditOrModel) {
@@ -398,23 +662,27 @@ export function buildRecoveryBlueprintPdf(auditOrModel) {
     : buildRecoveryBlueprintModel(auditOrModel);
   const doc = new jsPDF({ unit: 'pt', format: 'letter', compress: true });
   doc.setProperties({
-    title: `${model.client.name} Recovery Blueprint`,
-    subject: 'Credit Comeback Club Recovery Blueprint',
+    title: `${model.client.name} Private Client Audit`,
+    subject: 'Credit Comeback Club Private Client Audit',
     author: 'Credit Comeback Club',
     creator: model.templateVersion,
   });
+
   addCover(doc, model);
   addSnapshot(doc, model);
+  addCostOfGap(doc, model);
   addOpeningMove(doc, model);
-  addR1Plan(doc, model);
-  addRecoveryPath(doc, model);
   addStrikeList(doc, model);
+  addForensicLayer(doc, model);
+  addIdentity(doc, model);
+  addRecoveryPath(doc, model);
   addClosing(doc, model);
 
   const total = doc.getNumberOfPages();
-  for (let page = 2; page < total; page += 1) {
+  for (let page = 2; page <= total; page += 1) {
     doc.setPage(page);
-    footer(doc, model, page, total);
+    if (page === 4 || page === total) footerDark(doc, model, page, total);
+    else footerLight(doc, model, page, total);
   }
   return doc;
 }

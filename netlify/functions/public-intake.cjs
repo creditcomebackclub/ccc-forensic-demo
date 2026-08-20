@@ -1,3 +1,20 @@
+const { createGuideDownloadToken } = require('./_guideDownloadToken.cjs');
+
+function normalizeIntent(value) {
+  const intent = String(value || 'consultation').trim().toLowerCase();
+  return ['consultation', 'guide_download'].includes(intent) ? intent : null;
+}
+
+function intakeLeadFields(intent, affiliateLabel, tier) {
+  const isGuide = intent === 'guide_download';
+  return {
+    lead_source: affiliateLabel ? `Affiliate: ${affiliateLabel}` : (isGuide ? 'Free Guide' : 'Website Intake'),
+    lead_notes: isGuide ? 'Requested the free Metro 2 dispute guide' : (tier ? `Selected Tier: ${tier}` : null),
+    consultation_status: isGuide ? null : 'requested',
+    ...(isGuide ? { tags: ['source:freeguide'] } : {}),
+  };
+}
+
 exports.handler = async (event) => {
   // Handle CORS preflight
   if (event.httpMethod === 'OPTIONS') {
@@ -25,9 +42,13 @@ exports.handler = async (event) => {
   try {
     const payload = JSON.parse(event.body);
     const { name, email, phone, tier, ref, website } = payload;
+    const intent = normalizeIntent(payload.intent);
 
     if (!name || !email) {
       return { statusCode: 400, body: JSON.stringify({ error: 'Name and email are required' }) };
+    }
+    if (!intent) {
+      return { statusCode: 400, body: JSON.stringify({ error: 'Unsupported intake intent' }) };
     }
 
     // Honeypot: every intake form (home.html, freeguide.html, join.html,
@@ -133,8 +154,7 @@ exports.handler = async (event) => {
         email: email.trim().toLowerCase(),
         lead_phone: phone ? phone.trim() : null,
         status: 'lead',
-        lead_source: affiliateLabel ? `Affiliate: ${affiliateLabel}` : 'Website Intake',
-        lead_notes: tier ? `Selected Tier: ${tier}` : null,
+        ...intakeLeadFields(intent, affiliateLabel, tier),
         lead_created_at: new Date().toISOString(),
         ...(affiliate ? { referred_by: affiliate.id, referral_fee: null } : {})
       })
@@ -175,12 +195,39 @@ exports.handler = async (event) => {
       console.error('Admin notification trigger failed:', await adminRes.text());
     }
 
+    // Partner confirmation when the public /join?ref= link attributed this lead.
+    if (affiliate?.id && lead?.id) {
+      try {
+        const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${serviceKey}`,
+          },
+          body: JSON.stringify({
+            event: 'referral_received',
+            clientId: lead.id,
+            affiliateId: affiliate.id,
+          }),
+        });
+        if (!partnerRes.ok) console.error('Affiliate referral confirm failed:', await partnerRes.text());
+      } catch (e) {
+        console.error('Affiliate referral confirm error:', e.message);
+      }
+    }
+
     return {
       statusCode: 200,
       headers: {
         'Access-Control-Allow-Origin': '*',
       },
-      body: JSON.stringify({ success: true, leadId: lead.id })
+      body: JSON.stringify({
+        success: true,
+        leadId: lead.id,
+        ...(intent === 'guide_download'
+          ? { downloadUrl: '/api/guide-download?token=' + encodeURIComponent(createGuideDownloadToken(lead.id, serviceKey)) }
+          : {}),
+      })
     };
 
   } catch (err) {
@@ -188,3 +235,5 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
   }
 };
+
+exports._test = { intakeLeadFields, normalizeIntent };
