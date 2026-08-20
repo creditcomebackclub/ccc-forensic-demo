@@ -71,7 +71,33 @@ function supabaseRequest(path, method, body, supabaseUrl, serviceKey, extraHeade
 // Lob renders the mailpiece HTML on its own schedule and fetches every remote
 // asset at that moment. The browser assembles that HTML, so the browser cannot
 // be the only thing that checks it — re-read what was actually uploaded.
-const MAIL_ASSET_URL_RE = /(?:\bsrc\s*=\s*["']|url\(\s*["']?)(https?:\/\/[^"')\s]+)/gi;
+// Unquoted `src=https://…` renders the same as the quoted form, so the
+// allowlist has to see it too.
+const MAIL_ASSET_URL_RE = /(?:\bsrc\s*=\s*["']?|url\(\s*["']?)(https?:\/\/[^"')\s>]+)/gi;
+
+const MAILPIECE_PREFLIGHT_TIMEOUT_MS = 15000;
+
+/**
+ * The mailpiece URL arrives in the request body, and this function both fetches
+ * it and hands it to Lob to print. Neither may point anywhere but the signed
+ * document we just uploaded: otherwise it is a server-side request primitive,
+ * and a way to have Lob print arbitrary content on firm letterhead.
+ */
+function durableMailpieceUrl(remoteUrl, supabaseUrl) {
+  const expectedPrefix = String(supabaseUrl).replace(/\/+$/, '') + '/storage/v1/object/sign/documents/';
+  let parsed;
+  let expected;
+  try {
+    parsed = new URL(String(remoteUrl));
+    expected = new URL(expectedPrefix);
+  } catch (e) {
+    throw new Error('The rendered letter URL is not a valid URL.');
+  }
+  if (parsed.protocol !== 'https:' || parsed.origin !== expected.origin || !String(remoteUrl).startsWith(expectedPrefix)) {
+    throw new Error('The rendered letter URL must be a signed document URL from this project storage.');
+  }
+  return String(remoteUrl);
+}
 
 function scanRemoteAssetUrls(fileUrl) {
   return new Promise((resolve, reject) => {
@@ -81,6 +107,7 @@ function scanRemoteAssetUrls(fileUrl) {
       port: 443,
       path: u.pathname + u.search,
       method: 'GET',
+      timeout: MAILPIECE_PREFLIGHT_TIMEOUT_MS,
     }, (res) => {
       if (res.statusCode < 200 || res.statusCode >= 300) {
         res.resume();
@@ -101,6 +128,11 @@ function scanRemoteAssetUrls(fileUrl) {
       });
       res.on('end', () => resolve(Array.from(found)));
       res.on('error', reject);
+    });
+    // Without this a stalled endpoint holds an irreversible mail send open
+    // until Netlify kills the whole invocation.
+    req.on('timeout', () => {
+      req.destroy(new Error('Timed out re-reading the uploaded mailpiece for preflight'));
     });
     req.on('error', reject);
     req.end();
@@ -666,6 +698,12 @@ exports.handler = async (event) => {
       if (!letterId || !remoteUrl || !toAddress || !fromAddress) {
         return { statusCode: 400, body: JSON.stringify({ error: 'letter_id, rendered letter URL, and complete addresses are required' }) };
       }
+      let mailpieceUrl;
+      try {
+        mailpieceUrl = durableMailpieceUrl(remoteUrl, supabaseUrl);
+      } catch (e) {
+        return { statusCode: 400, body: JSON.stringify({ error: e.message, blocked: true }) };
+      }
 
       // The database—not browser state—is the authoritative preflight check.
       // It prevents both a citation/enclosure block bypass and a second send
@@ -792,7 +830,7 @@ exports.handler = async (event) => {
       // enclosures failed whole mailpieces this way; only short-lived signed
       // URLs we minted for this send are acceptable.
       const durableAssetPrefix = String(supabaseUrl).replace(/\/+$/, '') + '/storage/v1/object/sign/documents/';
-      const remoteAssets = await scanRemoteAssetUrls(remoteUrl);
+      const remoteAssets = await scanRemoteAssetUrls(mailpieceUrl);
       const nonDurableAssets = remoteAssets.filter((url) => !url.startsWith(durableAssetPrefix));
       if (nonDurableAssets.length > 0) {
         return {
@@ -882,7 +920,7 @@ exports.handler = async (event) => {
           address_zip: fromAddress.zip,
           address_country: 'US',
         },
-        file: remoteUrl,
+        file: mailpieceUrl,
         // Text letters print B&W double-sided — enclosures are grayscaled
         // upstream anyway, and this roughly halves the per-letter cost
         color: false,
@@ -1042,3 +1080,8 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ error: e.message || 'Lob request failed' }) };
   }
 };
+
+// Exported for preflight regression tests; the handler is the only entry point
+// used in production.
+exports.durableMailpieceUrl = durableMailpieceUrl;
+exports.MAIL_ASSET_URL_RE = MAIL_ASSET_URL_RE;

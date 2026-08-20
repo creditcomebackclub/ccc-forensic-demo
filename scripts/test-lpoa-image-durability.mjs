@@ -3,6 +3,7 @@
 // signature images were still remote `client-docs` links after that bucket
 // went private, so Lob 404'd them mid-render and failed the whole piece.
 
+import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import {
   classifyRemoteSignatureUrl,
@@ -10,6 +11,9 @@ import {
   embedRemoteSignatureImages,
   remoteImageSources,
 } from '../src/utils/signatureInjection.js';
+
+const require = createRequire(import.meta.url);
+const { durableMailpieceUrl, MAIL_ASSET_URL_RE } = require('../netlify/functions/lob.cjs');
 
 let failed = 0;
 function assert(condition, message) {
@@ -111,9 +115,49 @@ throwsMessage(
   'historical enclosure repair still fails closed without a canonical signature'
 );
 
+// Unquoted src= renders identically and must not slip past either layer.
+const unquoted = `<img src=${DEAD_CLIENT_URL} style="max-height:56px" />`;
+assert(remoteImageSources(unquoted)[0] === DEAD_CLIENT_URL, 'an unquoted image source is still seen as a remote image');
+assert(
+  !remoteImageSources(embedRemoteSignatureImages(unquoted, { clientSignatureDataUrl: CLIENT_SIG })).length,
+  'an unquoted retired signature link is embedded like a quoted one'
+);
+throwsMessage(
+  () => embedRemoteSignatureImages('<img src=https://cdn.example/exhibit.png />', { clientSignatureDataUrl: CLIENT_SIG }),
+  'will not reliably render in physical mail',
+  'an unquoted foreign image fails closed'
+);
+assert(
+  classifyRemoteSignatureUrl('https://cdn.example/signature.png') === 'unknown'
+  && classifyRemoteSignatureUrl('https://evil.example/lpoa/signature.png') === 'unknown',
+  'a signature.png hosted outside our storage is never treated as this client\'s signature'
+);
+
+const SUPABASE_URL = 'https://mlsbdmewxocgweotcdud.supabase.co';
+const SIGNED_MAILPIECE = `${SUPABASE_URL}/storage/v1/object/sign/documents/firm/temp/letters/b/x.html?token=abc`;
+assert(durableMailpieceUrl(SIGNED_MAILPIECE, SUPABASE_URL) === SIGNED_MAILPIECE, 'a signed document URL is accepted for printing');
+for (const [hostile, why] of [
+  ['http://169.254.169.254/latest/meta-data/', 'an internal address'],
+  [`${SUPABASE_URL}/storage/v1/object/public/client-docs/admin/settings.json`, 'a public object outside documents'],
+  ['https://mlsbdmewxocgweotcdud.supabase.co.evil.example/storage/v1/object/sign/documents/x', 'a lookalike host'],
+  ['https://evil.example/storage/v1/object/sign/documents/x', 'a foreign host'],
+]) {
+  throwsMessage(
+    () => durableMailpieceUrl(hostile, SUPABASE_URL),
+    'signed document URL',
+    `the mailpiece URL rejects ${why}`
+  );
+}
+
+MAIL_ASSET_URL_RE.lastIndex = 0;
+assert(
+  MAIL_ASSET_URL_RE.exec('<img src=https://cdn.example/x.png>')?.[1] === 'https://cdn.example/x.png',
+  'the server asset scan sees unquoted image sources'
+);
+
 const lobMailer = readFileSync(new URL('../src/components/LobMailer.jsx', import.meta.url), 'utf8');
 assert(
-  (lobMailer.match(/fetchLpoaHtmlForPrint\(supabase, clientMeta\?\.\[0\]\?\.lpoa_signature_data, \{ clientSignatureDataUrl: canonicalSignature \}\)/g) || []).length === 4,
+  (lobMailer.match(/fetchLpoaHtmlForPrint\([^)]*\{ clientSignatureDataUrl: canonicalSignature \}\)/g) || []).length === 4,
   'every LPOA enclosure path can resolve a retired client signature link'
 );
 assert(
@@ -122,9 +166,14 @@ assert(
   'the assembled mailpiece is checked for foreign image links before it is uploaded for Lob'
 );
 
+assert(
+  /if \(phase3LpoaData\) throw e;/.test(lobMailer) && /if \(phase1LpoaData \|\| letter\.roundId\) throw e;/.test(lobMailer),
+  'a client with an LPOA on file cannot mail without it when the enclosure fails to build'
+);
+
 const lobFunction = readFileSync(new URL('../netlify/functions/lob.cjs', import.meta.url), 'utf8');
 assert(
-  lobFunction.includes('scanRemoteAssetUrls(remoteUrl)')
+  lobFunction.includes('scanRemoteAssetUrls(mailpieceUrl)')
   && lobFunction.indexOf('nonDurableAssets') < lobFunction.indexOf('let submission = await findSubmission(letterId, supabaseUrl, serviceKey);'),
   'the server re-reads the uploaded mailpiece and blocks non-durable assets before submitting to Lob'
 );
@@ -132,6 +181,16 @@ assert(
   /storage\/v1\/object\/sign\/documents\//.test(lobFunction),
   'only short-lived signed document URLs minted for the send are accepted'
 );
+assert(
+  lobFunction.includes('timeout: MAILPIECE_PREFLIGHT_TIMEOUT_MS')
+  && /req\.on\('timeout'/.test(lobFunction),
+  'the preflight fetch cannot hold an irreversible mail send open indefinitely'
+);
+assert(
+  lobFunction.indexOf('durableMailpieceUrl(remoteUrl, supabaseUrl)') < lobFunction.indexOf('const letter = await findLetter(letterId'),
+  'the caller-supplied mailpiece URL is validated before the server fetches it'
+);
+assert(lobFunction.includes('file: mailpieceUrl,'), 'Lob prints the validated URL, not the raw payload value');
 
 if (failed) {
   console.error(`\n${failed} failure(s)`);

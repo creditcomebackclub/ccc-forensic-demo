@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=20.6.0"
+  },
   "description": "Credit Comeback Club — Forensic Credit Audit Demo (browser app)",
   "scripts": {
     "dev": "vite",

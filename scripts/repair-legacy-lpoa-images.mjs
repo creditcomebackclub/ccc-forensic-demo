@@ -76,7 +76,9 @@ async function main() {
 
   const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
-  let query = db.from('clients').select('id,user_id,name,lpoa_signature_data').not('lpoa_signature_data', 'is', null);
+  let query = db.from('clients')
+    .select('id,user_id,name,lpoa_signature_data,lpoa_document_hash')
+    .not('lpoa_signature_data', 'is', null);
   if (clientId) query = query.eq('id', clientId);
   const { data: clients, error } = await query;
   if (error) throw error;
@@ -89,7 +91,7 @@ async function main() {
     console.warn('WARN: no attorney signature found at firm/attorney-signature.png or the legacy path.');
   }
 
-  const stats = { scanned: 0, clean: 0, repaired: 0, unreadable: 0, unresolved: 0 };
+  const stats = { scanned: 0, clean: 0, repaired: 0, finalized: 0, unreadable: 0, unresolved: 0, conflicted: 0 };
 
   for (const client of clients || []) {
     const label = client.name || client.id;
@@ -105,6 +107,20 @@ async function main() {
 
     const remotes = remoteImageSources(loaded.html);
     if (remotes.length === 0) {
+      // A document with no remote links but an unfinished repair record means
+      // an earlier run wrote the repaired bytes and then failed before it
+      // recorded provenance. Close that out rather than skipping it forever.
+      if (lpoaData.imageRepair?.status === 'pending') {
+        stats.finalized += 1;
+        console.log(`${apply ? 'FINALIZED ' : 'WOULD FIX '}  ${label} — completing provenance from an interrupted repair`);
+        if (apply) {
+          const { error: finalizeError } = await db.from('clients').update({
+            lpoa_signature_data: { ...lpoaData, imageRepair: { ...lpoaData.imageRepair, status: 'complete' } },
+          }).eq('id', client.id);
+          if (finalizeError) throw new Error(`Could not finalize LPOA repair for ${label}: ${finalizeError.message}`);
+        }
+        continue;
+      }
       stats.clean += 1;
       continue;
     }
@@ -149,11 +165,36 @@ async function main() {
       Buffer.from(loaded.html, 'utf8'),
       { upsert: false, contentType: 'text/html;charset=utf-8' }
     );
-    // A pre-existing archive means an earlier run already preserved the
-    // originals; that is not a reason to abandon the repair.
-    if (archiveError && !/exists/i.test(archiveError.message)) {
-      throw new Error(`Could not archive original LPOA for ${label}: ${archiveError.message}`);
+    if (archiveError) {
+      if (!/exists/i.test(archiveError.message)) {
+        throw new Error(`Could not archive original LPOA for ${label}: ${archiveError.message}`);
+      }
+      // Something is already parked at the archive path. Only an identical
+      // copy proves it is this document's original; anything else would mean
+      // overwriting the sole surviving copy of the current LPOA.
+      const { data: existing } = await db.storage.from(loaded.bucket).download(originalPath);
+      const existingHtml = existing ? await existing.text() : null;
+      if (existingHtml !== loaded.html) {
+        stats.repaired -= 1;
+        stats.conflicted += 1;
+        console.log(`CONFLICT    ${label} — ${originalPath} exists and does not match the current document; skipped`);
+        continue;
+      }
     }
+
+    // Provenance is written before the document is overwritten so an
+    // interrupted run is always recoverable from the record.
+    const repairRecord = {
+      status: 'pending',
+      repairedAt: new Date().toISOString(),
+      originalPath,
+      originalDocumentHash: client.lpoa_document_hash || lpoaData.documentHash || null,
+      embeddedImages: remotes,
+    };
+    const { error: pendingError } = await db.from('clients')
+      .update({ lpoa_signature_data: { ...lpoaData, imageRepair: repairRecord } })
+      .eq('id', client.id);
+    if (pendingError) throw new Error(`Could not record pending LPOA repair for ${label}: ${pendingError.message}`);
 
     const { error: writeError } = await db.storage.from(loaded.bucket).upload(
       loaded.path,
@@ -162,17 +203,9 @@ async function main() {
     );
     if (writeError) throw new Error(`Could not write repaired LPOA for ${label}: ${writeError.message}`);
 
-    const { error: metaError } = await db.from('clients').update({
-      lpoa_signature_data: {
-        ...lpoaData,
-        imageRepair: {
-          repairedAt: new Date().toISOString(),
-          originalPath,
-          originalDocumentHash: lpoaData.documentHash || null,
-          embeddedImages: remotes,
-        },
-      },
-    }).eq('id', client.id);
+    const { error: metaError } = await db.from('clients')
+      .update({ lpoa_signature_data: { ...lpoaData, imageRepair: { ...repairRecord, status: 'complete' } } })
+      .eq('id', client.id);
     if (metaError) throw new Error(`Could not record LPOA repair for ${label}: ${metaError.message}`);
   }
 

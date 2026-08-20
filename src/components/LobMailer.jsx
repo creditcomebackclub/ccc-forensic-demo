@@ -607,13 +607,15 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         // the storage reorg migration moves those objects into evidence rows.
 
         // LPOA still included for Phase 3
+        let phase3LpoaData = null;
         try {
           const clientMetaQuery = letter.clientId
             ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
             : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
           const { data: clientMeta, error: clientMetaError } = await clientMetaQuery;
           if (clientMetaError) throw clientMetaError;
-          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data, { clientSignatureDataUrl: canonicalSignature });
+          phase3LpoaData = clientMeta?.[0]?.lpoa_signature_data || null;
+          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, phase3LpoaData, { clientSignatureDataUrl: canonicalSignature });
           if (letter.roundId && !lpoaHtml) throw new Error('A signed Limited Power of Attorney is required for this dispute round. Nothing was sent.');
           if (lpoaHtml) {
             const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
@@ -625,7 +627,14 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
               + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Limited Power of Attorney</div>'
               + lpoaBody + '</div>';
           }
-        } catch(e) { console.warn('Could not fetch LPOA for Phase 3:', e); }
+        } catch(e) {
+          // A client with an LPOA on file must never mail without it because
+          // its signature images could not be embedded. Dropping the enclosure
+          // silently downgrades the packet's authority; only a client with no
+          // LPOA record at all may proceed.
+          if (phase3LpoaData) throw e;
+          console.warn('Could not fetch LPOA for Phase 3:', e);
+        }
 
         // If no Phase 1 letter was ever actually transmitted through our
         // own Lob integration (lob_id — not mailed_date, which on a
@@ -645,12 +654,14 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
 
       } else {
         // Phase 1 enclosures: LPOA + ID + Address
+        let phase1LpoaData = null;
         try {
           const clientMetaQuery = letter.clientId
             ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
             : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
           const { data: clientMeta } = await clientMetaQuery;
-          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data, { clientSignatureDataUrl: canonicalSignature });
+          phase1LpoaData = clientMeta?.[0]?.lpoa_signature_data || null;
+          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, phase1LpoaData, { clientSignatureDataUrl: canonicalSignature });
           if (lpoaHtml) {
             const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
             const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
@@ -662,7 +673,9 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
               + lpoaBody + '</div>';
           }
         } catch(e) {
-          if (letter.roundId) throw e;
+          // Same rule as Phase 3: an LPOA on file is not optional just because
+          // it failed to load.
+          if (phase1LpoaData || letter.roundId) throw e;
           console.warn('Could not fetch LPOA:', e);
         }
 

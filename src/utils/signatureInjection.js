@@ -12,15 +12,20 @@ function escapeHtmlAttribute(value) {
 // URLs die the day a bucket is made private (this is what retired every
 // pre-reorg LPOA's signature images), and signed URLs die on their own clock.
 const IMG_TAG_RE = /<img\b[^>]*>/gi;
-const SRC_ATTRIBUTE_RE = /(\bsrc\s*=\s*)(["'])([\s\S]*?)\2/i;
+// Unquoted `src=https://…` is valid HTML and a renderer will fetch it, so it
+// has to be visible to classification and to the mail-safety guards.
+const SRC_ATTRIBUTE_RE = /(\bsrc\s*=\s*)(?:(["'])([\s\S]*?)\2|([^\s"'`=<>]+))/i;
 const DATA_IMAGE_RE = /^data:image\/[a-z0-9.+-]+;base64,/i;
 
 // The firm's attorney-in-fact signature. Legacy LPOAs hardcoded the public
 // client-docs URL; the canonical object now lives at firm/attorney-signature.png.
 const ATTORNEY_SIGNATURE_URL_RE = /chris[_-]signature|attorney[_-]signature|\/Christopher(?:%20|\+|\s)Holland\//i;
-// The client's own drawn signature — legacy `{authUid}/signature.png`, canonical
-// `documents/{firm}/{clientId}/lpoa/signature.png`.
-const CLIENT_SIGNATURE_URL_RE = /\bsignature\.(?:png|jpe?g|webp)(?:[?#]|$)/i;
+// The client's own drawn signature — legacy
+// `client-docs/{authUid}/signature.png`, canonical
+// `documents/{firm}/{clientId}/lpoa/signature.png`. Anchored to our own
+// storage buckets: an unrelated signature.png on some other host is not this
+// client's signature and must fail closed rather than be papered over with it.
+const CLIENT_SIGNATURE_URL_RE = /\/storage\/v1\/object\/(?:public|sign|authenticated)\/(?:client-docs|documents)\/[^?#]*\/signature\.(?:png|jpe?g|webp)(?:[?#]|$)/i;
 
 function decodeHtmlAttribute(value) {
   return String(value || '')
@@ -39,7 +44,8 @@ function decodeHtmlAttribute(value) {
 export function remoteImageSources(html) {
   const sources = [];
   for (const tag of String(html || '').match(IMG_TAG_RE) || []) {
-    const src = decodeHtmlAttribute(tag.match(SRC_ATTRIBUTE_RE)?.[3] || '');
+    const attribute = tag.match(SRC_ATTRIBUTE_RE);
+    const src = decodeHtmlAttribute(attribute?.[3] ?? attribute?.[4] ?? '');
     if (/^https?:/i.test(src)) sources.push(src);
   }
   return sources;
@@ -92,10 +98,12 @@ export function embedRemoteSignatureImages(html, {
   }
 
   return source.replace(IMG_TAG_RE, (tag) => {
-    const src = decodeHtmlAttribute(tag.match(SRC_ATTRIBUTE_RE)?.[3] || '');
+    const attribute = tag.match(SRC_ATTRIBUTE_RE);
+    const src = decodeHtmlAttribute(attribute?.[3] ?? attribute?.[4] ?? '');
     const replacement = replacements.get(src);
     if (!replacement) return tag;
-    return tag.replace(SRC_ATTRIBUTE_RE, (match, prefix, quote) => prefix + quote + escapeHtmlAttribute(replacement) + quote);
+    // Always re-emit quoted, whatever the original form was.
+    return tag.replace(SRC_ATTRIBUTE_RE, (match, prefix) => `${prefix}"${escapeHtmlAttribute(replacement)}"`);
   });
 }
 
