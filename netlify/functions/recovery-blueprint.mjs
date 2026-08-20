@@ -6,6 +6,8 @@ import authHelpers from './_requireAuth.cjs';
 
 const { requireStaff } = authHelpers;
 const BUCKET = 'recovery-blueprints';
+const ACCOUNT_KINDS = new Set(['charge_off', 'collection', 'repossession', 'bankruptcy', 'student_loan', 'late_payment', 'positive', 'other']);
+const LATE_PAYMENT_BANDS = new Set(['none', 'two_or_fewer', 'three_or_more', 'mixed', 'unclear']);
 
 function response(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: JSON.stringify(body) };
@@ -134,12 +136,29 @@ export const handler = async (event) => {
       const nextAudit = { ...auditRow.audit, accounts: (auditRow.audit.accounts || []).map((account) => {
         const correction = corrections.get(account.id);
         if (!correction) return account;
+        const accountKind = String(correction.accountKind || account.accountKind || 'other').trim();
+        const latePaymentBand = String(correction.latePaymentBand || account.latePaymentBand || 'unclear').trim();
+        const parsedLateCount = correction.latePaymentCount === null || correction.latePaymentCount === ''
+          ? null
+          : Number(correction.latePaymentCount);
+        if (!ACCOUNT_KINDS.has(accountKind)) {
+          throw Object.assign(new Error('An account correction contains an unsupported category.'), { statusCode: 400 });
+        }
+        if (!LATE_PAYMENT_BANDS.has(latePaymentBand)) {
+          throw Object.assign(new Error('An account correction contains an unsupported late-payment pattern.'), { statusCode: 400 });
+        }
+        if (parsedLateCount !== null && (!Number.isInteger(parsedLateCount) || parsedLateCount < 0 || parsedLateCount > 500)) {
+          throw Object.assign(new Error('Late-payment count must be a whole number from 0 to 500.'), { statusCode: 400 });
+        }
         return {
           ...account,
           balance: Number.isFinite(Number(correction.balance)) ? Number(correction.balance) : account.balance,
           status: String(correction.status || account.status || '').trim(),
           accountNumberMasked: String(correction.accountNumberMasked || account.accountNumberMasked || '').trim(),
           originalCreditor: correction.originalCreditor == null ? account.originalCreditor : String(correction.originalCreditor).trim() || null,
+          accountKind,
+          latePaymentCount: parsedLateCount,
+          latePaymentBand,
         };
       }) };
       const { error } = await db.from('audits').update({ audit: nextAudit }).eq('id', auditRow.id).eq('user_id', auditRow.user_id);

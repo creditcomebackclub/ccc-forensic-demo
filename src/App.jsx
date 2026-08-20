@@ -13,7 +13,6 @@ const UploadZone = lazy(() => import('./components/UploadZone'));
 const AuditProgress = lazy(() => import('./components/AuditProgress'));
 const AuditResults = lazy(() => import('./components/AuditResults'));
 const BureauParseStatus = lazy(() => import('./components/BureauParseStatus'));
-const LetterViewer = lazy(() => import('./components/LetterViewer'));
 const ClientsPage = lazy(() => import('./components/ClientsPage'));
 const MethodologyPage = lazy(() => import('./components/MethodologyPage'));
 const AuthPage = lazy(() => import('./components/AuthPage'));
@@ -310,7 +309,6 @@ export default function App() {
   const [fileName, setFileName] = useState('');
   const [auditProgress, setAuditProgress] = useState(null);
   const [error, setError] = useState(null);
-  const [activeLetter, setActiveLetter] = useState(null);
   const [auditClientName, setAuditClientName] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [isClient, setIsClient] = useState(false);
@@ -656,16 +654,11 @@ export default function App() {
   };
 
   const handleReset = () => { setView(VIEW.AUDIT); setState(STATE.IDLE); setAuditResult(null); setError(null); };
-  const handleGenerateLetter = (account) => setActiveLetter(account);
-  // autoOpenAccount: optional — used by the Report Comparison modal's
-  // "Generate Letter" shortcut to jump straight to LetterViewer for a
-  // specific account instead of just opening the audit.
-  const handleOpenSavedAudit = (audit, autoOpenAccount) => {
+  const handleOpenSavedAudit = (audit) => {
     setAuditResult(audit);
     setState(STATE.RESULTS);
     setView(VIEW.AUDIT);
     setAuditClientName(audit && audit.client && audit.client.name || null);
-    if (autoOpenAccount) setActiveLetter(autoOpenAccount);
   };
   const handleSignOut = async () => { try { await supabase.auth.signOut(); } catch(e) {} window.location.href = '/'; };
 
@@ -709,7 +702,7 @@ export default function App() {
                   />
                 )}
                 {state === STATE.RESULTS && auditResult && auditResult.kind !== 'bureau_parse' && (
-                  <AuditResults audit={auditResult} onGenerateLetter={handleGenerateLetter} onReset={handleReset} onBackToClients={() => setView(VIEW.CLIENTS)} />
+                  <AuditResults audit={auditResult} onReset={handleReset} onBackToClients={() => setView(VIEW.CLIENTS)} />
                 )}
                 {state === STATE.ERROR && <ErrorView error={error} onReset={handleReset} />}
               </>
@@ -718,9 +711,6 @@ export default function App() {
         </div>
       </main>
       <Suspense fallback={null}>
-        {activeLetter && auditResult && (
-          <LetterViewer account={activeLetter} client={auditResult.client} onClose={() => setActiveLetter(null)} />
-        )}
         {showSettings && (
           <SettingsModal onClose={() => setShowSettings(false)} displayName={displayName} email={user.email} isAdmin={isAdmin} />
         )}
@@ -857,9 +847,9 @@ function TopBar({ view, state, isAdmin }) {
     </header>
   );
   const titles = {
-    idle: { title: 'New Forensic Audit', subtitle: 'Upload report → run Setup & Spike Phase 1 pipeline' },
-    processing: { title: 'Analyzing Report', subtitle: 'Claude is performing forensic analysis' },
-    results: { title: 'Audit Results', subtitle: 'Phase 1 strategy ready for review' },
+    idle: { title: 'New 3B Audit', subtitle: 'Upload report → classify the correct Consent, Accuracy, or Collection R1' },
+    processing: { title: 'Analyzing Report', subtitle: 'Extracting report facts for deterministic R1 classification' },
+    results: { title: 'R1 Start Instructions', subtitle: 'Review the bureau plan before opening the stored-template campaign builder' },
     error: { title: 'Audit Failed', subtitle: 'Something went wrong' },
   };
   const cfg = titles[state] || titles.idle;

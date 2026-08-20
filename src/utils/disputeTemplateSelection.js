@@ -2,9 +2,12 @@
 // fallbacks remain independently testable.
 export function templatesForRecommendation(templates, recommendation, bureauCode) {
   const round = Number(recommendation?.round || 1);
-  const allowedFlows = recommendation?.flow === 'combo' && [5, 6, 7].includes(round)
-    ? new Set(['combo', 'accuracy'])
-    : new Set([recommendation?.flow]);
+  let allowedFlows = new Set([recommendation?.flow]);
+  if (recommendation?.flow === 'combo' && [5, 6, 7].includes(round)) {
+    allowedFlows = new Set(['combo', 'accuracy']);
+  } else if (recommendation?.flow === 'late_pay' && round === 2) {
+    allowedFlows = new Set(['late_pay', 'consent']);
+  }
   return (templates || [])
     .filter((template) => template.active
       && allowedFlows.has(template.flow)

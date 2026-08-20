@@ -79,7 +79,8 @@ comment on column public.letters.dispute_account_snapshot is
 
 create table if not exists public.dispute_letter_results (
   id uuid primary key default gen_random_uuid(),
-  letter_id text not null references public.letters(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  letter_id text not null,
   client_id uuid references public.clients(id) on delete cascade,
   client_account_id uuid references public.client_accounts(id) on delete set null,
   account_key text not null,
@@ -91,7 +92,8 @@ create table if not exists public.dispute_letter_results (
   recorded_by uuid not null references auth.users(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (letter_id, account_key)
+  foreign key (user_id, letter_id) references public.letters(user_id, id) on delete cascade,
+  unique (user_id, letter_id, account_key)
 );
 
 create index if not exists dispute_letter_results_template_metrics_idx
@@ -109,7 +111,8 @@ using (
     select 1
     from public.letters letter
     join public.profiles profile on profile.id = auth.uid()
-    where letter.id = dispute_letter_results.letter_id
+    where letter.user_id = dispute_letter_results.user_id
+      and letter.id = dispute_letter_results.letter_id
       and profile.role in ('admin', 'auditor')
       and (profile.role = 'admin' or letter.user_id = auth.uid())
   )
@@ -124,7 +127,8 @@ with check (
     select 1
     from public.letters letter
     join public.profiles profile on profile.id = auth.uid()
-    where letter.id = dispute_letter_results.letter_id
+    where letter.user_id = dispute_letter_results.user_id
+      and letter.id = dispute_letter_results.letter_id
       and profile.role in ('admin', 'auditor')
       and (profile.role = 'admin' or letter.user_id = auth.uid())
   )
@@ -138,7 +142,8 @@ using (
     select 1
     from public.letters letter
     join public.profiles profile on profile.id = auth.uid()
-    where letter.id = dispute_letter_results.letter_id
+    where letter.user_id = dispute_letter_results.user_id
+      and letter.id = dispute_letter_results.letter_id
       and profile.role in ('admin', 'auditor')
       and (profile.role = 'admin' or letter.user_id = auth.uid())
   )
@@ -149,7 +154,8 @@ with check (
     select 1
     from public.letters letter
     join public.profiles profile on profile.id = auth.uid()
-    where letter.id = dispute_letter_results.letter_id
+    where letter.user_id = dispute_letter_results.user_id
+      and letter.id = dispute_letter_results.letter_id
       and profile.role in ('admin', 'auditor')
       and (profile.role = 'admin' or letter.user_id = auth.uid())
   )
@@ -250,7 +256,9 @@ left join public.letters letter
   on letter.dispute_template_id = template.id
  and caller.role in ('admin', 'auditor')
  and (caller.role = 'admin' or letter.user_id = auth.uid())
-left join public.dispute_letter_results result on result.letter_id = letter.id
+left join public.dispute_letter_results result
+  on result.user_id = letter.user_id
+ and result.letter_id = letter.id
 group by template.id;
 
 grant select on public.dispute_template_performance to authenticated;

@@ -16,13 +16,6 @@ const DEFAULT_SETTINGS = {
   },
   affiliates: {
     defaultCommissionRate: 20
-  },
-  disputes: {
-    // Matches the letter style CCC has always actually sent (the only
-    // prompt that existed before this setting had any real effect) — not
-    // "Standard," so wiring this setting up for real doesn't silently
-    // soften every future letter for anyone who's never touched Settings.
-    defaultAggressiveness: 'Aggressive'
   }
 };
 
@@ -45,8 +38,7 @@ export async function getSettings() {
     return {
       pricing: { ...DEFAULT_SETTINGS.pricing, ...(parsed.pricing || {}) },
       notifications: { ...DEFAULT_SETTINGS.notifications, ...(parsed.notifications || {}) },
-      affiliates: { ...DEFAULT_SETTINGS.affiliates, ...(parsed.affiliates || {}) },
-      disputes: { ...DEFAULT_SETTINGS.disputes, ...(parsed.disputes || {}) }
+      affiliates: { ...DEFAULT_SETTINGS.affiliates, ...(parsed.affiliates || {}) }
     };
   } catch (e) {
     console.error('Failed to parse settings:', e);

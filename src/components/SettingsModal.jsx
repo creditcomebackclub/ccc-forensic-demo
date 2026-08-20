@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, User, Save, DollarSign, Bell, Users, ShieldAlert, FileText } from 'lucide-react';
+import { X, Check, User, Save, DollarSign, Bell, Users, FileText } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 import { getSettings, saveSettings } from '../utils/settings';
 import DisputeTemplateLibrary from './DisputeTemplateLibrary';
@@ -69,8 +69,7 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
     { id: 'pricing', label: 'Pricing', icon: DollarSign },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'affiliates', label: 'Affiliates', icon: Users },
-    { id: 'disputes', label: 'Disputes', icon: ShieldAlert },
-    { id: 'templates', label: 'Templates', icon: FileText },
+    { id: 'templates', label: 'Letter Library', icon: FileText },
   ];
 
   if (!settings) return null;
@@ -251,23 +250,6 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
                     className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
                   />
                   <p className="text-[10px] text-gray-400 mt-1">This percentage will be displayed in the Affiliate Portal as their cut of the First Work Fee.</p>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'disputes' && (
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">Default Aggressiveness</label>
-                  <select
-                    value={settings.disputes.defaultAggressiveness}
-                    onChange={(e) => setSettings({ ...settings, disputes: { ...settings.disputes, defaultAggressiveness: e.target.value } })}
-                    className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy bg-white"
-                  >
-                    <option value="Standard">Standard (FCRA/FDCPA compliance focus)</option>
-                    <option value="Aggressive">Aggressive (Demand immediate deletion with legal threats)</option>
-                  </select>
-                  <p className="text-[10px] text-gray-400 mt-1">The default tone used when AI generates initial dispute letters.</p>
                 </div>
               </div>
             )}

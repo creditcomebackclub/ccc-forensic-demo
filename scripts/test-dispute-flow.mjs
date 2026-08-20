@@ -97,6 +97,15 @@ assert.deepEqual(
   'an explicit Combo template remains preferred over the Accuracy fallback',
 );
 
+const latePayFallbackTemplates = [
+  { id: 'consent-r2', flow: 'consent', round: 2, bureau: 'ALL', active: true, updatedAt: '2026-08-20T00:00:00Z' },
+];
+assert.deepEqual(
+  templatesForRecommendation(latePayFallbackTemplates, { flow: 'late_pay', round: 2 }, 'EQ').map((item) => item.id),
+  ['consent-r2'],
+  'Late Pay R2 reuses the course Consent R2 law/template before switching to Accuracy',
+);
+
 const courseDraft = `Header\n\n►► WRITE THIS — DAMAGES (opens the letter)\nInstructions\nEXAMPLE OF THE RIGHT LENGTH AND SHAPE — replace every word:\nExample\n\n— — — FACTS (do not change this section) — — —\nFixed facts.\n\n►► WRITE THIS — LIST OF EXACT INACCURACIES (accuracy + combo only)\nInstructions\nExample\n\n►► WRITE THIS — PENALTY (closes the argument)\nInstructions\nExample\n\n— — — DELETION LIST (do not change this line) — — —\nDelete:\n{dispute_item_and_explanation}\n\n►► WRITE THIS — CONSUMER STATEMENT\nInstructions\nExample\n\n— — — SCREENSHOTS — ACCURACY / COMBO ONLY — — —\nText\n►► PASTE SCREENSHOTS HERE — one per account\n►► ATTACH ID + PROOF OF ADDRESS ON THE PAGE AFTER THE SCREENSHOTS.`;
 const normalized = normalizeCourseStyleTemplate(courseDraft);
 assert.match(normalized, /\{damages\}/);

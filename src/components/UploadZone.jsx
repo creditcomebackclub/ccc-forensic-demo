@@ -132,7 +132,7 @@ export default function UploadZone({ onAuditStart }) {
         <span style={{ width: 4, height: 30, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
         <div>
           <h1 className="ccc-display text-[22px] font-medium leading-tight" style={{ color: T.ink }}>New Forensic Audit</h1>
-          <p className="text-[11px]" style={{ color: T.muted }}>Upload a report → run the Setup &amp; Spike Phase 1 pipeline</p>
+          <p className="text-[11px]" style={{ color: T.muted }}>Upload a report → extract 3B facts → receive exact R1 start instructions</p>
         </div>
       </div>
 

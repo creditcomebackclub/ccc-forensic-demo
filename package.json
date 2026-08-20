@@ -20,6 +20,7 @@
     "test:ccc-template-library": "node scripts/test-ccc-template-library.mjs",
     "test:dispute-tracking": "node scripts/test-dispute-tracking.mjs",
     "test:dispute-rewrite": "node scripts/test-dispute-rewrite.mjs",
+    "test:current-dispute-method": "node scripts/test-current-dispute-method.mjs",
     "test:operations": "node scripts/test-operations-control-center.mjs"
   },
   "dependencies": {

@@ -38,7 +38,8 @@ assert.match(
 );
 assert.match(migration, /protect_used_dispute_template_version/i, 'used template bodies must be immutable');
 assert.match(migration, /activate_dispute_template_version/i, 'new versions must retire the prior version');
-assert.match(migration, /unique \(letter_id, account_key\)/i, 'one outcome per covered account and letter');
+assert.match(migration, /foreign key \(user_id, letter_id\) references public\.letters\(user_id, id\)/i, 'outcomes must use the legacy composite letter identity');
+assert.match(migration, /unique \(user_id, letter_id, account_key\)/i, 'one outcome per covered account and tenant-owned letter');
 
 const studio = readFileSync(new URL('../src/components/DisputeCampaignStudio.jsx', import.meta.url), 'utf8');
 assert.match(studio, /FLOW_LETTER_ROUNDS\[flow\]/, 'Campaign Studio must expose later rounds');

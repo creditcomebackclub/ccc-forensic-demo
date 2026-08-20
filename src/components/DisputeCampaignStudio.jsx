@@ -359,7 +359,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
         { ...audit.client, id: identity.id, name: identity.name, address: identity.address },
         letterHtml,
         `${FLOW_LABELS[recommendation.flow]} R${round} prepared for ${bureauPlan.bureau.name}.`,
-        `Phase 1 — ${FLOW_LABELS[recommendation.flow]} R${round} — ${bureauPlan.bureau.name}`,
+        `CCC Dispute — ${FLOW_LABELS[recommendation.flow]} R${round} — ${bureauPlan.bureau.name}`,
         '',
         {
           coveredFurnishers: recommendation.accounts.map((account) => account.furnisher).filter(Boolean),

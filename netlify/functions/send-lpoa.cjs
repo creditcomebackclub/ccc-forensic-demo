@@ -199,6 +199,7 @@ exports.handler = async (event) => {
     if (!sgKey) return { statusCode: 500, body: JSON.stringify({ error: 'SENDGRID_API_KEY not configured' }) };
 
     const subjects = {
+      ccc_dispute_mailed: 'Your CCC Dispute Letter Has Been Mailed — ' + furnisher,
       phase1_mailed: 'Your Dispute Letter Has Been Mailed — ' + furnisher,
       phase1_delivered: 'Dispute Letter Delivered — ' + furnisher + ' Has 30 Days to Respond',
       phase2_analyzed: 'Response Analysis Complete — ' + furnisher,
@@ -206,6 +207,9 @@ exports.handler = async (event) => {
     };
 
     const bodies = {
+      ccc_dispute_mailed: `<p>Your <strong>${details || 'CCC dispute letter'}</strong> to <strong>${furnisher}</strong> has been mailed via USPS Certified Mail.</p>
+        ${trackingNumber ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}" style="color:#1B2A4A;">USPS Tracking ${trackingNumber.slice(-8)}</a></p>` : ''}
+        <p>We will track delivery, record the bureau's result, and move any surviving accounts according to the saved CCC round sequence.</p>`,
       phase1_mailed: `<p>Your Phase 1 dispute letter to <strong>${furnisher}</strong> has been mailed via USPS Certified Mail.</p>
         ${trackingNumber ? `<p>Track your letter: <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}" style="color:#1B2A4A;">USPS Tracking ${trackingNumber.slice(-8)}</a></p>` : ''}
         <p>The furnisher has 30 days from delivery to respond. We will monitor the response and notify you of next steps.</p>`,
@@ -478,6 +482,22 @@ exports.handler = async (event) => {
 
     const firstName = clientName.split(' ')[0] || clientName;
     const configs = {
+      ccc_day7_checkin: {
+        subject: 'Your CCC Dispute Campaign — Week 1 Update',
+        headline: 'Your bureau letter is in progress.',
+        body: 'Your certified CCC dispute letter to ' + (furnisher || 'the credit bureau') + ' is in its review window. No action is needed from you right now.',
+        action: 'Keep any bureau mail or updated credit report you receive and upload it to your CCC portal.',
+        tone: '#EFF6FF',
+        borderColor: '#BFDBFE',
+      },
+      ccc_day30_review: {
+        subject: 'CCC Round Review Due — ' + (furnisher || 'Your Dispute'),
+        headline: 'It is time to review this round.',
+        body: 'The review window for your letter to ' + (furnisher || 'the credit bureau') + ' is closing. CCC will record the documented result and determine the next saved round for any account that remains.',
+        action: 'Upload the bureau response and latest report if you have received them. CCC will not assume a result that is not documented.',
+        tone: '#FFFBEB',
+        borderColor: '#FDE68A',
+      },
       day7_checkin: {
         subject: 'Your Dispute Campaign — Week 1 Update',
         headline: 'Your letters are in transit.',

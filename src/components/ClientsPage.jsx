@@ -1052,7 +1052,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             {(activeTab[c.id] || 'Letters') === 'Letters' && (
               <div>
                 {c.letters.length === 0 ? (
-                  <p className="text-[12.5px] text-ink-muted py-6 text-center bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>No letters yet — run an audit to generate Phase 1 letters.</p>
+                  <p className="text-[12.5px] text-ink-muted py-6 text-center bg-white rounded-xl" style={{ border: '1px solid ' + T.border }}>No letters yet — open the client audit and build the recommended R1 campaign.</p>
                 ) : (
                   (() => {
                     const openAccount = (letter) => {
@@ -2124,56 +2124,13 @@ function ViolationDetail({ a }) {
 function DiffResultModal({ result, onClose, onOpenAudit }) {
   const [expandedKey, setExpandedKey] = React.useState(null);
   if (!result) return null;
-  const { clientName, fromReportDate, toReportDate, diff, phaseProgress = [], newerAudit, letters } = result;
+  const { clientName, fromReportDate, toReportDate, diff, phaseProgress = [], newerAudit } = result;
 
-  // The diff only carries a lightweight summary per account (furnisher,
-  // masked number, balance, status) — letter generation needs the full
-  // record (violations, batch, strategy, addressStatus...), which lives on
-  // newerAudit.accounts. Matched the same way the diff engine itself
-  // identifies an account within one report: furnisher + masked number.
+  // The comparison carries lightweight account summaries. The complete
+  // report findings remain on the newer audit for drill-down and R1 review.
   const findFullAccount = (a) => (newerAudit?.accounts || []).find(
     (fa) => fa.furnisher === a.furnisher && fa.accountNumberMasked === a.accountNumberMasked
   ) || null;
-
-  // Safety net for the shortcut below: match by furnisher name only (the
-  // one identifier every mailed Phase 1 letter and every diffed account
-  // both reliably carry) against any already-mailed, non-Phase-3 letter.
-  // Not perfectly precise if a client has two distinct accounts with the
-  // same furnisher, but the point is to stop an accidental re-send, not to
-  // silently allow one on a technicality.
-  const normFurnisher = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const alreadyDisputed = (furnisher) => {
-    const target = normFurnisher(furnisher);
-    return (letters || []).some((l) => l.mailedDate && !l.phase?.startsWith('Phase 3') && normFurnisher(l.furnisher) === target);
-  };
-
-  // Reuses the existing, unmodified letter-generation flow exactly as if
-  // the account were opened normally from this audit's own results page —
-  // just skips the navigation. Never touches how a letter is generated.
-  const disputeAccount = (a) => {
-    const full = findFullAccount(a);
-    if (!full || !newerAudit || !onOpenAudit) return;
-    onOpenAudit(newerAudit, full);
-    onClose();
-  };
-
-  const DisputeAction = ({ a, tone }) => {
-    const full = findFullAccount(a);
-    if (!full) return null;
-    if (alreadyDisputed(a.furnisher)) {
-      return (
-        <span className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-gray-100 text-ink-faint" title="A letter has already been mailed to this furnisher — check the Letters tab before disputing again">
-          Already Disputed
-        </span>
-      );
-    }
-    const toneClass = tone === 'amber' ? 'border-amber-300 text-amber-700 hover:bg-amber-100' : 'border-blue-300 text-blue-700 hover:bg-blue-100';
-    return (
-      <button onClick={() => disputeAccount(a)} className={`shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm border transition-colors ${toneClass}`}>
-        Generate Letter
-      </button>
-    );
-  };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6" onClick={onClose}>
@@ -2184,14 +2141,21 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
               <h2 className="ccc-display text-[18px] text-ink font-medium">Report Comparison</h2>
               <p className="text-[12px] text-ink-muted mt-0.5">{clientName} · {fromReportDate} → {toReportDate}</p>
             </div>
-            <button onClick={onClose} className="text-ink-faint hover:text-ink text-lg leading-none">✕</button>
+            <div className="flex items-center gap-2">
+              {newerAudit && onOpenAudit && (
+                <button onClick={() => { onOpenAudit(newerAudit); onClose(); }} className="rounded-sm bg-navy px-3 py-1.5 text-[10px] uppercase tracking-wider text-gold">
+                  Open R1 plan
+                </button>
+              )}
+              <button onClick={onClose} className="text-ink-faint hover:text-ink text-lg leading-none">✕</button>
+            </div>
           </div>
         </div>
 
         <div className="p-5 space-y-5">
           {phaseProgress.length > 0 && (
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-navy font-medium mb-2">Campaign status across phases</div>
+              <div className="text-[10px] uppercase tracking-wider text-navy font-medium mb-2">Historical campaign status</div>
               <div className="overflow-hidden rounded-sm border border-border bg-white">
                 {phaseProgress.map((item) => (
                   <div key={item.accountKey} className="flex items-start justify-between gap-3 px-3 py-2.5 border-t border-border first:border-t-0">
@@ -2199,7 +2163,7 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
                       <div className="text-[12px] font-medium text-ink truncate">{item.furnisher} {item.accountNumberMasked && <span className="text-ink-faint font-normal">{item.accountNumberMasked}</span>}</div>
                       <div className="text-[11px] text-ink-muted mt-0.5">{item.reportLabel} · {item.label}</div>
                     </div>
-                    <span className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-blue-50 text-navy">Phase {item.phase}</span>
+                    <span className="shrink-0 text-[10px] uppercase tracking-wider px-2 py-1 rounded-sm bg-blue-50 text-navy">Legacy phase {item.phase}</span>
                   </div>
                 ))}
               </div>
@@ -2239,7 +2203,6 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
                             {(a.oldViolationCount !== a.newViolationCount || (a.violationsResolved || []).length > 0) && <span className="text-navy"> · view detail</span>}
                           </div>
                         </button>
-                        <DisputeAction a={a} tone="amber" />
                       </div>
                       {isOpen && <ViolationDetail a={a} />}
                     </div>
@@ -2267,7 +2230,6 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
                             {full?.violations?.length > 0 && <span className="text-navy"> · view {full.violations.length} violation{full.violations.length === 1 ? '' : 's'}</span>}
                           </div>
                         </button>
-                        <DisputeAction a={a} tone="blue" />
                       </div>
                       {isOpen && full?.violations?.length > 0 && (
                         <div className="mt-2 pt-2 border-t border-black/5 space-y-1">

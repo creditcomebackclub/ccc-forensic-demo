@@ -48,7 +48,7 @@ export const FLOW_SEQUENCES = {
     '15 USC 1681i(a)(7)',
     '15 USC 1681i(a)(6)(B)',
     '15 USC 1681i(c)',
-    '15 USC 1681s-2(a)(b)',
+    '15 USC 1681s-2(b)',
     '15 USC 1681(b) + 1681e(b) + 1681i(a)',
     '15 USC 1681c(e)',
     '15 USC 1681e(b) — discharged debt balance',

@@ -280,6 +280,7 @@ exports.handler = async () => {
     // a silently assumed deadline based on its mailing date.
     if (!letter.delivered_at) continue;
     const isPhase3 = String(letter.phase || '').startsWith('Phase 3');
+    const isCccDispute = String(letter.phase || '').startsWith('CCC Dispute —');
     const windowDays = isPhase3 ? 45 : 30;
     const adminNotificationKey = isPhase3 ? 'admin45' : 'admin30';
     const clockStart = letter.delivered_at.slice(0, 10);
@@ -299,7 +300,7 @@ exports.handler = async () => {
 
     if (sgKey && clientEmail && daysElapsed >= 7 && daysElapsed < 8 && !sent.includes('day7')) {
       try {
-        await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day7_checkin', furnisher: letter.furnisher, daysElapsed });
+        await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: isCccDispute ? 'ccc_day7_checkin' : 'day7_checkin', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day7'); touched = true;
         clientUpdatesCount++;
       } catch(e) { console.error('day7 email failed:', e); }
@@ -307,7 +308,7 @@ exports.handler = async () => {
 
     if (!isPhase3 && sgKey && clientEmail && daysElapsed >= 28 && daysElapsed < 30 && !sent.includes('day30')) {
       try {
-        await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: 'day30_approaching', furnisher: letter.furnisher, daysElapsed });
+        await fetch_send('send_campaign_update', { clientName: letter.client_name, clientEmail, updateType: isCccDispute ? 'ccc_day30_review' : 'day30_approaching', furnisher: letter.furnisher, daysElapsed });
         newSent.push('day30'); touched = true;
         clientUpdatesCount++;
       } catch(e) { console.error('day30 email failed:', e); }
@@ -327,14 +328,14 @@ exports.handler = async () => {
         try {
           await sendgridEmail(
             ADMIN_EMAIL,
-            (isPhase3 ? 'Bureau Response Review: ' : 'Escalation Ready: ') + letter.client_name + ' / ' + letter.furnisher,
+            (isPhase3 ? 'Bureau Response Review: ' : isCccDispute ? 'CCC Round Review: ' : 'Escalation Ready: ') + letter.client_name + ' / ' + letter.furnisher,
             `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;">
               <div style="background:#1B2A4A;padding:20px 28px;border-radius:4px 4px 0 0;">
-                <h2 style="color:#C9A84C;margin:0;font-size:18px;">Escalation Ready for Review</h2>
+                <h2 style="color:#C9A84C;margin:0;font-size:18px;">${isCccDispute ? 'CCC Round Ready for Review' : 'Escalation Ready for Review'}</h2>
               </div>
               <div style="border:1px solid #ddd;border-top:none;padding:20px 28px;border-radius:0 0 4px 4px;">
                 <p><strong>${letter.client_name}</strong> — ${letter.furnisher} (${letter.phase || 'Phase 1'})</p>
-                <p>${daysElapsed} days since confirmed delivery with no logged response. This has crossed the ${windowDays}-day operational review window and is ready for staff review.</p>
+                <p>${daysElapsed} days since confirmed delivery with no logged response. This has crossed the ${windowDays}-day operational review window and is ready for ${isCccDispute ? 'result recording and next-round review' : 'staff review'}.</p>
               </div>
             </div>`,
             sgKey

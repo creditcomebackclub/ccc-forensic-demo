@@ -7,7 +7,8 @@ alter table public.dispute_templates
 
 alter table public.dispute_templates
   drop constraint if exists dispute_templates_flow_code_check,
-  drop constraint if exists dispute_templates_round_number_check;
+  drop constraint if exists dispute_templates_round_number_check,
+  drop constraint if exists dispute_templates_check;
 
 alter table public.dispute_templates
   add constraint dispute_templates_flow_code_check

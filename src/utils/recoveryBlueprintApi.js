@@ -28,8 +28,15 @@ export function getBlueprintStatus(audit) {
 
 export function persistReviewedAccounts(audit, accounts) {
   return blueprintRequest('save_corrections', audit, {
-    accounts: accounts.map(({ id, balance, status, accountNumberMasked, originalCreditor }) => ({
-      id, balance, status, accountNumberMasked, originalCreditor,
+    accounts: accounts.map(({ id, balance, status, accountNumberMasked, originalCreditor, accountKind, latePaymentCount, latePaymentBand }) => ({
+      id,
+      balance,
+      status,
+      accountNumberMasked,
+      originalCreditor,
+      accountKind,
+      latePaymentCount,
+      latePaymentBand,
     })),
   });
 }
@@ -50,4 +57,3 @@ export function base64PdfUrl(base64) {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
   return URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
 }
-
