@@ -342,6 +342,31 @@ function billingNoticeHtml({ name, eyebrow, paragraphs, tone, ctaLabel }) {
   });
 }
 
+// Keep in sync with CALENDLY_VIP_URL in src/components/client-portal/VipTab.jsx —
+// duplicated rather than shared since that file is bundled by Vite for the
+// browser and this one runs as a CommonJS Netlify function.
+const CALENDLY_VIP_URL = 'https://calendly.com/creditcomebackclub/monthly-vip-call';
+
+function vipCallAlreadyBookedThisMonth(vipCallScheduledAt, vipCallStatus, monthKey) {
+  if (vipCallStatus === 'canceled') return false;
+  return Boolean(vipCallScheduledAt && vipCallScheduledAt.slice(0, 7) === monthKey);
+}
+
+function vipCallReminderHtml({ name }) {
+  const { wrapClientEmail, escapeHtml } = require('./_email.cjs');
+  const safeName = escapeHtml(name || 'there');
+  const bodyHtml = `<p style="margin:0 0 14px;">Hi ${safeName},</p>`
+    + `<p style="margin:0 0 14px;">Your VIP plan includes a monthly 1-on-1 strategy call — a chance to walk through exactly what's changed on your file since your last round, what furnishers have responded, and what the next round of disputes will target.</p>`
+    + `<p style="margin:0 0 14px;">Pick a time below to get this month's call on the calendar.</p>`
+    + `<p style="margin:0;">Thank you,<br/>Credit Comeback Club</p>`;
+  return wrapClientEmail({
+    eyebrow: 'VIP Monthly Call',
+    bodyHtml,
+    cta: { href: CALENDLY_VIP_URL, label: 'Book your strategy call →' },
+    preheader: 'A quick reminder to book this month’s 1-on-1 strategy call.',
+  });
+}
+
 function daysBetween(aIso, bIso) {
   const a = new Date(aIso + 'T00:00:00');
   const b = new Date(bIso + 'T00:00:00');
@@ -842,6 +867,42 @@ exports.handler = async () => {
     }
   }
 
+  // --- 2.75 VIP Monthly Call Reminder ---
+  // Skips clients who've already booked this month (vip_call_scheduled_at,
+  // synced from Calendly by calendly-webhook.cjs) rather than relying only on
+  // the send-idempotency claim below, which only prevents a duplicate email —
+  // not a duplicate email to someone who already has the call on the books.
+  let vipCallRemindersSent = 0;
+  if (mailReady) {
+    try {
+      const monthKey = todayISO().slice(0, 7); // 'YYYY-MM'
+      const vipClients = await listAllRows(
+        '/rest/v1/clients?is_vip=eq.true&status=neq.lead'
+          + '&or=(billing_status.eq.Active,billing_status.is.null)'
+          + '&select=id,name,email,vip_call_scheduled_at,vip_call_status&order=id.asc',
+        supabaseUrl,
+        supabaseKey
+      );
+
+      for (const c of vipClients) {
+        if (!c.email) continue;
+        if (vipCallAlreadyBookedThisMonth(c.vip_call_scheduled_at, c.vip_call_status, monthKey)) continue;
+        const firstName = (c.name || '').split(' ')[0] || c.name || 'there';
+        const result = await sendAutomatedEmail({
+          eventKey: `vip_call_reminder:${c.id}:${monthKey}`,
+          eventType: 'vip_call_reminder',
+          recipient: c.email,
+          clientId: c.id,
+          subject: 'Time to Book Your Monthly Strategy Call',
+          html: vipCallReminderHtml({ name: firstName }),
+        }, supabaseUrl, supabaseKey);
+        if (result.sent) vipCallRemindersSent++;
+      }
+    } catch (e) {
+      console.error('VIP call reminder sweep failed:', e);
+    }
+  }
+
   // --- 3. Gather Business Metrics for Executive Briefing ---
   let unmailedCount = 0;
   let newLeadsCount = 0;
@@ -1225,6 +1286,7 @@ exports.handler = async () => {
       leadNurtureSent: nurtureDripsCount,
       updatesSent: clientUpdatesCount,
       winbackSent: winbackSentCount,
+      vipCallRemindersSent,
       affiliateSummariesSent,
       clientEmailRetries,
       tempsPurged,
@@ -1235,3 +1297,5 @@ exports.handler = async () => {
 exports.config = {
   schedule: '0 15 * * *',
 };
+
+module.exports._test = { vipCallReminderHtml, vipCallAlreadyBookedThisMonth };

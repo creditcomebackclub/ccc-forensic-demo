@@ -2,6 +2,7 @@ const {
   chooseClient,
   consultationTags,
   isConsultationEvent,
+  isVipCallEvent,
   isStaleBookingEvent,
   verifyWebhookResources,
   webhookEventKey,
@@ -99,6 +100,22 @@ async function findClient(email, inviteeUri, supabaseUrl, serviceKey) {
   return chooseClient(byEmail, email, inviteeUri);
 }
 
+async function findVipCallClient(email, inviteeUri, supabaseUrl, serviceKey) {
+  const fields = 'id,user_id,name,email,is_vip,vip_call_status,vip_call_scheduled_at,vip_call_invitee_uri,vip_call_updated_at';
+  const byInvitee = await dbRequest(
+    supabaseUrl,
+    serviceKey,
+    '/rest/v1/clients?vip_call_invitee_uri=eq.' + encodeURIComponent(inviteeUri) + '&select=' + fields + '&limit=1'
+  );
+  if (Array.isArray(byInvitee) && byInvitee[0]) return byInvitee[0];
+  const rows = await dbRequest(
+    supabaseUrl,
+    serviceKey,
+    '/rest/v1/clients?email=eq.' + encodeURIComponent(email) + '&is_vip=eq.true&select=' + fields + '&order=created_at.desc.nullslast,id.asc&limit=1'
+  );
+  return Array.isArray(rows) && rows[0] ? rows[0] : null;
+}
+
 async function createCalendlyLead(verified, supabaseUrl, serviceKey) {
   const profiles = await dbRequest(
     supabaseUrl,
@@ -158,6 +175,33 @@ function bookingPatch(client, verified) {
   };
 }
 
+function vipCallBookingPatch(client, verified) {
+  const canceled = verified.event === 'invitee.canceled';
+  const rescheduled = Boolean(verified.payload.rescheduled || verified.invitee.rescheduled);
+  const occurredAt = verified.occurredAt || verified.invitee.updated_at || new Date().toISOString();
+  const isDifferentInvitee = Boolean(client.vip_call_invitee_uri && client.vip_call_invitee_uri !== verified.inviteeUri);
+  const canCompleteReschedule = !canceled && isDifferentInvitee && client.vip_call_status === 'rescheduled';
+  const priorUpdate = Date.parse(client.vip_call_updated_at || '') || 0;
+  const incoming = Date.parse(occurredAt) || 0;
+  const isStale = Boolean(priorUpdate && incoming && incoming < priorUpdate);
+  if (isStale && !canCompleteReschedule) return null;
+
+  if (canceled) {
+    if (isDifferentInvitee) return null;
+    return {
+      vip_call_status: rescheduled ? 'rescheduled' : 'canceled',
+      vip_call_updated_at: occurredAt,
+    };
+  }
+
+  return {
+    vip_call_status: 'scheduled',
+    vip_call_scheduled_at: verified.scheduledEvent.start_time || null,
+    vip_call_invitee_uri: verified.inviteeUri,
+    vip_call_updated_at: occurredAt,
+  };
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
@@ -184,7 +228,8 @@ exports.handler = async (event) => {
     // API before trusting or persisting any email, name, time, or lifecycle
     // value from the public request.
     const verified = await verifyWebhookResources(input);
-    if (!isConsultationEvent(verified.scheduledEvent)) {
+    const isVip = isVipCallEvent(verified.scheduledEvent);
+    if (!isConsultationEvent(verified.scheduledEvent) && !isVip) {
       return { statusCode: 200, body: JSON.stringify({ received: true, ignored: true, reason: 'not_consultation_event' }) };
     }
     const verifiedStatus = String(verified.invitee.status || '').toLowerCase();
@@ -198,6 +243,35 @@ exports.handler = async (event) => {
     if (receipt.duplicate) {
       return { statusCode: 200, body: JSON.stringify({ received: true, duplicate: true }) };
     }
+
+    if (isVip) {
+      const vipClient = await findVipCallClient(verified.email, verified.inviteeUri, supabaseUrl, serviceKey);
+      if (!vipClient) {
+        await updateReceipt(receipt.row.id, {
+          processing_status: 'ignored',
+          processed_at: new Date().toISOString(),
+          processing_error: 'No matching VIP client for this booking.',
+        }, supabaseUrl, serviceKey);
+        return { statusCode: 200, body: JSON.stringify({ received: true, ignored: true }) };
+      }
+      const vipPatch = vipCallBookingPatch(vipClient, verified);
+      if (vipPatch) {
+        await dbRequest(
+          supabaseUrl,
+          serviceKey,
+          '/rest/v1/clients?id=eq.' + encodeURIComponent(vipClient.id),
+          { method: 'PATCH', prefer: 'return=minimal', body: vipPatch }
+        );
+      }
+      await updateReceipt(receipt.row.id, {
+        client_id: vipClient.id,
+        processing_status: 'processed',
+        processing_error: null,
+        processed_at: new Date().toISOString(),
+      }, supabaseUrl, serviceKey);
+      return { statusCode: 200, body: JSON.stringify({ received: true }) };
+    }
+
     let client = await findClient(verified.email, verified.inviteeUri, supabaseUrl, serviceKey);
     if (!client && verified.event === 'invitee.created') {
       client = await createCalendlyLead(verified, supabaseUrl, serviceKey);
@@ -251,4 +325,4 @@ exports.handler = async (event) => {
   }
 };
 
-module.exports._test = { bookingPatch, createCalendlyLead, findClient };
+module.exports._test = { bookingPatch, createCalendlyLead, findClient, vipCallBookingPatch, findVipCallClient };
