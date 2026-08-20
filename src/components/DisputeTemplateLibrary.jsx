@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Archive, FilePlus2, Loader2, Save, Sparkles } from 'lucide-react';
+import { Archive, CopyPlus, FilePlus2, Loader2, Save, Sparkles } from 'lucide-react';
 import { FLOW_LABELS, FLOW_LETTER_ROUNDS, FLOW_SEQUENCES, flowRoundLabel } from '../utils/disputeFlow.js';
 import {
   TEMPLATE_FIELD_GROUPS,
@@ -11,6 +11,9 @@ import {
   retireDisputeTemplate,
   saveDisputeTemplate,
 } from '../utils/disputeTemplates.js';
+import { dateAfterDays, nextTemplateVersionLabel } from '../utils/disputeTemplateSelection.js';
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
 
 const blankTemplate = () => ({
   id: null,
@@ -22,7 +25,21 @@ const blankTemplate = () => ({
   body: '',
   notes: '',
   active: true,
+  familyKey: '',
+  publishedOn: todayIso(),
+  reviewDueOn: dateAfterDays(todayIso(), 90),
+  supersedesTemplateId: null,
+  timesMailed: 0,
+  resultsRecorded: 0,
+  wins: 0,
+  nonDeletionResults: 0,
+  winRate: null,
 });
+
+function fmtDate(value) {
+  if (!value) return '—';
+  return new Date(`${value}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 function TemplateRow({ template, selected, onClick }) {
   return (
@@ -36,6 +53,14 @@ function TemplateRow({ template, selected, onClick }) {
       </div>
       <div className="mt-1 text-[10px] text-gray-500">
         {flowRoundLabel(template.flow, template.round)} · {template.bureau} · {template.version}
+      </div>
+      <div className="mt-1 flex items-center gap-1.5 text-[9px] text-gray-400">
+        <span>{template.timesMailed} mailed</span>
+        <span>·</span>
+        <span>{template.wins} win{template.wins === 1 ? '' : 's'}</span>
+        {template.reviewDueOn && new Date(`${template.reviewDueOn}T23:59:59`) < new Date() && template.active && (
+          <span className="rounded bg-amber-100 px-1 py-0.5 font-semibold text-amber-800">Review due</span>
+        )}
       </div>
     </button>
   );
@@ -114,6 +139,28 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
       ...current,
       body: `${current.body}${current.body.endsWith('\n') || !current.body ? '' : '\n'}{${token}}`,
     }));
+  };
+
+  const startNewVersion = () => {
+    if (!draft.id) return;
+    const publishedOn = todayIso();
+    setDraft({
+      ...draft,
+      id: null,
+      version: nextTemplateVersionLabel(draft.version),
+      publishedOn,
+      reviewDueOn: dateAfterDays(publishedOn, 90),
+      supersedesTemplateId: draft.id,
+      active: true,
+      retiredAt: null,
+      retirementReason: '',
+      timesMailed: 0,
+      resultsRecorded: 0,
+      wins: 0,
+      nonDeletionResults: 0,
+      winRate: null,
+    });
+    setNotice('New quarterly version started. Saving it retires the prior version while preserving every prior letter and result.');
   };
 
   return (
@@ -197,6 +244,17 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
           </div>
         </div>
 
+        {draft.id && (
+          <div className="mt-3 grid grid-cols-4 gap-2 rounded-lg border border-border bg-gray-50 p-3">
+            <div><div className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Mailed</div><div className="mt-1 text-sm font-semibold text-navy">{draft.timesMailed}</div></div>
+            <div><div className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Results</div><div className="mt-1 text-sm font-semibold text-navy">{draft.resultsRecorded}</div></div>
+            <div><div className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Deletion wins</div><div className="mt-1 text-sm font-semibold text-green-700">{draft.wins}</div></div>
+            <div><div className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Win rate</div><div className="mt-1 text-sm font-semibold text-navy">{draft.winRate == null ? '—' : `${Math.round(draft.winRate * 100)}%`}</div></div>
+            <div className="col-span-2 text-[9px] text-gray-500">Published {fmtDate(draft.publishedOn)}</div>
+            <div className="col-span-2 text-right text-[9px] text-gray-500">Quarterly review {fmtDate(draft.reviewDueOn)}</div>
+          </div>
+        )}
+
         <div className="mt-4 flex items-center justify-between gap-3">
           <label className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Template text</label>
           {canEdit && (
@@ -232,6 +290,11 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
             <button onClick={save} disabled={saving || !draft.name.trim() || !draft.body.trim()} className="flex items-center gap-1.5 rounded-md bg-navy px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gold disabled:opacity-40">
               {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save template
             </button>
+            {draft.id && draft.active && (
+              <button onClick={startNewVersion} disabled={saving} className="flex items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-blue-700">
+                <CopyPlus size={12} /> New version
+              </button>
+            )}
             {draft.id && draft.active && (
               <button onClick={retire} disabled={saving} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
                 <Archive size={12} /> Retire

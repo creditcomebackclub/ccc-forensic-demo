@@ -10,6 +10,7 @@ const FLOW_MAX_ROUNDS = Object.freeze({
   combo: 12,
   consent: 3,
   late_pay: 2,
+  accuracy_solo: 1,
 });
 
 const BUREAUS = new Set(['EQ', 'EXP', 'TU']);

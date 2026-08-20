@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Clock, ChevronRight, AlertTriangle, Mail } from 'lucide-react';
+import { BarChart3, Clock, ChevronRight, AlertTriangle, Mail } from 'lucide-react';
 import { listInFlightLetterRows } from '../utils/storage';
+import DisputeOutcomeTracker from './DisputeOutcomeTracker.jsx';
 
 const T = {
   navy: '#1B2A4A',
@@ -74,6 +75,7 @@ export default function LetterTrackerPage({ onNavigate, isAdmin }) {
   const [nextCursor, setNextCursor] = useState(null);
   const [totalCount, setTotalCount] = useState(0);
   const [counts, setCounts] = useState({ overdue: 0, dueSoon: 0, awaiting: 0, inTransit: 0 });
+  const [trackerView, setTrackerView] = useState('in_flight');
 
   const load = async (append = false) => {
     if (append) setLoadingMore(true);
@@ -139,6 +141,13 @@ export default function LetterTrackerPage({ onNavigate, isAdmin }) {
           {' '}Display only; nothing here triggers analysis.
         </p>
       </div>
+
+      <div className="flex w-fit rounded-lg border bg-white p-1" style={{ borderColor: T.border }}>
+        <button onClick={() => setTrackerView('in_flight')} className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${trackerView === 'in_flight' ? 'bg-navy text-gold' : 'text-gray-500'}`}><Clock size={12} /> In flight</button>
+        <button onClick={() => setTrackerView('results')} className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-[10px] font-bold uppercase tracking-wider ${trackerView === 'results' ? 'bg-navy text-gold' : 'text-gray-500'}`}><BarChart3 size={12} /> Wins & results</button>
+      </div>
+
+      {trackerView === 'results' ? <DisputeOutcomeTracker /> : <>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-xl border" style={{ borderColor: counts.overdue > 0 ? '#FECACA' : T.border }}>
@@ -224,6 +233,7 @@ export default function LetterTrackerPage({ onNavigate, isAdmin }) {
           )}
         </div>
       )}
+      </>}
     </div>
   );
 }

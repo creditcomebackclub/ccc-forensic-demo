@@ -198,11 +198,14 @@ export async function saveLetter(account, client, html, summary, phase, idSuffix
       : {}),
     ...('disputeTemplateId' in metadata ? { dispute_template_id: metadata.disputeTemplateId || null } : {}),
     ...('disputeTemplateName' in metadata ? { dispute_template_name: metadata.disputeTemplateName || null } : {}),
+    ...('disputeTemplateVersionLabel' in metadata ? { dispute_template_version_label: metadata.disputeTemplateVersionLabel || null } : {}),
+    ...('disputeTemplateFamilyKey' in metadata ? { dispute_template_family_key: metadata.disputeTemplateFamilyKey || null } : {}),
     ...('disputeFlowCode' in metadata ? { dispute_flow_code: metadata.disputeFlowCode || null } : {}),
     ...('disputeRoundNumber' in metadata ? { dispute_round_number: metadata.disputeRoundNumber || null } : {}),
     ...('disputeBureauCode' in metadata ? { dispute_bureau_code: metadata.disputeBureauCode || null } : {}),
     ...('disputeTemplateSnapshot' in metadata ? { dispute_template_snapshot: metadata.disputeTemplateSnapshot || null } : {}),
     ...('disputeEditableSections' in metadata ? { dispute_editable_sections: metadata.disputeEditableSections || {} } : {}),
+    ...('disputeAccountSnapshot' in metadata ? { dispute_account_snapshot: metadata.disputeAccountSnapshot || [] } : {}),
   });
   if (error) throw error;
   return id;
@@ -315,11 +318,14 @@ function normalizeLetter(l) {
     sourceBureauResponseEvidenceId: l.source_bureau_response_evidence_id || null,
     disputeTemplateId: l.dispute_template_id || null,
     disputeTemplateName: l.dispute_template_name || null,
+    disputeTemplateVersionLabel: l.dispute_template_version_label || null,
+    disputeTemplateFamilyKey: l.dispute_template_family_key || null,
     disputeFlowCode: l.dispute_flow_code || null,
     disputeRoundNumber: l.dispute_round_number || null,
     disputeBureauCode: l.dispute_bureau_code || null,
     disputeTemplateSnapshot: l.dispute_template_snapshot || null,
     disputeEditableSections: l.dispute_editable_sections || {},
+    disputeAccountSnapshot: l.dispute_account_snapshot || [],
     clientAccountId: l.client_account_id || null,
     auditorName: l.auditor_name || null,
   };

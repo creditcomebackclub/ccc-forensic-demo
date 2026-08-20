@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, FileText, ImagePlus, Loader2, Save, Sparkles, X } from 'lucide-react';
 import { readClientSensitiveData, writeClientSensitiveData } from '../utils/clientSensitiveData.js';
-import { buildR1CampaignPlan, FLOW_LABELS, flowRoundLabel } from '../utils/disputeFlow.js';
+import { buildR1CampaignPlan, FLOW_LABELS, FLOW_LETTER_ROUNDS, flowRoundLabel } from '../utils/disputeFlow.js';
 import {
   buildAutomaticTemplateValues,
   extractTemplateTokens,
@@ -18,12 +18,13 @@ import { supabase } from '../utils/supabase.js';
 const HUMAN_FIELDS = [
   { key: 'damages', label: 'Damages / client story', rows: 5, help: 'Client-supplied facts only. Write a different opening for each bureau.' },
   { key: 'personalization', label: 'Facts / exact inaccuracies', rows: 6, help: 'Account-specific fields and bureau values. Do not change the template’s fixed legal facts.' },
-  { key: 'penalty', label: 'Penalty / deadline', rows: 3, help: 'The R1 consequence paragraph written for this bureau.' },
+  { key: 'penalty', label: 'Penalty / deadline', rows: 3, help: 'The round-specific consequence paragraph written for this bureau.' },
   { key: 'consumer_statement', label: 'Consumer statement', rows: 4, help: 'What the reporting is doing, why this flow applies, and the requested deadline.' },
   { key: 'optional_strengthener', label: 'Optional strengthener', rows: 2, help: 'Use only when the template calls for it and the supporting client fact is confirmed.' },
 ];
 
 const blankSections = () => Object.fromEntries(HUMAN_FIELDS.map((field) => [field.key, '']));
+const CAMPAIGN_FLOW_CODES = ['accuracy', 'collection', 'combo', 'consent', 'late_pay', 'accuracy_solo'];
 
 async function loadClientIdentity(audit) {
   const clientId = audit?.client?.id;
@@ -78,6 +79,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
   const firstBureau = plan.bureaus.find((item) => item.recommendations.length)?.bureau.code || 'EQ';
   const [bureauCode, setBureauCode] = useState(firstBureau);
   const [flow, setFlow] = useState(() => plan.bureaus.find((item) => item.bureau.code === firstBureau)?.primary?.flow || 'accuracy');
+  const [round, setRound] = useState(1);
   const [templates, setTemplates] = useState([]);
   const [templateId, setTemplateId] = useState('');
   const [identity, setIdentity] = useState(null);
@@ -111,6 +113,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
     setIdentity(null);
     setBureauCode(firstBureau);
     setFlow(plan.bureaus.find((item) => item.bureau.code === firstBureau)?.primary?.flow || 'accuracy');
+    setRound(1);
     setTemplateId('');
     setSectionsByKey({});
     setScreenshotsByKey({});
@@ -139,8 +142,9 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
   }, [auditClientKey]);
 
   const bureauPlan = plan.bureaus.find((item) => item.bureau.code === bureauCode) || plan.bureaus[0];
-  const recommendation = bureauPlan.recommendations.find((item) => item.flow === flow) || bureauPlan.primary;
-  const workKey = `${bureauCode}:${recommendation?.flow || flow}`;
+  const baseRecommendation = bureauPlan.recommendations.find((item) => item.flow === flow) || bureauPlan.primary;
+  const recommendation = baseRecommendation ? { ...baseRecommendation, flow, round } : null;
+  const workKey = `${bureauCode}:${recommendation?.flow || flow}:R${round}`;
   const sections = sectionsByKey[workKey] || blankSections();
   const screenshots = screenshotsByKey[workKey] || [];
   const matches = recommendation ? templatesForRecommendation(templates, recommendation, bureauCode) : [];
@@ -148,7 +152,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
   useEffect(() => {
     if (!recommendation) return;
     if (!matches.some((template) => template.id === templateId)) setTemplateId(matches[0]?.id || '');
-  }, [bureauCode, recommendation?.flow, templates.length]);
+  }, [bureauCode, recommendation?.flow, round, templates.length]);
 
   const selectedTemplate = matches.find((template) => template.id === templateId) || matches[0] || null;
   const autoValues = buildAutomaticTemplateValues({
@@ -162,9 +166,9 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
   const templateTokens = extractTemplateTokens(selectedTemplate?.body || '');
   const unknown = selectedTemplate ? unknownTemplateTokens(selectedTemplate.body, values) : [];
   const requiredMissing = templateTokens.filter((token) => Object.prototype.hasOwnProperty.call(values, token) && !String(values[token] || '').trim() && token !== 'screenshots');
-  const screenshotsRequired = recommendation && (recommendation.flow === 'accuracy' || recommendation.flow === 'combo');
+  const screenshotsRequired = Boolean(recommendation && templateTokens.includes('screenshots'));
   const bodyHtml = selectedTemplate ? renderDisputeTemplate(selectedTemplate.body, values, ['screenshots']) : '';
-  const letterHtml = selectedTemplate ? wrapDisputeLetterHtml(bodyHtml, `${bureauPlan.bureau.name} ${FLOW_LABELS[recommendation?.flow]} R1`) : '';
+  const letterHtml = selectedTemplate ? wrapDisputeLetterHtml(bodyHtml, `${bureauPlan.bureau.name} ${FLOW_LABELS[recommendation?.flow]} R${round}`) : '';
 
   const setSection = (key, value) => {
     setSectionsByKey((current) => ({ ...current, [workKey]: { ...(current[workKey] || blankSections()), [key]: value } }));
@@ -255,7 +259,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
         sectionKey: fieldKey,
         selectedText: selection.selectedText,
         flow: recommendation.flow,
-        round: 1,
+        round,
         bureau: bureauCode,
         storyNotesVersion: approvedStoryNotesVersion,
       });
@@ -291,6 +295,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
   const selectBureau = (code) => {
     rewriteRequestIdRef.current += 1;
     setBureauCode(code);
+    setRound(1);
     const next = plan.bureaus.find((item) => item.bureau.code === code)?.primary;
     if (next) setFlow(next.flow);
     setSavedId(null);
@@ -301,6 +306,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
   const selectFlow = (nextFlow) => {
     rewriteRequestIdRef.current += 1;
     setFlow(nextFlow);
+    setRound(1);
     setSavedId(null);
     setRewriteProposal(null);
     setRewritingKey(null);
@@ -334,10 +340,6 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
     const saveGeneration = clientGenerationRef.current;
     if (unknown.length) { setError(`Template has unsupported curlys: ${unknown.map((token) => `{${token}}`).join(', ')}`); return; }
     if (requiredMissing.length) { setError(`Complete these fields before saving: ${requiredMissing.map((token) => `{${token}}`).join(', ')}`); return; }
-    if (screenshotsRequired && !templateTokens.includes('screenshots')) {
-      setError('Accuracy and Combo R1 templates must contain {screenshots}. Add the curly in Settings → Templates before using this template.');
-      return;
-    }
     if (screenshotsRequired && !screenshots.length) {
       setError('This flow requires report screenshots. Upload them before saving the letter.');
       return;
@@ -348,7 +350,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
     setError(null);
     try {
       const syntheticAccount = {
-        id: `ccc-${recommendation.flow}-r1-${bureauCode.toLowerCase()}`,
+        id: `ccc-${recommendation.flow}-r${round}-${bureauCode.toLowerCase()}`,
         furnisher: bureauPlan.bureau.name,
         type: null,
       };
@@ -356,18 +358,27 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
         syntheticAccount,
         { ...audit.client, id: identity.id, name: identity.name, address: identity.address },
         letterHtml,
-        `${FLOW_LABELS[recommendation.flow]} R1 prepared for ${bureauPlan.bureau.name}.`,
-        `Phase 1 — ${FLOW_LABELS[recommendation.flow]} R1 — ${bureauPlan.bureau.name}`,
+        `${FLOW_LABELS[recommendation.flow]} R${round} prepared for ${bureauPlan.bureau.name}.`,
+        `Phase 1 — ${FLOW_LABELS[recommendation.flow]} R${round} — ${bureauPlan.bureau.name}`,
         '',
         {
           coveredFurnishers: recommendation.accounts.map((account) => account.furnisher).filter(Boolean),
           disputeTemplateId: selectedTemplate.id,
           disputeTemplateName: `${selectedTemplate.name} ${selectedTemplate.version}`.trim(),
+          disputeTemplateVersionLabel: selectedTemplate.version,
+          disputeTemplateFamilyKey: selectedTemplate.familyKey,
           disputeFlowCode: recommendation.flow,
-          disputeRoundNumber: 1,
+          disputeRoundNumber: round,
           disputeBureauCode: bureauCode,
           disputeTemplateSnapshot: selectedTemplate.body,
           disputeEditableSections: sections,
+          disputeAccountSnapshot: recommendation.accounts.map((account) => ({
+            accountKey: account.clientAccountId ? `client-account:${account.clientAccountId}` : `account:${account.id || account.accountNumberMasked || account.furnisher}`,
+            clientAccountId: account.clientAccountId || null,
+            accountId: account.id || null,
+            furnisher: account.furnisher || 'Unknown furnisher',
+            accountNumberMasked: account.accountNumberMasked || null,
+          })),
         },
       );
       if (clientGenerationRef.current !== saveGeneration) return;
@@ -386,7 +397,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
         <header className="flex items-center justify-between bg-[#121F38] px-6 py-4">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-[.2em] text-[#C9A84C]">CCC Dispute Campaign</div>
-            <div className="text-lg font-semibold text-white">R1 Template Builder · {audit?.client?.name}</div>
+            <div className="text-lg font-semibold text-white">R{round} Template Builder · {audit?.client?.name}</div>
           </div>
           <button onClick={onClose} className="p-1 text-white/60 hover:text-white"><X size={19} /></button>
         </header>
@@ -417,6 +428,24 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
               )}
 
               {recommendation && (
+                <div className="mt-4 grid grid-cols-2 gap-2 rounded-lg border border-border bg-gray-50 p-3">
+                  <div>
+                    <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-gray-400">Flow</label>
+                    <select value={flow} onChange={(event) => selectFlow(event.target.value)} className="w-full rounded-md border border-border bg-white px-2 py-2 text-[10px]">
+                      {CAMPAIGN_FLOW_CODES.map((code) => <option key={code} value={code}>{FLOW_LABELS[code]}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-gray-400">Round</label>
+                    <select value={round} onChange={(event) => { setRound(Number(event.target.value)); setSavedId(null); setRewriteProposal(null); }} className="w-full rounded-md border border-border bg-white px-2 py-2 text-[10px]">
+                      {Array.from({ length: FLOW_LETTER_ROUNDS[flow] || 1 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>R{value}</option>)}
+                    </select>
+                  </div>
+                  {round > 1 && <div className="col-span-2 text-[9px] leading-relaxed text-gray-500">R1 was the deterministic starting recommendation. You are preparing a later round while preserving the same bureau/account set.</div>}
+                </div>
+              )}
+
+              {recommendation && (
                 <div className="mt-4">
                   <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-gray-400">Template</label>
                   {matches.length ? (
@@ -424,7 +453,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
                       {matches.map((template) => <option key={template.id} value={template.id}>{template.name} · {template.version} · {template.bureau}</option>)}
                     </select>
                   ) : (
-                    <div className="rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-700">No active {FLOW_LABELS[recommendation.flow]} R1 template. Add one under Settings → Templates.</div>
+                    <div className="rounded-md border border-red-200 bg-red-50 p-2 text-[11px] text-red-700">No active {FLOW_LABELS[recommendation.flow]} R{round} template. Add one under Settings → Templates.</div>
                   )}
                 </div>
               )}
@@ -551,7 +580,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
               {savedId && <div className="mt-4 flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-[11px] text-green-700"><CheckCircle2 size={14} className="mt-0.5 shrink-0" /> Saved to the client’s Letters campaign with the template snapshot and team-written sections.</div>}
 
               <button onClick={saveCampaignLetter} disabled={saving || savingStoryNotes || !!rewritingKey || !selectedTemplate || !recommendation || unknown.length > 0} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-[#C9A84C] py-3 text-[10px] font-bold uppercase tracking-wider text-[#121F38] disabled:opacity-40">
-                {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save R1 campaign letter
+                {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save R{round} campaign letter
               </button>
               {!!unknown.length && <div className="mt-2 text-[9px] text-red-600">Unsupported curlys: {unknown.map((token) => `{${token}}`).join(', ')}</div>}
             </aside>
