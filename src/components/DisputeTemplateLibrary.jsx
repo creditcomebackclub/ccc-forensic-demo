@@ -48,6 +48,8 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [query, setQuery] = useState('');
+  const [flowFilter, setFlowFilter] = useState('all');
 
   const reload = async (selectId = null) => {
     setLoading(true);
@@ -67,6 +69,14 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
   useEffect(() => { reload(); }, []);
 
   const tokens = useMemo(() => extractTemplateTokens(draft.body), [draft.body]);
+  const visibleTemplates = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return templates.filter((template) => (
+      (flowFilter === 'all' || template.flow === flowFilter)
+      && (!needle || [template.name, FLOW_LABELS[template.flow], `R${template.round}`, template.version]
+        .some((value) => String(value || '').toLowerCase().includes(needle)))
+    ));
+  }, [flowFilter, query, templates]);
   const roundMax = FLOW_LETTER_ROUNDS[draft.flow] || 12;
 
   const save = async () => {
@@ -120,13 +130,35 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
             </button>
           )}
         </div>
+        <div className="mb-3 space-y-2">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            className="w-full rounded-md border border-border bg-white px-2.5 py-2 text-[11px]"
+            placeholder="Search name, law, or round"
+            aria-label="Search letter templates"
+          />
+          <select
+            value={flowFilter}
+            onChange={(event) => setFlowFilter(event.target.value)}
+            className="w-full rounded-md border border-border bg-white px-2.5 py-2 text-[11px]"
+            aria-label="Filter letter templates by flow"
+          >
+            <option value="all">All flows</option>
+            {Object.entries(FLOW_LABELS).map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+          </select>
+        </div>
         {loading ? (
           <div className="flex items-center gap-2 py-6 text-[11px] text-gray-400"><Loader2 size={13} className="animate-spin" /> Loading…</div>
-        ) : templates.length ? (
+        ) : visibleTemplates.length ? (
           <div className="space-y-2">
-            {templates.map((template) => (
+            {visibleTemplates.map((template) => (
               <TemplateRow key={template.id} template={template} selected={draft.id === template.id} onClick={() => setDraft({ ...template })} />
             ))}
+          </div>
+        ) : templates.length ? (
+          <div className="rounded-lg border border-dashed border-gray-300 p-4 text-[11px] leading-relaxed text-gray-500">
+            No templates match this search.
           </div>
         ) : (
           <div className="rounded-lg border border-dashed border-gray-300 p-4 text-[11px] leading-relaxed text-gray-500">

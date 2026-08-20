@@ -12,6 +12,7 @@ import {
   disputeItemsText,
   unknownTemplateTokens,
 } from '../src/utils/disputeTemplateEngine.js';
+import { templatesForRecommendation } from '../src/utils/disputeTemplateSelection.js';
 
 const account = (overrides) => ({
   id: overrides.id,
@@ -80,6 +81,21 @@ assert.equal(mixedLateOverride.bureaus[0].primary.flow, 'late_pay');
 assert.equal(mixedLateOverride.bureaus[0].primary.accounts.length, 2, 'mixed-late override moves every late-pay account to Late Pay');
 assert.equal(FLOW_SEQUENCES.collection[5], '15 USC 1692e(10)', 'repo R3 reuses Collection R6');
 assert.match(REPO_SEQUENCE[2], /1692e\(10\)/, 'repo R3 shortcut is retained explicitly');
+
+const comboFallbackTemplates = [
+  { id: 'accuracy-r5', flow: 'accuracy', round: 5, bureau: 'ALL', active: true, updatedAt: '2026-08-20T00:00:00Z' },
+  { id: 'combo-r5-custom', flow: 'combo', round: 5, bureau: 'TU', active: true, updatedAt: '2026-08-19T00:00:00Z' },
+];
+assert.deepEqual(
+  templatesForRecommendation(comboFallbackTemplates, { flow: 'combo', round: 5 }, 'EQ').map((item) => item.id),
+  ['accuracy-r5'],
+  'Combo R5-R7 reuse the canonical Accuracy templates when no Combo override exists',
+);
+assert.deepEqual(
+  templatesForRecommendation(comboFallbackTemplates, { flow: 'combo', round: 5 }, 'TU').map((item) => item.id),
+  ['combo-r5-custom', 'accuracy-r5'],
+  'an explicit Combo template remains preferred over the Accuracy fallback',
+);
 
 const courseDraft = `Header\n\n►► WRITE THIS — DAMAGES (opens the letter)\nInstructions\nEXAMPLE OF THE RIGHT LENGTH AND SHAPE — replace every word:\nExample\n\n— — — FACTS (do not change this section) — — —\nFixed facts.\n\n►► WRITE THIS — LIST OF EXACT INACCURACIES (accuracy + combo only)\nInstructions\nExample\n\n►► WRITE THIS — PENALTY (closes the argument)\nInstructions\nExample\n\n— — — DELETION LIST (do not change this line) — — —\nDelete:\n{dispute_item_and_explanation}\n\n►► WRITE THIS — CONSUMER STATEMENT\nInstructions\nExample\n\n— — — SCREENSHOTS — ACCURACY / COMBO ONLY — — —\nText\n►► PASTE SCREENSHOTS HERE — one per account\n►► ATTACH ID + PROOF OF ADDRESS ON THE PAGE AFTER THE SCREENSHOTS.`;
 const normalized = normalizeCourseStyleTemplate(courseDraft);

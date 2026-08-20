@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js';
+export { templatesForRecommendation } from './disputeTemplateSelection.js';
 
 function normalizeTemplate(row) {
   return {
@@ -69,17 +70,4 @@ export async function retireDisputeTemplate(id) {
     .single();
   if (error) throw error;
   return normalizeTemplate(data);
-}
-
-export function templatesForRecommendation(templates, recommendation, bureauCode) {
-  return (templates || [])
-    .filter((template) => template.active
-      && template.flow === recommendation?.flow
-      && Number(template.round) === Number(recommendation?.round || 1)
-      && (template.bureau === bureauCode || template.bureau === 'ALL'))
-    .sort((a, b) => {
-      const bureauDelta = Number(b.bureau === bureauCode) - Number(a.bureau === bureauCode);
-      if (bureauDelta) return bureauDelta;
-      return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
-    });
 }

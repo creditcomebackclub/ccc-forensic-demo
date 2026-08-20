@@ -11,6 +11,8 @@ export const TEMPLATE_FIELD_GROUPS = {
     'client_first_name', 'client_last_name', 'client_name', 'client_address',
     'ss_number', 'bdate', 'bureau_address', 'bureau_name', 'curr_date',
     'dispute_item_and_explanation', 'account_list', 'report_date', 'screenshots',
+    'creditor_name', 'creditor_address', 'creditor_city', 'creditor_state',
+    'creditor_zip', 'account_number',
   ],
   human: [...HUMAN_SECTION_TOKENS],
 };
@@ -84,6 +86,57 @@ export function disputeItemsText(accounts = []) {
     if (!issues.length && account.primaryViolation) issues.push(`• ${account.primaryViolation}`);
     return [header, ...issues].join('\n');
   }).join('\n\n');
+}
+
+function splitClientName(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return { first: parts[0] || '', last: parts.slice(1).join(' ') };
+}
+
+function maskedSsn(last4) {
+  const digits = String(last4 || '').replace(/\D/g, '').slice(-4);
+  return digits ? `***-**-${digits}` : '';
+}
+
+function currentDateLabel(date = new Date()) {
+  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+// This is the single data contract for automatic letter curlys. CRA campaign
+// letters and future direct-to-collector letters must both use this mapper so
+// a token cannot silently point at a different client or account property.
+export function buildAutomaticTemplateValues({
+  identity = {},
+  audit = {},
+  bureau = {},
+  accounts = [],
+  screenshots = [],
+  creditor = {},
+  currentDate = new Date(),
+} = {}) {
+  const clientName = identity.name || audit?.client?.name || '';
+  const name = splitClientName(clientName);
+  return {
+    client_first_name: name.first,
+    client_last_name: name.last,
+    client_name: clientName,
+    client_address: identity.address || audit?.client?.address || '',
+    ss_number: maskedSsn(identity.ssnLast4),
+    bdate: identity.dateOfBirth || audit?.personalInfo?.dateOfBirth || '',
+    bureau_address: bureau.address || '',
+    bureau_name: bureau.name || '',
+    curr_date: currentDateLabel(currentDate),
+    report_date: audit?.client?.reportDate || '',
+    dispute_item_and_explanation: disputeItemsText(accounts),
+    account_list: disputeItemsText(accounts),
+    screenshots: screenshotsHtml(screenshots),
+    creditor_name: creditor.name || creditor.creditorName || creditor.furnisher || '',
+    creditor_address: creditor.address || creditor.creditorAddress || '',
+    creditor_city: creditor.city || creditor.creditorCity || '',
+    creditor_state: creditor.state || creditor.creditorState || '',
+    creditor_zip: creditor.zip || creditor.zipCode || creditor.creditorZip || '',
+    account_number: creditor.accountNumberMasked || creditor.accountNumber || '',
+  };
 }
 
 export function screenshotsHtml(screenshots = []) {

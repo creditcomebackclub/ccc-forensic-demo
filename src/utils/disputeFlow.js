@@ -25,6 +25,8 @@ export const FLOW_LABELS = {
   combo: 'Accuracy + Collection Combo',
   consent: 'Consent',
   late_pay: 'Late Pay',
+  direct: 'Direct to Collector',
+  accuracy_solo: 'Accuracy Solo',
 };
 
 export const FLOW_LETTER_ROUNDS = {
@@ -33,6 +35,8 @@ export const FLOW_LETTER_ROUNDS = {
   combo: 12,
   consent: 3,
   late_pay: 2,
+  direct: 2,
+  accuracy_solo: 1,
 };
 
 export const FLOW_SEQUENCES = {
@@ -86,6 +90,13 @@ export const FLOW_SEQUENCES = {
     '15 USC 1681a(d)(a)(2)(a)(i)',
     '15 USC 1681(a)(4)',
     'Switch to Accuracy if the late payment remains',
+  ],
+  direct: [
+    '15 USC 1692g(b) — debt verification',
+    '15 USC 1692g(b) + 15 USC 1692e(10)',
+  ],
+  accuracy_solo: [
+    '15 USC 1681c(f) — incomplete dispute comments',
   ],
 };
 

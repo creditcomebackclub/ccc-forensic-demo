@@ -3,10 +3,9 @@ import { AlertCircle, CheckCircle2, FileText, ImagePlus, Loader2, Save, Sparkles
 import { readClientSensitiveData, writeClientSensitiveData } from '../utils/clientSensitiveData.js';
 import { buildR1CampaignPlan, FLOW_LABELS, flowRoundLabel } from '../utils/disputeFlow.js';
 import {
-  disputeItemsText,
+  buildAutomaticTemplateValues,
   extractTemplateTokens,
   renderDisputeTemplate,
-  screenshotsHtml,
   unknownTemplateTokens,
   wrapDisputeLetterHtml,
 } from '../utils/disputeTemplateEngine.js';
@@ -25,20 +24,6 @@ const HUMAN_FIELDS = [
 ];
 
 const blankSections = () => Object.fromEntries(HUMAN_FIELDS.map((field) => [field.key, '']));
-
-function todayLabel() {
-  return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-}
-
-function splitName(name) {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  return { first: parts[0] || '', last: parts.slice(1).join(' ') };
-}
-
-function ssnDisplay(last4) {
-  const digits = String(last4 || '').replace(/\D/g, '').slice(-4);
-  return digits ? `***-**-${digits}` : '';
-}
 
 async function loadClientIdentity(audit) {
   const clientId = audit?.client?.id;
@@ -166,22 +151,13 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
   }, [bureauCode, recommendation?.flow, templates.length]);
 
   const selectedTemplate = matches.find((template) => template.id === templateId) || matches[0] || null;
-  const name = splitName(identity?.name || audit?.client?.name);
-  const autoValues = {
-    client_first_name: name.first,
-    client_last_name: name.last,
-    client_name: identity?.name || audit?.client?.name || '',
-    client_address: identity?.address || '',
-    ss_number: ssnDisplay(identity?.ssnLast4),
-    bdate: identity?.dateOfBirth || '',
-    bureau_address: bureauPlan.bureau.address,
-    bureau_name: bureauPlan.bureau.name,
-    curr_date: todayLabel(),
-    report_date: audit?.client?.reportDate || '',
-    dispute_item_and_explanation: disputeItemsText(recommendation?.accounts || []),
-    account_list: disputeItemsText(recommendation?.accounts || []),
-    screenshots: screenshotsHtml(screenshots),
-  };
+  const autoValues = buildAutomaticTemplateValues({
+    identity,
+    audit,
+    bureau: bureauPlan.bureau,
+    accounts: recommendation?.accounts || [],
+    screenshots,
+  });
   const values = { ...autoValues, ...sections };
   const templateTokens = extractTemplateTokens(selectedTemplate?.body || '');
   const unknown = selectedTemplate ? unknownTemplateTokens(selectedTemplate.body, values) : [];
