@@ -4,6 +4,8 @@ import { generateCombinedCleanupLetter } from '../utils/api';
 import { buildAuditPdfDoc, auditPdfFilename, blobToBase64 } from '../utils/auditPdf';
 import { upsertFurnisherAddress } from '../utils/storage';
 import RecoveryBlueprintStudio from './RecoveryBlueprintStudio';
+import DisputeCampaignStudio from './DisputeCampaignStudio';
+import { buildR1CampaignPlan, flowRoundLabel } from '../utils/disputeFlow.js';
 import {
   CheckCircle2, CheckCircle, Download, ArrowRight, Sparkles, MapPin, Calendar,
   FileWarning, AlertTriangle, Eye, ChevronRight, Mail, Scale, MoreHorizontal, Pencil,
@@ -277,6 +279,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   const [clientEmail, setClientEmail] = React.useState(null);
   const [emailModalOpen, setEmailModalOpen] = React.useState(false);
   const [blueprintOpen, setBlueprintOpen] = React.useState(false);
+  const [campaignOpen, setCampaignOpen] = React.useState(false);
   const inqKey = (i) => i.furnisher + '|' + i.date;
 
   React.useEffect(() => {
@@ -340,6 +343,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
   const [correctionsDirty, setCorrectionsDirty] = useState(false);
   useEffect(() => { setAccounts(audit.accounts || []); setCorrectionsDirty(false); }, [audit]);
   const auditView = { ...audit, accounts };
+  const r1Plan = buildR1CampaignPlan(auditView);
   const updateAccount = (id, patch) => {
     setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch, _edited: true } : a)));
     setSelectedAccount((s) => (s && s.id === id ? { ...s, ...patch, _edited: true } : s));
@@ -392,6 +396,12 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
             </button>
           )}
           <button
+            onClick={() => setCampaignOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] uppercase tracking-wider rounded-lg transition-colors border"
+            style={{ backgroundColor: '#fff', borderColor: T.navy, color: T.navy }}>
+            <Sparkles size={13} strokeWidth={1.75} /> Build R1 Campaign
+          </button>
+          <button
             onClick={() => setBlueprintOpen(true)}
             className="flex items-center gap-1.5 px-3.5 py-1.5 text-[11px] uppercase tracking-wider rounded-lg transition-colors"
             style={{ backgroundColor: T.navy, color: T.gold }}>
@@ -415,6 +425,13 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           clientEmail={clientEmail}
           onCorrectionsSaved={() => setCorrectionsDirty(false)}
           onClose={() => setBlueprintOpen(false)}
+        />
+      )}
+      {campaignOpen && (
+        <DisputeCampaignStudio
+          audit={auditView}
+          onSaved={() => {}}
+          onClose={() => setCampaignOpen(false)}
         />
       )}
 
@@ -481,6 +498,36 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
           <p className="text-[13px] text-gray-300 leading-relaxed">{audit.executiveSummary}</p>
         </div>
       )}
+
+      <div style={{ background: '#fff', border: '1px solid ' + T.border, borderRadius: 14, padding: 20, boxShadow: T.cardShadow }}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span style={{ width: 3, height: 14, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+              <h3 className="ccc-display text-[15px] font-medium text-ink">Deterministic R1 Classification</h3>
+            </div>
+            <p className="mt-1 text-[11px] text-ink-muted">Claude extracts account facts from the 3B. CCC applies the fixed course routing rules and recommends the matching stored template.</p>
+          </div>
+          <button onClick={() => setCampaignOpen(true)} className="shrink-0 rounded-lg px-3.5 py-2 text-[10px] font-bold uppercase tracking-wider" style={{ background: T.navy, color: T.gold }}>
+            Open campaign builder
+          </button>
+        </div>
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          {r1Plan.bureaus.map((item) => (
+            <div key={item.bureau.code} className="rounded-lg border p-3" style={{ borderColor: item.primary ? '#BFDBFE' : T.border, background: item.primary ? '#EFF6FF' : '#FAFBFC' }}>
+              <div className="text-[9px] font-bold uppercase tracking-wider" style={{ color: T.faint }}>{item.bureau.name}</div>
+              {item.recommendations.length ? item.recommendations.map((recommendation) => (
+                <div key={recommendation.flow} className="mt-1.5">
+                  <div className="text-[11px] font-semibold text-navy">{flowRoundLabel(recommendation.flow, 1)}</div>
+                  <div className="text-[9px] text-ink-muted">{recommendation.accounts.length} routed account{recommendation.accounts.length === 1 ? '' : 's'}</div>
+                </div>
+              )) : <div className="mt-1.5 text-[11px] text-ink-muted">No routed R1 letter</div>}
+              {!!item.needsReview.length && <div className="mt-2 text-[9px] font-semibold text-red-600">{item.needsReview.length} account{item.needsReview.length === 1 ? '' : 's'} need classification review</div>}
+              {!!item.deferred.length && <div className="mt-1 text-[9px] text-ink-muted">{item.deferred.length} separately routed account{item.deferred.length === 1 ? '' : 's'} held for staff review</div>}
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Step 1 — Inquiries & Personal Information cleanup */}
       {hasCleanupWork && (

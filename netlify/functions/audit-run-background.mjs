@@ -728,6 +728,9 @@ export const handler = async (event) => {
           acct.dateOfFirstDelinquency = e ? e.dateOfFirstDelinquency : null;
           acct.remarks = e ? e.remarks : null;
           acct.disputeFlag = e ? !!e.disputeFlag : false;
+          acct.accountKind = e ? e.accountKind : null;
+          acct.latePaymentCount = e ? e.latePaymentCount : null;
+          acct.latePaymentBand = e ? e.latePaymentBand : 'unclear';
         }
       } catch (e) {
         console.warn('[audit-enrichment] failed (non-fatal, audit continues without these fields):', e.message);
@@ -1015,6 +1018,8 @@ export const handler = async (event) => {
     const auditId = clientId
       ? slug(clientName) + '__' + clientId + '__' + reportDate
       : slug(clientName) + '__' + reportDate;
+
+    if (audit.client && clientId) audit.client.id = clientId;
 
     const { error } = await db.from('audits').upsert({
       id: auditId,

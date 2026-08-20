@@ -722,7 +722,7 @@ export default function App() {
           <LetterViewer account={activeLetter} client={auditResult.client} onClose={() => setActiveLetter(null)} />
         )}
         {showSettings && (
-          <SettingsModal onClose={() => setShowSettings(false)} displayName={displayName} email={user.email} />
+          <SettingsModal onClose={() => setShowSettings(false)} displayName={displayName} email={user.email} isAdmin={isAdmin} />
         )}
       </Suspense>
     </div>

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { X, Check, User, Save, DollarSign, Bell, Users, ShieldAlert } from 'lucide-react';
+import { X, Check, User, Save, DollarSign, Bell, Users, ShieldAlert, FileText } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 import { getSettings, saveSettings } from '../utils/settings';
+import DisputeTemplateLibrary from './DisputeTemplateLibrary';
 
-export default function SettingsModal({ onClose, displayName, email }) {
+export default function SettingsModal({ onClose, displayName, email, isAdmin = false }) {
   const [activeTab, setActiveTab] = useState('profile');
   
   // Profile state
@@ -68,14 +69,15 @@ export default function SettingsModal({ onClose, displayName, email }) {
     { id: 'pricing', label: 'Pricing', icon: DollarSign },
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'affiliates', label: 'Affiliates', icon: Users },
-    { id: 'disputes', label: 'Disputes', icon: ShieldAlert }
+    { id: 'disputes', label: 'Disputes', icon: ShieldAlert },
+    { id: 'templates', label: 'Templates', icon: FileText },
   ];
 
   if (!settings) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded border border-border w-full max-w-2xl flex overflow-hidden shadow-2xl">
+      <div className="bg-white rounded border border-border w-full max-w-6xl flex overflow-hidden shadow-2xl">
         
         {/* Sidebar */}
         <div className="w-48 bg-gray-50 border-r border-border flex flex-col">
@@ -103,7 +105,7 @@ export default function SettingsModal({ onClose, displayName, email }) {
         </div>
 
         {/* Content */}
-        <div className="flex-1 flex flex-col h-[500px]">
+        <div className="flex-1 flex flex-col h-[82vh] min-h-0">
           <div className="flex items-center justify-between px-6 py-4 border-b border-border">
             <div className="text-[14px] font-bold text-navy">{tabs.find(t => t.id === activeTab).label} Settings</div>
             <button onClick={onClose} className="text-gray-400 hover:text-navy">
@@ -270,13 +272,19 @@ export default function SettingsModal({ onClose, displayName, email }) {
               </div>
             )}
 
+            {activeTab === 'templates' && (
+              <div className="h-full min-h-[620px]">
+                <DisputeTemplateLibrary canEdit={isAdmin} />
+              </div>
+            )}
+
             {error && (
               <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>
             )}
           </div>
 
           <div className="px-6 py-4 border-t border-border bg-gray-50 flex justify-between items-center">
-            {activeTab !== 'profile' ? (
+            {activeTab !== 'profile' && activeTab !== 'templates' ? (
               <button
                 onClick={handleSaveSettings}
                 disabled={savingSettings}

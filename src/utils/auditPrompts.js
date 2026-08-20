@@ -81,14 +81,15 @@ export function trimBureau(data) {
 }
 
 // Second-pass enrichment for the Retention Build 1a diff engine (see
-// ACCOUNT_ENRICHMENT_SCHEMA) — re-examines the same report(s) for 4 fields
+// ACCOUNT_ENRICHMENT_SCHEMA) — re-examines the same report(s) for the small
+// set of diff and deterministic-flow facts
 // per already-identified account, since they didn't fit in the main
 // AUDIT_SCHEMA call without dropping inquiries or personalInfo.
 export function accountEnrichmentPrompt(t, accounts) {
   const accountList = (accounts || [])
     .map((a) => `- id=${a.id}: ${a.furnisher} ${a.accountNumberMasked || ''}`.trim())
     .join('\n');
-  return `ACCOUNT_ENRICHMENT_JSON_MODE\n\nToday is ${t}. You already extracted these accounts from the attached credit report(s):\n\n${accountList}\n\nFor EACH account id listed above, look at the attached report(s) again and extract exactly these 4 fields:\n- paymentRating: current payment status if the report shows one distinct from Account Status, e.g. 'Current' or '90 days late', or null\n- dateOfFirstDelinquency: Field 25 DOFD as YYYY-MM-DD if reported, else null\n- remarks: any remarks/comments text the bureau shows for this account, or null\n- disputeFlag: true if Field 20 (Compliance Condition Code) shows the account as consumer-disputed (e.g. code XB), else false\n\nReturn exactly one entry per account id listed above, using the EXACT same id values — do not invent accounts, do not omit any listed id. JSON only.`;
+  return `ACCOUNT_ENRICHMENT_JSON_MODE\n\nToday is ${t}. You already extracted these accounts from the attached credit report(s):\n\n${accountList}\n\nFor EACH account id listed above, look at the attached report(s) again and extract exactly these fields:\n- paymentRating: current payment status if the report shows one distinct from Account Status, e.g. 'Current' or '90 days late', or null\n- dateOfFirstDelinquency: Field 25 DOFD as YYYY-MM-DD if reported, else null\n- remarks: any remarks/comments text the bureau shows for this account, or null\n- disputeFlag: true if Field 20 (Compliance Condition Code) shows the account as consumer-disputed (e.g. code XB), else false\n- accountKind: choose exactly one of charge_off, collection, repossession, bankruptcy, student_loan, late_payment, positive, or other based only on what the report calls the account/status\n- latePaymentCount: count the distinct 30/60/90/120-day late-payment markers visible in the payment history for this account; return 0 when the full history is visible and contains none, or null when the history is missing/unclear\n- latePaymentBand: none when there are no lates; two_or_fewer when the report shows no more than two late markers; three_or_more when it shows at least three; mixed when the account contains separate late stretches and at least one stretch has two or fewer markers while another has three or more; unclear when the grid cannot support the choice\n\nDo not decide a dispute flow and do not interpret a statute. Extract report facts only. Return exactly one entry per account id listed above, using the EXACT same id values — do not invent accounts, do not omit any listed id. JSON only.`;
 }
 
 export function mergeAuditPrompt(t, eqData, expData, tuData) {

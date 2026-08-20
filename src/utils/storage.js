@@ -196,6 +196,13 @@ export async function saveLetter(account, client, html, summary, phase, idSuffix
     ...('sourceBureauResponseEvidenceId' in metadata
       ? { source_bureau_response_evidence_id: metadata.sourceBureauResponseEvidenceId || null }
       : {}),
+    ...('disputeTemplateId' in metadata ? { dispute_template_id: metadata.disputeTemplateId || null } : {}),
+    ...('disputeTemplateName' in metadata ? { dispute_template_name: metadata.disputeTemplateName || null } : {}),
+    ...('disputeFlowCode' in metadata ? { dispute_flow_code: metadata.disputeFlowCode || null } : {}),
+    ...('disputeRoundNumber' in metadata ? { dispute_round_number: metadata.disputeRoundNumber || null } : {}),
+    ...('disputeBureauCode' in metadata ? { dispute_bureau_code: metadata.disputeBureauCode || null } : {}),
+    ...('disputeTemplateSnapshot' in metadata ? { dispute_template_snapshot: metadata.disputeTemplateSnapshot || null } : {}),
+    ...('disputeEditableSections' in metadata ? { dispute_editable_sections: metadata.disputeEditableSections || {} } : {}),
   });
   if (error) throw error;
   return id;
@@ -306,6 +313,13 @@ function normalizeLetter(l) {
     enclosureParseIssues: l.enclosure_parse_issues || [],
     sourcePhase3LetterId: l.source_phase3_letter_id || null,
     sourceBureauResponseEvidenceId: l.source_bureau_response_evidence_id || null,
+    disputeTemplateId: l.dispute_template_id || null,
+    disputeTemplateName: l.dispute_template_name || null,
+    disputeFlowCode: l.dispute_flow_code || null,
+    disputeRoundNumber: l.dispute_round_number || null,
+    disputeBureauCode: l.dispute_bureau_code || null,
+    disputeTemplateSnapshot: l.dispute_template_snapshot || null,
+    disputeEditableSections: l.dispute_editable_sections || {},
     clientAccountId: l.client_account_id || null,
     auditorName: l.auditor_name || null,
   };

@@ -11,9 +11,9 @@ const fixture = {
   accountsTargeted: 3,
   totalViolations: 999,
   accounts: [
-    { id: 'a1', furnisher: 'Portfolio Recovery Associates', accountNumberMasked: '***1234', type: 'C', status: 'Collection', balance: 1420, bureaus: ['EQ', 'EXP'], batch: 1, primaryViolation: 'Balance and status reporting conflict across bureaus.', strategy: 'Demand account-level verification of the inconsistent data.', violations: [{ field: 'Balance', issue: 'The reported balances conflict.', statute: 'FCRA', severity: 'high' }] },
-    { id: 'a2', furnisher: 'Discover Bank', accountNumberMasked: '***9876', type: 'A', status: 'Charged off', balance: 2840, bureaus: ['EQ', 'EXP', 'TU'], batch: 1, primaryViolation: 'The payment history and status do not align.', strategy: 'Challenge the contradictory payment history.', violations: [{ field: 'Payment history', issue: 'Contradictory history.', statute: 'FCRA', severity: 'high' }, { field: 'Status', issue: 'Conflicting status.', statute: 'Metro 2', severity: 'med' }] },
-    { id: 'a3', furnisher: 'USAlliance', accountNumberMasked: '***2222', type: 'A', status: 'Late', balance: 900, bureaus: ['TU'], batch: 2, primaryViolation: 'Dates are inconsistent.', strategy: 'Request correction.', violations: [{ field: 'Dates', issue: 'Dates conflict.', statute: 'FCRA', severity: 'med' }] },
+    { id: 'a1', furnisher: 'Portfolio Recovery Associates', accountNumberMasked: '***1234', type: 'C', accountKind: 'collection', status: 'Collection', balance: 1420, bureaus: ['EQ', 'EXP'], batch: 1, primaryViolation: 'Balance and status reporting conflict across bureaus.', strategy: 'Demand account-level verification of the inconsistent data.', violations: [{ field: 'Balance', issue: 'The reported balances conflict.', statute: 'FCRA', severity: 'high' }] },
+    { id: 'a2', furnisher: 'Discover Bank', accountNumberMasked: '***9876', type: 'A', accountKind: 'charge_off', status: 'Charged off', balance: 2840, bureaus: ['EQ', 'EXP', 'TU'], batch: 1, primaryViolation: 'The payment history and status do not align.', strategy: 'Challenge the contradictory payment history.', violations: [{ field: 'Payment history', issue: 'Contradictory history.', statute: 'FCRA', severity: 'high' }, { field: 'Status', issue: 'Conflicting status.', statute: 'Metro 2', severity: 'med' }] },
+    { id: 'a3', furnisher: 'USAlliance', accountNumberMasked: '***2222', type: 'A', accountKind: 'late_payment', latePaymentCount: 2, status: 'Late', balance: 900, bureaus: ['TU'], batch: 2, primaryViolation: 'Dates are inconsistent.', strategy: 'Request correction.', violations: [{ field: 'Dates', issue: 'Dates conflict.', statute: 'FCRA', severity: 'med' }] },
   ],
 };
 
@@ -24,11 +24,14 @@ assert.equal(model.metrics.targetedNegativeBalance, 5160);
 assert.equal(model.metrics.batch1StrikeZone, 4260);
 assert.equal(model.openingMove.id, 'a1', 'existing Claude order must be preserved');
 assert.equal(model.batch1Accounts.length, 2);
+assert.equal(model.r1CampaignPlan.bureaus[0].primary.flow, 'combo');
+assert.equal(model.r1CampaignPlan.bureaus[2].primary.flow, 'accuracy');
+assert.equal(model.r1CampaignPlan.bureaus[2].deferred[0].flow, 'late_pay');
 assert.equal(model.openingMove.addressStatus, undefined, 'internal mail fields must not be exposed');
 assert.equal(recoveryBlueprintFilename(model), 'ccc-recovery-blueprint-david-example-2026-07-31.pdf');
 
 const doc = buildRecoveryBlueprintPdf(model);
-assert.equal(doc.getNumberOfPages(), 6);
+assert.equal(doc.getNumberOfPages(), 7);
 assert.ok(doc.output('arraybuffer').byteLength > 5_000);
 
 const overflowFixture = structuredClone(fixture);
@@ -50,4 +53,4 @@ if (process.env.BLUEPRINT_QA_OUTPUT) {
   writeFileSync(process.env.BLUEPRINT_QA_OUTPUT, Buffer.from(doc.output('arraybuffer')));
 }
 
-console.log('Recovery Blueprint model and six-page renderer tests passed.');
+console.log('Recovery Blueprint model and seven-page renderer tests passed.');

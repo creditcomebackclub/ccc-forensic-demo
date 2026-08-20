@@ -5,6 +5,7 @@
 
 const NULLABLE_STRING = { anyOf: [{ type: 'string' }, { type: 'null' }] };
 const NULLABLE_NUMBER = { anyOf: [{ type: 'number' }, { type: 'null' }] };
+const NULLABLE_INTEGER = { anyOf: [{ type: 'integer' }, { type: 'null' }] };
 const BUREAUS = { type: 'array', items: { type: 'string', enum: ['EQ', 'EXP', 'TU'] } };
 
 const VIOLATION = {
@@ -213,12 +214,12 @@ export const BUREAU_SCHEMA = {
   required: ['bureau', 'client', 'accounts', 'inquiries', 'personalInfo'],
 };
 
-// Second-pass enrichment for the Retention Build 1a diff engine — payment
-// rating/DOFD/remarks/dispute flag couldn't fit in AUDIT_SCHEMA's single
+// Second-pass enrichment for the Retention Build 1a diff engine and the
+// deterministic R1 router — these report facts couldn't fit in AUDIT_SCHEMA's single
 // call without dropping inquiries or personalInfo (both feed real, shipped
 // letter types), so this runs as its own small follow-up call instead.
-// Deliberately tiny — no violations, no enums, nothing nested — so it can
-// never itself hit the compiled-grammar limit. Best-effort only: a failure
+// Deliberately tiny — no violations and nothing deeply nested — so it stays
+// well below the compiled-grammar limit. Best-effort only: a failure
 // here must never block the audit (see audit-run-background.mjs).
 export const ACCOUNT_ENRICHMENT_SCHEMA = {
   type: 'object',
@@ -235,8 +236,22 @@ export const ACCOUNT_ENRICHMENT_SCHEMA = {
           dateOfFirstDelinquency: NULLABLE_STRING,
           remarks: NULLABLE_STRING,
           disputeFlag: { type: 'boolean' },
+          // Structured report facts used by disputeFlow.js. Claude extracts
+          // these facts; the R1 decision itself is deterministic code.
+          accountKind: {
+            type: 'string',
+            enum: ['charge_off', 'collection', 'repossession', 'bankruptcy', 'student_loan', 'late_payment', 'positive', 'other'],
+          },
+          latePaymentCount: NULLABLE_INTEGER,
+          latePaymentBand: {
+            type: 'string',
+            enum: ['none', 'two_or_fewer', 'three_or_more', 'mixed', 'unclear'],
+          },
         },
-        required: ['id', 'paymentRating', 'dateOfFirstDelinquency', 'remarks', 'disputeFlag'],
+        required: [
+          'id', 'paymentRating', 'dateOfFirstDelinquency', 'remarks', 'disputeFlag',
+          'accountKind', 'latePaymentCount', 'latePaymentBand',
+        ],
       },
     },
   },

@@ -1,4 +1,6 @@
-export const RECOVERY_BLUEPRINT_TEMPLATE_VERSION = 'recovery_blueprint_v1';
+import { buildR1CampaignPlan } from './disputeFlow.js';
+
+export const RECOVERY_BLUEPRINT_TEMPLATE_VERSION = 'recovery_blueprint_v2';
 
 const BUREAU_LABELS = { EQ: 'Equifax', EXP: 'Experian', TU: 'TransUnion' };
 
@@ -62,6 +64,11 @@ function normalizeAccount(account, index) {
       account?.strategy,
       'Challenge the documented reporting discrepancy with account-specific evidence.',
     ),
+    accountKind: cleanText(account?.accountKind),
+    latePaymentCount: account?.latePaymentCount ?? null,
+    latePaymentBand: cleanText(account?.latePaymentBand),
+    paymentRating: cleanText(account?.paymentRating),
+    remarks: cleanText(account?.remarks),
   };
 }
 
@@ -84,6 +91,7 @@ export function buildRecoveryBlueprintModel(audit, options = {}) {
   const clientName = cleanText(audit.client?.name, 'Client');
   const reportDate = cleanText(audit.client?.reportDate || options.reportDate);
   const firstName = clientName.split(' ')[0] || 'Client';
+  const r1CampaignPlan = buildR1CampaignPlan({ accounts });
 
   return {
     templateVersion: RECOVERY_BLUEPRINT_TEMPLATE_VERSION,
@@ -114,6 +122,7 @@ export function buildRecoveryBlueprintModel(audit, options = {}) {
     },
     openingMove,
     batch1Accounts,
+    r1CampaignPlan,
     recoveryPath: [
       {
         number: '01',
@@ -148,4 +157,3 @@ export function recoveryBlueprintFilename(auditOrModel) {
   const date = model.client.reportDate || new Date().toISOString().slice(0, 10);
   return `ccc-recovery-blueprint-${slug}-${date}.pdf`;
 }
-

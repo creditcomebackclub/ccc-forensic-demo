@@ -232,7 +232,7 @@ function addOpeningMove(doc, model) {
 
 function addRecoveryPath(doc, model) {
   doc.addPage();
-  pageHeader(doc, '03 / The system', 'Your four-step recovery path');
+  pageHeader(doc, '04 / The system', 'Your four-step recovery path');
   model.recoveryPath.forEach((step, index) => {
     const y = 154 + index * 132;
     setColor(doc, index === 0 ? C.gold : C.navy, true);
@@ -258,7 +258,7 @@ function addRecoveryPath(doc, model) {
 
 function addStrikeList(doc, model) {
   doc.addPage();
-  pageHeader(doc, '04 / Month one', 'The Batch 1 strike list');
+  pageHeader(doc, '05 / Month one', 'The Batch 1 strike list');
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   setColor(doc, C.muted);
@@ -291,6 +291,54 @@ function addStrikeList(doc, model) {
       2: { cellWidth: 82 },
       3: { cellWidth: 246 },
     },
+  });
+}
+
+function addR1Plan(doc, model) {
+  doc.addPage();
+  pageHeader(doc, '03 / Classification', 'Your recommended R1 flow');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  setColor(doc, C.muted);
+  doc.text('Each bureau is classified independently from the account facts in the reviewed three-bureau report.', M, 137);
+
+  model.r1CampaignPlan.bureaus.forEach((item, index) => {
+    const y = 172 + index * 164;
+    setColor(doc, C.white, true);
+    doc.roundedRect(M, y, PAGE_W - M * 2, 136, 6, 6, 'F');
+    setColor(doc, C.navy, true);
+    doc.rect(M, y, 5, 136, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    setColor(doc, C.navy);
+    doc.text(item.bureau.name, M + 20, y + 28);
+
+    if (item.recommendations.length) {
+      item.recommendations.forEach((recommendation, recIndex) => {
+        const recY = y + 50 + recIndex * 35;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9.5);
+        setColor(doc, C.green);
+        doc.text(`${recommendation.label} R1`, M + 20, recY);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+        setColor(doc, C.muted);
+        const law = doc.splitTextToSize(`${recommendation.law} · ${recommendation.accounts.length} routed account${recommendation.accounts.length === 1 ? '' : 's'}`, 454).slice(0, 1);
+        doc.text(law, M + 20, recY + 15);
+      });
+    } else {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9.5);
+      setColor(doc, C.muted);
+      doc.text('No R1 letter is recommended from the currently classified accounts.', M + 20, y + 62);
+    }
+
+    if (item.needsReview.length) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      setColor(doc, [180, 83, 9]);
+      doc.text(`${item.needsReview.length} ACCOUNT${item.needsReview.length === 1 ? '' : 'S'} REQUIRE STAFF CLASSIFICATION REVIEW`, PAGE_W - M - 16, y + 28, { align: 'right' });
+    }
   });
 }
 
@@ -358,6 +406,7 @@ export function buildRecoveryBlueprintPdf(auditOrModel) {
   addCover(doc, model);
   addSnapshot(doc, model);
   addOpeningMove(doc, model);
+  addR1Plan(doc, model);
   addRecoveryPath(doc, model);
   addStrikeList(doc, model);
   addClosing(doc, model);
