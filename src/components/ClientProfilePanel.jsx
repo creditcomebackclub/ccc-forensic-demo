@@ -91,7 +91,7 @@ function PasswordField({ clientName, clientId, field, onSaved }) {
     setBusy(true);
     setError('');
     try {
-      const data = await readClientSensitiveData(clientName, clientId);
+      const data = await readClientSensitiveData(clientName, clientId, [field]);
       const value = (field === 'ssnLast4' ? data.ssnLast4 : data.monitoringPassword) || '';
       setRevealed(value);
       return value;

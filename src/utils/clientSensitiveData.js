@@ -1,5 +1,6 @@
-// Client-side access to SSN last-4 / monitoring password. Both values are
-// encrypted at rest and never included in bulk client-list queries — every
+// Client-side access to SSN last-4, monitoring password, and staff-authored
+// dispute-story notes. Values are encrypted at rest and never included in
+// bulk client-list queries — every
 // read/write goes through netlify/functions/client-sensitive-data.mjs, which
 // verifies the caller's session token itself rather than trusting anything
 // sent in the request body.
@@ -22,14 +23,16 @@ async function callFunction(body) {
   return json;
 }
 
-// Staff-only — returns { ssnLast4, monitoringPassword }.
-// clientId preferred; clientName kept only for pre-migration callers.
-export async function readClientSensitiveData(clientName, clientId) {
-  return callFunction({ action: 'read', clientName, clientId: clientId || null });
+// Staff-only. Ask for only the fields a focused workflow needs so unrelated
+// credentials never enter that component's browser state.
+// Sensitive records are UUID-addressed; names are never used as selectors.
+export async function readClientSensitiveData(clientName, clientId, fields = ['ssnLast4', 'monitoringPassword']) {
+  return callFunction({ action: 'read', clientId: clientId || null, fields });
 }
 
-// Staff, or the client updating their own record. Only keys present in
-// `fields` are written — omit a key to leave it untouched.
+// Staff, or the client updating their own SSN/password record. Story notes
+// are additionally restricted to an admin or the auditor who owns the client.
+// Only keys present in `fields` are written — omit a key to leave it untouched.
 export async function writeClientSensitiveData(clientName, fields, clientId) {
-  return callFunction({ action: 'write', clientName, clientId: clientId || null, ...fields });
+  return callFunction({ action: 'write', clientId: clientId || null, ...fields });
 }

@@ -38,6 +38,13 @@
     window = "1m"
     limit = 30
 
+# Paid, staff-authenticated Claude rewrite endpoint. The application also
+# enforces client ownership; this edge limit bounds accidental repeat calls.
+[functions."rewrite-dispute-selection"]
+  [functions."rewrite-dispute-selection".rate_limit]
+    window = "1m"
+    limit = 20
+
 [[headers]]
   for = "/*"
   [headers.values]

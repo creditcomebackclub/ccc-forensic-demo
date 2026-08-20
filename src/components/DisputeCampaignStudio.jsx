@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, FileText, ImagePlus, Loader2, Save, X } from 'lucide-react';
-import { readClientSensitiveData } from '../utils/clientSensitiveData.js';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, CheckCircle2, FileText, ImagePlus, Loader2, Save, Sparkles, X } from 'lucide-react';
+import { readClientSensitiveData, writeClientSensitiveData } from '../utils/clientSensitiveData.js';
 import { buildR1CampaignPlan, FLOW_LABELS, flowRoundLabel } from '../utils/disputeFlow.js';
 import {
   disputeItemsText,
@@ -11,6 +11,8 @@ import {
   wrapDisputeLetterHtml,
 } from '../utils/disputeTemplateEngine.js';
 import { listDisputeTemplates, templatesForRecommendation } from '../utils/disputeTemplates.js';
+import { requestDisputeRewrite } from '../utils/disputeRewriteApi.js';
+import { replaceDisputeSelection } from '../utils/disputeRewriteRules.js';
 import { saveLetter } from '../utils/storage.js';
 import { supabase } from '../utils/supabase.js';
 
@@ -53,13 +55,15 @@ async function loadClientIdentity(audit) {
   }
   const client = rows[0];
   if (!client) throw new Error('Client profile not found. Save the audit to a client before building a campaign.');
-  const sensitive = await readClientSensitiveData(client.name, client.id);
+  const sensitive = await readClientSensitiveData(client.name, client.id, ['ssnLast4', 'disputeStoryNotes']);
   return {
     id: client.id,
     name: client.name,
     address: client.address || audit?.client?.address || '',
     dateOfBirth: client.date_of_birth || audit?.personalInfo?.dateOfBirth || '',
     ssnLast4: sensitive?.ssnLast4 || '',
+    disputeStoryNotes: sensitive?.disputeStoryNotes || '',
+    disputeStoryNotesVersion: sensitive?.disputeStoryNotesVersion || '',
   };
 }
 
@@ -94,23 +98,60 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
   const [identity, setIdentity] = useState(null);
   const [sectionsByKey, setSectionsByKey] = useState({});
   const [screenshotsByKey, setScreenshotsByKey] = useState({});
+  const [storyNotes, setStoryNotes] = useState('');
+  const [storyNotesVersion, setStoryNotesVersion] = useState('');
+  const [storyNotesDirty, setStoryNotesDirty] = useState(false);
+  const [savingStoryNotes, setSavingStoryNotes] = useState(false);
+  const [storyNotesSaved, setStoryNotesSaved] = useState(false);
+  const [storyNotesApprovedForAi, setStoryNotesApprovedForAi] = useState(false);
+  const [selectionsByKey, setSelectionsByKey] = useState({});
+  const [rewritingKey, setRewritingKey] = useState(null);
+  const [rewriteProposal, setRewriteProposal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [savedId, setSavedId] = useState(null);
+  const storyNotesRevisionRef = useRef(0);
+  const rewriteRequestIdRef = useRef(0);
+  const clientGenerationRef = useRef(0);
+  const auditClientKey = audit?.client?.id || audit?.client?.name || '';
 
   useEffect(() => {
     let active = true;
+    clientGenerationRef.current += 1;
+    rewriteRequestIdRef.current += 1;
+    storyNotesRevisionRef.current += 1;
+    setLoading(true);
+    setError(null);
+    setIdentity(null);
+    setBureauCode(firstBureau);
+    setFlow(plan.bureaus.find((item) => item.bureau.code === firstBureau)?.primary?.flow || 'accuracy');
+    setTemplateId('');
+    setSectionsByKey({});
+    setScreenshotsByKey({});
+    setSelectionsByKey({});
+    setStoryNotes('');
+    setStoryNotesVersion('');
+    setStoryNotesDirty(false);
+    setStoryNotesSaved(false);
+    setStoryNotesApprovedForAi(false);
+    setRewriteProposal(null);
+    setRewritingKey(null);
+    setSavingStoryNotes(false);
+    setSaving(false);
+    setSavedId(null);
     Promise.all([listDisputeTemplates({ activeOnly: true }), loadClientIdentity(audit)])
       .then(([templateRows, clientIdentity]) => {
         if (!active) return;
         setTemplates(templateRows);
         setIdentity(clientIdentity);
+        setStoryNotes(clientIdentity.disputeStoryNotes || '');
+        setStoryNotesVersion(clientIdentity.disputeStoryNotesVersion || '');
       })
       .catch((err) => { if (active) setError(err.message || 'Could not prepare the campaign.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [audit]);
+  }, [auditClientKey]);
 
   const bureauPlan = plan.bureaus.find((item) => item.bureau.code === bureauCode) || plan.bureaus[0];
   const recommendation = bureauPlan.recommendations.find((item) => item.flow === flow) || bureauPlan.primary;
@@ -154,14 +195,143 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
     setSavedId(null);
   };
 
+  const selectionKey = (fieldKey) => `${workKey}:${fieldKey}`;
+
+  const captureSelection = (fieldKey, event) => {
+    const value = event.currentTarget.value;
+    const start = event.currentTarget.selectionStart;
+    const end = event.currentTarget.selectionEnd;
+    setSelectionsByKey((current) => ({
+      ...current,
+      [selectionKey(fieldKey)]: { start, end, selectedText: value.slice(start, end) },
+    }));
+  };
+
+  const saveStoryNotes = async () => {
+    if (!identity?.id) return false;
+    const submittedGeneration = clientGenerationRef.current;
+    const submittedRevision = storyNotesRevisionRef.current;
+    const submittedNotes = storyNotes.trim();
+    setSavingStoryNotes(true);
+    setError(null);
+    try {
+      const result = await writeClientSensitiveData(identity.name, {
+        disputeStoryNotes: submittedNotes,
+        disputeStoryNotesVersion: storyNotesVersion || null,
+      }, identity.id);
+      const isCurrent = clientGenerationRef.current === submittedGeneration
+        && storyNotesRevisionRef.current === submittedRevision;
+      if (!isCurrent) return '';
+      setStoryNotesDirty(false);
+      setStoryNotesSaved(true);
+      setStoryNotesVersion(result.disputeStoryNotesVersion || '');
+      setTimeout(() => {
+        if (clientGenerationRef.current === submittedGeneration
+            && storyNotesRevisionRef.current === submittedRevision) setStoryNotesSaved(false);
+      }, 2500);
+      return result.disputeStoryNotesVersion || '';
+    } catch (err) {
+      if (clientGenerationRef.current === submittedGeneration) {
+        setError(err.message || 'Could not save the encrypted personalization notes.');
+      }
+      return '';
+    } finally {
+      if (clientGenerationRef.current === submittedGeneration) setSavingStoryNotes(false);
+    }
+  };
+
+  const rewriteSelectedDamages = async () => {
+    const fieldKey = 'damages';
+    const key = selectionKey(fieldKey);
+    const selection = selectionsByKey[key];
+    const currentText = sections[fieldKey] || '';
+    if (!selection || selection.start === selection.end || currentText.slice(selection.start, selection.end) !== selection.selectedText) {
+      setError('Highlight the exact sentence or paragraph you want Claude to rewrite in the Damages box.');
+      return;
+    }
+    if (!storyNotes.trim()) {
+      setError('Add the confirmed client story notes before asking Claude to personalize the damages paragraph.');
+      return;
+    }
+    if (!storyNotesApprovedForAi) {
+      setError('Confirm that the personalization notes are safe to send to Claude before requesting a rewrite.');
+      return;
+    }
+
+    const requestId = rewriteRequestIdRef.current + 1;
+    rewriteRequestIdRef.current = requestId;
+    setRewritingKey(key);
+    setRewriteProposal(null);
+    setError(null);
+    try {
+      let approvedStoryNotesVersion = storyNotesVersion;
+      if (storyNotesDirty) {
+        approvedStoryNotesVersion = await saveStoryNotes();
+        if (!approvedStoryNotesVersion) return;
+      }
+      if (rewriteRequestIdRef.current !== requestId) return;
+      if (!approvedStoryNotesVersion) {
+        setError('Save and approve the current client story notes before requesting a rewrite.');
+        return;
+      }
+      const result = await requestDisputeRewrite({
+        clientId: identity.id,
+        sectionKey: fieldKey,
+        selectedText: selection.selectedText,
+        flow: recommendation.flow,
+        round: 1,
+        bureau: bureauCode,
+        storyNotesVersion: approvedStoryNotesVersion,
+      });
+      if (rewriteRequestIdRef.current !== requestId) return;
+      setRewriteProposal({
+        key,
+        fieldKey,
+        start: selection.start,
+        end: selection.end,
+        selectedText: selection.selectedText,
+        replacement: result.replacement,
+        warning: result.warning,
+      });
+    } catch (err) {
+      if (rewriteRequestIdRef.current === requestId) setError(err.message || 'Claude could not rewrite that selection.');
+    } finally {
+      if (rewriteRequestIdRef.current === requestId) setRewritingKey(null);
+    }
+  };
+
+  const acceptRewrite = () => {
+    if (!rewriteProposal || rewriteProposal.key !== selectionKey(rewriteProposal.fieldKey)) return;
+    try {
+      const currentText = sections[rewriteProposal.fieldKey] || '';
+      const nextText = replaceDisputeSelection(currentText, rewriteProposal, rewriteProposal.replacement);
+      setSection(rewriteProposal.fieldKey, nextText);
+      setRewriteProposal(null);
+    } catch (err) {
+      setError(err.message || 'The paragraph changed after the suggestion was created. Select it again.');
+    }
+  };
+
   const selectBureau = (code) => {
+    rewriteRequestIdRef.current += 1;
     setBureauCode(code);
     const next = plan.bureaus.find((item) => item.bureau.code === code)?.primary;
     if (next) setFlow(next.flow);
     setSavedId(null);
+    setRewriteProposal(null);
+    setRewritingKey(null);
+  };
+
+  const selectFlow = (nextFlow) => {
+    rewriteRequestIdRef.current += 1;
+    setFlow(nextFlow);
+    setSavedId(null);
+    setRewriteProposal(null);
+    setRewritingKey(null);
   };
 
   const uploadScreenshots = async (event) => {
+    const uploadGeneration = clientGenerationRef.current;
     const selectedFiles = [...(event.target.files || [])];
     const files = selectedFiles.filter((file) => SAFE_SCREENSHOT_TYPES.has(file.type));
     if (!files.length) return;
@@ -174,9 +344,10 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
       const addedBytes = files.reduce((total, file) => total + file.size, 0);
       if (existingBytes + addedBytes > 24 * 1024 * 1024) throw new Error('Keep the combined screenshots under 24 MB.');
       const added = await Promise.all(files.map(readImage));
+      if (clientGenerationRef.current !== uploadGeneration) return;
       setScreenshotsByKey((current) => ({ ...current, [workKey]: [...(current[workKey] || []), ...added] }));
     } catch (err) {
-      setError(err.message || 'Could not add screenshots.');
+      if (clientGenerationRef.current === uploadGeneration) setError(err.message || 'Could not add screenshots.');
     } finally {
       event.target.value = '';
     }
@@ -184,6 +355,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
 
   const saveCampaignLetter = async () => {
     if (!identity?.id || !recommendation || !selectedTemplate) return;
+    const saveGeneration = clientGenerationRef.current;
     if (unknown.length) { setError(`Template has unsupported curlys: ${unknown.map((token) => `{${token}}`).join(', ')}`); return; }
     if (requiredMissing.length) { setError(`Complete these fields before saving: ${requiredMissing.map((token) => `{${token}}`).join(', ')}`); return; }
     if (screenshotsRequired && !templateTokens.includes('screenshots')) {
@@ -194,6 +366,8 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
       setError('This flow requires report screenshots. Upload them before saving the letter.');
       return;
     }
+    if (storyNotesDirty && !(await saveStoryNotes())) return;
+    if (clientGenerationRef.current !== saveGeneration) return;
     setSaving(true);
     setError(null);
     try {
@@ -220,12 +394,13 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
           disputeEditableSections: sections,
         },
       );
+      if (clientGenerationRef.current !== saveGeneration) return;
       setSavedId(id);
       onSaved?.(id);
     } catch (err) {
-      setError(err.message || 'Could not save the campaign letter.');
+      if (clientGenerationRef.current === saveGeneration) setError(err.message || 'Could not save the campaign letter.');
     } finally {
-      setSaving(false);
+      if (clientGenerationRef.current === saveGeneration) setSaving(false);
     }
   };
 
@@ -256,7 +431,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
               {bureauPlan.recommendations.length ? (
                 <div className="mt-4 space-y-2">
                   {bureauPlan.recommendations.map((item) => (
-                    <button key={item.flow} onClick={() => setFlow(item.flow)} className="block w-full text-left">
+                    <button key={item.flow} onClick={() => selectFlow(item.flow)} className="block w-full text-left">
                       <FlowPill recommendation={item} />
                     </button>
                   ))}
@@ -278,11 +453,86 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
                 </div>
               )}
 
+              {selectedTemplate && templateTokens.includes('damages') && (
+                <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-violet-800"><Sparkles size={12} /> Encrypted AI personalization notes</div>
+                    <button onClick={saveStoryNotes} disabled={savingStoryNotes || !storyNotesDirty} className="rounded-md bg-white px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-violet-800 shadow-sm disabled:opacity-40">
+                      {savingStoryNotes ? 'Saving…' : storyNotesSaved ? 'Saved' : 'Save notes'}
+                    </button>
+                  </div>
+                  <textarea
+                    value={storyNotes}
+                    onChange={(event) => {
+                      storyNotesRevisionRef.current += 1;
+                      rewriteRequestIdRef.current += 1;
+                      setRewritingKey(null);
+                      setRewriteProposal(null);
+                      setStoryNotes(event.target.value);
+                      setStoryNotesDirty(true);
+                      setStoryNotesSaved(false);
+                      setStoryNotesApprovedForAi(false);
+                    }}
+                    disabled={savingStoryNotes}
+                    maxLength={8000}
+                    rows={5}
+                    className="mt-2 w-full rounded-md border border-violet-200 bg-white px-2.5 py-2 text-[11px] leading-relaxed"
+                    placeholder="Confirmed personal facts: what happened, practical consequences, emotional impact the client actually described, and why correction matters to them."
+                  />
+                  <p className="mt-1 text-[9px] leading-relaxed text-violet-700">Stored encrypted and hidden from the client portal. When you request a rewrite, CCC sends Claude only these notes, the highlighted damages text, and the flow/bureau context. Never put names beyond what the passage needs, SSNs, dates of birth, account/ID numbers, contact details, passwords, addresses, or medical/health information here.</p>
+                  <label className="mt-2 flex items-start gap-2 text-[9px] leading-relaxed text-violet-900">
+                    <input type="checkbox" checked={storyNotesApprovedForAi} onChange={(event) => setStoryNotesApprovedForAi(event.target.checked)} disabled={savingStoryNotes || !storyNotes.trim()} className="mt-0.5 accent-violet-700" />
+                    <span>I reviewed this AI-safe excerpt. It contains only confirmed story facts approved for Claude and none of the prohibited personal data above.</span>
+                  </label>
+                </div>
+              )}
+
               {selectedTemplate && HUMAN_FIELDS.filter((field) => templateTokens.includes(field.key)).map((field) => (
                 <div key={field.key} className="mt-4">
-                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-navy">{field.label}</label>
-                  <textarea value={sections[field.key] || ''} onChange={(event) => setSection(field.key, event.target.value)} rows={field.rows} className="w-full rounded-md border border-border px-2.5 py-2 text-[11px] leading-relaxed" />
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-navy">{field.label}</label>
+                    {field.key === 'damages' && (
+                      <button
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={rewriteSelectedDamages}
+                        disabled={!!rewritingKey || savingStoryNotes}
+                        className="flex items-center gap-1 rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-violet-800 disabled:opacity-40"
+                        title="Highlight text in the Damages box first; Claude will suggest a replacement without changing the fixed template language"
+                      >
+                        {rewritingKey === selectionKey(field.key) ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />} Rewrite selected
+                      </button>
+                    )}
+                  </div>
+                  <textarea
+                    value={sections[field.key] || ''}
+                    onChange={(event) => {
+                      if (field.key === 'damages') {
+                        rewriteRequestIdRef.current += 1;
+                        setRewritingKey(null);
+                      }
+                      setSection(field.key, event.target.value);
+                      if (rewriteProposal?.fieldKey === field.key) setRewriteProposal(null);
+                    }}
+                    onSelect={(event) => captureSelection(field.key, event)}
+                    rows={field.rows}
+                    className="w-full rounded-md border border-border px-2.5 py-2 text-[11px] leading-relaxed"
+                  />
                   <div className="mt-1 text-[9px] leading-relaxed text-gray-400">{field.help}</div>
+                  {field.key === 'damages' && <div className="mt-1 text-[9px] text-violet-600">Highlight only the passage you want changed. Claude cannot edit the fixed course template or apply a suggestion automatically.</div>}
+                  {rewriteProposal?.key === selectionKey(field.key) && (
+                    <div className="mt-2 rounded-lg border border-violet-200 bg-white p-3 shadow-sm">
+                      <div className="text-[9px] font-bold uppercase tracking-wider text-violet-800">Claude suggestion — review before applying</div>
+                      {rewriteProposal.warning && <div className="mt-2 rounded bg-amber-50 p-2 text-[9px] leading-relaxed text-amber-800">{rewriteProposal.warning}</div>}
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div><div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-gray-400">Original</div><div className="rounded bg-gray-50 p-2 text-[10px] leading-relaxed text-gray-600">{rewriteProposal.selectedText}</div></div>
+                        <div><div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-violet-500">Suggested replacement</div><div className="rounded bg-violet-50 p-2 text-[10px] leading-relaxed text-violet-900">{rewriteProposal.replacement}</div></div>
+                      </div>
+                      <div className="mt-2 flex gap-2">
+                        <button onClick={acceptRewrite} className="rounded-md bg-violet-700 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-white">Use rewrite</button>
+                        <button onClick={() => setRewriteProposal(null)} className="rounded-md border border-gray-200 px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-gray-500">Keep original</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
 
@@ -324,7 +574,7 @@ export default function DisputeCampaignStudio({ audit, onClose, onSaved }) {
               {error && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-[11px] text-red-700">{error}</div>}
               {savedId && <div className="mt-4 flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-[11px] text-green-700"><CheckCircle2 size={14} className="mt-0.5 shrink-0" /> Saved to the client’s Letters campaign with the template snapshot and team-written sections.</div>}
 
-              <button onClick={saveCampaignLetter} disabled={saving || !selectedTemplate || !recommendation || unknown.length > 0} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-[#C9A84C] py-3 text-[10px] font-bold uppercase tracking-wider text-[#121F38] disabled:opacity-40">
+              <button onClick={saveCampaignLetter} disabled={saving || savingStoryNotes || !!rewritingKey || !selectedTemplate || !recommendation || unknown.length > 0} className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-[#C9A84C] py-3 text-[10px] font-bold uppercase tracking-wider text-[#121F38] disabled:opacity-40">
                 {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} Save R1 campaign letter
               </button>
               {!!unknown.length && <div className="mt-2 text-[9px] text-red-600">Unsupported curlys: {unknown.map((token) => `{${token}}`).join(', ')}</div>}

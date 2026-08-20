@@ -429,6 +429,7 @@ export default function AuditResults({ audit, onGenerateLetter, onReset, onBackT
       )}
       {campaignOpen && (
         <DisputeCampaignStudio
+          key={auditView?.client?.id || auditView?.client?.name || 'campaign'}
           audit={auditView}
           onSaved={() => {}}
           onClose={() => setCampaignOpen(false)}

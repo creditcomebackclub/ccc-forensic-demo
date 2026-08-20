@@ -1,42 +1,21 @@
-// Encrypted store for SSN last-4 and monitoring-service password. These
-// values never touch the browser in plaintext except as a value the user
-// themselves typed into a form field. Reads/writes go through here instead
+// Encrypted store for SSN last-4, monitoring-service password, and private
+// staff-authored dispute-story notes. Values only reach an authorized
+// browser when a focused workflow needs them. Reads/writes go through here instead
 // of a direct Supabase call so we can (a) encrypt at rest with a key that
 // only exists server-side, and (b) authorize server-side against a verified
 // caller JWT rather than trusting a client-supplied client name/id.
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import crypto from 'crypto';
+import { decryptClientData, encryptClientData, versionClientData } from './_clientDataCrypto.mjs';
+import { MAX_STORY_NOTES_CHARS, canStaffAccessClient } from '../../src/utils/disputeRewriteRules.js';
 
-const ALGORITHM = 'aes-256-gcm';
-
-function getKey() {
-  const b64 = process.env.CLIENT_DATA_ENCRYPTION_KEY;
-  if (!b64) throw new Error('CLIENT_DATA_ENCRYPTION_KEY not configured');
-  const key = Buffer.from(b64, 'base64');
-  if (key.length !== 32) throw new Error('CLIENT_DATA_ENCRYPTION_KEY must decode to 32 bytes');
-  return key;
-}
-
-function encryptValue(plaintext) {
-  if (plaintext == null || plaintext === '') return null;
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv(ALGORITHM, getKey(), iv);
-  const ciphertext = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return Buffer.concat([iv, authTag, ciphertext]).toString('base64');
-}
-
-function decryptValue(blob) {
-  if (!blob) return null;
-  const buf = Buffer.from(blob, 'base64');
-  const iv = buf.subarray(0, 12);
-  const authTag = buf.subarray(12, 28);
-  const ciphertext = buf.subarray(28);
-  const decipher = crypto.createDecipheriv(ALGORITHM, getKey(), iv);
-  decipher.setAuthTag(authTag);
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
-}
+const JSON_HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const READ_FIELDS = Object.freeze({
+  ssnLast4: 'ssn_last4',
+  monitoringPassword: 'monitoring_password',
+  disputeStoryNotes: 'dispute_story_notes',
+});
 
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
@@ -82,21 +61,21 @@ export const handler = async (event) => {
   try { payload = JSON.parse(event.body || '{}'); }
   catch (e) { return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }; }
 
-  const { action, clientName, clientId } = payload;
-  if (!clientId && !clientName) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'clientId or clientName required' }) };
+  const { action, clientId } = payload;
+  if (typeof clientId !== 'string' || !UUID_PATTERN.test(clientId)) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'A valid clientId is required' }) };
   }
   if (action !== 'read' && action !== 'write') {
     return { statusCode: 400, body: JSON.stringify({ error: 'action must be "read" or "write"' }) };
   }
 
-  // clientId preferred — clients.name is not unique and same-named clients
-  // would otherwise read/write each other's encrypted SSN/password rows.
-  let clientQuery = db.from('clients').select('id, email').limit(1);
-  clientQuery = clientId
-    ? clientQuery.eq('id', clientId)
-    : clientQuery.eq('name', clientName);
-  const { data: clientRow, error: clientErr } = await clientQuery.maybeSingle();
+  // Sensitive records are UUID-addressed only. Names are not unique and must
+  // never select an arbitrary client's encrypted row.
+  const { data: clientRow, error: clientErr } = await db
+    .from('clients')
+    .select('id, email, user_id')
+    .eq('id', clientId)
+    .maybeSingle();
   if (clientErr || !clientRow) {
     return { statusCode: 404, body: JSON.stringify({ error: 'Client not found' }) };
   }
@@ -107,6 +86,7 @@ export const handler = async (event) => {
     .eq('id', caller.id)
     .maybeSingle();
   const isStaff = !!staffRow && (staffRow.role === 'admin' || staffRow.role === 'auditor');
+  const canAccessStoryNotes = canStaffAccessClient(staffRow?.role, caller.id, clientRow.user_id);
   const isOwnRecord = !!clientRow.email && !!caller.email
     && clientRow.email.toLowerCase() === caller.email.toLowerCase();
 
@@ -116,19 +96,40 @@ export const handler = async (event) => {
     if (!isStaff) {
       return { statusCode: 403, body: JSON.stringify({ error: 'Not authorized' }) };
     }
+    if (!canAccessStoryNotes) {
+      return { statusCode: 403, body: JSON.stringify({ error: 'Not authorized for this client' }) };
+    }
+    const requestedFields = payload.fields === undefined ? ['ssnLast4', 'monitoringPassword'] : payload.fields;
+    if (!Array.isArray(requestedFields) || !requestedFields.length
+        || requestedFields.some((field) => !Object.prototype.hasOwnProperty.call(READ_FIELDS, field))) {
+      return { statusCode: 400, body: JSON.stringify({ error: 'Valid sensitive-data fields are required' }) };
+    }
+    const uniqueFields = [...new Set(requestedFields)];
+    const selectedColumns = uniqueFields.map((field) => READ_FIELDS[field]);
+    if (uniqueFields.includes('disputeStoryNotes')) selectedColumns.push('dispute_story_notes_version');
     const { data: row, error: rowErr } = await db
       .from('client_sensitive_data')
-      .select('ssn_last4, monitoring_password')
+      .select(selectedColumns.join(','))
       .eq('client_id', clientRow.id)
       .maybeSingle();
-    if (rowErr) return { statusCode: 500, body: JSON.stringify({ error: rowErr.message }) };
+    if (rowErr) return { statusCode: 500, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Could not load sensitive client data' }) };
+    const values = {};
+    try {
+      for (const field of uniqueFields) values[field] = row ? decryptClientData(row[READ_FIELDS[field]]) : null;
+    } catch {
+      return { statusCode: 500, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Could not decrypt sensitive client data' }) };
+    }
+    if (uniqueFields.includes('disputeStoryNotes')) {
+      const computedVersion = versionClientData(values.disputeStoryNotes);
+      if (row && row.dispute_story_notes_version !== computedVersion) {
+        return { statusCode: 500, headers: JSON_HEADERS, body: JSON.stringify({ error: 'The stored story-note version is invalid' }) };
+      }
+      values.disputeStoryNotesVersion = computedVersion;
+    }
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ssnLast4: row ? decryptValue(row.ssn_last4) : null,
-        monitoringPassword: row ? decryptValue(row.monitoring_password) : null,
-      }),
+      headers: JSON_HEADERS,
+      body: JSON.stringify(values),
     };
   }
 
@@ -137,17 +138,87 @@ export const handler = async (event) => {
   if (!isStaff && !isOwnRecord) {
     return { statusCode: 403, body: JSON.stringify({ error: 'Not authorized' }) };
   }
+  if (isStaff && !canAccessStoryNotes) {
+    return { statusCode: 403, body: JSON.stringify({ error: 'Not authorized for this client' }) };
+  }
+
+  // Clients retain the existing ability to submit their own last-4 and
+  // monitoring password, but the staff-authored dispute story is never a
+  // client-readable or client-writable field.
+  const includesStoryNotes = Object.prototype.hasOwnProperty.call(payload, 'disputeStoryNotes');
+  if (includesStoryNotes && (!isStaff || !canAccessStoryNotes)) {
+    return { statusCode: 403, body: JSON.stringify({ error: 'Staff access required for dispute story notes' }) };
+  }
+  if (includesStoryNotes && payload.disputeStoryNotes != null && typeof payload.disputeStoryNotes !== 'string') {
+    return { statusCode: 400, body: JSON.stringify({ error: 'disputeStoryNotes must be text' }) };
+  }
+  if (includesStoryNotes && String(payload.disputeStoryNotes || '').length > MAX_STORY_NOTES_CHARS) {
+    return { statusCode: 400, body: JSON.stringify({ error: `disputeStoryNotes must be ${MAX_STORY_NOTES_CHARS} characters or fewer` }) };
+  }
+  const suppliedStoryNotesVersion = payload.disputeStoryNotesVersion;
+  if (includesStoryNotes
+      && suppliedStoryNotesVersion !== null
+      && (typeof suppliedStoryNotesVersion !== 'string' || !/^[a-f0-9]{64}$/i.test(suppliedStoryNotesVersion))) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'A valid prior story-note version is required' }) };
+  }
+  if (!includesStoryNotes && Object.prototype.hasOwnProperty.call(payload, 'disputeStoryNotesVersion')) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'A story-note version requires disputeStoryNotes' }) };
+  }
+
   const patch = { client_id: clientRow.id, updated_at: new Date().toISOString() };
-  if ('ssnLast4' in payload) patch.ssn_last4 = encryptValue(payload.ssnLast4);
-  if ('monitoringPassword' in payload) patch.monitoring_password = encryptValue(payload.monitoringPassword);
-  if (!('ssnLast4' in payload) && !('monitoringPassword' in payload)) {
+  if ('ssnLast4' in payload) patch.ssn_last4 = encryptClientData(payload.ssnLast4);
+  if ('monitoringPassword' in payload) patch.monitoring_password = encryptClientData(payload.monitoringPassword);
+  const nextStoryNotesVersion = includesStoryNotes ? versionClientData(payload.disputeStoryNotes) : null;
+  if (includesStoryNotes) {
+    patch.dispute_story_notes = encryptClientData(payload.disputeStoryNotes);
+    patch.dispute_story_notes_version = nextStoryNotesVersion;
+  }
+  if (!('ssnLast4' in payload) && !('monitoringPassword' in payload) && !includesStoryNotes) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Nothing to write' }) };
   }
 
-  const { error: upsertErr } = await db
-    .from('client_sensitive_data')
-    .upsert(patch, { onConflict: 'client_id' });
-  if (upsertErr) return { statusCode: 500, body: JSON.stringify({ error: upsertErr.message }) };
+  if (includesStoryNotes) {
+    const expectedVersion = suppliedStoryNotesVersion === null
+      ? null
+      : suppliedStoryNotesVersion.toLowerCase();
+    let updateQuery = db
+      .from('client_sensitive_data')
+      .update(patch)
+      .eq('client_id', clientRow.id);
+    updateQuery = expectedVersion === null
+      ? updateQuery.is('dispute_story_notes_version', null)
+      : updateQuery.eq('dispute_story_notes_version', expectedVersion);
+    const { data: updatedRows, error: updateErr } = await updateQuery.select('client_id');
+    if (updateErr) {
+      return { statusCode: 500, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Could not save sensitive client data' }) };
+    }
+    if (!updatedRows?.length) {
+      if (expectedVersion !== null) {
+        return { statusCode: 409, headers: JSON_HEADERS, body: JSON.stringify({ error: 'The story notes changed in another staff session. Reload before saving your edits' }) };
+      }
+      const { error: insertErr } = await db.from('client_sensitive_data').insert(patch);
+      if (insertErr) {
+        if (insertErr.code === '23505') {
+          return { statusCode: 409, headers: JSON_HEADERS, body: JSON.stringify({ error: 'The story notes changed in another staff session. Reload before saving your edits' }) };
+        }
+        return { statusCode: 500, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Could not save sensitive client data' }) };
+      }
+    }
+  } else {
+    const { error: upsertErr } = await db
+      .from('client_sensitive_data')
+      .upsert(patch, { onConflict: 'client_id' });
+    if (upsertErr) return { statusCode: 500, headers: JSON_HEADERS, body: JSON.stringify({ error: 'Could not save sensitive client data' }) };
+  }
 
-  return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ saved: true }) };
+  return {
+    statusCode: 200,
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      saved: true,
+      ...(includesStoryNotes
+        ? { disputeStoryNotesVersion: nextStoryNotesVersion }
+        : {}),
+    }),
+  };
 };
