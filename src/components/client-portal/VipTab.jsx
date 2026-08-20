@@ -24,7 +24,7 @@ export default function VipTab({ isVip }) {
       if (disposed || !mountEl || !window.Calendly?.initInlineWidget) return;
       mountEl.replaceChildren();
       window.Calendly.initInlineWidget({
-        url: `${CALENDLY_VIP_URL}?hide_gdpr_banner=1`,
+        url: `${CALENDLY_VIP_URL}?hide_event_type_details=1&hide_gdpr_banner=1`,
         parentElement: mountEl,
         prefill: {},
       });
