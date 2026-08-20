@@ -68,6 +68,45 @@ function supabaseRequest(path, method, body, supabaseUrl, serviceKey, extraHeade
   });
 }
 
+// Lob renders the mailpiece HTML on its own schedule and fetches every remote
+// asset at that moment. The browser assembles that HTML, so the browser cannot
+// be the only thing that checks it — re-read what was actually uploaded.
+const MAIL_ASSET_URL_RE = /(?:\bsrc\s*=\s*["']|url\(\s*["']?)(https?:\/\/[^"')\s]+)/gi;
+
+function scanRemoteAssetUrls(fileUrl) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(fileUrl);
+    const req = https.request({
+      hostname: u.hostname,
+      port: 443,
+      path: u.pathname + u.search,
+      method: 'GET',
+    }, (res) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume();
+        reject(new Error('Could not re-read the uploaded mailpiece for preflight (' + res.statusCode + ')'));
+        return;
+      }
+      const found = new Set();
+      let carry = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        // Keep a tail between chunks so a URL split across the boundary is
+        // still seen whole; the Set absorbs the resulting overlap.
+        const text = carry + chunk;
+        MAIL_ASSET_URL_RE.lastIndex = 0;
+        let match;
+        while ((match = MAIL_ASSET_URL_RE.exec(text)) !== null) found.add(match[1]);
+        carry = text.slice(-2048);
+      });
+      res.on('end', () => resolve(Array.from(found)));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 function isSuccess(res) {
   return res && res.status >= 200 && res.status < 300;
 }
@@ -743,6 +782,24 @@ exports.handler = async (event) => {
           body: JSON.stringify({
             error: 'BUREAU FOLLOW-UP ENCLOSURES INVALID — nothing was sent.',
             issues: followUpIssues,
+            blocked: true,
+          }),
+        };
+      }
+
+      // Fail closed on any asset Lob would have to fetch from somewhere we do
+      // not control. Retired public client-docs URLs inside legacy LPOA
+      // enclosures failed whole mailpieces this way; only short-lived signed
+      // URLs we minted for this send are acceptable.
+      const durableAssetPrefix = String(supabaseUrl).replace(/\/+$/, '') + '/storage/v1/object/sign/documents/';
+      const remoteAssets = await scanRemoteAssetUrls(remoteUrl);
+      const nonDurableAssets = remoteAssets.filter((url) => !url.startsWith(durableAssetPrefix));
+      if (nonDurableAssets.length > 0) {
+        return {
+          statusCode: 422,
+          body: JSON.stringify({
+            error: 'MAILPIECE CONTAINS NON-DURABLE IMAGE LINKS — Lob would fail to render it. Nothing was sent.',
+            issues: nonDurableAssets.slice(0, 10),
             blocked: true,
           }),
         };

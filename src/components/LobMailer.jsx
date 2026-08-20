@@ -13,7 +13,7 @@ import { listMailArtifacts } from '../utils/mailArtifacts';
 import { inferMediaType } from '../utils/responseFiles';
 import { supabase } from '../utils/supabase';
 import { canMailLetter, generationErrorMessage, isGenerationRunning, letterSignatureState } from '../utils/letterGeneration.js';
-import { embedCanonicalSignatureInHistoricalHtml, embeddedSignatureSource } from '../utils/signatureInjection.js';
+import { embedCanonicalSignatureInHistoricalHtml, embeddedSignatureSource, remoteImageSources } from '../utils/signatureInjection.js';
 import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../utils/letterMailing.js';
 import {
   fetchLpoaHtmlForPrint,
@@ -217,6 +217,9 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       let assetNumber = 0;
       let optionalPageCount = 0;
       const attachmentManifest = [];
+      // Every remote URL this send legitimately puts in front of Lob. Anything
+      // else in the final HTML is a link we did not mint and cannot vouch for.
+      const mailAssetUrls = new Set();
       const uploadMailImage = async (blob) => {
         const contentType = ['image/jpeg', 'image/png', 'image/webp'].includes(blob.type) ? blob.type : 'image/jpeg';
         const extension = contentType === 'image/png' ? 'png' : (contentType === 'image/webp' ? 'webp' : 'jpg');
@@ -229,6 +232,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         tempPathsToClean.push(storagePath);
         const { data, error: urlError } = await supabase.storage.from('documents').createSignedUrl(storagePath, 3600);
         if (urlError || !data?.signedUrl) throw urlError || new Error('Could not prepare a print enclosure URL');
+        mailAssetUrls.add(data.signedUrl);
         return data.signedUrl;
       };
 
@@ -409,7 +413,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
           .limit(1);
         const { data: clientMeta, error: clientMetaError } = await clientMetaQuery;
         if (clientMetaError) throw clientMetaError;
-        const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data);
+        const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data, { clientSignatureDataUrl: canonicalSignature });
         if (!lpoaHtml) {
           throw new Error('FOLLOW-UP EXHIBIT C MISSING — this client has no signed Limited Power of Attorney. Nothing was sent.');
         }
@@ -482,7 +486,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
         }
         const { data: clientMeta, error: clientMetaError } = await supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1);
         if (clientMetaError) throw clientMetaError;
-        const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data);
+        const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data, { clientSignatureDataUrl: canonicalSignature });
         if (!lpoaHtml) throw new Error('A signed Limited Power of Attorney is required for this dispute round. Nothing was sent.');
         const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
         const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
@@ -609,7 +613,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
           const { data: clientMeta, error: clientMetaError } = await clientMetaQuery;
           if (clientMetaError) throw clientMetaError;
-          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data);
+          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data, { clientSignatureDataUrl: canonicalSignature });
           if (letter.roundId && !lpoaHtml) throw new Error('A signed Limited Power of Attorney is required for this dispute round. Nothing was sent.');
           if (lpoaHtml) {
             const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
@@ -646,7 +650,7 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
             ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
             : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
           const { data: clientMeta } = await clientMetaQuery;
-          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data);
+          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data, { clientSignatureDataUrl: canonicalSignature });
           if (lpoaHtml) {
             const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
             const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
@@ -688,6 +692,20 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
       // makes an exact collision unlikely, but this is a temp path for a
       // physical-mail send, not worth leaving on name alone when the id is
       // sitting right there.
+      // Lob fetches remote images while rendering, long after this code ran.
+      // A link that 404s there fails the entire mailpiece — which is exactly
+      // how retired public client-docs signature URLs broke legacy LPOA
+      // enclosures. Refuse to send anything we did not mint this run.
+      const foreignImages = remoteImageSources(finalHtml).filter((url) => !mailAssetUrls.has(url));
+      if (foreignImages.length > 0) {
+        throw new Error(
+          'MAILPIECE CONTAINS NON-DURABLE IMAGE LINKS — Lob would fail to render it. Embed these before sending: '
+          + foreignImages.slice(0, 5).join(', ')
+          + (foreignImages.length > 5 ? ` (+${foreignImages.length - 5} more)` : '')
+          + ' Nothing was sent.'
+        );
+      }
+
       const tempFileName = slug(letter.clientName) + (letter.clientId ? '-' + letter.clientId : '') + '-' + slug(letter.furnisher) + '.html';
       const tempPath = tempLetterPath(user.id, batchId, tempFileName);
       const htmlBlob = new Blob([finalHtml], { type: 'text/html;charset=utf-8' });
