@@ -1,3 +1,5 @@
+import { USPS_FIRST_CLASS, isCccDisputePhase } from './cccMailRules.js';
+
 export const LETTER_GENERATING_PLACEHOLDER = 'GENERATING...';
 
 const FIELD_NUMBER_PATTERN = /\b(?:field|fields)\s*(17A|17B|\d{1,2})(?:\s*\/\s*(17A|17B|\d{1,2}))?/gi;
@@ -76,17 +78,6 @@ export function packetAccountIsolationProblems(html, accounts = [], { additional
   return problems;
 }
 
-const REQUIRED_GENERATED_SECTIONS = [
-  ['signature-block', 'signature block'],
-  ['mail-notation', 'certified-mail notation'],
-  ['enclosures', 'enclosures section'],
-];
-
-function hasClass(html, className) {
-  const escaped = className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`class=["'](?:[^"']*\\s)?${escaped}(?:\\s[^"']*)?["']`, 'i').test(html);
-}
-
 function signatureImageTag(html) {
   const value = String(html || '');
   const tags = [...value.matchAll(/<img\b[^>]*>/gi)];
@@ -120,27 +111,13 @@ export function letterSignatureState(letterOrHtml) {
 }
 
 /**
- * Certified-mail notation is fixed product copy, not model-authored legal
- * analysis. Repairing this mechanical omission is safer than discarding an
- * otherwise valid letter and asking the model to regenerate it.
- */
-export function ensureCertifiedMailNotation(letterOrHtml) {
-  const html = typeof letterOrHtml === 'string' ? letterOrHtml : letterOrHtml?.html;
-  const value = String(html || '');
-  if (!value || hasClass(value, 'mail-notation')) return value;
-  const notation = '<div class="mail-notation">Sent via Certified Mail.</div>';
-  if (/<\/body>/i.test(value)) return value.replace(/<\/body>/i, `${notation}</body>`);
-  if (/<\/html>/i.test(value)) return value.replace(/<\/html>/i, `${notation}</html>`);
-  return value + notation;
-}
-
-/**
  * Detect output that stopped mid-document. Legacy fragment letters are left
  * alone; a value that declares itself to be an HTML document must actually
- * close, and newly generated letters may opt into the required closing
- * sections check.
+ * close. Packet enclosures are assembled and validated separately by the CCC
+ * mailpiece-integrity boundary, so stored letter HTML has no required packet
+ * section.
  */
-export function generatedLetterValidationError(letterOrHtml, { requireSections = false } = {}) {
+export function generatedLetterValidationError(letterOrHtml, _options = {}) {
   const html = typeof letterOrHtml === 'string' ? letterOrHtml : letterOrHtml?.html;
   const value = String(html || '').trim();
   if (!value) return 'The generated letter is empty.';
@@ -152,11 +129,6 @@ export function generatedLetterValidationError(letterOrHtml, { requireSections =
     return 'The generated letter is incomplete and stops before the document closes.';
   }
 
-  if (requireSections) {
-    for (const [className, label] of REQUIRED_GENERATED_SECTIONS) {
-      if (!hasClass(value, className)) return `The generated letter is missing its ${label}.`;
-    }
-  }
   return null;
 }
 
@@ -200,10 +172,20 @@ export function isGenerationRunning(letter) {
 }
 
 export function canMailLetter(letter) {
-  return letterGenerationState(letter) === 'ready' && letterSignatureState(letter) === 'embedded';
+  if (!isCccDisputePhase(letter?.phase)) return false;
+  const explicitService = letter?.mailService ?? letter?.mail_service ?? null;
+  return !generatedLetterValidationError(letter)
+    && (!explicitService || explicitService === USPS_FIRST_CLASS);
 }
 
 export function generationErrorMessage(letter) {
-  const html = String(letter?.html || '').trim();
-  return generatedLetterValidationError(html) || 'The letter was not generated successfully.';
+  if (!isCccDisputePhase(letter?.phase)) {
+    return 'This historical letter belongs to a retired dispute workflow and cannot be sent or regenerated.';
+  }
+  const explicitService = letter?.mailService ?? letter?.mail_service ?? null;
+  if (explicitService && explicitService !== USPS_FIRST_CLASS) {
+    return 'This letter is not configured for the required USPS First-Class service.';
+  }
+  return generatedLetterValidationError(letter)
+    || 'The letter was not generated successfully.';
 }

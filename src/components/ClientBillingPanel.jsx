@@ -2,13 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { updateClientProfile } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { Check, X, DollarSign, Edit2, Link, FileSignature } from 'lucide-react';
-import { computeClientCommission, commissionRate } from '../utils/affiliateCommission';
+import {
+  collectedTotal,
+  computeClientCommission,
+} from '../utils/affiliateCommission';
 import { notifyAffiliate } from '../utils/notifyAffiliate';
 import {
   INQUIRY_ONLY_FEE_TEXT,
   buildLatePaymentPackage,
   hasCustomServiceAgreement,
 } from '../utils/pricing';
+import {
+  agreementOpeningInvoicePreview,
+  mutateClientLedger,
+  openingInvoiceConfirmation,
+} from '../utils/manualBilling';
 import { toast } from 'react-hot-toast';
 
 const T = {
@@ -184,7 +192,16 @@ function EngagementStatusField({ status, onSave }) {
   return <div className="flex items-center gap-1.5 group justify-end"><span className="text-[12px]" style={{ color: status === 'active' ? '#15803D' : T.ink }}>{ENGAGEMENT_LABELS[status] || 'Pending Onboarding'}</span><button onClick={() => setEditing(true)} className="opacity-30 group-hover:opacity-100 text-ink-faint hover:text-navy"><Edit2 size={11} /></button></div>;
 }
 
-function ServiceAgreementSection({ client, ledger, save, onChanged }) {
+function ServiceAgreementSection({ client, save, onChanged, canManageLedger }) {
+  const savedMode = (client.serviceAgreementMode || 'tier') === 'custom' ? 'custom' : 'tier';
+  const savedAgreementFingerprint = JSON.stringify({
+    mode: savedMode,
+    label: savedMode === 'custom' ? (client.serviceAgreementLabel || '') : '',
+    amount: savedMode === 'custom' && client.serviceAgreementAmount != null ? String(Number(client.serviceAgreementAmount)) : '',
+    feeText: savedMode === 'custom' ? (client.serviceAgreementFeeText || '') : '',
+    billingTier: client.billingTier || '',
+    billingType: client.billingType || '',
+  });
   const isCustom = (client.serviceAgreementMode || 'tier') === 'custom';
   const [mode, setMode] = useState(isCustom ? 'custom' : 'tier');
   const [label, setLabel] = useState(client.serviceAgreementLabel || '');
@@ -192,25 +209,76 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
     client.serviceAgreementAmount != null ? String(client.serviceAgreementAmount) : ''
   );
   const [feeText, setFeeText] = useState(client.serviceAgreementFeeText || '');
+  const [customBillingType, setCustomBillingType] = useState(
+    isCustom && ['Automated Recurring', 'Paid in Full'].includes(client.billingType)
+      ? client.billingType
+      : 'Paid in Full'
+  );
   const [perBureau, setPerBureau] = useState('75');
   const [bureauCount, setBureauCount] = useState('2');
   const [includeInquiryPi, setIncludeInquiryPi] = useState(true);
   const [saving, setSaving] = useState(false);
   const [startingOnboarding, setStartingOnboarding] = useState(false);
+  const [creatingOpeningInvoice, setCreatingOpeningInvoice] = useState(false);
+  const [latestAgreement, setLatestAgreement] = useState(null);
   const [onboardingMessage, setOnboardingMessage] = useState('');
+  const [lastSavedFingerprint, setLastSavedFingerprint] = useState(savedAgreementFingerprint);
 
   useEffect(() => {
     setMode((client.serviceAgreementMode || 'tier') === 'custom' ? 'custom' : 'tier');
     setLabel(client.serviceAgreementLabel || '');
     setAmount(client.serviceAgreementAmount != null ? String(client.serviceAgreementAmount) : '');
     setFeeText(client.serviceAgreementFeeText || '');
+    setCustomBillingType(
+      (client.serviceAgreementMode || 'tier') === 'custom'
+        && ['Automated Recurring', 'Paid in Full'].includes(client.billingType)
+        ? client.billingType
+        : 'Paid in Full'
+    );
+    setLastSavedFingerprint(savedAgreementFingerprint);
   }, [
     client.id,
     client.serviceAgreementMode,
     client.serviceAgreementLabel,
     client.serviceAgreementAmount,
     client.serviceAgreementFeeText,
+    client.billingTier,
+    client.billingType,
+    savedAgreementFingerprint,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLatestAgreement(null);
+    if (!client.id) return () => { cancelled = true; };
+    supabase
+      .from('client_service_agreements')
+      .select('id,status,template_version,plan_snapshot,created_at')
+      .eq('client_id', client.id)
+      .in('status', ['draft', 'sent', 'signed'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.warn('Could not load the latest agreement billing snapshot:', error.message);
+          return;
+        }
+        setLatestAgreement(data || null);
+      });
+    return () => { cancelled = true; };
+  }, [client.id]);
+
+  const currentAgreementFingerprint = JSON.stringify({
+    mode,
+    label: mode === 'custom' ? label.trim() : '',
+    amount: mode === 'custom' && amount !== '' && !Number.isNaN(Number(amount)) ? String(Number(amount)) : '',
+    feeText: mode === 'custom' ? feeText.trim() : '',
+    billingTier: client.billingTier || '',
+    billingType: mode === 'custom' ? customBillingType : (client.billingType || ''),
+  });
+  const agreementHasUnsavedChanges = currentAgreementFingerprint !== lastSavedFingerprint;
 
   const applyLatePaymentPreset = () => {
     const built = buildLatePaymentPackage({
@@ -222,6 +290,7 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
     setLabel(built.label);
     setAmount(String(built.amount));
     setFeeText(built.feeText);
+    setCustomBillingType('Paid in Full');
   };
 
   const applyInquiryPreset = () => {
@@ -229,6 +298,7 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
     setLabel('Inquiry / PI removal');
     setAmount('');
     setFeeText(INQUIRY_ONLY_FEE_TEXT);
+    setCustomBillingType('Paid in Full');
   };
 
   const applyBlankCustom = () => {
@@ -236,11 +306,36 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
     setLabel('');
     setAmount('');
     setFeeText('');
+    setCustomBillingType('Paid in Full');
   };
 
   const saveAgreement = async () => {
     if (mode === 'custom' && !String(feeText || '').trim()) {
-      toast.error('Custom agreement needs fee text for the LPOA.');
+      toast.error('Custom agreement needs the exact fee terms the client will sign.');
+      return;
+    }
+    if (mode === 'custom' && !String(label || '').trim()) {
+      toast.error('Add a client-facing package name before saving.');
+      return;
+    }
+    if (mode === 'custom' && !['Automated Recurring', 'Paid in Full'].includes(customBillingType)) {
+      toast.error('Choose monthly recurring or one-time billing for the custom agreement.');
+      return;
+    }
+    const customAmount = amount === '' ? null : Number(amount);
+    if (mode === 'custom' && customAmount != null
+        && (!Number.isFinite(customAmount) || customAmount <= 0
+          || Math.abs(customAmount * 100 - Math.round(customAmount * 100)) > 1e-8)) {
+      toast.error('Custom billing amounts must be greater than $0 and use no more than two decimal places.');
+      return;
+    }
+    if (mode === 'custom' && customBillingType === 'Automated Recurring'
+        && customAmount == null) {
+      toast.error('Custom monthly billing requires an amount greater than $0.');
+      return;
+    }
+    if (mode === 'tier' && !client.billingTier) {
+      toast.error('Choose and save the client service tier before saving the agreement.');
       return;
     }
     setSaving(true);
@@ -249,62 +344,35 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
         ? {
             service_agreement_mode: 'custom',
             service_agreement_label: label.trim() || null,
-            service_agreement_amount: amount !== '' && !Number.isNaN(Number(amount)) ? Number(amount) : null,
+            service_agreement_amount: customAmount,
             service_agreement_fee_text: feeText.trim(),
-            // One-shot custom packages must not enter automated monthly invoicing.
-            billing_type: 'Paid in Full',
+            billing_type: customBillingType,
+            billing_recurring_amount: customBillingType === 'Automated Recurring'
+              && customAmount != null
+              ? customAmount
+              : null,
           }
         : {
             service_agreement_mode: 'tier',
             service_agreement_label: null,
             service_agreement_amount: null,
             service_agreement_fee_text: null,
+            billing_type: client.billingTier === 'Paid In Full' ? 'Paid in Full' : 'Automated Recurring',
+            billing_recurring_amount: client.billingTier === 'Paid In Full' ? null : client.billingRecurringAmount,
           };
-      await save(fields);
-      toast.success(mode === 'custom' ? 'Custom service agreement saved' : 'Using standard tier fees for LPOA');
+      const saved = await save(fields);
+      if (saved === false) return;
+      setLastSavedFingerprint(currentAgreementFingerprint);
+      toast.success(mode === 'custom' ? 'Custom service agreement saved' : 'Tier service agreement saved');
     } finally {
       setSaving(false);
     }
   };
 
-  const addMatchingInvoice = async () => {
-    if (mode !== 'custom' || amount === '' || Number.isNaN(Number(amount))) {
-      toast.error('Save a custom agreement with an amount first.');
-      return;
-    }
-    const desc = label.trim() || 'Custom service package';
-    const amt = Number(amount);
-    const today = new Date().toISOString().slice(0, 10);
-    const updatedLedger = [...(Array.isArray(ledger) ? ledger : []), {
-      id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2),
-      date: today,
-      type: 'Invoice',
-      amount: amt,
-      description: desc,
-      status: 'Due',
-      created_at: new Date().toISOString(),
-    }];
-    await save({
-      ledger: updatedLedger,
-      service_agreement_mode: 'custom',
-      service_agreement_label: desc,
-      service_agreement_amount: amt,
-      service_agreement_fee_text: feeText.trim() || null,
-      billing_type: 'Paid in Full',
-    });
-    toast.success('Ledger invoice added — mark paid when payment lands');
-    if (onChanged) onChanged();
-  };
-
-  // Sends the same portal-invite magic link as "Send Portal Invite" —
-  // deliberately NOT the separate agreement-onboarding.cjs/sign-agreement.html
-  // pre-portal signing flow (that one gates on a counsel-approved template
-  // and gets its own email; this button is for the in-portal wizard where
-  // the client sets a password, signs the LPOA, and uploads ID/address docs
-  // in one continuous session — ClientOnboardingModal in ClientSetupFlow.jsx).
-  // The billing tier/custom fee saved above feeds that wizard's LPOA fee
-  // section directly (billing_tier / service_agreement_fee_text on this
-  // client row), so save the plan first — the wizard reads it live.
+  // This is the only new-client onboarding entry point. The server rereads
+  // the saved client billing fields, snapshots the exact agreement version,
+  // plan, fees, and client identity, then emails a single-use signing link.
+  // Later billing edits cannot mutate a packet that was already prepared.
   const startOnboarding = async () => {
     if (mode === 'custom' && !String(feeText || '').trim()) {
       toast.error('Save the custom plan terms before starting onboarding.');
@@ -314,20 +382,47 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
       toast.error('Add the client email before starting onboarding.');
       return;
     }
+    if (mode === 'tier' && !client.billingTier) {
+      toast.error('Choose and save the client service tier before starting onboarding.');
+      return;
+    }
+    if (mode === 'tier') {
+      const expectedBillingType = client.billingTier === 'Paid In Full' ? 'Paid in Full' : 'Automated Recurring';
+      if (client.billingType !== expectedBillingType) {
+        toast.error(`${client.billingTier} requires Billing Type “${expectedBillingType}” before starting onboarding.`);
+        return;
+      }
+    }
+    if (agreementHasUnsavedChanges) {
+      toast.error('Save the agreement changes before starting onboarding.');
+      return;
+    }
     setStartingOnboarding(true);
     setOnboardingMessage('');
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const adminToken = session?.access_token;
-      const res = await fetch('/.netlify/functions/provision-user', {
+      const res = await fetch('/.netlify/functions/agreement-onboarding', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}) },
-        body: JSON.stringify({ email: client.email.trim().toLowerCase(), fullName: client.name, kind: 'client', clientId: client.id }),
+        body: JSON.stringify({ clientId: client.id, action: 'start' }),
       });
       const out = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(out.error || 'Could not start onboarding.');
-      setOnboardingMessage('Onboarding email sent — they set a password, sign the agreement, and upload documents in one flow, then land in the portal.');
-      toast.success('Onboarding started — invite sent');
+      if (!res.ok || out.sendBlocked) {
+        const blockers = Array.isArray(out.blockers) && out.blockers.length
+          ? ` (${out.blockers.join(', ')})`
+          : '';
+        throw new Error((out.error || out.message || 'Could not start onboarding.') + blockers);
+      }
+      setOnboardingMessage('Onboarding link sent. The wizard uses the frozen client name, agreement version, and billing snapshot, then requires disclosure review, agreement signature, ID, and proof of address before portal access.');
+      setLatestAgreement({
+        id: out.agreementId,
+        status: out.status,
+        template_version: out.templateVersion,
+        plan_snapshot: out.planSnapshot,
+        created_at: new Date().toISOString(),
+      });
+      toast.success('Secure onboarding link sent');
       if (onChanged) onChanged();
     } catch (e) {
       toast.error(e.message || 'Could not start onboarding.');
@@ -336,10 +431,59 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
     }
   };
 
+  const openingInvoicePreview = (() => {
+    try {
+      return latestAgreement
+        ? agreementOpeningInvoicePreview(latestAgreement.plan_snapshot, {
+            templateVersion: latestAgreement.template_version,
+            status: latestAgreement.status,
+          })
+        : null;
+    }
+    catch { return null; }
+  })();
+
+  const createOpeningInvoice = async () => {
+    if (!canManageLedger) {
+      toast.error('Only the account owner can create ledger invoices.');
+      return;
+    }
+    if (!latestAgreement?.id || !openingInvoicePreview) {
+      toast.error('Start onboarding to freeze the exact pricing first, or use Add Transaction for a custom amount.');
+      return;
+    }
+    if (!confirm(openingInvoiceConfirmation(openingInvoicePreview))) return;
+    const requestKey = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : null;
+    if (!requestKey) {
+      toast.error('This browser cannot create a secure invoice request.');
+      return;
+    }
+    setCreatingOpeningInvoice(true);
+    try {
+      const { data, error } = await supabase.rpc('ccc_create_manual_agreement_invoice', {
+        p_client_id: client.id,
+        p_agreement_id: latestAgreement.id,
+        p_request_key: requestKey,
+        p_invoice_date: new Date().toISOString().slice(0, 10),
+      });
+      if (error) throw error;
+      toast.success(data?.alreadyCreated
+        ? 'That agreement already has its opening ledger invoice'
+        : `Opening ledger invoice created for $${Number(data?.invoice?.amount || openingInvoicePreview.total).toFixed(2)}`);
+      if (onChanged) onChanged();
+    } catch (error) {
+      toast.error(error.message || 'Could not create the opening ledger invoice.');
+    } finally {
+      setCreatingOpeningInvoice(false);
+    }
+  };
+
   return (
     <Section title="Service Agreement" span2>
       <p className="text-[12px]" style={{ color: T.muted }}>
-        Choose and save the exact plan first — Start Onboarding emails a portal link that reads this plan live for the LPOA fee section. The client sets a password, signs the agreement, and uploads their ID and proof of address in one flow before landing in the portal. It never creates a payment.
+        Choose and save the exact plan first. Start Onboarding freezes the client name, agreement version, selected plan, and fee terms, then emails one secure wizard link. The client reviews the required disclosure, signs the agreement, and uploads ID and proof of address before portal access. It never creates a payment.
       </p>
 
       <div className="flex flex-wrap gap-2">
@@ -371,7 +515,7 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
 
       {mode === 'tier' ? (
         <div className="text-[12px] px-3 py-2 rounded-md border" style={{ borderColor: T.border, color: T.muted }}>
-          LPOA fees follow the Service Tier below
+          Agreement fees follow the Service Tier below
           {client.billingTier ? ` (${client.billingTier})` : ' (set a tier first)'}.
           {hasCustomServiceAgreement(client) && (
             <span className="block mt-1 text-amber-700">A custom agreement is saved — click Save to clear it and return to tier fees.</span>
@@ -421,17 +565,25 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
                 placeholder="150"
                 className="border rounded-md px-2 py-1.5 text-[12px]" style={{ borderColor: T.border }} />
             </div>
+            <div className="flex flex-col gap-1 md:col-span-2">
+              <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>Billing schedule</label>
+              <select value={customBillingType} onChange={(e) => setCustomBillingType(e.target.value)}
+                className="border rounded-md px-2 py-1.5 text-[12px] bg-white" style={{ borderColor: T.border }}>
+                <option value="Automated Recurring">Monthly recurring</option>
+                <option value="Paid in Full">One-time payment</option>
+              </select>
+            </div>
           </div>
 
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>LPOA fee text (Section 4)</label>
+            <label className="text-[10px] uppercase tracking-wider font-bold" style={{ color: T.faint }}>Client-facing fee terms</label>
             <textarea value={feeText} onChange={(e) => setFeeText(e.target.value)} rows={4}
               placeholder="Exact prose the client will sign…"
               className="border rounded-md px-2 py-1.5 text-[12px] w-full" style={{ borderColor: T.border }} />
           </div>
 
           <div className="text-[11px] px-3 py-2 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
-            Saving a custom package sets Billing Type to <strong>Paid in Full</strong> so automated monthly invoices are not created.
+            The selected schedule and exact fee terms are frozen into the agreement. Saving terms never creates an invoice or payment.
           </div>
         </div>
       )}
@@ -442,27 +594,36 @@ function ServiceAgreementSection({ client, ledger, save, onChanged }) {
           style={{ background: T.navy, color: T.gold }}>
           {saving ? 'Saving…' : 'Save agreement'}
         </button>
-        {mode === 'custom' && (
-          <>
-            <button type="button" onClick={addMatchingInvoice}
-              className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border hover:bg-gray-50"
-              style={{ borderColor: T.border, color: T.ink }}>
-              Add matching ledger invoice
-            </button>
-          </>
-        )}
-        <button type="button" onClick={startOnboarding} disabled={startingOnboarding || saving}
+        <button type="button" onClick={startOnboarding} disabled={startingOnboarding || saving || agreementHasUnsavedChanges}
           className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
           style={{ borderColor: T.navy, color: T.navy }}>
           <FileSignature size={12} /> {startingOnboarding ? 'Preparing…' : 'Start onboarding'}
         </button>
+        {canManageLedger && <button
+          type="button"
+          onClick={createOpeningInvoice}
+          disabled={creatingOpeningInvoice || !openingInvoicePreview}
+          title={openingInvoicePreview
+            ? 'Creates a ledger invoice only; it does not charge a payment method.'
+            : 'Start onboarding to freeze exact agreement pricing, or use Add Transaction below.'}
+          className="text-[11px] uppercase tracking-wider px-3 py-2 rounded-md border hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
+          style={{ borderColor: T.border, color: T.ink }}
+        >
+          <DollarSign size={12} /> {creatingOpeningInvoice ? 'Creating…' : 'Create opening invoice'}
+        </button>}
       </div>
+      {openingInvoicePreview && (
+        <div className="text-[11px] px-3 py-2 rounded-md bg-slate-50 border" style={{ borderColor: T.border, color: T.muted }}>
+          Owner action only: {openingInvoicePreview.lineItems.map((item) => `${item.description} $${item.amount.toFixed(2)}`).join(' + ')} = <strong>${`$${openingInvoicePreview.total.toFixed(2)}`}</strong>. It records a ledger invoice and never charges automatically.
+        </div>
+      )}
+      {agreementHasUnsavedChanges && <div className="text-[11px] px-3 py-2 rounded-md bg-amber-50 text-amber-800 border border-amber-200">Save the current agreement selection before starting onboarding.</div>}
       {onboardingMessage && <div className="text-[11px] px-3 py-2 rounded-md bg-amber-50 text-amber-800 border border-amber-200">{onboardingMessage}</div>}
     </Section>
   );
 }
 
-export default function ClientBillingPanel({ client, onChanged }) {
+export default function ClientBillingPanel({ client, onChanged, isAdmin = false }) {
   const today = new Date().toISOString().slice(0, 10);
   const [showAddTx, setShowAddTx] = useState(false);
   const [newTx, setNewTx] = useState({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due', paidDate: today });
@@ -497,25 +658,45 @@ export default function ClientBillingPanel({ client, onChanged }) {
     return sum;
   }, 0);
 
-  const totalPaid = ledger.reduce((sum, tx) => {
-    if (tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid')) {
-      return sum + (parseFloat(tx.amount) || 0);
-    }
-    return sum;
-  }, 0);
+  const totalPaid = collectedTotal({ ledger });
 
   const save = async (fields) => {
     try {
       await updateClientProfile(client.name, fields, client.id);
       if (onChanged) onChanged();
+      return true;
     } catch (e) {
       console.error('Failed to save billing settings:', e);
       alert('Failed to save: ' + e.message);
+      return false;
     }
   };
 
-  const notifyCommissionEarnedIfNeeded = (prevLedger, nextLedger) => {
-    if (!client.referredBy) return;
+  const runLedgerCommand = async ({ operation, transactionId, changes = {} }) => {
+    if (!isAdmin) {
+      toast.error('Only the account owner can change the ledger.');
+      return null;
+    }
+    try {
+      const result = await mutateClientLedger({
+        clientId: client.id,
+        expectedLedger: ledger,
+        operation,
+        transactionId,
+        changes,
+      });
+      if (onChanged) await onChanged();
+      return result;
+    } catch (error) {
+      const message = error.message || 'Could not update the ledger.';
+      toast.error(message);
+      if (/changed in another session/i.test(message) && onChanged) await onChanged();
+      return null;
+    }
+  };
+
+  const notifyCommissionEarnedIfNeeded = (prevLedger, nextLedger, ledgerTransactionId) => {
+    if (!client.referredBy || !ledgerTransactionId) return;
     const affiliate = affiliates[client.referredBy] || null;
     const before = computeClientCommission(
       { referral_fee: client.referralFee, ledger: prevLedger },
@@ -529,12 +710,9 @@ export default function ClientBillingPanel({ client, onChanged }) {
     ).earned;
     const delta = after - before;
     if (delta <= 0.004) return;
-    const rate = commissionRate({ referral_fee: client.referralFee }, affiliate);
-    const revenueAmount = rate > 0 ? delta / rate : null;
     notifyAffiliate('commission_earned', {
       clientId: client.id,
-      amount: delta,
-      revenueAmount,
+      ledgerTransactionId,
     });
   };
 
@@ -553,32 +731,45 @@ export default function ClientBillingPanel({ client, onChanged }) {
       ? new Date(newTx.date + 'T12:00:00').toISOString()
       : (newTx.status === 'Paid' ? new Date((newTx.paidDate || newTx.date) + 'T12:00:00').toISOString() : null);
 
-    let updatedLedger;
+    let transactionId = editingTxId;
+    let changes;
     if (editingTxId) {
-      updatedLedger = ledger.map(t => t.id === editingTxId ? {
-        ...t,
+      const existing = ledger.find((transaction) => transaction.id === editingTxId);
+      if (existing?.source === 'manual_agreement_opening_invoice') {
+        toast.error('Agreement opening invoices cannot be edited. Record payment status instead.');
+        return;
+      }
+      changes = {
         date: newTx.date,
         type: newTx.type,
         amount: parseFloat(newTx.amount),
         description: newTx.description || (newTx.type === 'Invoice' ? 'Service Fee' : 'Payment Received'),
         status: newTx.type === 'Payment' ? 'Paid' : newTx.status,
         paid_at: paidAt,
-      } : t);
+      };
     } else {
-      updatedLedger = [...ledger, {
-        id: (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).substring(7),
+      transactionId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : null;
+      if (!transactionId) {
+        toast.error('This browser cannot create a secure ledger transaction.');
+        return;
+      }
+      changes = {
         date: newTx.date,
         type: newTx.type,
         amount: parseFloat(newTx.amount),
         description: newTx.description || (newTx.type === 'Invoice' ? 'Service Fee' : 'Payment Received'),
         status: newTx.type === 'Payment' ? 'Paid' : newTx.status,
         ...(paidAt ? { paid_at: paidAt } : {}),
-        created_at: new Date().toISOString()
-      }];
+      };
     }
 
-    await save({ ledger: updatedLedger });
-    notifyCommissionEarnedIfNeeded(ledger, updatedLedger);
+    const result = await runLedgerCommand({
+      operation: editingTxId ? 'edit' : 'add',
+      transactionId,
+      changes,
+    });
+    if (!result) return;
+    notifyCommissionEarnedIfNeeded(ledger, result.ledger, transactionId);
     setShowAddTx(false);
     setEditingTxId(null);
     setNewTx({ date: new Date().toISOString().slice(0, 10), type: 'Invoice', amount: '', description: '', status: 'Due', paidDate: today });
@@ -598,8 +789,13 @@ export default function ClientBillingPanel({ client, onChanged }) {
   };
 
   const deleteTransaction = async (id) => {
+    const transaction = ledger.find((entry) => entry.id === id);
+    if (transaction?.source === 'manual_agreement_opening_invoice') {
+      toast.error('Agreement opening invoices are immutable and cannot be deleted.');
+      return;
+    }
     if (!confirm('Delete this transaction?')) return;
-    await save({ ledger: ledger.filter(t => t.id !== id) });
+    await runLedgerCommand({ operation: 'delete', transactionId: id });
   };
 
   const markPaid = async (id, paidOnDate) => {
@@ -608,15 +804,19 @@ export default function ClientBillingPanel({ client, onChanged }) {
     // the caller pick the real payment date instead of always "now" — see
     // the inline date picker this opens into below.
     const stamp = paidOnDate ? new Date(paidOnDate + 'T12:00:00').toISOString() : new Date().toISOString();
-    const updated = ledger.map(t => t.id === id ? { ...t, status: 'Paid', paid_at: t.paid_at || stamp } : t);
-    await save({ ledger: updated });
-    notifyCommissionEarnedIfNeeded(ledger, updated);
+    const result = await runLedgerCommand({
+      operation: 'mark_paid',
+      transactionId: id,
+      changes: { paid_at: stamp },
+    });
+    if (!result) return;
+    notifyCommissionEarnedIfNeeded(ledger, result.ledger, id);
     setMarkingPaidId(null);
   };
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start mt-2">
-      <ServiceAgreementSection client={client} ledger={ledger} save={save} onChanged={onChanged} />
+      <ServiceAgreementSection client={client} save={save} onChanged={onChanged} canManageLedger={isAdmin} />
 
       <Section title="Billing Setup">
         <Row label="Amount Due">
@@ -669,8 +869,6 @@ export default function ClientBillingPanel({ client, onChanged }) {
               ) {
                 notifyAffiliate('exited', {
                   clientId: client.id,
-                  billingStatus: fields.billing_status,
-                  exitReason: fields.exit_reason,
                 });
               }
             }}
@@ -692,14 +890,18 @@ export default function ClientBillingPanel({ client, onChanged }) {
               value={client.billingTier}
               options={['Standard', 'VIP', 'Paid In Full']}
               placeholder="Select tier..."
-              onSave={(v) => save({ billing_tier: v })}
+              onSave={(v) => save({
+                billing_tier: v,
+                billing_type: v === 'Paid In Full' ? 'Paid in Full' : 'Automated Recurring',
+                billing_recurring_amount: v === 'Paid In Full' ? null : client.billingRecurringAmount,
+              })}
             />
           </Row>
         )}
         {hasCustomServiceAgreement(client) && (
           <Row label="Service Tier">
             <span className="text-[12px] italic" style={{ color: T.faint }}>
-              Custom package (LPOA uses Service Agreement above)
+              Custom package (uses the Service Agreement above)
             </span>
           </Row>
         )}
@@ -707,11 +909,30 @@ export default function ClientBillingPanel({ client, onChanged }) {
           <Field 
             label="billing type" 
             value={client.billingType} 
-            options={['Automated Recurring', 'Paid in Full']} 
-            onSave={(v) => save({ billing_type: v })} 
+            options={hasCustomServiceAgreement(client)
+              ? ['Automated Recurring', 'Paid in Full']
+              : client.billingTier === 'Paid In Full'
+                ? ['Paid in Full']
+                : client.billingTier
+                  ? ['Automated Recurring']
+                  : ['Automated Recurring', 'Paid in Full']}
+            onSave={(v) => {
+              const expected = hasCustomServiceAgreement(client)
+                ? null
+                : client.billingTier === 'Paid In Full'
+                  ? 'Paid in Full'
+                  : client.billingTier
+                    ? 'Automated Recurring'
+                    : null;
+              if (expected && v !== expected) {
+                toast.error(`${client.billingTier} requires Billing Type “${expected}”.`);
+                return false;
+              }
+              return save({ billing_type: v });
+            }}
           />
         </Row>
-        {client.billingType === 'Automated Recurring' && (
+        {!hasCustomServiceAgreement(client) && client.billingType === 'Automated Recurring' && (
           <Row label="Custom Monthly Fee">
             <Field
               label="custom monthly fee"
@@ -728,7 +949,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
               }}
             />
             <div className="text-[10px] mt-1 text-right" style={{ color: T.faint }}>
-              Optional override for recurring invoices and MRR; does not affect balances or payments.
+              Optional recurring-plan price override used in the agreement and MRR. Invoices are still created manually.
             </div>
           </Row>
         )}
@@ -741,12 +962,12 @@ export default function ClientBillingPanel({ client, onChanged }) {
                 <>
                   <strong>One-time / paid-in-full billing.</strong>
                   {hasCustomServiceAgreement(client)
-                    ? ' Custom package drives the LPOA — no automated monthly invoices.'
-                    : ' Not enrolled in the automated monthly billing cycle.'}
+                    ? ' Custom package drives the signed service agreement. Invoices remain owner-controlled.'
+                    : ' Any invoice remains owner-controlled.'}
                 </>
               ) : (
                 <>
-                  <strong>Billing is active.</strong> Client will be included in the automated billing cycle (once gateway is integrated).
+                  <strong>Recurring plan is active.</strong> CCC will not create invoices, charge a payment method, or pause service automatically. Use the ledger or the agreement-based opening-invoice action when you choose.
                 </>
               )}
             </div>
@@ -820,7 +1041,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
             if (!commissionPayDate) { alert('Pick a paid-on date before confirming.'); return; }
             try {
               const { data: { user } } = await supabase.auth.getUser();
-              const { error } = await supabase.from('commission_payouts').insert({
+              const { data: payout, error } = await supabase.from('commission_payouts').insert({
                 affiliate_id: client.referredBy,
                 client_id: client.id,
                 client_name: client.name,
@@ -831,14 +1052,11 @@ export default function ClientBillingPanel({ client, onChanged }) {
                 amount,
                 paid_at: new Date(commissionPayDate + 'T12:00:00').toISOString(),
                 paid_by: user?.id || null,
-              });
+              }).select('id').single();
               if (error) throw error;
               setPayingCommission(false);
               notifyAffiliate('commission_paid', {
-                clientId: client.id,
-                affiliateId: client.referredBy,
-                amount,
-                paidAt: new Date(commissionPayDate + 'T12:00:00').toISOString(),
+                payoutId: payout.id,
               });
               if (onChanged) onChanged();
             } catch (e) {
@@ -872,13 +1090,13 @@ export default function ClientBillingPanel({ client, onChanged }) {
                     <button onClick={payCommission} className="text-green-600 hover:text-green-700" title="Confirm payout"><Check size={13} strokeWidth={3} /></button>
                     <button onClick={() => setPayingCommission(false)} className="text-ink-faint hover:text-red-600" title="Cancel"><X size={13} strokeWidth={3} /></button>
                   </div>
-                ) : (
+                ) : isAdmin ? (
                   <button
                     onClick={() => { setPayingCommission(true); setCommissionPayAmount(owed.toFixed(2)); setCommissionPayDate(today); }}
                     className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-300 mt-1 hover:bg-amber-100 transition-colors">
                     Pay ${owed.toFixed(2)}
                   </button>
-                )}
+                ) : null}
               </div>
             </Row>
           );
@@ -888,9 +1106,9 @@ export default function ClientBillingPanel({ client, onChanged }) {
       <Section title="Ledger" span2>
         <div className="flex items-center justify-between mb-2">
           <div className="text-[12px] text-ink-muted">Transaction history and open invoices.</div>
-          <button onClick={() => { setEditingTxId(null); setNewTx({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due', paidDate: today }); setShowAddTx(!showAddTx); }} className="text-[11px] uppercase tracking-wider bg-navy text-gold px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity">
+          {isAdmin && <button onClick={() => { setEditingTxId(null); setNewTx({ date: today, type: 'Invoice', amount: '', description: '', status: 'Due', paidDate: today }); setShowAddTx(!showAddTx); }} className="text-[11px] uppercase tracking-wider bg-navy text-gold px-3 py-1.5 rounded-md hover:opacity-90 transition-opacity">
             + Add Transaction
-          </button>
+          </button>}
         </div>
 
         {showAddTx && (
@@ -983,7 +1201,7 @@ export default function ClientBillingPanel({ client, onChanged }) {
                       )}
                     </td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
-                      <div className="flex justify-end items-center gap-2 opacity-30 hover:opacity-100 transition-opacity">
+                      {isAdmin ? <div className="flex justify-end items-center gap-2 opacity-30 hover:opacity-100 transition-opacity">
                         {tx.type === 'Invoice' && tx.status !== 'Paid' && (
                           markingPaidId === tx.id ? (
                             <span className="flex items-center gap-1">
@@ -1011,13 +1229,19 @@ export default function ClientBillingPanel({ client, onChanged }) {
                             </button>
                           )
                         )}
-                        <button onClick={() => startEditTx(tx)} className="text-blue-500 hover:text-blue-700" title="Edit">
-                          <Edit2 size={12} strokeWidth={3} />
-                        </button>
-                        <button onClick={() => deleteTransaction(tx.id)} className="text-red-500 hover:text-red-700" title="Delete">
-                          <X size={12} strokeWidth={3} />
-                        </button>
-                      </div>
+                        {tx.source === 'manual_agreement_opening_invoice' ? (
+                          <span className="text-[9px] uppercase tracking-wider text-faint" title="Agreement invoice terms are immutable">Agreement invoice</span>
+                        ) : (
+                          <>
+                            <button onClick={() => startEditTx(tx)} className="text-blue-500 hover:text-blue-700" title="Edit">
+                              <Edit2 size={12} strokeWidth={3} />
+                            </button>
+                            <button onClick={() => deleteTransaction(tx.id)} className="text-red-500 hover:text-red-700" title="Delete">
+                              <X size={12} strokeWidth={3} />
+                            </button>
+                          </>
+                        )}
+                      </div> : <span className="text-[10px] text-faint uppercase">Owner only</span>}
                     </td>
                   </tr>
                 ))

@@ -2,7 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { DollarSign, TrendingUp, TrendingDown, AlertCircle, Clock, CheckCircle, ChevronRight, Activity, Users, Layers, Repeat, UserMinus, Percent, CalendarClock, Timer, Landmark, Receipt, Plus, X } from 'lucide-react';
 import { listExpenses, addExpense, updateExpense, deleteExpense } from '../utils/storage';
 import { supabase } from '../utils/supabase';
-import { computeClientCommission, commissionRate } from '../utils/affiliateCommission';
+import {
+  collectedRevenueAmount,
+  computeClientCommission,
+  commissionRate,
+} from '../utils/affiliateCommission';
 import { calculateActiveRecurringMrr, resolveRecurringMonthlyFee } from '../utils/pricing';
 
 const T = {
@@ -26,11 +30,7 @@ const daysBetween = (a, b) => Math.floor((a - b) / 86400000);
 
 // Unified revenue recognition: a Payment row, OR an Invoice flipped to Paid.
 // This matches ClientBillingPanel's totalPaid so global and per-client agree.
-const recognizedAmount = (tx) => {
-  if (tx.type === 'Payment') return parseFloat(tx.amount || 0);
-  if (tx.type === 'Invoice' && tx.status === 'Paid') return parseFloat(tx.amount || 0);
-  return 0;
-};
+const recognizedAmount = collectedRevenueAmount;
 // Date revenue is recognized on: payment date, or an invoice's paid_at (fallback to its date).
 const recognitionDate = (tx) => (tx.type === 'Invoice' ? (tx.paid_at || tx.date) : tx.date);
 const isFwf = (tx) => /first\s*work|fwf|setup\s*fee|initial\s*fee/i.test(tx.description || '');
@@ -640,7 +640,7 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
         </Panel>
       </div>
 
-      {/* COMMISSION + FWF + FORECAST */}
+      {/* COMMISSION + HISTORICAL FWF + FORECAST */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Panel className="lg:col-span-1 h-[360px]" title="Commission Payables" icon={Percent} iconColor={T.gold}
           right={<span className="text-[11px] font-bold text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">{money0(commissionOwed)} owed</span>}>
@@ -667,12 +667,12 @@ export default function BillingDashboardPage({ onNavigate, isAdmin }) {
           </div>
         </Panel>
 
-        <Panel title="First Work Fees" icon={Landmark} iconColor={T.navy}>
+        <Panel title="Historical First Work Fees" icon={Landmark} iconColor={T.navy}>
           <div className="p-5">
             <StatLine label="FWF collected" value={money(fwfCollected)} tone="good" />
             <StatLine label="FWF outstanding" value={money(fwfOutstanding)} tone={fwfOutstanding > 0 ? 'warn' : undefined} />
             <StatLine label="FWF collection rate" value={`${(fwfCollected + fwfOutstanding) > 0 ? ((fwfCollected / (fwfCollected + fwfOutstanding)) * 100).toFixed(0) : 0}%`} />
-            <div className="mt-3 text-[11px] text-faint">Matched from ledger descriptions (first work / setup / initial fee).</div>
+            <div className="mt-3 text-[11px] text-faint">Read-only historical reporting from retained ledger descriptions. Active plans no longer create this fee.</div>
           </div>
         </Panel>
 

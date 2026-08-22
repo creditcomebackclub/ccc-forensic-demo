@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   ArrowRight, CalendarDays, CheckCircle2, Clock3, FileCheck2, FileSearch,
-  Flag, MailCheck, MapPin, Send, ShieldCheck, Sparkles, Target, TrendingUp,
+  Flag, MapPin, Send, ShieldCheck, Sparkles, Target, TrendingUp,
   Upload, AlertCircle,
 } from 'lucide-react';
 import ScoreMeter from './ScoreMeter';
@@ -18,7 +18,7 @@ function formatDate(value) {
   catch { return null; }
 }
 
-function campaignState({ onboardingStage, mailed, delivered, responded, deletions, hasBlueprint, stageId }) {
+function campaignState({ onboardingStage, mailed, reviewStarted, responded, deletions, hasBlueprint, stageId }) {
   if (deletions.length > 0) {
     return {
       eyebrow: 'Results in motion', title: 'Your campaign is producing results.',
@@ -33,18 +33,18 @@ function campaignState({ onboardingStage, mailed, delivered, responded, deletion
       next: 'Account-level results appear below as your specialist logs each item.', icon: FileSearch, tone: 'blue',
     };
   }
-  if (delivered.length > 0) {
+  if (reviewStarted.length > 0) {
     return {
-      eyebrow: 'Response window active', title: 'Your dispute is officially in motion.',
-      body: `${delivered.length} campaign letter${delivered.length === 1 ? ' has' : 's have'} received a delivery scan. The review clock is now running.`,
+      eyebrow: 'Case review active', title: 'Your casework is officially in motion.',
+      body: `${reviewStarted.length} campaign letter${reviewStarted.length === 1 ? ' has' : 's have'} reached its documented review-start date. The team’s review clock is now running.`,
       next: 'If a bureau letter arrives at your home, upload it under Disputes.', icon: Clock3, tone: 'amber',
     };
   }
   if (mailed.length > 0) {
     return {
-      eyebrow: 'Campaign mail in transit', title: 'Your dispute package is on its way.',
-      body: `${mailed.length} campaign letter${mailed.length === 1 ? ' is' : 's are'} moving through the USPS mail stream.`,
-      next: 'A delivery scan or expected-delivery date will set the team’s review target.', icon: MapPin, tone: 'blue',
+      eyebrow: 'Campaign mail sent', title: 'Your dispute package is on its way.',
+      body: `${mailed.length} campaign letter${mailed.length === 1 ? ' was' : 's were'} sent by mail.`,
+      next: 'The portal will show when each eligible review clock is scheduled to start.', icon: MapPin, tone: 'blue',
     };
   }
   if (hasBlueprint) {
@@ -239,7 +239,7 @@ function ResultsSummary({ accountResults, onNavigate }) {
 }
 
 export default function OverviewTab({
-  profile, clientMeta, firstName, mailed, delivered, responded, deletions,
+  profile, clientMeta, firstName, mailed, reviewStarted, responded, deletions,
   totalDisputes, fileUpdateCount = 0, latestScores, auditHistory, onboardingStage, onboardingDates,
   recoveryBlueprints = [],
   rounds = [],
@@ -257,7 +257,7 @@ export default function OverviewTab({
   const stage = derivePortalStage({
     blueprints: recoveryBlueprints,
     mailed,
-    delivered,
+    reviewStarted,
     responded,
     deletions,
     rounds,
@@ -267,7 +267,7 @@ export default function OverviewTab({
   const state = campaignState({
     onboardingStage,
     mailed,
-    delivered,
+    reviewStarted,
     responded,
     deletions,
     hasBlueprint,
@@ -300,6 +300,7 @@ export default function OverviewTab({
     uploadSuccess,
   });
   const accountResults = buildAccountResults({ packetCoverage, letters });
+  const agreementSignedAt = profile?.agreement_signed_at || clientMeta?.agreement_signed_at || null;
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
@@ -356,7 +357,7 @@ export default function OverviewTab({
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <SignalCard label="Letters mailed" value={mailed.length} helper={mailed.length ? 'Campaign packages sent' : 'Preparing your first campaign'} icon={Send} tone="slate" />
-        <SignalCard label="Delivery scans" value={delivered.length} helper={delivered.length ? 'Review clock started' : 'Mailpiece updates will appear here'} icon={MailCheck} tone="blue" />
+        <SignalCard label="Review clocks" value={reviewStarted.length} helper={reviewStarted.length ? 'Documented review starts reached' : 'Review start is scheduled after mailing'} icon={Clock3} tone="blue" />
         <SignalCard label="Responses logged" value={responded.length} helper={responded.length ? 'Being evaluated for next action' : 'We’re monitoring for replies'} icon={FileSearch} tone="amber" />
         <SignalCard label="Verified removals" value={deletions.length} helper={deletions.length ? 'Confirmed in your report history' : 'Results will be reflected here'} icon={Flag} tone="green" />
       </section>
@@ -404,11 +405,19 @@ export default function OverviewTab({
         </div>
       </section>
 
-      <section className="flex items-center gap-4 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-5 shadow-sm">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700"><ShieldCheck size={19} strokeWidth={2.2} /></div>
-        <div className="min-w-0 flex-1"><div className="text-sm font-bold text-slate-900">Your authorization is active</div><div className="mt-0.5 text-[12px] leading-relaxed text-slate-600">Credit Comeback Club is authorized to act on your behalf{profile?.agreement_signed_at ? ` since ${new Date(profile.agreement_signed_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}` : ''}.</div></div>
-        <span className="hidden shrink-0 rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700 sm:block">Protected</span>
-      </section>
+      {agreementSignedAt ? (
+        <section className="flex items-center gap-4 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-5 shadow-sm">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700"><ShieldCheck size={19} strokeWidth={2.2} /></div>
+          <div className="min-w-0 flex-1"><div className="text-sm font-bold text-slate-900">Your service agreement is signed</div><div className="mt-0.5 text-[12px] leading-relaxed text-slate-600">Your agreement was completed on {new Date(agreementSignedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}. Your CCC team will manage the start and timing of service from your file.</div></div>
+          <span className="hidden shrink-0 rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700 sm:block">Agreement on file</span>
+        </section>
+      ) : (
+        <section className="flex items-center gap-4 rounded-2xl border border-blue-100 bg-blue-50/60 p-5 shadow-sm">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-700"><ShieldCheck size={19} strokeWidth={2.2} /></div>
+          <div className="min-w-0 flex-1"><div className="text-sm font-bold text-slate-900">Your service enrollment is active</div><div className="mt-0.5 text-[12px] leading-relaxed text-slate-600">Your existing CCC enrollment is on file. No agreement-signing date is being represented in the portal.</div></div>
+          <span className="hidden shrink-0 rounded-full border border-blue-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-blue-700 sm:block">Enrollment on file</span>
+        </section>
+      )}
     </div>
   );
 }

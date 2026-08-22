@@ -1,20 +1,17 @@
-// Server-side Phase 2 (furnisher response) analysis — Netlify BACKGROUND
-// function (15-min limit), mirroring audit-run-background.mjs. Holds
+// Server-side response analysis — Netlify BACKGROUND function (15-min
+// limit), mirroring audit-run-background.mjs. Holds
 // ANTHROPIC_API_KEY as a server env var; the browser never sees a key.
 //
 // Contract: response file(s) already live in the `responses` storage bucket
 // (uploaded by the client portal or the admin UI). The browser inserts a
 // phase2_jobs row (status 'queued') referencing those paths, then POSTs
 // { jobId, mailedDate } here and polls the row. This function claims the
-// job atomically, loads the Phase 1 letter, runs the same analysis prompt/
-// schema the old browser pipeline used, writes progress to the row, persists
-// the result onto the letters row (so a closed tab loses nothing), and
-// marks the job done.
+// job atomically, loads the saved CCC letter, extracts response evidence,
+// applies deterministic response rules, persists the result, and marks the
+// job done. It never drafts a follow-up letter.
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { BUREAU_FOLLOW_UP_SYSTEM_PROMPT } from '../../src/prompts/bureauFollowUpPrompt.js';
-import { BUREAU_FOLLOW_UP_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { RESPONSE_EXTRACTION_SCHEMA } from '../../src/utils/creditExtractionSchemas.js';
 import { RESPONSE_EXTRACTION_SYSTEM_PROMPT } from '../../src/prompts/extractionPrompts.js';
 import {
@@ -28,18 +25,8 @@ import { splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
 import { priorLetterPlainText } from '../../src/utils/roundEvidence.js';
 import { responseWindowDays } from '../../src/utils/responseWindow.js';
 import { assessPacketAccount } from '../../src/utils/packetResponse.js';
-import { renderStructuredLetter } from '../../src/utils/structuredLetter.js';
-import { unauthorizedFieldCitations } from '../../src/utils/letterGeneration.js';
-import { hasInjectedSignature, injectSignatureImage } from '../../src/utils/signatureInjection.js';
-import {
-  assertMapFullySourced,
-  autoFixFieldCitations,
-  collectBureauFollowUpProblems,
-  normalizeFollowUpPresentation,
-} from '../../src/constants/metro2Fields.js';
 import { requireStaff } from './_requireAuth.cjs';
 import storagePaths from './_storagePaths.cjs';
-import { loadCanonicalClientSignature } from './_letterSignature.mjs';
 import {
   assertCompletedMessage,
   CLAUDE_CLIENT_OPTIONS,
@@ -49,25 +36,16 @@ import {
   usageFromMessage,
 } from './_claudeRuntime.mjs';
 
-assertMapFullySourced();
-
 const { responseEvidencePrefixes } = storagePaths;
 
 const MODEL = CLAUDE_MODEL;
 const MAX_TOTAL_RESPONSE_BYTES = 18 * 1024 * 1024;
 const RESPONSE_PDF_CHUNK_PAGES = 40;
 const RESPONSE_EXTRACTION_SYSTEM = [{ type: 'text', text: RESPONSE_EXTRACTION_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
-const BUREAU_FOLLOW_UP_SYSTEM = [{ type: 'text', text: BUREAU_FOLLOW_UP_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
-const PHASE2_KINDS = ['response', 'non_response', 'bureau_response', 'bureau_follow_up'];
-
-function bureauFromPhase(phase) {
-  const p = String(phase || '').toLowerCase();
-  if (p.includes('equifax')) return 'equifax';
-  if (p.includes('experian')) return 'experian';
-  if (p.includes('transunion') || p.includes('trans union')) return 'transunion';
-  return null;
-}
+const PHASE2_KINDS = ['response', 'non_response', 'bureau_response'];
+const RETIRED_FOLLOW_UP_ERROR =
+  'LEGACY FOLLOW-UP GENERATION RETIRED — review the response, then continue through the approved CCC template track. No letter was drafted.';
 
 const today = () => new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
@@ -113,8 +91,8 @@ export const handler = async (event) => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (!supabaseUrl || !serviceKey || !anthropicKey) {
-    console.error('phase2-analyze: missing env (supabase or ANTHROPIC_API_KEY)');
+  if (!supabaseUrl || !serviceKey) {
+    console.error('phase2-analyze: missing Supabase server configuration');
     return { statusCode: 500, body: 'server not configured' };
   }
 
@@ -139,13 +117,23 @@ export const handler = async (event) => {
     console.warn('phase2-analyze: job not available to caller', jobId, queuedJobErr?.message);
     return { statusCode: 409, body: 'job not claimable' };
   }
+  if (queuedJob.kind === 'bureau_follow_up') {
+    await db.from('phase2_jobs').update({
+      status: 'error',
+      stage: 'Retired workflow blocked',
+      error: RETIRED_FOLLOW_UP_ERROR,
+      finished_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', jobId).eq('user_id', caller.userId).eq('status', 'queued');
+    return { statusCode: 410, body: RETIRED_FOLLOW_UP_ERROR };
+  }
   if (typeof queuedJob.letter_id !== 'string' || !queuedJob.letter_id
       || !PHASE2_KINDS.includes(queuedJob.kind)) {
     return { statusCode: 400, body: 'job contains invalid analysis data' };
   }
   const responseFiles = Array.isArray(queuedJob.files) ? queuedJob.files : [];
   if ((queuedJob.kind === 'non_response' && responseFiles.length)
-      || ((queuedJob.kind === 'bureau_response' || queuedJob.kind === 'bureau_follow_up') && !queuedJob.response_evidence_id)
+      || (queuedJob.kind === 'bureau_response' && !queuedJob.response_evidence_id)
       || (queuedJob.kind === 'response' && !queuedJob.response_evidence_id
           && (!responseFiles.length || !responseFiles.every((file) => isResponsePathForLetter(file?.path, queuedJob.letter_id))))) {
     return { statusCode: 400, body: 'job contains invalid response upload paths' };
@@ -153,12 +141,27 @@ export const handler = async (event) => {
 
   const { data: targetLetter, error: targetLetterErr } = await db
     .from('letters')
-    .select('id, user_id, client_id')
+    .select('id, user_id, client_id, phase')
     .eq('id', queuedJob.letter_id)
     .maybeSingle();
   if (targetLetterErr || !targetLetter) return { statusCode: 404, body: 'letter not found' };
   if (caller.role !== 'admin' && targetLetter.user_id !== caller.userId) {
     return { statusCode: 403, body: 'not authorized for this letter' };
+  }
+  if (!String(targetLetter.phase || '').startsWith('CCC Dispute —')) {
+    const error = 'LEGACY RESPONSE WORKFLOW RETIRED — this historical letter remains readable, but it cannot start a new response-analysis or letter-generation job.';
+    await db.from('phase2_jobs').update({
+      status: 'error',
+      stage: 'Retired workflow blocked',
+      error,
+      finished_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', jobId).eq('user_id', caller.userId).eq('status', 'queued');
+    return { statusCode: 410, body: error };
+  }
+  if (!anthropicKey) {
+    console.error('phase2-analyze: missing ANTHROPIC_API_KEY');
+    return { statusCode: 500, body: 'server not configured' };
   }
 
   // New uploads are bound to an immutable evidence row before a service-role
@@ -174,7 +177,7 @@ export const handler = async (event) => {
       .maybeSingle();
     if (evidenceErr || !evidenceRow) return { statusCode: 400, body: 'response evidence not found' };
 
-    const expectedKind = (queuedJob.kind === 'bureau_response' || queuedJob.kind === 'bureau_follow_up')
+    const expectedKind = queuedJob.kind === 'bureau_response'
       ? 'bureau'
       : 'furnisher';
     const evidencePaths = Array.isArray(evidenceRow.storage_paths) ? evidenceRow.storage_paths : [];
@@ -188,11 +191,6 @@ export const handler = async (event) => {
       || !evidencePaths.every((path) => isResponsePathForEvidence(path, evidenceRow))
     ) {
       return { statusCode: 400, body: 'response evidence does not match this analysis job' };
-    }
-    if (queuedJob.kind === 'bureau_follow_up') {
-      if (evidenceRow.analysis_status !== 'analyzed' || !evidenceRow.analysis) {
-        return { statusCode: 400, body: 'bureau response must be analyzed before follow-up letter generation' };
-      }
     }
     evidence = evidenceRow;
     filesForAnalysis = evidencePaths.map((path) => ({ path }));
@@ -227,7 +225,7 @@ export const handler = async (event) => {
 
   try {
     const { data: letter, error: letterErr } = await db.from('letters').select('*').eq('id', job.letter_id).single();
-    if (letterErr || !letter) throw new Error('Could not find the Phase 1 letter for this job.');
+    if (letterErr || !letter) throw new Error('Could not find the saved CCC letter for this job.');
     const priorLetterText = priorLetterPlainText(letter.html, 16000);
     const priorDemands = extractDemandsFromLetterHtml(letter.html);
     const { data: loadedPacketCoverage, error: packetCoverageError } = Number(letter.packet_version || 1) === 2
@@ -258,51 +256,6 @@ export const handler = async (event) => {
         throw new Error(`The recorded response window remains open until ${due.toLocaleDateString('en-US')}.`);
       }
     }
-    let followUpRenderData = null;
-    const renderFollowUpLetter = async (draft) => {
-      if (!draft?.letterContent) throw new Error('Follow-up generation omitted its structured letter content.');
-      const bureau = draft.bureau || bureauFromPhase(letter.phase);
-      if (!bureau) throw new Error('Could not determine the bureau for follow-up rendering.');
-      if (!followUpRenderData) {
-        const [{ data: clientRow, error: clientRowError }, { data: auditRows, error: auditRowsError }] = await Promise.all([
-          db.from('clients').select('id,user_id,name,address,date_of_birth,lpoa_signature_data').eq('id', letter.client_id).maybeSingle(),
-          db.from('audits').select('audit').eq('user_id', letter.user_id).eq('client_id', letter.client_id).order('saved_at', { ascending: false }).limit(1),
-        ]);
-        if (clientRowError || auditRowsError) throw clientRowError || auditRowsError;
-        if (!clientRow || clientRow.user_id !== letter.user_id) throw new Error('The follow-up client could not be verified.');
-        const auditedAccount = auditRows?.[0]?.audit?.accounts?.find((item) => item.clientAccountId === letter.client_account_id) || {
-          furnisher: letter.furnisher,
-          accountNumberMasked: letter.account_id,
-        };
-        const signature = await loadCanonicalClientSignature(db, letter, clientRow);
-        const fmt = (value) => value
-          ? new Date(value).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-          : 'date on file';
-        followUpRenderData = {
-          client: clientRow,
-          account: auditedAccount,
-          signature,
-          enclosures: [
-            `Exhibit A: Prior Phase 3 CRA Dispute Letter (dated ${fmt(letter.date || letter.saved_at)})`,
-            `Exhibit B: ${bureau.charAt(0).toUpperCase() + bureau.slice(1)} Investigation Results (dated ${fmt(evidence?.received_at)})`,
-            'Exhibit C: Limited Power of Attorney',
-          ],
-        };
-      }
-      let rendered = renderStructuredLetter({
-        content: draft.letterContent,
-        client: followUpRenderData.client,
-        account: followUpRenderData.account,
-        letter: { ...letter, target_type: 'bureau', target_bureau: bureau },
-        enclosures: followUpRenderData.enclosures,
-      });
-      rendered = injectSignatureImage(rendered, followUpRenderData.signature.dataUrl, followUpRenderData.signature.printedName);
-      if (!hasInjectedSignature(rendered, followUpRenderData.signature.dataUrl)) {
-        throw new Error('The follow-up signature block could not be populated.');
-      }
-      return { ...draft, letterHtml: rendered };
-    };
-
     // Silence is evidence too. Persist an explicit nonresponse record so a
     // later round links the reviewed pair rather than inferring an absence.
     if (job.kind === 'non_response' && !evidence) {
@@ -327,9 +280,7 @@ export const handler = async (event) => {
       await db.from('phase2_jobs').update({ response_evidence_id: evidence.id }).eq('id', jobId);
     }
 
-    // Follow-up drafts reuse an already-analyzed evidence row. Do not flip
-    // analysis_status to running/error — that would clobber the prior review.
-    if (evidence && job.kind !== 'bureau_follow_up') {
+    if (evidence) {
       await db.from('response_evidence').update({
         analysis_status: 'running',
         updated_at: new Date().toISOString(),
@@ -340,7 +291,6 @@ export const handler = async (event) => {
     }
 
     let messages;
-    let authorizedFollowUpFindings = null;
     if (job.kind === 'non_response') {
       const mailedDate = mailedDateOverride || letter.mailed_date;
       const mailed = mailedDate
@@ -350,7 +300,7 @@ export const handler = async (event) => {
         role: 'user',
         content: [{
           type: 'text',
-          text: `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\nLetter mailed: ${mailed}\n\nPRIOR DIRECT DISPUTE LETTER (normalized text; no response was received within the recorded response window):\n${priorLetterText}\n\nClassify this as NON_RESPONSE and perform the same forensic demand-by-demand analysis. Do not call silence an automatic §1681s-2(b) violation; §1681s-2(b) attaches only after CRA notice under §1681i(a)(2). Analyze only. Do not draft a follow-up letter.`,
+          text: `Today: ${today()}\nClient: ${letter.client_name}\nFurnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\nLetter mailed: ${mailed}\n\nMAILED CCC DISPUTE LETTER (normalized text; no response was received within the recorded response window):\n${priorLetterText}\n\nClassify this as NON_RESPONSE and perform the same forensic demand-by-demand analysis. Do not call silence an automatic §1681s-2(b) violation; §1681s-2(b) attaches only after CRA notice under §1681i(a)(2). Analyze only. Do not draft a follow-up letter.`,
         }],
       }];
     } else {
@@ -379,60 +329,25 @@ export const handler = async (event) => {
       const pageNote = pageBlocks.length > 1
         ? ` — ${pageBlocks.length} pages/photos of the same response, attached in order. Read them as one continuous document.`
         : ' (attached document):';
-      if (job.kind === 'bureau_follow_up') {
-        const expectedBureau = bureauFromPhase(letter.phase);
-        if (!expectedBureau) throw new Error('Could not determine bureau from Phase 3 letter phase.');
-        const prior = evidence?.analysis || {};
-        const authorizedFindings = (prior.issueAnalysis || [])
-          .filter((item) => item && ['IGNORED', 'PARTIALLY_ADDRESSED', 'UNCLEAR'].includes(item.outcome))
-          .map((item) => ({
-            issueId: item.issueId || null,
-            issue: item.issue,
-            field: item.field || null,
-            outcome: item.outcome,
-            notes: item.notes,
-            ruleId: item.ruleId || null,
-            evidenceRefs: item.evidenceRefs || [],
-          }));
-        authorizedFollowUpFindings = authorizedFindings;
-        messages = [{
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `Today: ${today()}\nClient: ${letter.client_name}\nBureau target (must match output.bureau): ${expectedBureau}\nPhase label: ${letter.phase || ''}\nRelated furnisher: ${letter.furnisher}\nAccount: ${letter.account_id || ''}\n\nAUTHORIZED REVIEWED FINDINGS (JSON — the only issues the narrative may use):\n${JSON.stringify(authorizedFindings, null, 2)}\n\nEXHIBIT A — ORIGINAL PHASE 3 BUREAU DISPUTE LETTER (background and formatting evidence only; it does not authorize additional issues):\n${priorLetterText}\n\nEXHIBIT B — BUREAU RESPONSE${pageNote}`,
-            },
-            ...pageBlocks,
-            {
-              type: 'text',
-              text: `Draft the supplemental Phase 3 follow-up content for ${expectedBureau}. Output bureau must be "${expectedBureau}". Use every applicable AUTHORIZED REVIEWED FINDING above and no other factual issue. Do not create, remove, reclassify, prioritize, or correct a finding. If the authorized list is empty, do not invent a dispute issue. HARD RULES for letterContent: no "1681s-2(a)"; Johnson governs the furnisher's §1681s-2(b) investigation, not the CRA; Seamans is limited to supported dispute-status issues; Field 19 is Special Comment and Field 20 is Compliance Condition Code; Field 23 is Original Charge-off Amount and Field 27 is Date of Last Payment; Field 18 is a rolling 24-month profile; Status 97 may carry a balance/past due; balance equaling past due is not a violation by itself; post-closure C/O entries are not wrong solely because the account is closed; a returned payment date alone is not DOFD; do not state that a CRA must produce UDF/source documents or confirm transaction-level records reviewed — request only the §1681i(a)(6)(B)(iii)/(a)(7) procedure description. Return structured content only; the server owns formatting and enclosures.`,
-            },
-          ],
-        }];
-      } else {
-        const bureauResponse = job.kind === 'bureau_response';
-        messages = [{
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: bureauResponse
-                ? `Today: ${today()}\nExpected sender: ${letter.phase || ''}\n${packetSuffixes.length ? `Packet covered account suffixes: ${packetSuffixes.join(', ')}\nFor every account-related claim, copy the visible account suffix into accountSuffix. Never apply one account's statement to another.\n` : `Related account suffix: ${letter.account_id || ''}\n`}\nBUREAU RESPONSE DOCUMENT${pageNote}`
-                : `Today: ${today()}\nExpected sender: ${letter.furnisher}\n${packetSuffixes.length ? `Packet covered account suffixes: ${packetSuffixes.join(', ')}\nFor every account-related claim, copy the visible account suffix into accountSuffix. Never apply one account's statement to another.\n` : `Related account suffix: ${letter.account_id || ''}\n`}\nFURNISHER RESPONSE DOCUMENT${pageNote}`,
-            },
-            ...pageBlocks,
-            { type: 'text', text: 'Extract only the response statements and document-quality facts into the extraction schema. Do not compare them with Exhibit A and do not classify or evaluate the response.' },
-          ],
-        }];
-      }
+      const bureauResponse = job.kind === 'bureau_response';
+      messages = [{
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: bureauResponse
+              ? `Today: ${today()}\nExpected sender: ${letter.phase || ''}\n${packetSuffixes.length ? `Packet covered account suffixes: ${packetSuffixes.join(', ')}\nFor every account-related claim, copy the visible account suffix into accountSuffix. Never apply one account's statement to another.\n` : `Related account suffix: ${letter.account_id || ''}\n`}\nBUREAU RESPONSE DOCUMENT${pageNote}`
+              : `Today: ${today()}\nExpected sender: ${letter.furnisher}\n${packetSuffixes.length ? `Packet covered account suffixes: ${packetSuffixes.join(', ')}\nFor every account-related claim, copy the visible account suffix into accountSuffix. Never apply one account's statement to another.\n` : `Related account suffix: ${letter.account_id || ''}\n`}\nFURNISHER RESPONSE DOCUMENT${pageNote}`,
+          },
+          ...pageBlocks,
+          { type: 'text', text: 'Extract only the response statements and document-quality facts into the extraction schema. Do not draft correspondence. Deterministic code will classify the response.' },
+        ],
+      }];
     }
 
     const isBureauResponse = job.kind === 'bureau_response';
-    const isBureauFollowUp = job.kind === 'bureau_follow_up';
     await updateJob({
-      stage: isBureauFollowUp
-        ? 'Drafting bureau follow-up letter'
-        : (isBureauResponse ? 'Extracting bureau response evidence' : 'Extracting furnisher response evidence'),
+      stage: isBureauResponse ? 'Extracting bureau response evidence' : 'Extracting furnisher response evidence',
     }, true);
 
     // Response review remains detailed. Letter drafting now occurs only after
@@ -442,17 +357,17 @@ export const handler = async (event) => {
     const runModel = async (modelMessages, stageLabel) => {
       if (stageLabel) await updateJob({ stage: stageLabel }, true);
       modelAttempt += 1;
-      const effort = isBureauFollowUp ? 'medium' : 'high';
+      const effort = 'high';
       const params = {
         model: MODEL,
-        max_tokens: isBureauFollowUp ? 24000 : (isBureauResponse ? 12000 : 16000),
-        system: isBureauFollowUp ? BUREAU_FOLLOW_UP_SYSTEM : RESPONSE_EXTRACTION_SYSTEM,
+        max_tokens: isBureauResponse ? 12000 : 16000,
+        system: RESPONSE_EXTRACTION_SYSTEM,
         messages: modelMessages,
         output_config: {
           effort,
           format: {
             type: 'json_schema',
-            schema: isBureauFollowUp ? BUREAU_FOLLOW_UP_SCHEMA : RESPONSE_EXTRACTION_SCHEMA,
+            schema: RESPONSE_EXTRACTION_SCHEMA,
           },
         },
       };
@@ -484,7 +399,7 @@ export const handler = async (event) => {
       const usage = usageFromMessage(msg);
       await logClaudeCall(db, {
         userId: letter.user_id,
-        operation: isBureauFollowUp ? 'response.follow_up' : (isBureauResponse ? 'response.bureau_analysis' : 'response.furnisher_analysis'),
+        operation: isBureauResponse ? 'response.bureau_analysis' : 'response.furnisher_analysis',
         entityType: 'phase2_job',
         entityId: jobId,
         model: MODEL,
@@ -518,70 +433,10 @@ export const handler = async (event) => {
       const extracted = await runModel(messages);
       responseExtraction = extracted.parsed;
       u = extracted.usage;
-      if (isBureauFollowUp) {
-        analysis = await renderFollowUpLetter(extracted.parsed);
-      } else {
-        await updateJob({ stage: 'Applying deterministic response rules' }, true);
-        analysis = isBureauResponse
-          ? evaluateBureauResponse(priorDemands, extracted.parsed)
-          : evaluateFurnisherResponse(priorDemands, extracted.parsed);
-      }
-    }
-    const MAX_LINT_ATTEMPTS = 3;
-
-    const mergeUsage = (next) => {
-      u = {
-        input_tokens: (u.input_tokens || 0) + (next.input_tokens || 0),
-        output_tokens: (u.output_tokens || 0) + (next.output_tokens || 0),
-        cache_read_input_tokens: (u.cache_read_input_tokens || 0) + (next.cache_read_input_tokens || 0),
-        cache_creation_input_tokens: (u.cache_creation_input_tokens || 0) + (next.cache_creation_input_tokens || 0),
-      };
-    };
-
-    // Most Metro 2 field-citation mistakes are a transposed field NUMBER
-    // against a correctly-written label — mechanically correctable without
-    // spending another model call. Fix those before even checking whether a
-    // rebuild is needed, so a rebuild is only requested for what code
-    // couldn't confidently resolve on its own (invalid field numbers,
-    // substantive overclaims, enclosure-contract mistakes).
-    if (isBureauFollowUp && analysis?.letterHtml) {
-      analysis.letterHtml = normalizeFollowUpPresentation(
-        autoFixFieldCitations(analysis.letterHtml).html
-      );
-      // Up to 2 conversational rewrites (3 total attempts) — matches Phase 1.
-      for (let attempt = 1; attempt < MAX_LINT_ATTEMPTS; attempt++) {
-        const citationProblems = [
-          ...collectBureauFollowUpProblems(analysis.letterHtml),
-          ...unauthorizedFieldCitations(analysis.letterHtml, {
-            findings: (authorizedFollowUpFindings || []).map((item) => ({ ...item, field: item.field || item.issue, outcome: 'FLAG' })),
-          }),
-        ];
-        if (!citationProblems.length) break;
-        console.warn(`[phase2] bureau_follow_up production lint failed (attempt ${attempt}); requesting rewrite`, citationProblems);
-        const rewriteMessages = [
-          ...messages,
-          {
-            role: 'user',
-            content: [{
-              type: 'text',
-              text: `CRITICAL CORRECTION: The rendered draft failed production-safety lint. Return a complete corrected structured JSON object for this follow-up. Fix EVERY issue below in letterContent. Keep only supported focus issues. Do not mention that a correction was required.\n\nLINT FAILURES:\n- ${citationProblems.join('\n- ')}\n\nREMINDERS:\n- Never cite "1681s-2(a)"; use CRA duties under §1681i and describe the furnisher's separate §1681s-2(b) duty accurately.\n- Field 19 = Special Comment; Field 20 = Compliance Condition Code; Field 23 = Original Charge-off Amount; Field 27 = Date of Last Payment.\n- Status 97 may carry a balance/past due; equality of those figures is not a violation by itself.\n- Field 18 is rolling 24 months. Do not challenge C/O after closure solely because it follows closure.\n- A returned payment date alone is not DOFD.\n- Request the §1681i(a)(6)(B)(iii)/(a)(7) procedure description; do not claim a right to UDF/source documents or transaction-level-record review confirmation.\n- Do not use "Dear Sir or Madam" or "Sincerely".\n\nBAD RENDERED DRAFT (reference only; return structured content, not HTML):\n${priorLetterPlainText(analysis.letterHtml, 12000)}`,
-            }],
-          },
-        ];
-        const rebuilt = await runModel(rewriteMessages, `Rewriting follow-up to fix production lint (attempt ${attempt + 1})`);
-        analysis = await renderFollowUpLetter(rebuilt.parsed);
-        if (analysis?.letterHtml) {
-          analysis.letterHtml = normalizeFollowUpPresentation(
-            autoFixFieldCitations(analysis.letterHtml).html
-          );
-        }
-        mergeUsage(rebuilt.usage);
-      }
-    }
-
-    if (isBureauFollowUp) {
-      const expectedBureau = bureauFromPhase(letter.phase);
-      if (expectedBureau && analysis.bureau !== expectedBureau) analysis.bureau = expectedBureau;
+      await updateJob({ stage: 'Applying deterministic response rules' }, true);
+      analysis = isBureauResponse
+        ? evaluateBureauResponse(priorDemands, extracted.parsed)
+        : evaluateFurnisherResponse(priorDemands, extracted.parsed);
     }
 
     // Parse-confidence gate (2026-07-23 defect report, P0-1): if the model's
@@ -596,31 +451,11 @@ export const handler = async (event) => {
       blockIssues.push(...(dq.issues && dq.issues.length ? dq.issues : ['An enclosed document could not be reliably read.']));
     }
 
-    // Production-safety lint applies to the remaining legacy follow-up draft.
-    if (isBureauFollowUp) {
-      const html = analysis && analysis.letterHtml;
-      const bureau = (analysis && analysis.bureau) || bureauFromPhase(letter.phase) || 'bureau';
-      const productionProblems = [
-        ...collectBureauFollowUpProblems(html),
-        ...unauthorizedFieldCitations(html, {
-          findings: (authorizedFollowUpFindings || []).map((item) => ({ ...item, field: item.field || item.issue, outcome: 'FLAG' })),
-        }),
-      ];
-      for (const p of productionProblems) {
-        blockIssues.push(`The generated ${bureau} follow-up letter failed production-safety lint: ${p}`);
-      }
-    }
     const parseBlocked = blockIssues.length > 0;
     if (evidence) analysis.responseEvidenceId = evidence.id;
-    if (isBureauFollowUp) {
-      analysis.enclosure_parse_blocked = parseBlocked;
-      analysis.enclosure_parse_issues = blockIssues;
-      analysis.source_letter_id = letter.id;
-      analysis.source_evidence_id = evidence?.id || null;
-    }
 
     const analyzedAt = new Date().toISOString();
-    if (packetCoverage?.length && !isBureauFollowUp && evidence) {
+    if (packetCoverage?.length && evidence) {
       const assessmentRows = packetCoverage.map((coverage) => {
         const result = assessPacketAccount({
           letterHtml: letter.html,
@@ -653,15 +488,7 @@ export const handler = async (event) => {
         response_status: 'review_ready', updated_at: analyzedAt,
       }).eq('letter_id', letter.id);
     }
-    if (isBureauFollowUp) {
-      // Follow-up draft lives on the job result for the client to saveLetter.
-      // Do not overwrite the prior bureau-response analysis on evidence.
-      await db.from('letters').update({
-        bureau_next_action: 'bureau_follow_up',
-        bureau_review_status: 'follow_up',
-        bureau_response_status: 'reviewed',
-      }).eq('id', job.letter_id);
-    } else if (isBureauResponse) {
+    if (isBureauResponse) {
       // The full analysis stays private in response_evidence. The linked
       // letter gets only a safe lifecycle status used by staff/dashboard and
       // the client portal; no staff notes or raw model output leak to client.
@@ -677,9 +504,8 @@ export const handler = async (event) => {
         bureau_response_analyzed_at: analyzedAt,
       }).eq('id', job.letter_id);
     } else {
-      // Preserve the established Phase 2 contract for legacy UI and Phase 3
-      // generation, while also attaching the immutable evidence record when
-      // this analysis came through the new intake path.
+      // Preserve response evidence for staff review. New correspondence is
+      // selected later from the approved CCC template track.
       await db.from('letters').update({
         phase2_analysis: analysis, phase2_analyzed_at: analyzedAt,
         enclosure_parse_blocked: parseBlocked,
@@ -708,10 +534,10 @@ export const handler = async (event) => {
     console.error('phase2-analyze failed:', e);
     await logClaudeCall(db, {
       userId: caller.userId, operation: 'response.pipeline', entityType: 'phase2_job', entityId: jobId,
-      model: MODEL, effort: job.kind === 'bureau_follow_up' ? 'medium' : 'high', promptVersion: 'phase2-v2',
+      model: MODEL, effort: 'high', promptVersion: 'phase2-v2',
       status: 'error', startedAt: new Date(), errorType: e.name, errorMessage: e.message,
     });
-    if (evidence && job.kind !== 'bureau_follow_up') {
+    if (evidence) {
       await db.from('response_evidence').update({
         analysis_status: 'error',
         updated_at: new Date().toISOString(),

@@ -17,3 +17,5 @@ e2e-runner.local.mjs
 e2e-individual-retest.local.mjs
 .claude/settings.local.json
 repomix-output.xml
+output/
+tmp/

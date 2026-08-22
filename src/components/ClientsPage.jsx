@@ -3,16 +3,9 @@ import { Toaster, toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, FileText, Mail, UserPlus, ChevronRight, RefreshCw, Star, Zap, X, Send, MoreHorizontal, Search, Pencil } from 'lucide-react';
 import { listClientSummaries, getClientDetails, findClientIdByLegacyReference, deleteClient, updateLetter, deleteLetter, toggleVip, updateClientEmail, createLead, convertLeadToClient, revertClientToLead, deleteLead, runProgressDiff, updateLeadInfo, updateLeadStage, markLeadViewed } from '../utils/storage';
-import { getReturnReceiptUrl } from '../utils/api';
-import { getSettings } from '../utils/settings';
-import { getTierPricing, describeTierFee, resolveClientFeeText, hasCustomServiceAgreement } from '../utils/pricing';
-import { autoFixFieldCitations, collectBureauFollowUpProblems, collectPhase3CitationProblems, normalizeFollowUpPresentation } from '../constants/metro2Fields';
-import { isPhase3FollowUpLetter } from '../utils/followUpEnclosures';
-import { hasInjectedSignature, injectSignatureImage } from '../utils/signatureInjection';
 import { supabase } from '../utils/supabase';
 import { affiliateLabel } from '../utils/affiliate';
 import { archiveHistoricalMailpiece, getMailArtifactUrl, listMailArtifacts } from '../utils/mailArtifacts';
-import { resolveLpoaViewUrl } from '../utils/storagePaths';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
 import { extendLetterDeadline } from '../utils/rounds.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
@@ -22,13 +15,11 @@ import {
   hasMailedContentWarning,
   hasMailedDeliveryEvidence,
   letterGenerationState,
-  letterSignatureState,
 } from '../utils/letterGeneration.js';
+import { isCccDisputePhase } from '../utils/cccMailRules.js';
 import ResponseAnalyzer from './ResponseAnalyzer';
 import BureauResponseReview from './BureauResponseReview';
 import BureauResponseAnalyzer from './BureauResponseAnalyzer';
-import BureauFollowUpPanel from './BureauFollowUpPanel';
-import EscalationPanel from './EscalationPanel';
 import DocumentManager from './DocumentManager';
 import ClientProfilePanel from './ClientProfilePanel';
 import ClientBillingPanel from './ClientBillingPanel';
@@ -110,12 +101,12 @@ function hoursBetween(aIso, bIso) {
 }
 
 function letterStatus(l) {
+  if (!isCccDisputePhase(l?.phase) && !hasMailedDeliveryEvidence(l)) {
+    return { code: 'legacy_read_only', label: 'Historical draft · read only', tone: 'neutral' };
+  }
   const generation = letterGenerationState(l);
   if (generation === 'failed' && !hasMailedContentWarning(l)) return { code: 'generation_failed', label: 'Generation failed', tone: 'red' };
   if (generation === 'generating') return { code: 'generating', label: 'Generating', tone: 'neutral' };
-  if (letterSignatureState(l) !== 'embedded' && !hasMailedDeliveryEvidence(l)) {
-    return { code: 'signature_required', label: 'Signature required', tone: 'red' };
-  }
   const status = responseWindowStatus(l);
   if (status.code === 'received') return { ...status, label: 'Response received' + (l.responseDate ? ' · ' + fmt(l.responseDate) : ''), tone: 'green' };
   if (status.code === 'no_response') return { ...status, label: 'No response confirmed', tone: 'red' };
@@ -124,6 +115,10 @@ function letterStatus(l) {
   if (status.code === 'in_transit') return { ...status, label: 'In Transit', tone: 'neutral' };
   if (status.code === 'awaiting' || status.code === 'due_soon') return { ...status, code: 'awaiting', remaining: status.daysRemaining, label: 'Awaiting · ' + status.daysRemaining + 'd left', tone: 'amber' };
   return { ...status, code: 'window_closed', label: 'Window elapsed · review required', tone: 'red' };
+}
+
+function currentCccLetters(client) {
+  return (client?.letters || []).filter((letter) => isCccDisputePhase(letter?.phase));
 }
 
 function importDueInfo(c) {
@@ -142,7 +137,8 @@ function importDueInfo(c) {
 
 function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
   if (!filter) return true;
-  const openLetters = (c.letters || []).filter((l) => l.roundId ? isOpenRoundLetter(c, l) : !l.phase?.startsWith('Phase 3'));
+  const currentLetters = currentCccLetters(c);
+  const openLetters = currentLetters.filter((letter) => !letter.roundId || isOpenRoundLetter(c, letter));
   const lifecycle = c.billingStatus || 'Active';
   switch (filter) {
     case 'open_rounds':
@@ -154,20 +150,17 @@ function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
       return openLetters.some((l) => letterStatus(l).code === 'awaiting');
     case 'escalate':
       return (c.rounds || []).some((round) => round.status === 'closed' && round.final_disposition === 'escalate')
-        || (c.letters || []).some((letter) => !letter.roundId && letter.bureauNextAction === 'escalation');
+        || currentLetters.some((letter) => !letter.roundId && letter.bureauNextAction === 'escalation');
     case 'ready':
       return openLetters.some((l) => letterStatus(l).code === 'received' && (!l.roundId || isPendingRoundReview(c, l)));
     case 'phase3':
-      return (c.letters || []).some((l) => l.targetType === 'bureau' || l.phase?.startsWith('Phase 3'));
+      return currentLetters.some((letter) => letter.targetType === 'bureau');
     case 'phase4':
       return (c.rounds || []).some((round) => round.status === 'closed' && round.final_disposition === 'escalate')
-        || (c.letters || []).some((letter) => !letter.roundId && letter.bureauNextAction === 'escalation');
+        || currentLetters.some((letter) => !letter.roundId && letter.bureauNextAction === 'escalation');
     case 'received':
-      return openLetters.some((l) => {
-        if (l.responseOutcome !== 'received') return false;
-        if (l.roundId) return isPendingRoundReview(c, l);
-        return !(c.letters || []).some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
-      });
+      return openLetters.some((letter) => letter.responseOutcome === 'received'
+        && (!letter.roundId || isPendingRoundReview(c, letter)));
     case 'attention':
       return (
         openLetters.some((letter) => ['window_closed', 'no_response'].includes(letterStatus(letter).code) && (!letter.roundId || isPendingRoundReview(c, letter))) ||
@@ -179,9 +172,9 @@ function clientMatchesFilter(c, filter, unanalyzedNames, unanalyzedClientIds) {
       );
     case 'completed':
       return lifecycle === 'Graduated' || (
-        (c.letters || []).length > 0 &&
+        currentLetters.length > 0 &&
         openLetters.length === 0 &&
-        (c.letters || []).every((l) => !!l.responseOutcome || (l.phase || '').startsWith('Phase 3'))
+        currentLetters.every((letter) => !!letter.responseOutcome)
       );
     case 'noemail':
       return !c.email;
@@ -210,38 +203,6 @@ const FILTER_LABELS = {
   unanalyzed: 'Needs Analysis',
 };
 
-function ReturnReceiptButton({ lobId, returnReceiptUrl }) {
-  const [loading, setLoading] = useState(false);
-
-  async function handleDownload() {
-    if (returnReceiptUrl) {
-      window.open(returnReceiptUrl, '_blank');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const url = await getReturnReceiptUrl(lobId);
-      if (url) {
-        window.open(url, '_blank');
-      } else {
-        toast('USPS has not uploaded the signed receipt yet. This typically takes 24-48 hours after delivery. Please check back later.', { icon: '📬' });
-      }
-    } catch (e) {
-      toast.error(e.message || 'Failed to fetch return receipt');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <button onClick={handleDownload} disabled={loading}
-      className="text-[10px] uppercase tracking-wider text-navy hover:text-gold ml-2 disabled:opacity-50 transition-colors">
-      {loading ? 'Fetching...' : 'Signed Receipt ↓'}
-    </button>
-  );
-}
-
 function StatusBadge({ label, tone }) {
   const map = { neutral: 'bg-gray-100 text-gray-600', amber: 'bg-amber-50 text-amber-700', green: 'bg-green-50 text-green-700', red: 'bg-red-50 text-red-700' };
   return <span className={'inline-block text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-sm ' + (map[tone] || map.neutral)}>{label}</span>;
@@ -249,7 +210,9 @@ function StatusBadge({ label, tone }) {
 
 // One pill per client — only the most urgent state, so rows stay scannable
 function primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
-  const clientUploaded = c.letters.some(l => l.responseOutcome === 'received' && (l.responseFileUrl || l.hasResponseFile));
+  const currentLetters = currentCccLetters(c);
+  const clientUploaded = currentLetters.some((letter) => letter.responseOutcome === 'received'
+    && (letter.responseFileUrl || letter.hasResponseFile));
   if (clientUploaded) return { label: 'Response Uploaded', tone: 'green' };
 
   if (ripe > 0) return { label: ripe + ' need review', tone: 'red' };
@@ -263,7 +226,7 @@ function primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
   
   if (importDue) return importDue;
   
-  if (c.letters.length === 0) return { label: 'No letters yet', tone: 'neutral' };
+  if (currentLetters.length === 0) return { label: 'Ready to start at R1', tone: 'neutral' };
   return { label: 'On track', tone: 'green' };
 }
 
@@ -290,7 +253,8 @@ function clientRosterStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
     ? `Round ${roundNumbers[0]}`
     : roundNumbers.length > 1 ? `Rounds ${roundNumbers[0]}–${roundNumbers[roundNumbers.length - 1]}` : null;
   const prefix = roundLabel ? `Active · ${roundLabel} · ` : 'Active · ';
-  const openLetters = (c.letters || []).filter((letter) => !letter.roundId || isOpenRoundLetter(c, letter));
+  const currentLetters = currentCccLetters(c);
+  const openLetters = currentLetters.filter((letter) => !letter.roundId || isOpenRoundLetter(c, letter));
   const unmailed = openLetters.filter((letter) => letterStatus(letter).code === 'not_mailed').length;
 
   if (ripe > 0 || needsPhase3 > 0) return { label: `${prefix}Response review`, tone: ripe > 0 ? 'red' : 'amber' };
@@ -298,7 +262,7 @@ function clientRosterStatus(c, { ripe, needsPhase3, awaiting, inTransit }) {
   if (awaiting > 0) return { label: `${prefix}Awaiting response`, tone: 'neutral' };
   if (inTransit > 0) return { label: `${prefix}In transit`, tone: 'neutral' };
   if (openRounds.length > 0) return { label: `${prefix}In progress`, tone: 'neutral' };
-  if (c.letters.length === 0) return { label: 'Active · Ready for audit', tone: 'neutral' };
+  if (currentLetters.length === 0) return { label: 'Active · Ready to start at R1', tone: 'neutral' };
   return { label: 'Active · On track', tone: 'green' };
 }
 
@@ -391,26 +355,23 @@ function ArchiveMailpieceButton({ letter, onArchived }) {
   </button>;
 }
 
-function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, onAnalyzeBureau, onLobMail, onOpenAccount, onEdit, onEscalate, onReviewBureau }) {
+function LetterRow({ l, isAdmin, isVip, onView, onChange, onAnalyze, onAnalyzeBureau, onLobMail, onOpenAccount, onEdit, onReviewBureau }) {
   const [mode, setMode] = useState(null);
   const [dateVal, setDateVal] = useState(todayISO());
   const status = letterStatus(l);
   const generation = letterGenerationState(l);
   const mailedContentWarning = hasMailedContentWarning(l);
   const mailEvidence = hasMailedDeliveryEvidence(l);
-  const signatureState = generation === 'ready' ? letterSignatureState(l) : null;
-  const signatureRequired = !!signatureState && signatureState !== 'embedded' && !mailEvidence;
-  const historicalSignatureWarning = !!signatureState && signatureState !== 'embedded' && mailEvidence;
   const mailReady = canMailLetter(l);
   const archivedMailpiece = (l.mailArtifacts || []).find((artifact) => artifact.artifact_type === 'mailpiece_pdf');
-  const isPhase3 = l.targetType === 'bureau' || (l.phase && l.phase.startsWith('Phase 3'));
-  const isCccDispute = String(l.phase || '').startsWith('CCC Dispute —');
-  // Phase 3's own escalation-readiness uses the 45-day CRA clock, not the
-  // 30-day one — same reasoning as DashboardPage.jsx's identical gate.
-  const status3 = isPhase3 ? letterStatus(l) : null;
+  const isBureauLetter = l.targetType === 'bureau'
+    || l.target_type === 'bureau'
+    || (l.phase && l.phase.startsWith('Phase 3'));
+  const isCccDispute = isCccDisputePhase(l.phase);
+  const isLegacy = !isCccDispute;
+  const bureauStatus = isBureauLetter ? letterStatus(l) : null;
 
   const urgency = (() => {
-    if (hasPhase3) return null;
     if (l.responseOutcome !== 'received' || !l.responseDate) return null;
     const deadline = isVip ? VIP_RESPONSE_DAYS : STD_RESPONSE_DAYS;
     const hoursLeft = (deadline * 24) - hoursBetween(l.responseDate, new Date().toISOString());
@@ -451,12 +412,13 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     }
   };
 
-  const canAnalyze = !isPhase3 && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response');
-  const needsBureauReview = isPhase3 && status3 && (status3.code === 'received' || status3.code === 'window_closed' || status3.code === 'no_response');
+  const canAnalyze = !isBureauLetter && (status.code === 'received' || status.code === 'window_closed' || status.code === 'no_response');
+  const needsBureauReview = isBureauLetter && bureauStatus && (bureauStatus.code === 'received' || bureauStatus.code === 'window_closed' || bureauStatus.code === 'no_response');
 
   // One visible action per letter; the rest live in the ⋯ menu
   const primaryAction = (() => {
-    if (!mailReady && !mailedContentWarning && !historicalSignatureWarning) return null;
+    if (isLegacy) return null;
+    if (!mailReady && !mailedContentWarning) return null;
     if (!l.mailedDate) return mailReady ? (
       <button onClick={() => onLobMail(l)}
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md border transition-colors shrink-0"
@@ -472,10 +434,10 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
       </button>
     );
     if (needsBureauReview) return (
-      <button onClick={() => status3.code === 'received' ? onAnalyzeBureau(l) : onReviewBureau(l)}
+      <button onClick={() => bureauStatus.code === 'received' ? onAnalyzeBureau(l) : onReviewBureau(l)}
         className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded-md shrink-0"
         style={{ backgroundColor: l.bureauReviewStatus === 'escalated' ? '#6B7280' : T.navy, color: '#fff' }}>
-        <Zap size={10} strokeWidth={2} /> {status3.code === 'received' ? (l.bureauResponseStatus === 'review_ready' ? 'View analysis' : 'Analyze response') : (l.bureauReviewStatus === 'escalated' ? 'View decision' : 'Review response')}
+        <Zap size={10} strokeWidth={2} /> {bureauStatus.code === 'received' ? (l.bureauResponseStatus === 'review_ready' ? 'View analysis' : 'Analyze response') : (l.bureauReviewStatus === 'escalated' ? 'View decision' : 'Review response')}
       </button>
     );
     if (l.mailedDate && !l.responseOutcome) return (
@@ -489,29 +451,27 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
   })();
 
   const menuItems = [
-    (mailReady || mailedContentWarning || signatureRequired || historicalSignatureWarning) && {
-      label: mailReady ? 'View letter' : 'View stored letter',
+    (generation === 'ready' || mailedContentWarning || !!l.html) && {
+      label: isLegacy ? 'View historical letter' : mailReady ? 'View letter' : 'View stored letter',
       onClick: () => onView(l),
     },
-    mailReady && onEdit && { label: 'Edit letter', onClick: () => onEdit(l) },
+    !isLegacy && mailReady && !mailEvidence && onEdit && { label: 'Edit letter', onClick: () => onEdit(l) },
     { label: 'Account history', onClick: () => onOpenAccount(l) },
     'divider',
-    mailReady && !l.mailedDate && !l.lobId && { label: 'Mark as mailed…', onClick: () => { setDateVal(todayISO()); setMode('mailing'); } },
-    l.mailedDate && !l.lobId && { label: 'Clear mail date', onClick: () => save({ mailedDate: null }) },
+    !isLegacy && mailReady && !l.mailedDate && !l.lobId && { label: 'Mark as mailed…', onClick: () => { setDateVal(todayISO()); setMode('mailing'); } },
+    !isLegacy && l.mailedDate && !l.lobId && { label: 'Clear mail date', onClick: () => save({ mailedDate: null }) },
     l.mailedDate && l.lobId && {
       label: 'Resend requires reviewed revision',
       title: 'A mailed letter is immutable evidence. Generate or save a reviewed revision before mailing again.',
       onClick: () => toast('This mailing remains immutable evidence. Make a reviewed revision of the letter before sending another copy.', { icon: 'ℹ️' }),
     },
-    l.mailedDate && !l.responseOutcome && { label: 'Log response…', onClick: () => { setDateVal(todayISO()); setMode('responding'); } },
-    l.mailedDate && !l.responseOutcome && { label: 'Mark no response', onClick: () => save({ responseOutcome: 'no_response' }) },
-    l.roundId && l.deliveredAt && !l.responseOutcome && !l.responseWindowExtensionDays && { label: 'Extend response window +15 days…', onClick: handleExtendDeadline },
-    isPhase3 && l.responseOutcome === 'received' && { label: 'Analyze bureau response…', onClick: () => onAnalyzeBureau(l) },
-    isPhase3 && l.responseOutcome && { label: 'Review bureau response…', onClick: () => onReviewBureau(l) },
-    isPhase3 && !l.roundId && needsBureauReview && { label: 'Prepare CFPB / State AG escalation…', onClick: () => onEscalate(l) },
-    l.roundId && l.roundNextAction === 'escalate' && { label: 'Open approved CFPB / State AG escalation…', onClick: () => onEscalate(l) },
-    l.mailedDate && { label: 'Edit mail date…', onClick: () => { setDateVal(l.mailedDate); setMode('mailing'); } },
-    l.responseOutcome && { label: 'Reset response', onClick: () => save({ responseOutcome: null, responseDate: null }) },
+    !isLegacy && l.mailedDate && !l.responseOutcome && { label: 'Log response…', onClick: () => { setDateVal(todayISO()); setMode('responding'); } },
+    !isLegacy && l.mailedDate && !l.responseOutcome && { label: 'Mark no response', onClick: () => save({ responseOutcome: 'no_response' }) },
+    !isLegacy && l.roundId && l.deliveredAt && !l.responseOutcome && !l.responseWindowExtensionDays && { label: 'Extend response window +15 days…', onClick: handleExtendDeadline },
+    !isLegacy && isBureauLetter && l.responseOutcome === 'received' && { label: 'Analyze bureau response…', onClick: () => onAnalyzeBureau(l) },
+    !isLegacy && isBureauLetter && l.responseOutcome && { label: 'Review bureau response…', onClick: () => onReviewBureau(l) },
+    !isLegacy && l.mailedDate && { label: 'Edit mail date…', onClick: () => { setDateVal(l.mailedDate); setMode('mailing'); } },
+    !isLegacy && l.responseOutcome && { label: 'Reset response', onClick: () => save({ responseOutcome: null, responseDate: null }) },
     'divider',
     (l.mailArtifacts || []).some((a) => a.artifact_type === 'mailpiece_pdf') && {
       label: 'Exact Lob PDF',
@@ -526,7 +486,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
         }
       },
     },
-    l.lobId && !(l.mailArtifacts || []).some((a) => a.artifact_type === 'mailpiece_pdf') && {
+    !isLegacy && l.lobId && !(l.mailArtifacts || []).some((a) => a.artifact_type === 'mailpiece_pdf') && {
       label: 'Archive Lob PDF…',
       onClick: async () => {
         try {
@@ -540,24 +500,12 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
         }
       },
     },
-    l.trackingStatus === 'Delivered' && l.lobId && l.mailService !== 'usps_first_class' && {
-      label: 'Signed receipt…',
-      onClick: async () => {
-        if (l.returnReceiptUrl) {
-          window.open(l.returnReceiptUrl, '_blank');
-          return;
-        }
-        try {
-          const url = await getReturnReceiptUrl(l.lobId);
-          if (url) window.open(url, '_blank');
-          else toast('USPS has not uploaded the signed receipt yet. This typically takes 24-48 hours after delivery.', { icon: '📬' });
-        } catch (e) {
-          toast.error(e.message || 'Failed to fetch return receipt');
-        }
-      },
-    },
     'divider',
-    l.campaignRouteId
+    isLegacy
+      ? { label: 'Historical record · read only', disabled: true, title: 'Legacy correspondence is preserved as immutable evidence.' }
+      : mailEvidence
+      ? { label: 'Mailed evidence · read only', disabled: true, title: 'Mailed correspondence is immutable evidence.' }
+      : l.campaignRouteId
       ? { label: 'Managed in Campaign workspace', disabled: true, title: 'Campaign letters must be retried or managed from the client campaign so route history stays intact.' }
       : { label: 'Delete letter…', danger: true, onClick: handleDelete },
   ];
@@ -573,7 +521,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
     <div className="py-2.5 border-b last:border-b-0" style={{ borderColor: T.grid }}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="text-[12px] min-w-0" style={{ color: T.ink }}>
-          <span className={isPhase3 ? 'font-medium' : ''} style={{ color: isPhase3 ? '#8F7524' : T.ink }}>{l.phase || 'Letter'}</span>
+          <span className={isBureauLetter ? 'font-medium' : ''} style={{ color: isBureauLetter ? '#8F7524' : T.ink }}>{l.phase || 'Letter'}</span>
           {metaBits.length > 0 && (
             <span className="text-ink-muted"> · {metaBits.join(' · ')}</span>
           )}
@@ -587,9 +535,8 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
         </div>
         <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
           <MailStageRail letter={l} />
+          {isLegacy && <StatusBadge label="Historical · read only" tone="neutral" />}
           {mailedContentWarning && <StatusBadge label="Content warning" tone="amber" />}
-          {signatureRequired && <StatusBadge label="Signature required" tone="red" />}
-          {historicalSignatureWarning && <StatusBadge label="Historical preview" tone="amber" />}
           {urgency && <StatusBadge label={urgency.label} tone={urgency.tone} />}
           {primaryAction}
           <Menu items={menuItems} />
@@ -608,28 +555,7 @@ function LetterRow({ l, isAdmin, isVip, hasPhase3, onView, onChange, onAnalyze, 
               : <ArchiveMailpieceButton letter={l} onArchived={onChange} />}
           </span>
         </div>
-      ) : signatureRequired ? (
-        <div className="mt-2 text-[10px] rounded-lg px-3 py-2" style={{ color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA' }}>
-          <strong>Signature required · mailing blocked.</strong>{' '}
-          {signatureState === 'missing'
-            ? 'No client signature is stored in this letter. Wait for the signed LPOA/signature capture, then regenerate or save a reviewed draft with the canonical signature embedded.'
-            : signatureState === 'remote'
-              ? 'This draft uses a remote or expiring signature URL. Rebuild it with the canonical signature embedded before mailing.'
-              : 'The embedded signature is invalid. Rebuild it from the canonical signature before mailing.'}
-        </div>
-      ) : historicalSignatureWarning ? (
-        <div className="mt-2 text-[10px] rounded-lg px-3 py-2 flex items-center justify-between gap-3 flex-wrap" style={{ color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A' }}>
-          <span className="leading-relaxed">
-            <strong>Historical signature preview unavailable.</strong>{' '}
-            This already-mailed record uses a retired or expiring image link in its stored HTML. Do not rewrite the evidence record; use the exact Lob PDF to verify what was mailed.
-          </span>
-          <span className="shrink-0">
-            {archivedMailpiece
-              ? <MailpieceLink artifact={archivedMailpiece} />
-              : <ArchiveMailpieceButton letter={l} onArchived={onChange} />}
-          </span>
-        </div>
-      ) : generation !== 'ready' && (
+      ) : !isLegacy && generation !== 'ready' && (
         <div className="mt-2 text-[10px] rounded-lg px-3 py-2" style={{ color: generation === 'failed' ? '#B91C1C' : T.muted, background: generation === 'failed' ? '#FEF2F2' : '#F3F4F6', border: `1px solid ${generation === 'failed' ? '#FECACA' : T.border}` }}>
           {generation === 'failed' ? `${generationErrorMessage(l)} ${l.campaignRouteId ? 'Retry this route from the Campaign tab.' : 'Open this account round to retry only the failed draft.'}` : 'Claude is still generating this letter. Mailing remains blocked until the final draft is saved.'}
         </div>
@@ -736,8 +662,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
   const [analyzingLetter, setAnalyzingLetter] = useState(null);
   const [analyzingBureauLetter, setAnalyzingBureauLetter] = useState(null); // { letter, client }
   const [reviewingBureauLetter, setReviewingBureauLetter] = useState(null); // { letter, client }
-  const [followUpBureauLetter, setFollowUpBureauLetter] = useState(null); // { letter, client, evidence }
-  const [escalatingLetter, setEscalatingLetter] = useState(null); // { letter, client }
   const [lobMailerQueue, setLobMailerQueue] = useState([]);
   const [togglingVip, setTogglingVip] = useState(null);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
@@ -806,7 +730,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
     const requested = (Array.isArray(letters) ? letters : [letters]).filter(Boolean);
     const ready = requested.filter(canMailLetter);
     if (ready.length !== requested.length) {
-      toast.error('One or more letters are still generating or failed generation. Nothing invalid was added to the mail queue.');
+      const includesLegacy = requested.some((letter) => !isCccDisputePhase(letter?.phase));
+      toast.error(includesLegacy
+        ? 'Historical letters are read-only and cannot be added to a new mail queue.'
+        : 'One or more CCC letters are incomplete or not configured for First-Class Mail. Nothing invalid was added to the queue.');
     }
     if (ready.length) setLobMailerQueue(ready);
   };
@@ -980,7 +907,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
 
   const openLetter = (letter) => {
-    if (letterGenerationState(letter) !== 'ready') {
+    const isLegacy = !isCccDisputePhase(letter?.phase);
+    if (!isLegacy && letterGenerationState(letter) !== 'ready') {
       toast.error(letterGenerationState(letter) === 'generating'
         ? 'This letter is still generating.'
         : `This letter failed generation: ${generationErrorMessage(letter)}`);
@@ -1001,7 +929,10 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       const detail = await getClientDetails(clientId);
       const audit = detail.audits.find((record) => record.id === auditId);
       if (!audit?.audit) throw new Error('The full audit record is unavailable.');
-      onOpenAudit(audit.clientId ? { ...audit.audit, client: { ...audit.audit.client, id: audit.clientId } } : audit.audit);
+      const exactAudit = { ...audit.audit, id: audit.id, auditId: audit.id };
+      onOpenAudit(audit.clientId
+        ? { ...exactAudit, client: { ...exactAudit.client, id: audit.clientId } }
+        : exactAudit);
     } catch (e) {
       toast.error('Could not open this audit: ' + (e.message || e));
     }
@@ -1028,57 +959,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       toast.error('Could not update VIP status: ' + (e.message || e));
     } finally {
       setTogglingVip(null);
-    }
-  };
-
-  // For clients with no email/portal account — e.g. Swiftedly referrals,
-  // where staff don't run the normal LPOA + portal signup flow — this is
-  // the only path to a signature. Every client row has a sign_token
-  // (clients migration 20260725), so the link is always ready; nothing to
-  // generate on demand. 'inquiry' swaps the Fee Structure section for
-  // personal-info/inquiry-only removal clients (flat per-bureau rate, no
-  // First Work Fee/monthly service) — see public/sign-lpoa.html.
-  const copySignatureLink = async (c, lpoaType = 'standard') => {
-    try {
-      // Summary rows deliberately omit signing tokens. Fetching one selected
-      // record on demand keeps the board payload free of reusable tokens.
-      const detail = c.signToken ? c : await getClientDetails(c.id);
-      if (!detail.signToken) { toast.error('No signing token on this client yet — refresh and try again.'); return; }
-
-      const settings = await getSettings();
-      // Custom service agreement always wins — including over the legacy
-      // inquiry menu item — so the signed LPOA matches Billing.
-      let feeParam = '';
-      let typeParam = '';
-      if (hasCustomServiceAgreement(detail)) {
-        const feeText = resolveClientFeeText(detail, settings, { lpoaType: 'standard' });
-        feeParam = '&feeText=' + encodeURIComponent(feeText);
-      } else if (lpoaType === 'inquiry') {
-        typeParam = '&type=inquiry';
-      } else {
-        const tierPricing = getTierPricing(settings);
-        const feeText = describeTierFee(detail.billingTier || 'Standard', tierPricing);
-        feeParam = '&feeText=' + encodeURIComponent(feeText);
-      }
-
-      const url = window.location.origin + '/sign-lpoa.html?client=' + encodeURIComponent(detail.name) + '&token=' + detail.signToken
-        + typeParam + feeParam;
-
-      await navigator.clipboard.writeText(url);
-      toast.success('Signature link copied');
-    } catch (e) {
-      toast.error('Could not load the signature link: ' + (e.message || e));
-    }
-  };
-
-  const viewSignedLpoa = async (c) => {
-    try {
-      const detail = c.lpoaSignatureData ? c : await getClientDetails(c.id);
-      const url = await resolveLpoaViewUrl(supabase, detail.lpoaSignatureData);
-      if (!url) { toast.error('No signed LPOA is available for this client.'); return; }
-      window.open(url, '_blank');
-    } catch (e) {
-      toast.error('Could not load the signed LPOA: ' + (e.message || e));
     }
   };
 
@@ -1132,28 +1012,24 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
       );
     }
     const c = selectedClient;
-    
-    const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || isPendingRoundReview(c, l))).length;
-    const activeStatusLetters = c.letters.filter((l) => !l.roundId || isOpenRoundLetter(c, l));
+
+    const currentLetters = currentCccLetters(c);
+    const ripe = currentLetters.filter((letter) => letterStatus(letter).code === 'window_closed'
+      && (!letter.roundId || isPendingRoundReview(c, letter))).length;
+    const activeStatusLetters = currentLetters.filter((letter) => !letter.roundId || isOpenRoundLetter(c, letter));
     const awaiting = activeStatusLetters.filter((l) => letterStatus(l).code === 'awaiting').length;
     const inTransit = activeStatusLetters.filter((l) => letterStatus(l).code === 'in_transit').length;
-    const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
-      ? isPendingRoundReview(c, l)
-      : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;
+    const needsPhase3 = activeStatusLetters.filter((letter) => letter.responseOutcome === 'received'
+      && (!letter.roundId || isPendingRoundReview(c, letter))).length;
     const auditors = isAdmin ? [...new Set([
       ...c.audits.map((a) => a.auditorName),
       ...c.letters.map((l) => l.auditorName),
     ].filter(Boolean))] : [];
     const primary = primaryClientStatus(c, { ripe, needsPhase3, awaiting, inTransit });
-    const hasLpoa = !!(c.lpoaSignatureData && (c.lpoaSignatureData.lpoaPath || c.lpoaSignatureData.lpoaUrl));
-    
+
     const clientMenu = [
       { label: 'Email client…', onClick: () => setEmailingClient(c) },
       { label: 'Edit email', onClick: () => { setEditingEmail(c.id); setEmailVal(c.email || ''); } },
-      'divider',
-      { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
-      { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
-      c.lpoaSigned && hasLpoa && { label: 'View signed LPOA', onClick: () => viewSignedLpoa(c) },
       'divider',
       {
         label: 'Revert to lead…', onClick: async () => {
@@ -1200,10 +1076,8 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
     const renderLetter = (l) => (
       <LetterRow key={l.id} l={l} isAdmin={isAdmin} isVip={c.isVip}
-        hasPhase3={c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)))}
         onView={openLetter} onChange={refreshSelectedClient} onAnalyze={setAnalyzingLetter} onLobMail={(letter) => queueLettersForMail([letter])}
         onEdit={(letter) => setEditingLetterHtml(letter)} onOpenAccount={openAccount}
-        onEscalate={(letter) => setEscalatingLetter({ letter, client: c })}
         onAnalyzeBureau={(letter) => setAnalyzingBureauLetter({ letter, client: c })}
         onReviewBureau={(letter) => setReviewingBureauLetter({ letter, client: c })} />
     );
@@ -1317,7 +1191,7 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         )}
 
         {currentTab === 'Billing' && (
-          <ClientBillingPanel client={c} onChanged={refreshSelectedClient} />
+          <ClientBillingPanel client={c} onChanged={refreshSelectedClient} isAdmin={isAdmin} />
         )}
 
         {currentTab === 'Documents' && (
@@ -1329,7 +1203,9 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
           return (
             <LobMailer
               letter={currentLetter}
-              furnisherAddress={currentLetter ? ((currentLetter.targetType === 'bureau' || (currentLetter.phase && (currentLetter.phase.startsWith('Phase 3') || currentLetter.phase.startsWith('CCC Dispute —')))) ? parseBureauAddress(currentLetter.targetBureau || currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+              furnisherAddress={currentLetter ? ((currentLetter.targetType === 'bureau' || currentLetter.target_type === 'bureau')
+                ? parseBureauAddress(currentLetter.targetBureau || currentLetter.target_bureau || currentLetter.phase)
+                : parseFurnisherAddress(currentLetter.furnisher)) : null}
               batchRemaining={lobMailerQueue.length - 1}
               onNext={() => setLobMailerQueue(prev => prev.slice(1))}
               onClose={() => setLobMailerQueue([])}
@@ -1373,38 +1249,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             letter={reviewingBureauLetter.letter}
             evidence={reviewingBureauLetter.evidence || null}
             onClose={() => setReviewingBureauLetter(null)}
-            onSaved={refreshSelectedClient}
-            onEscalate={() => {
-              const next = reviewingBureauLetter;
-              setReviewingBureauLetter(null);
-              setEscalatingLetter(next);
-            }}
-            onFollowUp={(evidence) => {
-              const next = reviewingBureauLetter;
-              setReviewingBureauLetter(null);
-              setFollowUpBureauLetter({ ...next, evidence: evidence || next.evidence || null });
-            }}
-          />
-        )}
-        {followUpBureauLetter && (
-          <BureauFollowUpPanel
-            letter={followUpBureauLetter.letter}
-            client={followUpBureauLetter.client}
-            evidence={followUpBureauLetter.evidence || null}
-            onClose={() => {
-              // Refresh only after closing. Refreshing on save temporarily
-              // removes selectedClient, unmounting/remounting this panel and
-              // causing its mount effect to launch another paid model job.
-              setFollowUpBureauLetter(null);
-              refreshSelectedClient();
-            }}
-          />
-        )}
-        {escalatingLetter && (
-          <EscalationPanel
-            letter={escalatingLetter.letter}
-            client={escalatingLetter.client}
-            onClose={() => setEscalatingLetter(null)}
             onSaved={refreshSelectedClient}
           />
         )}
@@ -1634,13 +1478,14 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
       <div className="space-y-3">
         {viewTab === 'clients' && filteredClients.map((c) => {
-          const ripe = c.letters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || isPendingRoundReview(c, l))).length;
-          const activeStatusLetters = c.letters.filter((l) => !l.roundId || isOpenRoundLetter(c, l));
+          const currentLetters = currentCccLetters(c);
+          const ripe = currentLetters.filter((letter) => letterStatus(letter).code === 'window_closed'
+            && (!letter.roundId || isPendingRoundReview(c, letter))).length;
+          const activeStatusLetters = currentLetters.filter((letter) => !letter.roundId || isOpenRoundLetter(c, letter));
           const awaiting = activeStatusLetters.filter((l) => letterStatus(l).code === 'awaiting').length;
           const inTransit = activeStatusLetters.filter((l) => letterStatus(l).code === 'in_transit').length;
-          const needsPhase3 = c.letters.filter((l) => l.responseOutcome === 'received' && (l.roundId
-            ? isPendingRoundReview(c, l)
-            : !l.phase?.startsWith('Phase 3') && !c.letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher))))).length;
+          const needsPhase3 = activeStatusLetters.filter((letter) => letter.responseOutcome === 'received'
+            && (!letter.roundId || isPendingRoundReview(c, letter))).length;
           const auditors = isAdmin ? [...new Set([
             ...c.audits.map((a) => a.auditorName),
             ...c.letters.map((l) => l.auditorName),
@@ -1651,10 +1496,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
             { label: 'Email client…', onClick: () => setEmailingClient(c) },
             { label: togglingVip === c.id ? 'Updating…' : (c.isVip ? 'Remove VIP status' : 'Set as VIP'), onClick: () => handleVipToggle(c.name, c.isVip, c.id), disabled: togglingVip === c.id },
             { label: 'Edit email', onClick: () => { setEditingEmail(c.id); setEmailVal(c.email || ''); } },
-            'divider',
-            { label: 'Copy Signature Link (Standard)', onClick: () => copySignatureLink(c, 'standard') },
-      { label: 'Copy Signature Link (Inquiry/Info Only)', onClick: () => copySignatureLink(c, 'inquiry') },
-            c.lpoaSigned && { label: 'View signed LPOA', onClick: () => viewSignedLpoa(c) },
             'divider',
             {
               label: 'Revert to lead…', onClick: async () => {
@@ -1686,9 +1527,6 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
                   <div className="flex items-center gap-1.5">
                     <span className="ccc-display text-[14px] font-medium truncate" style={{ color: T.ink }}>{c.name}</span>
                     {c.isVip && <Star size={12} strokeWidth={2} fill={T.gold} style={{ color: T.gold, flexShrink: 0 }} title="VIP client" />}
-                    {c.lpoaSigned && (
-                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-px rounded-sm bg-green-50 text-green-700 shrink-0" title="LPOA signed">✓ LPOA</span>
-                    )}
                   </div>
                   <div className="text-[11px] truncate" style={{ color: T.muted }}>
                     {c.email || <span className="text-amber-600">No email</span>}
@@ -1745,7 +1583,9 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
         return (
           <LobMailer
             letter={currentLetter}
-            furnisherAddress={currentLetter ? ((currentLetter.targetType === 'bureau' || (currentLetter.phase && (currentLetter.phase.startsWith('Phase 3') || currentLetter.phase.startsWith('CCC Dispute —')))) ? parseBureauAddress(currentLetter.targetBureau || currentLetter.phase) : (['Personal Info Cleanup', 'Inquiry Removal', 'Personal Info & Inquiries'].includes(currentLetter.phase) ? parseBureauAddress(currentLetter.furnisher) : parseFurnisherAddress(currentLetter.furnisher))) : null}
+            furnisherAddress={currentLetter ? ((currentLetter.targetType === 'bureau' || currentLetter.target_type === 'bureau')
+              ? parseBureauAddress(currentLetter.targetBureau || currentLetter.target_bureau || currentLetter.phase)
+              : parseFurnisherAddress(currentLetter.furnisher)) : null}
             batchRemaining={lobMailerQueue.length - 1}
             onNext={() => setLobMailerQueue(prev => prev.slice(1))}
             onClose={() => setLobMailerQueue([])}
@@ -2379,21 +2219,23 @@ function DiffResultModal({ result, onClose, onOpenAudit }) {
     (fa) => fa.furnisher === a.furnisher && fa.accountNumberMasked === a.accountNumberMasked
   ) || null;
 
-  // Safety net for the shortcut below: match by furnisher name only (the
-  // one identifier every mailed Phase 1 letter and every diffed account
-  // both reliably carry) against any already-mailed, non-Phase-3 letter.
+  // Safety net for the shortcut below: match by furnisher name against any
+  // already-mailed current-method correspondence. Historical phase rows are
+  // evidence only and must not decide a new campaign route.
   // Not perfectly precise if a client has two distinct accounts with the
   // same furnisher, but the point is to stop an accidental re-send, not to
   // silently allow one on a technicality.
   const normFurnisher = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const alreadyDisputed = (furnisher) => {
     const target = normFurnisher(furnisher);
-    return (letters || []).some((l) => l.mailedDate && !l.phase?.startsWith('Phase 3') && normFurnisher(l.furnisher) === target);
+    return (letters || []).some((letter) => isCccDisputePhase(letter?.phase)
+      && letter.mailedDate
+      && normFurnisher(letter.furnisher) === target);
   };
 
-  // Reuses the existing, unmodified letter-generation flow exactly as if
-  // the account were opened normally from this audit's own results page —
-  // just skips the navigation. Never touches how a letter is generated.
+  // Return to the current audit/campaign route. Letter selection and review
+  // stay inside the CCC template workflow; this comparison never drafts or
+  // mails correspondence itself.
   const disputeAccount = (a) => {
     const full = findFullAccount(a);
     if (!full || !newerAudit || !onOpenAudit) return;
@@ -2550,39 +2392,20 @@ function LetterEditModal({ letter, onClose, onSaved }) {
   const editorRef = React.useRef(null);
 
   if (!letter) return null;
+  const isCurrentCccLetter = isCccDisputePhase(letter.phase);
+  const isImmutable = hasMailedDeliveryEvidence(letter);
 
   const handleSave = async () => {
+    if (!isCurrentCccLetter || isImmutable) {
+      toast.error(!isCurrentCccLetter
+        ? 'Historical letters are read-only. Start new correspondence in the CCC dispute campaign.'
+        : 'This mailed letter is immutable evidence. Create a reviewed revision before making changes.');
+      return;
+    }
     setSaving(true);
     try {
-      let html = editorRef.current?.innerHTML || '';
-      if (String(letter.phase || '').startsWith('Phase 3')) {
-        html = autoFixFieldCitations(html).html;
-        if (isPhase3FollowUpLetter(letter)) html = normalizeFollowUpPresentation(html);
-        const problems = isPhase3FollowUpLetter(letter)
-          ? collectBureauFollowUpProblems(html)
-          : collectPhase3CitationProblems(html);
-        if (problems.length) {
-          throw new Error('Phase 3 safety check failed: ' + problems.join(' '));
-        }
-      }
-
-      if (isPhase3FollowUpLetter(letter)) {
-        if (!letter.clientId) throw new Error('Client identity is missing; signature injection was blocked.');
-        const [{ data: profiles, error: profileError }, { data: clients, error: clientError }] = await Promise.all([
-          supabase.from('client_profiles').select('signature_data').eq('client_id', letter.clientId).limit(1),
-          supabase.from('clients').select('lpoa_signature_data,name').eq('id', letter.clientId).limit(1),
-        ]);
-        if (profileError) throw profileError;
-        if (clientError) throw clientError;
-        const signatureUrl = profiles?.[0]?.signature_data || clients?.[0]?.lpoa_signature_data?.signatureUrl;
-        const clientName = clients?.[0]?.name || letter.clientName;
-        if (!signatureUrl) throw new Error('The client has no stored signature.');
-        const signedHtml = injectSignatureImage(html, signatureUrl, clientName);
-        if (signedHtml === html && !hasInjectedSignature(html, signatureUrl)) {
-          throw new Error('The signature block could not be located.');
-        }
-        html = signedHtml;
-      }
+      const html = editorRef.current?.innerHTML || '';
+      if (!html.trim()) throw new Error('The reviewed CCC letter cannot be empty.');
       await updateLetter(letter.id, { html });
       if (onSaved) await onSaved();
       onClose();
@@ -2605,17 +2428,28 @@ function LetterEditModal({ letter, onClose, onSaved }) {
           </div>
           <div className="flex items-center gap-3">
             <button onClick={onClose} className="text-[11px] uppercase tracking-wider font-semibold text-ink-muted hover:text-ink px-3 py-2 transition-colors">Cancel</button>
-            <button onClick={handleSave} disabled={saving}
-              className="text-[11px] uppercase tracking-wider font-bold text-white bg-navy hover:bg-slate-800 transition-colors px-5 py-2 rounded shadow-sm disabled:opacity-50 flex items-center gap-2">
-              {saving ? 'Saving…' : 'Finalize & Save'}
-            </button>
+            {isCurrentCccLetter && !isImmutable && (
+              <button onClick={handleSave} disabled={saving}
+                className="text-[11px] uppercase tracking-wider font-bold text-white bg-navy hover:bg-slate-800 transition-colors px-5 py-2 rounded shadow-sm disabled:opacity-50 flex items-center gap-2">
+                {saving ? 'Saving…' : 'Save reviewed letter'}
+              </button>
+            )}
           </div>
         </div>
-        
+
+        {(!isCurrentCccLetter || isImmutable) && (
+          <div className="mx-8 mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] leading-relaxed text-amber-900">
+            <strong>Read-only evidence.</strong>{' '}
+            {!isCurrentCccLetter
+              ? 'This letter belongs to a retired workflow. It can be reviewed, but it cannot be edited, regenerated, finalized, or mailed again.'
+              : 'This CCC letter has mailing evidence and cannot be overwritten. Create a reviewed revision for any new correspondence.'}
+          </div>
+        )}
+
         <div className="p-8 flex-1 overflow-y-auto bg-gray-100 flex justify-center">
           <div
             ref={editorRef}
-            contentEditable
+            contentEditable={isCurrentCccLetter && !isImmutable}
             suppressContentEditableWarning
             dangerouslySetInnerHTML={{ __html: letter.html || '' }}
             className="bg-white w-[8.5in] min-h-[11in] shadow-xl p-[1in] focus:outline-none"
@@ -2624,7 +2458,7 @@ function LetterEditModal({ letter, onClose, onSaved }) {
               fontSize: "10pt",
               lineHeight: "1.5",
               color: "#000",
-              cursor: "text"
+              cursor: isCurrentCccLetter && !isImmutable ? 'text' : 'default',
             }}
           />
         </div>

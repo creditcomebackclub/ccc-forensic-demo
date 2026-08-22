@@ -1,38 +1,70 @@
 /**
- * Serves the client's signed LPOA / service agreement HTML with a real
- * Content-Type: text/html so the browser renders it as a document.
- *
- * WHY THIS EXISTS: Supabase Storage refuses to serve stored HTML inline. Even
- * when the object's stored mimetype is correctly "text/html", a request to
- * /storage/v1/object/sign/... comes back as:
- *     content-type: text/plain
- *     x-content-type-options: nosniff
- * which makes the browser display the raw markup instead of the document.
- * That is a deliberate stored-XSS defense on the *.supabase.co origin, so no
- * amount of re-uploading with the right content-type can change it (two
- * earlier attempts to do exactly that shipped and failed). The blueprint PDF
- * is unaffected because PDFs are not an XSS vector and are served as stored.
- *
- * So the bytes are proxied through this function instead, which is free to
- * declare the correct type on its own origin.
- *
- * This is a GET so window.open() can reach it, which means auth rides in a
- * short-lived HMAC token rather than an Authorization header. The token is
- * minted by portal-agreement-url.cjs only for an authenticated client, expires
- * in 120s, and is bound to both the user and the object path. On top of that
- * this handler re-resolves which document the token's user actually owns and
- * refuses to serve anything else, so a tampered or replayed token cannot reach
- * another client's file.
+ * Token-authenticated proxy for signed enrollment artifacts. HTML is rendered
+ * under a locked-down sandbox; PDFs are returned as real binary (base64 in the
+ * Netlify response envelope). Every request re-resolves portal ownership and
+ * compares the signed agreement/kind/path/hash descriptor before storage read.
  */
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { verifyAgreementViewToken } = require('./_agreementViewToken.cjs');
-const { resolveAgreementDocument } = require('./_agreementDocument.cjs');
+const { isAgreementArtifactKind, resolveAgreementDocument } = require('./_agreementDocument.cjs');
 
 function text(statusCode, body) {
   return {
     statusCode,
     headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
     body,
+  };
+}
+
+function decodeArtifactDescriptor(value) {
+  try {
+    const descriptor = JSON.parse(Buffer.from(String(value || ''), 'base64url').toString('utf8'));
+    if (!descriptor || typeof descriptor !== 'object') return null;
+    if (!descriptor.agreementId || !isAgreementArtifactKind(descriptor.kind) || !descriptor.path) return null;
+    if (descriptor.path.startsWith('/') || descriptor.path.includes('..')) return null;
+    if (descriptor.hash !== null && descriptor.hash !== undefined && !/^[0-9a-f]{64}$/.test(descriptor.hash)) return null;
+    return { agreementId: String(descriptor.agreementId), kind: descriptor.kind, path: descriptor.path, hash: descriptor.hash || null };
+  } catch {
+    return null;
+  }
+}
+
+function sameArtifact(document, claims, descriptor) {
+  return document.bucket === claims.bucket
+    && document.agreementId === descriptor.agreementId
+    && document.kind === descriptor.kind
+    && document.path === descriptor.path
+    && (document.hash || null) === descriptor.hash;
+}
+
+function artifactResponse(document, bytes) {
+  const commonHeaders = {
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Content-Disposition': `inline; filename="${document.fileName.replace(/[^A-Za-z0-9._-]/g, '-')}"`,
+  };
+  if (document.kind === 'cancellation') {
+    if (bytes.length < 5 || bytes.subarray(0, 5).toString('ascii') !== '%PDF-') {
+      return text(409, 'The cancellation notice is not a valid PDF. Contact Credit Comeback Club.');
+    }
+    return {
+      statusCode: 200,
+      headers: { ...commonHeaders, 'Content-Type': 'application/pdf' },
+      body: bytes.toString('base64'),
+      isBase64Encoded: true,
+    };
+  }
+
+  return {
+    statusCode: 200,
+    headers: {
+      ...commonHeaders,
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    },
+    body: bytes.toString('utf8'),
   };
 }
 
@@ -44,43 +76,35 @@ exports.handler = async (event) => {
   if (!url || !service) return text(500, 'Server is not configured.');
 
   const claims = verifyAgreementViewToken(event.queryStringParameters?.token, service);
-  if (!claims) return text(403, 'This agreement link is invalid or has expired. Please reopen it from your portal.');
+  const descriptor = claims ? decodeArtifactDescriptor(claims.path) : null;
+  if (!claims || !descriptor) return text(403, 'This document link is invalid or has expired. Please reopen it from your portal.');
 
   const admin = createClient(url, service, { auth: { persistSession: false, autoRefreshToken: false } });
-
-  // Re-resolve from the user in the token rather than trusting the path in it.
-  const { document } = await resolveAgreementDocument(admin, claims.userId);
-  if (!document) return text(404, 'No signed agreement file is on file yet.');
-  if (document.bucket !== claims.bucket || document.path !== claims.path) {
-    return text(403, 'This agreement link is no longer valid. Please reopen it from your portal.');
+  let resolved;
+  try { resolved = await resolveAgreementDocument(admin, claims.userId, descriptor.kind); }
+  catch (error) {
+    console.error('portal-agreement-view resolve failed', error);
+    return text(500, 'Could not verify this signed document.');
+  }
+  if (!resolved.document) return text(404, 'No signed document is on file yet.');
+  if (!sameArtifact(resolved.document, claims, descriptor)) {
+    return text(403, 'This document link is no longer valid. Please reopen it from your portal.');
   }
 
-  const { data: blob, error } = await admin.storage.from(document.bucket).download(document.path);
-  if (error || !blob) return text(404, 'Could not load your signed agreement.');
+  const { data: blob, error } = await admin.storage.from(resolved.document.bucket).download(resolved.document.path);
+  if (error || !blob) return text(404, 'Could not load your signed document.');
+  const bytes = Buffer.from(await blob.arrayBuffer());
+  if (resolved.document.hash) {
+    const actualHash = crypto.createHash('sha256').update(bytes).digest('hex');
+    if (actualHash !== resolved.document.hash) {
+      console.error('portal-agreement-view integrity mismatch', resolved.document.agreementId, resolved.document.kind);
+      return text(409, 'This document failed its integrity check. Contact Credit Comeback Club.');
+    }
+  }
 
-  const html = Buffer.from(await blob.arrayBuffer()).toString('utf8');
-
-  return {
-    statusCode: 200,
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-      'Referrer-Policy': 'no-referrer',
-      // Serving this on our own origin gives up the isolation Supabase was
-      // enforcing, so lock the document down instead: the LPOA only ever needs
-      // inline CSS and a base64 signature image, never script or network access.
-      //
-      // `sandbox` (with no allow-* tokens) drops the document into an opaque
-      // origin, so even a bypass of the directives above cannot reach the
-      // portal's own localStorage/session on this domain. It is the same
-      // pairing Supabase Storage itself applies to HTML objects. Scripting is
-      // already dead via default-src 'none'; this is the second lock, and it
-      // matters because the stored LPOA historically interpolated a
-      // client-supplied name without escaping.
-      'Content-Security-Policy':
-        "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-    },
-    body: html,
-  };
+  return artifactResponse(resolved.document, bytes);
 };
+
+module.exports.decodeArtifactDescriptor = decodeArtifactDescriptor;
+module.exports.sameArtifact = sameArtifact;
+module.exports.artifactResponse = artifactResponse;

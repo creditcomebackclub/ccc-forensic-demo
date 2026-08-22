@@ -1,4 +1,5 @@
 import { lastFour, nameSimilarity, normalizeFurnisher } from './diffEngine.js';
+import { deriveAccountRoutingFacts, reportCoverageFacts } from './disputeRoutingFacts.js';
 
 // Bureaus routinely truncate or reformat the same furnisher's name
 // differently (e.g. Equifax "JEFFERSON CAPITAL LL" vs Experian "JEFFERSON
@@ -22,9 +23,10 @@ import {
   validateScheduledPayment,
 } from '../constants/metro2Fields.js';
 
-// Additive schema: v2 fields remain; v3 adds priorityScore, evidenceQuality,
-// adjudication defaults, citationDebt, and challengeStatement helpers.
-export const DETERMINISTIC_AUDIT_SCHEMA_VERSION = 'deterministic-audit-v3';
+// Additive schema: v2/v3 fields remain; v4 adds evidence-backed routing facts
+// and exact three-bureau coverage. These are the only automatic facts allowed
+// to authorize a CCC R1 classification.
+export const DETERMINISTIC_AUDIT_SCHEMA_VERSION = 'deterministic-audit-v4';
 
 /** Single source of truth for report freshness (days). Used by timingChecks
  *  and by campaignBlueprint.auditFreshness when callers do not override. */
@@ -398,11 +400,23 @@ export function coerceBureauExtraction(report, forcedBureau = null) {
       const unreadableFields = extractedFields.size
         ? [...extractedFields.values()].filter((field) => field?.state === 'UNREADABLE').map((field) => field.name)
         : (Array.isArray(a.unreadableFields) ? a.unreadableFields : []);
-      const evidence = extractedFields.size
+      const structuredEvidence = extractedFields.size
         ? [...extractedFields.values()].filter((field) => field?.state === 'PRESENT' || field?.state === 'EXPLICITLY_BLANK').map((field) => ({
           field: field.name, rawValue: field.rawValue, page: field.page, label: field.label,
         }))
-        : (Array.isArray(a.evidence) ? a.evidence : []);
+        : [];
+      // Preserve page-anchored non-Field observations supplied by older or
+      // future extractors (for example a source-reported type label). Routing
+      // still requires the individual observation to carry a finite page.
+      const legacyEvidence = Array.isArray(a.evidence) ? a.evidence : [];
+      const evidence = [...structuredEvidence];
+      for (const item of legacyEvidence) {
+        if (!evidence.some((entry) => entry.field === (item?.field || item?.name)
+          && Number(entry.page) === Number(item?.page)
+          && String(entry.rawValue ?? '') === String(item?.rawValue ?? ''))) {
+          evidence.push(item);
+        }
+      }
       return {
       furnisher: clean(a.furnisher) || 'Unknown Furnisher',
       furnisherAddress: clean(a.furnisherAddress),
@@ -775,6 +789,7 @@ function mergePersonalInfo(reports) {
 export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) {
   const reports = (rawReports || []).map((report) => coerceBureauExtraction(report));
   if (!reports.length) throw new Error('No extracted bureau data was available for deterministic evaluation.');
+  const reportCoverage = reportCoverageFacts(reports);
   const grouped = new Map();
   reports.forEach((report) => {
     const baseKeys = report.accounts.map((account, index) => accountKey(account, index, report.bureau));
@@ -800,11 +815,11 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
         for (const [existingKey, existing] of grouped.entries()) {
           if (existing.last4 !== four) continue;
           if (existing.variants[report.bureau]) continue; // this bureau already has its own account in that group
-          const { score, nameSim } = scoreCrossBureauSignals(account, existing);
-          // Backward-compatible floor: strong name match alone still counts
-          // as one signal; require multiSignalMin total supporting signals.
-          const effective = score >= MATCH_THRESHOLDS.multiSignalMin
-            || (nameSim >= MATCH_THRESHOLDS.name && score >= 1);
+          const { score } = scoreCrossBureauSignals(account, existing);
+          // A similar furnisher name is only one signal. Never collapse two
+          // tradelines unless the last-four anchor has at least two
+          // independent supporting signals.
+          const effective = score >= MATCH_THRESHOLDS.multiSignalMin;
           if (effective && score > bestScore) {
             bestScore = score;
             bestKey = existingKey;
@@ -827,16 +842,27 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
     });
   });
 
+  const last4GroupCounts = new Map();
+  for (const group of grouped.values()) {
+    if (!group.last4) continue;
+    last4GroupCounts.set(group.last4, (last4GroupCounts.get(group.last4) || 0) + 1);
+  }
+  const ambiguousLast4s = new Set(
+    [...last4GroupCounts.entries()].filter(([, count]) => count > 1).map(([suffix]) => suffix)
+  );
+
   const accounts = [];
   for (const [key, group] of grouped.entries()) {
     const variants = group.variants;
     const representative = Object.values(variants)[0];
     const findings = [...crossBureauFindings(variants), ...perVariantFindings(variants)];
-    if (key.includes('::unresolved::') || key.includes('::ambiguous::')) {
+    if (key.includes('::unresolved::') || key.includes('::ambiguous::') || ambiguousLast4s.has(group.last4)) {
       findings.unshift(finding('ACCOUNT_MATCH_AMBIGUOUS', {
         outcome: 'REVIEW_REQUIRED',
         field: 'Account identity',
-        issue: 'This account has no stable masked-account suffix, so it was not matched to another bureau record.',
+        issue: ambiguousLast4s.has(group.last4)
+          ? `More than one unresolved tradeline shares masked-account suffix ${group.last4}; staff must confirm the exact account identities.`
+          : 'This account has no stable masked-account suffix, so it was not matched to another bureau record.',
         currentlyReports: Object.keys(variants).map((b) => BUREAU_CODES[b]).join(', '),
         shouldReport: 'Staff must resolve account identity before any cross-bureau comparison',
         source: 'Deterministic account-matching safety rule',
@@ -893,6 +919,11 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
       },
       authorizedFindingIds: authorizedFindingsList.map((entry) => entry.ruleId),
     };
+    accountRecord.routingFacts = deriveAccountRoutingFacts({ variants, findings, coverage: reportCoverage });
+    accountRecord.accountKind = accountRecord.routingFacts.accountKind;
+    accountRecord.latePaymentCount = accountRecord.routingFacts.latePaymentCount;
+    accountRecord.latePaymentBand = accountRecord.routingFacts.latePaymentBand;
+    accountRecord.latePaymentByBureau = accountRecord.routingFacts.bureauFacts;
     accountRecord.priorityScore = computePriorityScore(accountRecord);
     accounts.push(accountRecord);
   }
@@ -936,6 +967,8 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
     accountsTargeted: accounts.filter((a) => a.violations.length).length,
     totalViolations,
     citationDebt,
+    reportCoverage,
+    classificationReview: null,
     accounts,
     inquiries,
     personalInfo: mergePersonalInfo(reports),

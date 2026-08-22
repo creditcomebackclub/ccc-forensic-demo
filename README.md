@@ -34,12 +34,12 @@ React + Vite frontend
         +-- Netlify Functions: privileged workflows, AI jobs, mailing,
         |                       LPOA, intake, notifications, cron
         |
-        +-- Anthropic API: audits, letters, response analysis,
-        |                   progress narratives, escalations
+        +-- Anthropic API: audits, staff-directed drafting, response analysis,
+        |                   progress narratives, public prospect chat
         |
         +-- Lob: letter fulfillment, tracking, webhooks
         |
-        +-- Optional concierge service: Python service in /agents
+        +-- Render concierge service: authenticated portal route in /agents
 ```
 
 The browser uses the Supabase anon key only. Privileged serverless functions use the Supabase service-role key and AI/mailing keys, which must remain server-side.
@@ -89,7 +89,7 @@ Client-side variables:
 ```bash
 VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
-VITE_AGENTS_API_URL=  # optional; concierge-agent service URL
+VITE_AGENTS_API_URL=  # required for the client-portal concierge
 ```
 
 Server-only variables:
@@ -109,6 +109,10 @@ CALENDLY_ACCESS_TOKEN= # production Functions scope only
 ```
 
 Never expose `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, Calendly, Resend, or Lob keys in client code or public build variables. In particular, remove any legacy `VITE_LOB_*` variables from Netlify and local environment files: only browser-safe values may use the `VITE_` prefix.
+
+Render concierge configuration and its required release order are documented in
+[`agents/README.md`](agents/README.md). Public prospect chat remains an isolated
+Netlify Function and never reads client or portal data.
 
 ## Database and security
 
@@ -147,7 +151,7 @@ Netlify is configured in `netlify.toml`:
 - Build command: `npm run build`
 - Publish directory: `dist`
 - Functions directory: `netlify/functions`
-- Node version: 20
+- Node version: 22
 
 The public homepage is served from `public/home.html`; authenticated app routes fall back to the React application.
 

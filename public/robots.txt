@@ -1,2 +1,15 @@
 User-agent: *
-Disallow: /
+Allow: /
+Disallow: /.netlify/
+Disallow: /api/
+Disallow: /login
+Disallow: /join
+Disallow: /affiliate/
+Disallow: /widget
+Disallow: /new-site-preview
+Disallow: /site-preview/
+Disallow: /site-live/index.html
+Disallow: /success
+Disallow: /sign-
+
+Sitemap: https://creditcomebackclub.com/sitemap.xml

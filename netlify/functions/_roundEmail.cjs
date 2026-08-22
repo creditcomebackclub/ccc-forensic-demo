@@ -3,22 +3,24 @@ const crypto = require('node:crypto');
 const ws = require('ws');
 const { escapeHtml, sendEmail, wrapClientEmail } = require('./_email.cjs');
 
+const RETIRED_TEMPLATE_COPY = /\bcertified(?:\s+mail)?\b|\bmonitor (?:each )?delivery\b|\bresponse window\b|\bdirect-furnisher\b|\bfirst step in your campaign\b|\bMetro\s*2\b|\bLPOA\b/i;
+
 const EVENT_COPY = {
   file_cleanup_mailed: {
-    subject: () => 'Your credit-file cleanup is underway',
-    body: ({ firstName, round, letters }) => `Hi ${firstName},\n\nYour personal-information and inquiry cleanup letters have been mailed by certified mail (${letters.length} ${letters.length === 1 ? 'letter' : 'letters'}). This is the first step in your campaign.\n\nOur team will now prepare Round ${round.round_number} of your account disputes. We will monitor delivery and the response window for the cleanup letters while that work continues.\n\nYou do not need to take action unless a response arrives at your home. If one does, please upload every page through your portal.`,
+    subject: () => 'Your credit-file update mailing has been recorded',
+    body: ({ firstName, letters }) => `Hi ${firstName},\n\nYour personal-information or inquiry correspondence has been mailed by USPS First-Class Mail (${letters.length} ${letters.length === 1 ? 'letter' : 'letters'}). CCC recorded the send date separately from your account-specific dispute paths.\n\nFirst-Class Mail does not include delivery confirmation or a signed receipt. If a response or updated report arrives, please upload every page through your portal so the team can document what happened.`,
   },
   next_round_prepared: {
     subject: ({ round }) => `Round ${round.round_number} is prepared for review`,
-    body: ({ firstName, round }) => `Hi ${firstName},\n\nWe prepared Round ${round.round_number} of your dispute campaign. Our team will review the letters and mailing packet before anything is sent.\n\nYou do not need to take action right now.`,
+    body: ({ firstName, round }) => `Hi ${firstName},\n\nWe prepared the letter set for Round ${round.round_number} from the saved account paths in your campaign. Our team will review the personalized facts, required personal statement when applicable, and packet enclosures before anything is sent.\n\nYou do not need to take action right now.`,
   },
   round_mailed: {
     subject: ({ round }) => `Round ${round.round_number} has been mailed`,
-    body: ({ firstName, round, letters }) => `Hi ${firstName},\n\nEvery letter in Round ${round.round_number} has now been mailed by certified mail (${letters.length} ${letters.length === 1 ? 'letter' : 'letters'}). We will monitor delivery and the response window.\n\nIf a response arrives at your home, please upload every page in your portal.`,
+    body: ({ firstName, round, letters }) => `Hi ${firstName},\n\nEvery letter in Round ${round.round_number} has now been mailed by USPS First-Class Mail (${letters.length} ${letters.length === 1 ? 'letter' : 'letters'}). CCC recorded the send date for each letter. First-Class Mail does not include delivery confirmation or a signed receipt.\n\nIf a response or updated report arrives, please upload every page in your portal. The team will record the documented outcome before selecting any next step.`,
   },
   first_response_received: {
     subject: ({ round }) => `We received a response for Round ${round.round_number}`,
-    body: ({ firstName, round }) => `Hi ${firstName},\n\nA response connected to Round ${round.round_number} has been received. Our forensic review will compare it with the exact disputes and evidence in that round before we decide what happens next.\n\nNo action is needed unless we ask for a specific document.`,
+    body: ({ firstName, round }) => `Hi ${firstName},\n\nA response connected to Round ${round.round_number} has been received. Our staff review will compare it with the exact correspondence and evidence in that round before any outcome or next step is recorded.\n\nNo action is needed unless we ask for a specific document.`,
   },
   documents_needed: {
     subject: ({ round }) => `Documents needed for Round ${round.round_number}`,
@@ -65,6 +67,11 @@ function renderTemplate(value, context) {
     if (!Object.prototype.hasOwnProperty.call(fields, normalized)) throw new Error(`Unknown client email merge field: ${normalized}`);
     return fields[normalized];
   });
+}
+
+function isCurrentMethodEmailTemplate(template) {
+  if (!template) return false;
+  return !RETIRED_TEMPLATE_COPY.test(`${template.subject_template || ''}\n${template.body_template || ''}`);
 }
 
 // A client campaign may open one account-level dispute_round per route.  The
@@ -135,7 +142,14 @@ async function sendMilestoneEmail({ db, context, eventType, eventKey, roundId = 
   const { data: templates, error: templateError } = await db.from('client_email_templates').select('id,event_type,subject_template,body_template')
     .eq('user_id', context.round.user_id).eq('is_active', true).in('event_type', templateEvents);
   if (templateError) throw new Error('Could not load the client email template: ' + templateError.message);
-  const template = (templates || []).find((item) => item.event_type === templateEvent) || (templates || []).find((item) => item.event_type === eventType) || null;
+  // Older installations may still have active seeded templates that describe
+  // certified delivery and the retired phase workflow. Never let those rows
+  // override the current First-Class Mail event copy. User-authored templates
+  // remain eligible when they do not contain a retired-method marker.
+  const compatibleTemplates = (templates || []).filter(isCurrentMethodEmailTemplate);
+  const template = compatibleTemplates.find((item) => item.event_type === templateEvent)
+    || compatibleTemplates.find((item) => item.event_type === eventType)
+    || null;
   const subject = template ? renderTemplate(template.subject_template, context) : copy.subject(vars);
   const bodyText = template ? renderTemplate(template.body_template, context) : copy.body(vars);
   const bodyHtml = plainTextHtml(bodyText, 'Campaign Update');
@@ -314,4 +328,4 @@ async function sendQueuedClientEmails(limit = 25) {
   return { processed: rows.length, sent };
 }
 
-module.exports = { EVENT_COPY, plainTextHtml, preparedEventKey, roundEventKey, campaignReadyForPreparedEmail, campaignReadyForMailedEmail, campaignCleanupReadyForEmail, queueRoundEvent, queueCampaignCleanupMailed, sendCustomClientEmail, sendQueuedClientEmails };
+module.exports = { EVENT_COPY, isCurrentMethodEmailTemplate, plainTextHtml, preparedEventKey, roundEventKey, campaignReadyForPreparedEmail, campaignReadyForMailedEmail, campaignCleanupReadyForEmail, queueRoundEvent, queueCampaignCleanupMailed, sendCustomClientEmail, sendQueuedClientEmails };

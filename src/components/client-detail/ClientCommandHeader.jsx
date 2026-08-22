@@ -85,9 +85,9 @@ export default function ClientCommandHeader({
                 {c.name}
               </h1>
               {c.isVip && <Star size={15} fill={T.gold} style={{ color: T.gold }} />}
-              {c.lpoaSigned && (
+              {c.agreementSigned && (
                 <span className="text-[9px] uppercase tracking-wider px-2 py-0.5 rounded" style={{ background: 'rgba(34,197,94,0.15)', color: '#86EFAC', border: '1px solid rgba(34,197,94,0.3)' }}>
-                  LPOA
+                  Agreement
                 </span>
               )}
               {c.billingStatus === 'Active' && (

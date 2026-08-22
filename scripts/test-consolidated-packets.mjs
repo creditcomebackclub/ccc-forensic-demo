@@ -102,25 +102,16 @@ const accounts = [
   { accountRef: 'acct-1', roundNumber: 1, account: accountItem(1).snapshot },
   { accountRef: 'acct-2', roundNumber: 2, account: accountItem(2).snapshot },
 ];
-const content = {
-  subject: 'Forensic dispute of covered accounts',
-  summary: 'Two account-specific reporting disputes.',
-  opening: ['I dispute the account-specific reporting described below.'],
-  sections: [
-    { accountRef: 'acct-1', heading: 'Account 1 — Field 12', paragraphs: ['Correct Field 12 for account XXXX0001.'], bullets: [] },
-    { accountRef: 'acct-2', heading: 'Account 2 — Field 25', paragraphs: ['Correct Field 25 for account XXXX0002.'], bullets: [] },
-  ],
-  demands: ['[acct-1] Correct Field 12.', '[acct-2] Correct Field 25.'],
-  closing: 'Please complete a reasonable reinvestigation.',
-};
-const html = renderStructuredLetter({
-  content,
-  client: { name: 'Jamie Packet', address: '55 Current Street\nPhoenix, AZ 85001' },
-  account: accounts[0].account,
-  accounts,
-  letter: { target_type: 'bureau', target_bureau: 'equifax', round_number: 1 },
-  enclosures: ['Government ID', 'Proof of address'],
-});
+assert.throws(() => renderStructuredLetter(), /renderer is retired.*template library/i,
+  'the former free-form packet renderer cannot create new correspondence');
+const html = `<!doctype html><html><body>
+  <div class="account-card" data-account-ref="acct-1">Account 1 — Masked account: XXXX0001</div>
+  <div class="account-card" data-account-ref="acct-2">Account 2 — Masked account: XXXX0002</div>
+  <section class="section" data-account-ref="acct-1"><h2>Account 1 — Field 12</h2><p>Correct Field 12 for account XXXX0001.</p></section>
+  <section class="section" data-account-ref="acct-2"><h2>Account 2 — Field 25</h2><p>Correct Field 25 for account XXXX0002.</p></section>
+  <tr data-account-ref="acct-1"><td>Correct Field 12.</td></tr>
+  <tr data-account-ref="acct-2"><td>Correct Field 25.</td></tr>
+</body></html>`;
 assert.equal((html.match(/class="account-card"/g) || []).length, 2, 'one rendered letter contains a distinct card for every covered account');
 assert.deepEqual(packetAccountIsolationProblems(html, accounts), [], 'valid account-scoped citations pass generation isolation');
 assert.match(extractPacketAccountHtml(html, 'acct-1'), /Field 12/);
@@ -147,24 +138,10 @@ assert.equal(accountTwoAssessment.proposedNextAction, 'next_round', 'the same co
 assert.deepEqual(accountOneAssessment.citedPages, [2], 'account assessment retains its evidence page');
 assert.deepEqual(accountTwoAssessment.citedPages, [], 'unmatched account receives no borrowed page citation');
 
-const oneAccountPacketHtml = renderStructuredLetter({
-  content: { ...content, sections: [content.sections[0]], demands: ['[acct-1] Correct Field 12.'] },
-  client: { name: 'Jamie Packet', address: '55 Current Street\nPhoenix, AZ 85001' },
-  account: accounts[0].account,
-  accounts: [accounts[0]],
-  letter: { packet_version: 2, target_type: 'bureau', target_bureau: 'equifax', round_number: 1 },
-});
+const oneAccountPacketHtml = '<!doctype html><html><body><div class="account-card" data-account-ref="acct-1">Account 1 — Masked account: XXXX0001</div><section class="section" data-account-ref="acct-1"><h2>Field 12</h2><p>Correct Field 12 for account XXXX0001.</p></section><tr data-account-ref="acct-1"><td>Correct Field 12.</td></tr></body></html>';
 assert.match(oneAccountPacketHtml, /class="account-card" data-account-ref="acct-1"/, 'the one-account remainder of a packet split retains packet coverage markup');
 assert.deepEqual(packetAccountIsolationProblems(oneAccountPacketHtml, [accounts[0]]), [], 'one-account packets retain account-scoped citation validation');
 assert.equal(assessPacketAccount({ letterHtml: oneAccountPacketHtml, coverageOrder: 1, responseKind: 'bureau', extraction }).proposedNextAction, 'resolved', 'one-account packet responses retain suffix-scoped assessment');
-
-const legacyHtml = renderStructuredLetter({
-  content: { ...content, sections: [content.sections[0]], demands: ['Correct Field 12.'] },
-  client: { name: 'Jamie Packet', address: '55 Current Street\nPhoenix, AZ 85001' },
-  account: accounts[0].account,
-  letter: { target_type: 'bureau', target_bureau: 'equifax', round_number: 1 },
-});
-assert.doesNotMatch(legacyHtml, /data-account-ref=/, 'legacy single-account rendering keeps its compatibility shape');
 
 const migration = readFileSync(new URL('../supabase/migrations/20260814160000_consolidated_round_packets.sql', import.meta.url), 'utf8');
 assert.match(migration, /create table if not exists public\.letter_account_coverage/i);

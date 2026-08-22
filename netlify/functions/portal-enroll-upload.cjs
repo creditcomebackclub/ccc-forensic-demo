@@ -1,26 +1,25 @@
-// Portal enrollment uploads (signature / LPOA / ID / address).
-// ClientSetupFlow used to write directly to the private documents bucket;
-// that INSERT is gated by storage RLS that joins client_profiles → clients.
-// When those policies are missing, stale, or the profile's client_id is not
-// wired yet, enrollment dies with "new row violates row-level security
-// policy". This endpoint authenticates the portal session, resolves the
-// caller's firm/client path server-side, and uploads with the service role.
+// Canonical portal enrollment upload for the two identity documents required
+// by the active service-agreement wizard. This endpoint deliberately does not
+// accept signatures, agreements, or legacy LPOAs and never mutates onboarding
+// or authorization state.
 
 const https = require('https');
 const crypto = require('crypto');
 const { requireAuth } = require('./_requireAuth.cjs');
-const {
-  DOCUMENTS_BUCKET,
-  identityDocPath,
-  lpoaSignaturePath,
-  lpoaDocumentPath,
-  buildLpoaSignatureRecord,
-} = require('./_storagePaths.cjs');
-const {
-  loadAttorneySignatureDataUrl,
-  injectAttorneySignatureHtml,
-  htmlNeedsAttorneySignature,
-} = require('./_attorneySig.cjs');
+const { DOCUMENTS_BUCKET, identityDocPath } = require('./_storagePaths.cjs');
+const { normalizePortalIdentity } = require('./_portalIdentity.cjs');
+
+// Base64 expands by ~33%; keep the decoded file below the synchronous Netlify
+// request limit so users receive our actionable 413 instead of an edge error.
+const MAX_BYTES = 4 * 1024 * 1024;
+const MIN_BYTES = 16;
+const KINDS = new Set(['id', 'address']);
+const DETECTED_TYPES = Object.freeze({
+  pdf: { contentType: 'application/pdf', extension: 'pdf' },
+  jpeg: { contentType: 'image/jpeg', extension: 'jpg' },
+  png: { contentType: 'image/png', extension: 'png' },
+  webp: { contentType: 'image/webp', extension: 'webp' },
+});
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,9 +27,13 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-function supabaseRequest(path, method, body, url, key) {
+function json(statusCode, body) {
+  return { statusCode, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: JSON.stringify(body) };
+}
+
+function supabaseRequest(path, method, body, url, key, prefer = 'return=representation') {
   return new Promise((resolve, reject) => {
-    const data = body ? JSON.stringify(body) : null;
+    const data = body === undefined || body === null ? null : JSON.stringify(body);
     const u = new URL(url + path);
     const options = {
       hostname: u.hostname,
@@ -41,19 +44,17 @@ function supabaseRequest(path, method, body, url, key) {
         'Content-Type': 'application/json',
         apikey: key,
         Authorization: 'Bearer ' + key,
-        Prefer: 'return=representation',
+        Prefer: prefer,
       },
     };
     if (data) options.headers['Content-Length'] = Buffer.byteLength(data);
     const req = https.request(options, (res) => {
       let raw = '';
-      res.on('data', (c) => (raw += c));
+      res.on('data', (chunk) => { raw += chunk; });
       res.on('end', () => {
-        try {
-          resolve({ status: res.statusCode, body: raw ? JSON.parse(raw) : {} });
-        } catch (e) {
-          resolve({ status: res.statusCode, body: raw });
-        }
+        let parsed = raw;
+        try { parsed = raw ? JSON.parse(raw) : {}; } catch { /* retain raw response */ }
+        resolve({ status: res.statusCode, body: parsed });
       });
     });
     req.on('error', reject);
@@ -64,33 +65,23 @@ function supabaseRequest(path, method, body, url, key) {
 
 function storageUpload(supabaseUrl, serviceKey, objectPath, buffer, contentType) {
   return new Promise((resolve, reject) => {
-    const path = '/storage/v1/object/' + DOCUMENTS_BUCKET + '/' + objectPath;
-    const u = new URL(supabaseUrl + path);
-    const options = {
+    const u = new URL('/storage/v1/object/' + DOCUMENTS_BUCKET + '/' + objectPath, supabaseUrl);
+    const req = https.request({
       hostname: u.hostname,
       port: 443,
       path: u.pathname,
       method: 'POST',
       headers: {
-        'Content-Type': contentType || 'application/octet-stream',
+        'Content-Type': contentType,
         apikey: serviceKey,
         Authorization: 'Bearer ' + serviceKey,
-        'x-upsert': 'true',
+        'x-upsert': 'false',
         'Content-Length': buffer.length,
       },
-    };
-    const req = https.request(options, (res) => {
+    }, (res) => {
       let raw = '';
-      res.on('data', (c) => (raw += c));
-      res.on('end', () => {
-        let body = raw;
-        try {
-          body = raw ? JSON.parse(raw) : {};
-        } catch (e) {
-          /* keep raw */
-        }
-        resolve({ status: res.statusCode, body });
-      });
+      res.on('data', (chunk) => { raw += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body: raw }));
     });
     req.on('error', reject);
     req.write(buffer);
@@ -98,302 +89,216 @@ function storageUpload(supabaseUrl, serviceKey, objectPath, buffer, contentType)
   });
 }
 
-function decodePayloadBytes(dataBase64) {
-  const cleaned = String(dataBase64 || '').replace(/^data:[^;]+;base64,/, '');
-  return Buffer.from(cleaned, 'base64');
+function storageDownload(supabaseUrl, serviceKey, objectPath) {
+  return new Promise((resolve, reject) => {
+    const u = new URL('/storage/v1/object/authenticated/' + DOCUMENTS_BUCKET + '/' + objectPath, supabaseUrl);
+    const req = https.request({
+      hostname: u.hostname,
+      port: 443,
+      path: u.pathname,
+      method: 'GET',
+      headers: { apikey: serviceKey, Authorization: 'Bearer ' + serviceKey },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => { chunks.push(Buffer.from(chunk)); });
+      res.on('end', () => resolve({ status: res.statusCode, buffer: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
 }
 
-function extFromNameOrType(fileName, contentType, fallback) {
-  if (fileName && fileName.includes('.')) {
-    return fileName.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || fallback;
+function normalizeClaimedType(value) {
+  const type = String(value || '').split(';')[0].trim().toLowerCase();
+  if (!type || type === 'application/octet-stream') return '';
+  if (type === 'image/jpg') return 'image/jpeg';
+  return type;
+}
+
+function decodeStrictBase64(value) {
+  const input = String(value || '');
+  const match = input.match(/^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/);
+  const encoded = match ? match[2] : input;
+  if (!encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+    throw new Error('The document payload is not valid base64.');
   }
-  if (contentType === 'image/jpeg' || contentType === 'image/jpg') return 'jpg';
-  if (contentType === 'image/png') return 'png';
-  if (contentType === 'image/webp') return 'webp';
-  if (contentType === 'application/pdf') return 'pdf';
-  if (contentType === 'text/html') return 'html';
-  return fallback;
+  const buffer = Buffer.from(encoded, 'base64');
+  const canonicalInput = encoded.replace(/=+$/, '');
+  if (buffer.toString('base64').replace(/=+$/, '') !== canonicalInput) {
+    throw new Error('The document payload is not valid base64.');
+  }
+  return { buffer, dataUrlType: match ? normalizeClaimedType(match[1]) : null };
+}
+
+function detectFile(buffer) {
+  if (buffer.length >= 5 && buffer.subarray(0, 5).toString('ascii') === '%PDF-') return DETECTED_TYPES.pdf;
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return DETECTED_TYPES.jpeg;
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return DETECTED_TYPES.png;
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return DETECTED_TYPES.webp;
+  return null;
+}
+
+function safeOriginalName(value, fallback, extension) {
+  const base = String(value || '').replace(/\\/g, '/').split('/').pop().replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (!base) return fallback;
+  const stem = base.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9._ ()-]/g, '-').trim() || 'document';
+  const safeExtension = extension || String(fallback || '').split('.').pop().replace(/[^a-z0-9]/gi, '') || 'bin';
+  return `${stem.slice(0, 170)}.${safeExtension}`;
 }
 
 exports.handler = async (event) => {
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: corsHeaders };
-  }
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers: corsHeaders, body: JSON.stringify({ error: 'Method not allowed' }) };
-  }
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: corsHeaders };
+  if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceKey) {
-    return { statusCode: 500, headers: corsHeaders, body: JSON.stringify({ error: 'Server not configured' }) };
-  }
+  if (!supabaseUrl || !serviceKey) return json(500, { error: 'Server not configured' });
 
-  let userId;
-  let email;
+  let caller;
   try {
-    ({ userId, email } = await requireAuth(event));
-  } catch (e) {
-    if (e.statusCode) return { ...e, headers: { ...corsHeaders, ...(e.headers || {}) } };
-    throw e;
+    caller = await requireAuth(event);
+  } catch (error) {
+    if (error.statusCode) return { ...error, headers: { ...corsHeaders, ...(error.headers || {}) } };
+    throw error;
   }
+  if (caller.isSystem) return json(403, { error: 'A verified client session is required.' });
 
   let payload;
-  try {
-    payload = JSON.parse(event.body || '{}');
-  } catch (e) {
-    return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Invalid JSON' }) };
-  }
+  try { payload = JSON.parse(event.body || '{}'); }
+  catch { return json(400, { error: 'Invalid JSON' }); }
 
-  const kind = payload.kind;
-  const allowed = new Set(['signature', 'lpoa', 'id', 'address']);
-  if (!allowed.has(kind)) {
-    return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'kind must be signature|lpoa|id|address' }) };
+  const kind = String(payload.kind || '');
+  if (!KINDS.has(kind)) {
+    return json(400, { error: 'Only government ID and proof-of-address uploads are accepted.' });
   }
-  if (!payload.dataBase64) {
-    return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'dataBase64 required' }) };
-  }
+  if (!payload.dataBase64) return json(400, { error: 'dataBase64 required' });
 
   try {
-    let profileRes = await supabaseRequest(
-      '/rest/v1/client_profiles?user_id=eq.' + encodeURIComponent(userId) + '&select=id,full_name,client_id,email',
-      'GET',
-      null,
+    const identityRes = await supabaseRequest(
+      '/rest/v1/rpc/ccc_resolve_canonical_portal_identity',
+      'POST',
+      { p_portal_user_id: caller.userId, p_access_mode: 'pre_sign_v3' },
       supabaseUrl,
-      serviceKey
+      serviceKey,
     );
-    let profile = Array.isArray(profileRes.body) && profileRes.body[0];
+    if (identityRes.status < 200 || identityRes.status >= 300) {
+      return json(identityRes.status === 401 || identityRes.status === 403 ? 403 : 409, {
+        error: 'A current sent Client Service Agreement is required before onboarding documents can be uploaded.',
+      });
+    }
+    const canonical = normalizePortalIdentity(identityRes.body);
 
-    // First-login race: profile may still be email-linked only.
-    if (!profile && email) {
-      const byEmail = await supabaseRequest(
-        '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(String(email).toLowerCase()) + '&select=id,full_name,client_id,email,user_id',
-        'GET',
-        null,
-        supabaseUrl,
-        serviceKey
-      );
-      profile = Array.isArray(byEmail.body) && byEmail.body[0];
-      if (profile && !profile.user_id) {
-        await supabaseRequest(
-          '/rest/v1/client_profiles?id=eq.' + encodeURIComponent(profile.id),
-          'PATCH',
-          { user_id: userId },
-          supabaseUrl,
-          serviceKey
-        );
-      }
+    // No email/name recovery is permitted here. The onboarding bootstrap RPC
+    // must first create one exact Auth user -> profile -> CRM client link.
+    const profilesRes = await supabaseRequest(
+      '/rest/v1/client_profiles?user_id=eq.' + encodeURIComponent(caller.userId)
+        + '&select=id,user_id,client_id,full_name&limit=2',
+      'GET', null, supabaseUrl, serviceKey
+    );
+    const profiles = Array.isArray(profilesRes.body) ? profilesRes.body : [];
+    if (profiles.length !== 1 || profiles[0].user_id !== caller.userId
+      || profiles[0].id !== canonical.profileId
+      || profiles[0].client_id !== canonical.clientId) {
+      return json(409, { error: 'This portal is not linked to exactly one client record. Contact Credit Comeback Club.' });
+    }
+    const profile = profiles[0];
+
+    const clientsRes = await supabaseRequest(
+      '/rest/v1/clients?id=eq.' + encodeURIComponent(profile.client_id) + '&select=id,user_id,name&limit=2',
+      'GET', null, supabaseUrl, serviceKey
+    );
+    const clients = Array.isArray(clientsRes.body) ? clientsRes.body : [];
+    if (clients.length !== 1 || clients[0].id !== profile.client_id
+      || clients[0].user_id !== canonical.firmUserId) {
+      return json(409, { error: 'The linked client record is unavailable. Contact Credit Comeback Club.' });
+    }
+    const client = clients[0];
+
+    const { buffer, dataUrlType } = decodeStrictBase64(payload.dataBase64);
+    if (buffer.length < MIN_BYTES) return json(400, { error: 'The uploaded file is empty or incomplete.' });
+    if (buffer.length > MAX_BYTES) return json(413, { error: 'File is too large. Upload a PDF or image no larger than 4 MB.' });
+
+    const detected = detectFile(buffer);
+    if (!detected) return json(415, { error: 'Upload a valid PDF, JPEG, PNG, or WebP document.' });
+    const claimedType = normalizeClaimedType(payload.contentType);
+    if ((claimedType && claimedType !== detected.contentType) || (dataUrlType && dataUrlType !== detected.contentType)) {
+      return json(415, { error: 'The file contents do not match the claimed file type.' });
     }
 
-    if (!profile) {
-      return { statusCode: 404, headers: corsHeaders, body: JSON.stringify({ error: 'Client profile not found for this session' }) };
-    }
+    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    const objectPath = identityDocPath(client.user_id, client.id, kind, detected.extension, sha256);
+    const fileName = safeOriginalName(payload.fileName, `${kind}.${detected.extension}`, detected.extension);
+    const uploadedAt = new Date().toISOString();
 
-    let clientId = profile.client_id || null;
-    let firmUserId = null;
-    let clientName = profile.full_name || email || 'Client';
-
-    if (clientId) {
-      const clientRes = await supabaseRequest(
-        '/rest/v1/clients?id=eq.' + encodeURIComponent(clientId) + '&select=id,user_id,name',
-        'GET',
-        null,
-        supabaseUrl,
-        serviceKey
-      );
-      const clientRow = Array.isArray(clientRes.body) && clientRes.body[0];
-      if (clientRow) {
-        firmUserId = clientRow.user_id;
-        clientName = clientRow.name || clientName;
-      }
-    }
-
-    if (!clientId || !firmUserId) {
-      const name = profile.full_name;
-      const emailNorm = (profile.email || email || '').toLowerCase();
-      let clientRow = null;
-      if (emailNorm) {
-        const byEmail = await supabaseRequest(
-          '/rest/v1/clients?email=eq.' + encodeURIComponent(emailNorm) + '&select=id,user_id,name&limit=1',
-          'GET',
-          null,
-          supabaseUrl,
-          serviceKey
-        );
-        clientRow = Array.isArray(byEmail.body) && byEmail.body[0];
-      }
-      if (!clientRow && name) {
-        const byName = await supabaseRequest(
-          '/rest/v1/clients?name=eq.' + encodeURIComponent(name) + '&select=id,user_id,name&limit=1',
-          'GET',
-          null,
-          supabaseUrl,
-          serviceKey
-        );
-        clientRow = Array.isArray(byName.body) && byName.body[0];
-      }
-      if (clientRow) {
-        clientId = clientRow.id;
-        firmUserId = clientRow.user_id;
-        clientName = clientRow.name || clientName;
-        await supabaseRequest(
-          '/rest/v1/client_profiles?id=eq.' + encodeURIComponent(profile.id),
-          'PATCH',
-          { client_id: clientId, user_id: userId },
-          supabaseUrl,
-          serviceKey
-        );
-      }
-    }
-
-    if (!clientId || !firmUserId) {
-      return {
-        statusCode: 409,
-        headers: corsHeaders,
-        body: JSON.stringify({ error: 'Client record is not linked to a firm folder yet. Contact Credit Comeback Club.' }),
-      };
-    }
-
-    const contentType = payload.contentType || 'application/octet-stream';
-    let buffer = decodePayloadBytes(payload.dataBase64);
-    if (!buffer.length) {
-      return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Empty file payload' }) };
-    }
-    // Netlify request body limit is ~6MB; keep a clear error under that.
-    if (buffer.length > 5.5 * 1024 * 1024) {
-      return {
-        statusCode: 413,
-        headers: corsHeaders,
-        body: JSON.stringify({ error: 'File is too large to upload during enrollment. Use a smaller photo (under ~5MB) and retry.' }),
-      };
-    }
-
-    let documentHash = null;
-    // Portal clients cannot read client-docs/firm/* — inject attorney sig here
-    // so stored LPOA HTML always has the real signature for Lob enclosures.
-    if (kind === 'lpoa') {
-      let html = buffer.toString('utf8');
-      if (htmlNeedsAttorneySignature(html)) {
-        try {
-          const dataUrl = await loadAttorneySignatureDataUrl(supabaseUrl, serviceKey);
-          html = injectAttorneySignatureHtml(html, dataUrl);
-          buffer = Buffer.from(html, 'utf8');
-        } catch (e) {
-          console.warn('portal-enroll-upload: attorney signature inject failed', e.message);
-        }
-      }
-      documentHash = crypto.createHash('sha256').update(buffer).digest('hex');
-    }
-
-    let objectPath;
-    if (kind === 'signature') {
-      objectPath = lpoaSignaturePath(firmUserId, clientId);
-    } else if (kind === 'lpoa') {
-      objectPath = lpoaDocumentPath(firmUserId, clientId);
-    } else {
-      const ext = extFromNameOrType(payload.fileName, contentType, kind === 'id' ? 'jpg' : 'jpg');
-      objectPath = identityDocPath(firmUserId, clientId, kind, ext);
-    }
-
-    const uploadRes = await storageUpload(supabaseUrl, serviceKey, objectPath, buffer, contentType);
+    const uploadRes = await storageUpload(supabaseUrl, serviceKey, objectPath, buffer, detected.contentType);
     if (uploadRes.status < 200 || uploadRes.status >= 300) {
-      console.error('portal-enroll-upload storage failed', uploadRes.status, uploadRes.body);
-      return {
-        statusCode: 502,
-        headers: corsHeaders,
-        body: JSON.stringify({ error: 'Storage upload failed', detail: uploadRes.body }),
-      };
-    }
-
-    // Legacy portal enrollment remains supported, but this security-sensitive
-    // state change happens server-side after the authenticated client actually
-    // stored an LPOA. Clients no longer receive broad UPDATE permission on
-    // their CRM row.
-    if (kind === 'lpoa') {
-      const signedAt = new Date().toISOString();
-      const signatureRecord = buildLpoaSignatureRecord({
-        firmUserId,
-        clientId,
-        signedAt,
-        method: 'Canvas signature — legacy portal enrollment',
-        documentHash,
-        ip: event.headers['x-forwarded-for'] || null,
-      });
-      const patch = await supabaseRequest(
-        '/rest/v1/clients?id=eq.' + encodeURIComponent(clientId),
-        'PATCH',
-        { lpoa_signed: true, lpoa_signed_at: signedAt, lpoa_signature_data: signatureRecord },
-        supabaseUrl,
-        serviceKey
-      );
-      if (patch.status < 200 || patch.status >= 300) throw new Error('Could not record the signed authorization.');
-    }
-
-    if (kind === 'id' || kind === 'address') {
-      const data = JSON.stringify({
-        user_id: firmUserId,
-        client_id: clientId,
-        client_name: clientName,
-        doc_type: kind,
-        file_name: payload.fileName || objectPath.split('/').pop(),
-        storage_path: objectPath,
-        uploaded_at: new Date().toISOString(),
-      });
-      const upsertRes = await new Promise((resolve, reject) => {
-        const u = new URL(
-          supabaseUrl + '/rest/v1/documents?on_conflict=user_id,client_id,doc_type'
-        );
-        const options = {
-          hostname: u.hostname,
-          port: 443,
-          path: u.pathname + u.search,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: serviceKey,
-            Authorization: 'Bearer ' + serviceKey,
-            Prefer: 'resolution=merge-duplicates,return=minimal',
-            'Content-Length': Buffer.byteLength(data),
-          },
-        };
-        const req = https.request(options, (res) => {
-          let raw = '';
-          res.on('data', (c) => (raw += c));
-          res.on('end', () => resolve({ status: res.statusCode, body: raw }));
+      // Retrying the exact same upload is safe: the immutable object name is
+      // derived from its SHA-256. Confirm exact bytes before accepting an
+      // already-existing object; never upsert over evidence.
+      const existing = await storageDownload(supabaseUrl, serviceKey, objectPath).catch(() => null);
+      const existingHash = existing?.status === 200
+        ? crypto.createHash('sha256').update(existing.buffer).digest('hex')
+        : null;
+      if (existingHash !== sha256) {
+        console.error('portal-enroll-upload storage failed', uploadRes.status, uploadRes.body);
+        return json(existing?.status === 200 ? 409 : 502, {
+          error: existing?.status === 200
+            ? 'A stored document failed its integrity check. Contact Credit Comeback Club.'
+            : 'Secure document storage failed. Please retry.',
         });
-        req.on('error', reject);
-        req.write(data);
-        req.end();
-      });
-      if (upsertRes.status < 200 || upsertRes.status >= 300) {
-        console.error('documents upsert failed', upsertRes.status, upsertRes.body);
-        return {
-          statusCode: 502,
-          headers: corsHeaders,
-          body: JSON.stringify({ error: 'File stored but documents registry write failed' }),
-        };
       }
     }
 
-    return {
-      statusCode: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ok: true,
-        path: objectPath,
-        bucket: DOCUMENTS_BUCKET,
-        clientId,
-        firmUserId,
-        clientName,
-        ...(documentHash ? { documentHash } : {}),
-      }),
-    };
-  } catch (e) {
-    console.error('portal-enroll-upload error', e);
-    return {
-      statusCode: 500,
-      headers: corsHeaders,
-      body: JSON.stringify({ error: e.message || 'Upload failed' }),
-    };
+    const registryRes = await supabaseRequest(
+      '/rest/v1/documents?on_conflict=user_id,client_id,doc_type',
+      'POST',
+      {
+        user_id: client.user_id,
+        client_id: client.id,
+        client_name: client.name || profile.full_name || 'Client',
+        doc_type: kind,
+        file_name: fileName,
+        storage_path: objectPath,
+        content_type: detected.contentType,
+        byte_size: buffer.length,
+        sha256,
+        uploaded_at: uploadedAt,
+      },
+      supabaseUrl,
+      serviceKey,
+      'resolution=merge-duplicates,return=representation'
+    );
+    if (registryRes.status < 200 || registryRes.status >= 300) {
+      console.error('portal-enroll-upload registry failed', registryRes.status, registryRes.body);
+      return json(502, { error: 'File stored but its secure registry record could not be confirmed. Contact Credit Comeback Club.' });
+    }
+
+    return json(200, {
+      ok: true,
+      kind,
+      path: objectPath,
+      bucket: DOCUMENTS_BUCKET,
+      clientId: client.id,
+      firmUserId: client.user_id,
+      contentType: detected.contentType,
+      byteSize: buffer.length,
+      sha256,
+      uploadedAt,
+    });
+  } catch (error) {
+    console.error('portal-enroll-upload error', error);
+    if (error?.status === 403) return json(403, { error: 'The client portal identity could not be verified.' });
+    const status = /base64|payload|file type/i.test(error.message || '') ? 400 : 500;
+    return json(status, { error: status === 400 ? error.message : 'Upload failed. Please retry.' });
   }
+};
+
+exports._test = {
+  MAX_BYTES,
+  KINDS,
+  normalizeClaimedType,
+  decodeStrictBase64,
+  detectFile,
+  safeOriginalName,
+  storageDownload,
 };

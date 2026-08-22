@@ -1,6 +1,9 @@
 const { verifyGuideDownloadToken } = require('./_guideDownloadToken.cjs');
 
-const GUIDE_PATH = '/downloads/7-Metro2-Dispute-Templates.pdf';
+// Legacy tracked links remain useful, but the downloadable Metro 2 asset is
+// retired. Send every valid historic link to the current on-page education
+// guide and record only that the guide was viewed.
+const GUIDE_PATH = '/freeguide.html';
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'GET') return { statusCode: 405, body: 'Method Not Allowed' };
@@ -19,11 +22,11 @@ exports.handler = async (event) => {
     const lead = Array.isArray(rows) ? rows[0] : null;
     if (lead) {
       const tags = Array.isArray(lead.tags) ? lead.tags.map(String) : [];
-      if (!tags.includes('guide:downloaded')) {
+      if (!tags.includes('guide:viewed')) {
         const update = await fetch(`${supabaseUrl}/rest/v1/clients?id=eq.${encodeURIComponent(leadId)}`, {
           method: 'PATCH',
           headers: { ...headers, Prefer: 'return=minimal' },
-          body: JSON.stringify({ tags: [...tags, 'guide:downloaded'] }),
+          body: JSON.stringify({ tags: [...tags, 'guide:viewed'] }),
         });
         if (!update.ok) console.error('Could not record guide download:', await update.text());
       }

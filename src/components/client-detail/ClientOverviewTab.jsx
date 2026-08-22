@@ -176,7 +176,7 @@ export default function ClientOverviewTab({
           </button>
         }
       >
-        <CheckRow ok={!!c.lpoaSigned} label="LPOA signed" />
+        <CheckRow ok={!!c.agreementSigned} label="Service agreement signed" />
         <CheckRow ok={!!c.portalOnboarded} label="Portal onboarding complete" />
         <CheckRow ok={!!c.email} label="Email on file" />
         <CheckRow ok={(c.letters || []).length > 0} label="Letters generated" />

@@ -11,7 +11,8 @@ function bookedEmail(name) {
       bodyHtml: `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
         + `<p style="margin:0 0 14px;">Your consultation is on the calendar, and we&rsquo;re eager to take a close look at your file.</p>`
         + `<p style="margin:0 0 14px;">Please have a copy of your newest credit report available&mdash;ideally a current three-bureau report showing Equifax, Experian, and TransUnion. Bring any relevant recent correspondence from creditors, collectors, or the credit bureaus.</p>`
-        + `<p style="margin:0 0 14px;">We&rsquo;ll use the consultation to understand your goals, review what is happening in your file, and explain the most appropriate next step. Booking does not create a payment, service agreement, or client portal. If you choose to move forward, we&rsquo;ll send the secure agreement and onboarding steps afterward.</p>`
+        + `<p style="margin:0 0 14px;">We&rsquo;ll use your current three-bureau report to understand your goals and prepare a free Recovery Blueprint. A team member reviews the account classifications before we explain the plan to you.</p>`
+        + `<p style="margin:0 0 14px;">Booking does not create a payment, service agreement, or client portal. Only if you decide to become a client after reviewing the Blueprint will we send the secure service-agreement and document-upload wizard.</p>`
         + `<p style="margin:14px 0;">Calendly&rsquo;s calendar invitation contains the confirmed date, time, and meeting details. If you need to reschedule, use the link in that invitation.</p>`
         + `<p style="margin:0;">Questions before the call? Reply to this email or call ${BRAND.phone}.</p>`,
       cta: null,

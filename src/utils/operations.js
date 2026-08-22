@@ -37,10 +37,10 @@ export async function getClientProductionReadiness(clientId) {
   const { data, error } = await supabase.rpc('get_client_production_readiness', { p_client_id: clientId });
   if (error) throw error;
   return (data || []).map((row) => ({
-    sequence: row.sequence,
+    sequence: Number(row.sequence),
     key: row.check_key,
     label: row.label,
-    status: row.status,
+    status: ['passed', 'pending', 'blocked'].includes(row.status) ? row.status : 'blocked',
     detail: row.detail,
     evidenceAt: row.evidence_at,
   }));

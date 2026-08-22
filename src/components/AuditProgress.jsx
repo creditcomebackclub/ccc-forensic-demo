@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Loader2, CheckCircle2 } from 'lucide-react';
+import { ADMIN_BRAND } from '../utils/adminBrand.js';
 
 const T = {
-  navy: '#1B2A4A',
-  gold: '#C9A84C',
-  border: '#E7EAF0',
-  ink: '#111827',
-  muted: '#6B7280',
-  faint: '#9CA3AF',
-  grid: '#EEF0F4',
-  cardShadow: '0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)',
+  primary: ADMIN_BRAND.ink,
+  accent: ADMIN_BRAND.accent,
+  border: ADMIN_BRAND.border,
+  ink: ADMIN_BRAND.ink,
+  muted: ADMIN_BRAND.muted,
+  faint: ADMIN_BRAND.faint,
+  grid: '#E8F0F6',
+  cardShadow: ADMIN_BRAND.shadow,
 };
 
 // Real stages of the 3-file Individual pipeline, matched by prefix against
@@ -61,7 +62,7 @@ export default function AuditProgress({ fileName, progress, mode }) {
     <div className="max-w-2xl mx-auto" style={{ padding: '20px 0 32px' }}>
       {/* Branded page header */}
       <div className="flex items-center gap-3 mb-6">
-        <span style={{ width: 4, height: 30, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+        <span style={{ width: 4, height: 30, borderRadius: 2, background: T.accent, display: 'inline-block' }} />
         <div>
           <h1 className="ccc-display text-[22px] font-medium leading-tight" style={{ color: T.ink }}>Running Forensic Audit</h1>
           <p className="text-[11px]" style={{ color: T.muted }}>{fileName}</p>
@@ -70,7 +71,7 @@ export default function AuditProgress({ fileName, progress, mode }) {
 
       <div style={{ background: '#fff', border: '1px solid ' + T.border, borderRadius: 14, padding: 28, boxShadow: T.cardShadow }}>
         <div className="flex items-center gap-3">
-          <Loader2 size={18} className="animate-spin shrink-0" style={{ color: T.gold }} />
+          <Loader2 size={18} className="animate-spin shrink-0" style={{ color: T.accent }} />
           <div className="flex-1 min-w-0">
             <div className="text-[14px] font-medium" style={{ color: T.ink }}>{stage}…</div>
             <div className="text-[11px] mt-0.5" style={{ color: T.faint }}>
@@ -83,9 +84,9 @@ export default function AuditProgress({ fileName, progress, mode }) {
         {/* Determinate bar for the 4-stage pipeline; shimmer for single-call runs */}
         <div className="mt-5 h-1.5 rounded-full overflow-hidden relative" style={{ background: T.grid }}>
           {pct !== null ? (
-            <div className="h-full rounded-full transition-all duration-700" style={{ width: pct + '%', background: T.gold }} />
+            <div className="h-full rounded-full transition-all duration-700" style={{ width: pct + '%', background: T.accent }} />
           ) : (
-            <div className="h-full rounded-full ccc-progress-shimmer" style={{ width: '40%', background: T.gold }} />
+            <div className="h-full rounded-full ccc-progress-shimmer" style={{ width: '40%', background: T.accent }} />
           )}
         </div>
 
@@ -98,7 +99,7 @@ export default function AuditProgress({ fileName, progress, mode }) {
                 <div key={s} className="flex items-center gap-3 text-[12px]" style={{ opacity: done || active ? 1 : 0.35 }}>
                   <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0"
                     style={{
-                      backgroundColor: done ? T.navy : active ? T.gold : 'transparent',
+                      backgroundColor: done ? T.primary : active ? T.accent : 'transparent',
                       border: !done && !active ? '1px solid #D6DCE6' : 'none',
                     }}>
                     {done && <CheckCircle2 size={10} color="#FFF" strokeWidth={3} />}

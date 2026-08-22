@@ -173,7 +173,7 @@ input:focus { outline: none; border-color: var(--navy); }
     <div class="eyebrow-wrap"><span class="eyebrow" id="eyebrow" style="display:none;"></span></div>
 
     <h1>Start Your Credit Comeback</h1>
-    <p class="subcopy">We dispute inaccurate accounts directly with the companies reporting them — not just the bureaus — targeting Metro 2 and FCRA violations they're legally required to fix. Tell us a little about you and we'll reach out to get started.</p>
+    <p class="subcopy">We review how accounts appear across your three credit reports, build factual disputes around the details that do not match, and track each response. Tell us a little about you and we'll reach out to get started.</p>
 
     <form id="leadForm">
       <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
@@ -258,7 +258,6 @@ const successStep = document.getElementById('successStep');
 const leadForm = document.getElementById('leadForm');
 const submitBtn = document.getElementById('submitBtn');
 const errorMsg = document.getElementById('errorMsg');
-let intakeLeadId = null;
 
 function initializeIntakeCalendly(name, email) {
   const mount = successStep.querySelector('.calendly-inline-widget');
@@ -301,8 +300,7 @@ leadForm.addEventListener('submit', async (e) => {
       body: JSON.stringify(payload)
     });
     if (!res.ok) throw new Error('Something went wrong — please try again.');
-    const intake = await res.json();
-    intakeLeadId = intake.leadId || null;
+    await res.json();
     initializeIntakeCalendly(payload.name, payload.email);
     formStep.style.display = 'none';
     successStep.style.display = 'block';
@@ -313,18 +311,6 @@ leadForm.addEventListener('submit', async (e) => {
   }
 });
 
-window.addEventListener('message', async (event) => {
-  if (event.origin !== 'https://calendly.com' || event.data?.event !== 'calendly.event_scheduled' || !intakeLeadId) return;
-  try {
-    await fetch('/api/intake-booked', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ leadId: intakeLeadId })
-    });
-  } catch (err) {
-    console.error('Could not send consultation preparation email:', err);
-  }
-});
 </script>
 </body>
 </html>

@@ -36,8 +36,14 @@ export default function ProspectChatWidget() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ history: newMessages })
       });
-      const data = await res.json();
-      if (!res.ok || !data.reply) throw new Error(data.error || 'Bad response');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.reply) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          text: data.error || "I'm sorry, I'm having trouble connecting right now."
+        }]);
+        return;
+      }
       setMessages(prev => [...prev, { role: 'assistant', text: data.reply }]);
     } catch (e) {
       console.error(e);
@@ -109,9 +115,10 @@ export default function ProspectChatWidget() {
             <input
               type="text"
               value={input}
+              maxLength={1200}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-              placeholder="Type your message..."
+              placeholder="Ask a general question — no sensitive info"
               className="w-full bg-gray-50 border border-gray-200 rounded-full pl-4 pr-10 py-2.5 text-[16px] text-gray-800 focus:outline-none focus:border-navy focus:bg-white transition-colors"
             />
             <button

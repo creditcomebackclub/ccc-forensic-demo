@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: ccc-agents-api
+    runtime: python
+    rootDir: agents
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn concierge_agent:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /readyz
+    autoDeployTrigger: off
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: https://creditcomebackclub.com,https://ccc-forensic-demo.netlify.app

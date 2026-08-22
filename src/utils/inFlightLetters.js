@@ -55,16 +55,19 @@ export function inFlightLettersForClient(clientName, letters, latestAuditAccount
       return !isBureauDispute(l) || !(l.roundReviewStatus || l.bureauReviewStatus) || (l.roundReviewStatus || l.bureauReviewStatus) === 'not_reviewed';
     })
     .map((l) => {
-      // Deadline computes from delivery date, not mail date — the
-      // statutory basis of the whole non-response argument. No delivery
-      // yet means no deadline yet either (still in transit).
-      const deliveryDate = l.deliveredAt || null;
+      // Plain First-Class is untracked. Its saved expected-delivery date is
+      // the operational review basis; a Lob scan is never delivery proof.
+      const isFirstClass = (l.mailService || l.mail_service) === 'usps_first_class';
+      const deliveryDate = isFirstClass ? null : (l.deliveredAt || l.delivered_at || null);
+      const expectedDeliveryDate = isFirstClass
+        ? (l.expectedDeliveryDate || l.expected_delivery_date || null)
+        : null;
       const windowDays = responseWindowDays(l);
       const deadline = responseDeadline(l);
       const daysRemaining = deadline ? Math.ceil((deadline - now) / 86400000) : null;
 
       let status;
-      if (!deliveryDate) status = 'in_transit';
+      if (!deadline) status = 'in_transit';
       else if (daysRemaining <= 0) status = 'overdue';
       else if (daysRemaining <= 5) status = 'due_soon';
       else status = 'awaiting';
@@ -81,6 +84,8 @@ export function inFlightLettersForClient(clientName, letters, latestAuditAccount
         bureau: bureauFromLetter(l),
         mailDate: l.mailedDate,
         deliveryDate,
+        expectedDeliveryDate,
+        scheduleBasis: isFirstClass && expectedDeliveryDate ? 'expected_delivery' : deliveryDate ? 'delivered' : null,
         deadline: deadline ? deadline.toISOString().slice(0, 10) : null,
         responseWindowDays: windowDays,
         daysRemaining,

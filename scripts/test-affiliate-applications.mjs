@@ -40,12 +40,13 @@ const page = readFileSync(new URL('../public/affiliate-apply.html', import.meta.
 assert.match(page, /\/api\/public-affiliate-application/);
 assert.match(page, /name="faxNumber"/);
 assert.match(page, /name="acknowledged"/);
-assert.match(page, /Applications are reviewed before portal access is created/i);
+assert.match(page, /Applications, partner terms, and the signed agreement are reviewed before portal access is activated/i);
 
 const panel = readFileSync(new URL('../src/components/AffiliateApplicationsPanel.jsx', import.meta.url), 'utf8');
-assert.match(panel, /approve_affiliate_application/);
+assert.match(panel, /ccc_prepare_affiliate_agreement/);
 assert.match(panel, /reject_affiliate_application/);
-assert.match(panel, /provision-user/);
+assert.match(panel, /affiliate-agreement-onboarding/);
+assert.match(panel, /ccc_activate_affiliate/);
 assert.match(panel, /https:\/\/creditcomebackclub\.com\/affiliate\/apply/);
 
 const netlify = readFileSync(new URL('../netlify.toml', import.meta.url), 'utf8');

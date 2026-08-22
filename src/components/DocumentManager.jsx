@@ -63,7 +63,7 @@ function DocSlot({ clientId, clientName, docType, label, desc, onChanged }) {
   const handleUpload = async (file) => {
     const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
     if (!allowed.includes(file.type)) { setError('PDF, JPG, PNG, or WEBP only'); return; }
-    if (file.size > 10 * 1024 * 1024) { setError('File must be under 10MB'); return; }
+    if (file.size > 4 * 1024 * 1024) { setError('File must be 4 MB or smaller'); return; }
     setUploading(true);
     setError(null);
     try {
@@ -117,7 +117,7 @@ function DocSlot({ clientId, clientName, docType, label, desc, onChanged }) {
           <span className="text-[12px] font-medium" style={{ color: T.ink }}>
             {uploading ? 'Uploading…' : 'Upload ' + label}
           </span>
-          <span className="text-[10px]" style={{ color: T.faint }}>{desc} · PDF, JPG, PNG · drop or click</span>
+          <span className="text-[10px]" style={{ color: T.faint }}>{desc} · PDF, JPG, PNG, or WebP · max 4 MB</span>
           <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden"
             onChange={(e) => { if (e.target.files[0]) handleUpload(e.target.files[0]); }} />
         </label>

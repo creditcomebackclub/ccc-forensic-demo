@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -17,6 +17,7 @@ import { toast } from 'react-hot-toast';
 import { convertLeadToClient, getLetterForMail, updateLetter } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { getUnanalyzedResponseStats } from '../utils/actionItems';
+import { isCccDisputePhase } from '../utils/cccMailRules.js';
 import LobMailer from './LobMailer';
 
 const T = {
@@ -32,10 +33,16 @@ const T = {
 
 const BACKLOG_WARN_DAYS = 7;
 const BACKLOG_LATE_DAYS = 14;
+const INBOX_PAGE_SIZE = {
+  leads: 50,
+  onboarding: 50,
+  letters: 100,
+  audits: 200,
+};
 
 const COL = {
   newLeads: 'newLeads',
-  needsLpoa: 'needsLpoa',
+  needsOnboarding: 'needsOnboarding',
   auditComplete: 'auditComplete',
   readyToMail: 'readyToMail',
   phase2Inbox: 'phase2Inbox',
@@ -43,12 +50,77 @@ const COL = {
 };
 
 const COLUMN_HINTS = {
-  [COL.newLeads]: 'Not yet converted — drag to Needs LPOA to convert',
-  [COL.needsLpoa]: "Can't dispute until signed — driven by LPOA signature",
+  [COL.newLeads]: 'Not yet converted — drag to Needs Onboarding to convert',
+  [COL.needsOnboarding]: 'Service agreement and required documents are not yet complete',
   [COL.auditComplete]: 'No letters generated yet — generate letters on the client',
-  [COL.readyToMail]: 'Generated, not yet sent — drag to Mail or hit Send',
+  [COL.readyToMail]: 'Reviewed CCC letters, not yet sent — drag to Mail or hit Send',
   [COL.phase2Inbox]: 'Response uploaded, not analyzed — open Documents to triage',
 };
+
+function takePage(rows, pageSize) {
+  const values = rows || [];
+  return {
+    rows: values.slice(0, pageSize),
+    hasMore: values.length > pageSize,
+  };
+}
+
+function mergeRowsById(current, next) {
+  const merged = new Map((current || []).map((row) => [row.id, row]));
+  for (const row of (next || [])) merged.set(row.id, row);
+  return Array.from(merged.values());
+}
+
+async function fetchInboxPage(source, offset = 0) {
+  const pageSize = INBOX_PAGE_SIZE[source];
+  const pageEnd = offset + pageSize;
+  let result;
+
+  if (source === 'leads') {
+    result = await supabase.from('clients')
+      .select('id,name,is_vip,lead_created_at,lead_source')
+      .eq('status', 'lead')
+      .order('lead_created_at', { ascending: false, nullsFirst: false })
+      .order('id', { ascending: false })
+      .range(offset, pageEnd);
+  } else if (source === 'onboarding') {
+    result = await supabase.from('clients')
+      .select('id,name,is_vip,enrollment_date,audit_count:audits(count)')
+      .neq('status', 'lead')
+      .eq('engagement_status', 'pending_onboarding')
+      .order('enrollment_date', { ascending: false, nullsFirst: false })
+      .order('id', { ascending: false })
+      .range(offset, pageEnd);
+  } else if (source === 'audits') {
+    result = await supabase.from('audits')
+      .select('id,client_id,client_name,saved_at,audit')
+      .order('saved_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(offset, pageEnd);
+  } else if (source === 'letters') {
+    result = await supabase.from('letters')
+      .select('id,client_id,client_name,furnisher,phase,round_id,round_number,target_type,target_bureau,saved_at,mailed_date,covered_furnishers,lob_id,tracking_number')
+      .is('mailed_date', null)
+      .like('phase', 'CCC Dispute —%')
+      .order('saved_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(offset, pageEnd);
+    if (result.error && /round_id|round_number|target_type|target_bureau/i.test(result.error.message || '')) {
+      result = await supabase.from('letters')
+        .select('id,client_id,client_name,furnisher,phase,saved_at,mailed_date,covered_furnishers,lob_id,tracking_number')
+        .is('mailed_date', null)
+        .like('phase', 'CCC Dispute —%')
+        .order('saved_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(offset, pageEnd);
+    }
+  } else {
+    throw new Error(`Unknown inbox page: ${source}`);
+  }
+
+  if (result.error) throw result.error;
+  return takePage(result.data, pageSize);
+}
 
 function todayISO() {
   const d = new Date();
@@ -72,13 +144,13 @@ function fmtTime(iso) {
   } catch (e) { return iso; }
 }
 
-function computeInboxColumns({ leads, lpoaClients, auditOnlyClients, unmaledLetters, unanalyzedNames, unanalyzedClientIds }) {
+function computeInboxColumns({ leads, onboardingClients, auditOnlyClients, unmaledLetters, unanalyzedNames, unanalyzedClientIds }) {
   const newLeads = leads.map((r) => ({
     clientId: r.id, name: r.name, isVip: !!r.is_vip,
     createdAt: r.lead_created_at, source: r.lead_source,
   })).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-  const needsLpoa = lpoaClients.map((r) => ({
+  const needsOnboarding = onboardingClients.map((r) => ({
     clientId: r.id, name: r.name, isVip: !!r.is_vip,
     hasAudit: r.audit_count > 0, enrollmentDate: r.enrollment_date,
   })).sort((a, b) => (b.isVip ? 1 : 0) - (a.isVip ? 1 : 0));
@@ -110,7 +182,7 @@ function computeInboxColumns({ leads, lpoaClients, auditOnlyClients, unmaledLett
     }
   }
 
-  return { newLeads, needsLpoa, auditComplete, readyToMail, phase2Inbox };
+  return { newLeads, needsOnboarding, auditComplete, readyToMail, phase2Inbox };
 }
 
 function AgeBadge({ days }) {
@@ -129,7 +201,7 @@ function AgeBadge({ days }) {
   );
 }
 
-function DropColumn({ id, icon: Icon, title, hint, count, empty, children, acceptHint }) {
+function DropColumn({ id, icon: Icon, title, hint, count, empty, children, acceptHint, footer }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
     <div className="flex flex-col min-w-0" style={{ minWidth: 260 }}>
@@ -159,8 +231,23 @@ function DropColumn({ id, icon: Icon, title, hint, count, empty, children, accep
             {isOver && acceptHint ? acceptHint : empty}
           </div>
         ) : children}
+        {footer}
       </div>
     </div>
+  );
+}
+
+function LoadMoreButton({ label, loading, onClick }) {
+  return (
+    <button
+      type="button"
+      disabled={loading}
+      onClick={onClick}
+      className="w-full rounded-lg border px-3 py-2 text-[10px] font-bold uppercase tracking-wider disabled:opacity-50"
+      style={{ borderColor: T.border, color: T.navy, background: '#fff' }}
+    >
+      {loading ? 'Loading…' : `Load more ${label}`}
+    </button>
   );
 }
 
@@ -259,83 +346,110 @@ export default function InboxPage({ isAdmin, onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [lobMailerLetter, setLobMailerLetter] = useState(null);
   const [openingLetterId, setOpeningLetterId] = useState(null);
-  const [truncated, setTruncated] = useState(false);
   const [convertingId, setConvertingId] = useState(null);
   const [activeDrag, setActiveDrag] = useState(null);
+  const [loadingMore, setLoadingMore] = useState(null);
+  const [pagination, setPagination] = useState({
+    leads: { offset: 0, hasMore: false },
+    onboarding: { offset: 0, hasMore: false },
+    letters: { offset: 0, hasMore: false },
+    audits: { offset: 0, hasMore: false },
+  });
+  const queueRowsRef = useRef({
+    leads: [], onboarding: [], letters: [], audits: [],
+    unanalyzed: { clientNames: new Set(), clientIds: new Set(), truncated: false },
+  });
+
+  const rebuildColumns = () => {
+    const source = queueRowsRef.current;
+    const cccLetters = (source.letters || []).filter((letter) => isCccDisputePhase(letter.phase));
+    const clientsWithLetters = new Set(cccLetters.map((letter) => letter.client_id).filter(Boolean));
+    const auditOnlyMap = new Map();
+
+    for (const row of (source.audits || [])) {
+      const cid = row.client_id;
+      if (!cid || clientsWithLetters.has(cid) || auditOnlyMap.has(cid)) continue;
+      auditOnlyMap.set(cid, {
+        id: cid,
+        name: row.client_name,
+        is_vip: false,
+        accounts_targeted: row.audit?.accountsTargeted || 0,
+        latest_audit_at: row.saved_at,
+      });
+    }
+
+    setColumns(computeInboxColumns({
+      leads: source.leads,
+      onboardingClients: source.onboarding.map((row) => ({
+        ...row,
+        audit_count: row.audit_count?.[0]?.count || 0,
+      })),
+      auditOnlyClients: Array.from(auditOnlyMap.values()),
+      unmaledLetters: cccLetters,
+      unanalyzedNames: source.unanalyzed.clientNames,
+      unanalyzedClientIds: source.unanalyzed.clientIds,
+    }));
+  };
 
   const load = async () => {
     setLoading(true);
     try {
-      const [leadsRes, lpoaRes, unanalyzed] = await Promise.all([
-        supabase.from('clients')
-          .select('id,name,is_vip,lead_created_at,lead_source')
-          .eq('status', 'lead')
-          .order('lead_created_at', { ascending: false })
-          .limit(200),
-        supabase.from('clients')
-          .select('id,name,is_vip,enrollment_date,audit_count:audits(count)')
-          .neq('status', 'lead')
-          .eq('lpoa_signed', false)
-          .limit(200),
+      const [leadsPage, onboardingPage, lettersPage, auditsPage, unanalyzed] = await Promise.all([
+        fetchInboxPage('leads'),
+        fetchInboxPage('onboarding'),
+        fetchInboxPage('letters'),
+        fetchInboxPage('audits'),
         getUnanalyzedResponseStats(),
       ]);
-
-      let unmailedResult = await supabase.from('letters')
-        .select('id,client_id,client_name,furnisher,phase,round_id,round_number,target_type,target_bureau,saved_at,mailed_date,covered_furnishers,lob_id,tracking_number')
-        .is('mailed_date', null)
-        .order('saved_at', { ascending: true })
-        .limit(300);
-      if (unmailedResult.error && /round_id|round_number|target_type|target_bureau/i.test(unmailedResult.error.message || '')) {
-        unmailedResult = await supabase.from('letters')
-          .select('id,client_id,client_name,furnisher,phase,saved_at,mailed_date,covered_furnishers,lob_id,tracking_number')
-          .is('mailed_date', null)
-          .order('saved_at', { ascending: true })
-          .limit(300);
-      }
-      const { data: unmailedLetters, error: unmailedError } = unmailedResult;
-      if (unmailedError) throw unmailedError;
-      const unmaledLettersRes = {
-        data: (unmailedLetters || []).filter((letter) => letter.target_type
-          ? letter.target_type !== 'bureau'
-          : !String(letter.phase || '').startsWith('Phase 3')),
+      queueRowsRef.current = {
+        leads: leadsPage.rows,
+        onboarding: onboardingPage.rows,
+        letters: lettersPage.rows,
+        audits: auditsPage.rows,
+        unanalyzed,
       };
-
-      const clientsWithLetters = new Set((unmaledLettersRes.data || []).map((l) => l.client_id).filter(Boolean));
-      const { data: auditRows } = await supabase
-        .from('audits')
-        .select('client_id,client_name,saved_at,audit')
-        .order('saved_at', { ascending: false })
-        .limit(500);
-      const auditOnlyMap = new Map();
-      for (const row of (auditRows || [])) {
-        const cid = row.client_id;
-        if (!cid || clientsWithLetters.has(cid)) continue;
-        if (!auditOnlyMap.has(cid)) {
-          auditOnlyMap.set(cid, {
-            id: cid, name: row.client_name, is_vip: false,
-            accounts_targeted: row.audit?.accountsTargeted || 0,
-            latest_audit_at: row.saved_at,
-          });
-        }
-      }
-
-      setColumns(computeInboxColumns({
-        leads: leadsRes.data || [],
-        lpoaClients: (lpoaRes.data || []).map((r) => ({ ...r, audit_count: r.audit_count?.[0]?.count || 0 })),
-        auditOnlyClients: Array.from(auditOnlyMap.values()),
-        unmaledLetters: unmaledLettersRes.data || [],
-        unanalyzedNames: unanalyzed.clientNames,
-        unanalyzedClientIds: unanalyzed.clientIds,
-      }));
-      setTruncated(false);
+      setPagination({
+        leads: { offset: leadsPage.rows.length, hasMore: leadsPage.hasMore },
+        onboarding: { offset: onboardingPage.rows.length, hasMore: onboardingPage.hasMore },
+        letters: { offset: lettersPage.rows.length, hasMore: lettersPage.hasMore },
+        audits: { offset: auditsPage.rows.length, hasMore: auditsPage.hasMore },
+      });
+      rebuildColumns();
     } catch (error) {
       console.error('Could not load inbox work items:', error);
+      queueRowsRef.current = {
+        leads: [], onboarding: [], letters: [], audits: [],
+        unanalyzed: { clientNames: new Set(), clientIds: new Set(), truncated: false },
+      };
       setColumns(computeInboxColumns({
-        leads: [], lpoaClients: [], auditOnlyClients: [],
+        leads: [], onboardingClients: [], auditOnlyClients: [],
         unmaledLetters: [], unanalyzedNames: new Set(), unanalyzedClientIds: new Set(),
       }));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMoreRows = async (source) => {
+    const pageState = pagination[source];
+    if (!pageState?.hasMore || loadingMore) return;
+    setLoadingMore(source);
+    try {
+      const page = await fetchInboxPage(source, pageState.offset);
+      queueRowsRef.current[source] = mergeRowsById(queueRowsRef.current[source], page.rows);
+      setPagination((current) => ({
+        ...current,
+        [source]: {
+          offset: pageState.offset + page.rows.length,
+          hasMore: page.hasMore,
+        },
+      }));
+      rebuildColumns();
+    } catch (error) {
+      console.error(`Could not load more ${source} inbox rows:`, error);
+      toast.error('Could not load more work items. Try again.');
+    } finally {
+      setLoadingMore(null);
     }
   };
 
@@ -347,7 +461,12 @@ export default function InboxPage({ isAdmin, onNavigate }) {
     if (!letterId || openingLetterId) return;
     setOpeningLetterId(letterId);
     try {
-      setLobMailerLetter(await getLetterForMail(letterId));
+      const letter = await getLetterForMail(letterId);
+      if (!isCccDisputePhase(letter?.phase)) {
+        toast.error('Historical letters are read-only. Start new correspondence in the CCC dispute campaign.');
+        return;
+      }
+      setLobMailerLetter(letter);
     } catch (error) {
       console.error('Could not open letter for mailing:', error);
       toast.error('Could not load this letter for mailing. Open the client record and try again.');
@@ -361,7 +480,7 @@ export default function InboxPage({ isAdmin, onNavigate }) {
     setConvertingId(lead.clientId);
     try {
       await convertLeadToClient(lead.name, lead.clientId);
-      toast.success(lead.name + ' converted — now in Needs LPOA');
+      toast.success(lead.name + ' converted — now in Needs Onboarding');
       await load();
     } catch (e) {
       toast.error('Could not convert lead: ' + e.message);
@@ -383,7 +502,7 @@ export default function InboxPage({ isAdmin, onNavigate }) {
     const type = drag.type;
 
     if (type === 'lead') {
-      if (target === COL.needsLpoa) {
+      if (target === COL.needsOnboarding) {
         await convertLead(drag.item);
         return;
       }
@@ -437,17 +556,18 @@ export default function InboxPage({ isAdmin, onNavigate }) {
 
   const goto = (clientId, fallbackName) => onNavigate('clients', { jumpTo: clientId || fallbackName });
   const draggingLetter = activeDrag?.type === 'letter';
+  const hasMoreQueues = Object.values(pagination).some((page) => page.hasMore);
 
   return (
     <div style={{ padding: '20px 32px 32px' }}>
       <div className="mb-5">
         <h1 className="text-2xl font-bold ccc-display" style={{ color: T.navy }}>Inbox</h1>
         <p className="text-[13px] mt-1" style={{ color: T.muted }}>
-          Work queues driven by real state — drag leads to Needs LPOA to convert, or drag letters to Mail to send.
+          Work queues driven by real state — drag leads to Needs Onboarding to convert, or drag letters to Mail to send.
         </p>
-        {truncated && (
-          <p className="text-[11px] mt-1 text-amber-700">
-            Showing the first 10,000 client summaries. Refine the CRM before adding more operating queues.
+        {(hasMoreQueues || queueRowsRef.current.unanalyzed.truncated) && (
+          <p className="text-[11px] mt-1" style={{ color: T.muted }}>
+            More work is available. Use the load-more control in each queue to keep the initial inbox fast.
           </p>
         )}
       </div>
@@ -470,6 +590,13 @@ export default function InboxPage({ isAdmin, onNavigate }) {
             count={columns.newLeads.length}
             empty="No new leads"
             acceptHint="Leads stay here until converted"
+            footer={pagination.leads.hasMore ? (
+              <LoadMoreButton
+                label="leads"
+                loading={loadingMore === 'leads'}
+                onClick={() => loadMoreRows('leads')}
+              />
+            ) : null}
           >
             {columns.newLeads.map((l) => (
               <DraggableCard
@@ -505,21 +632,28 @@ export default function InboxPage({ isAdmin, onNavigate }) {
           </DropColumn>
 
           <DropColumn
-            id={COL.needsLpoa}
+            id={COL.needsOnboarding}
             icon={FileSignature}
-            title="Needs LPOA"
-            hint={COLUMN_HINTS[COL.needsLpoa]}
-            count={columns.needsLpoa.length}
-            empty="Everyone's signed"
+            title="Needs Onboarding"
+            hint={COLUMN_HINTS[COL.needsOnboarding]}
+            count={columns.needsOnboarding.length}
+            empty="No onboarding packets waiting"
             acceptHint="Drop a lead here to convert → client"
+            footer={pagination.onboarding.hasMore ? (
+              <LoadMoreButton
+                label="onboarding"
+                loading={loadingMore === 'onboarding'}
+                onClick={() => loadMoreRows('onboarding')}
+              />
+            ) : null}
           >
-            {columns.needsLpoa.map((c) => (
+            {columns.needsOnboarding.map((c) => (
               <ItemCard
                 key={c.clientId}
                 onClick={() => goto(c.clientId, c.name)}
                 isVip={c.isVip}
                 title={c.name}
-                subtitle={c.hasAudit ? 'Audit on file, awaiting signature' : 'No audit yet'}
+                subtitle={c.hasAudit ? 'Audit on file, awaiting onboarding' : 'No audit yet'}
                 ageDays={c.enrollmentDate ? daysBetween(c.enrollmentDate, todayISO()) : null}
               />
             ))}
@@ -532,6 +666,13 @@ export default function InboxPage({ isAdmin, onNavigate }) {
             hint={COLUMN_HINTS[COL.auditComplete]}
             count={columns.auditComplete.length}
             empty="Nothing waiting"
+            footer={pagination.audits.hasMore ? (
+              <LoadMoreButton
+                label="audits"
+                loading={loadingMore === 'audits'}
+                onClick={() => loadMoreRows('audits')}
+              />
+            ) : null}
           >
             {columns.auditComplete.map((c) => (
               <ItemCard
@@ -553,6 +694,13 @@ export default function InboxPage({ isAdmin, onNavigate }) {
             count={columns.readyToMail.length}
             empty="Nothing waiting to mail"
             acceptHint="Drop here or on Mail strip to open Lob"
+            footer={pagination.letters.hasMore ? (
+              <LoadMoreButton
+                label="letters"
+                loading={loadingMore === 'letters'}
+                onClick={() => loadMoreRows('letters')}
+              />
+            ) : null}
           >
             {columns.readyToMail.map((r) => (
               <DraggableCard

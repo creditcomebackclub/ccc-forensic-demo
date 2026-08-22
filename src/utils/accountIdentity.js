@@ -33,21 +33,43 @@ export function matchAccount(account, existing) {
   const f = identityFields(account);
   const candidates = existing || [];
 
+  const supportScore = (identity) => {
+    const furnisherSimilarity = nameSimilarity(f.norm_furnisher, identity.norm_furnisher || '');
+    const originalSimilarity = f.original_creditor && identity.original_creditor
+      ? nameSimilarity(f.original_creditor, identity.original_creditor)
+      : null;
+    return {
+      furnisherSimilarity,
+      originalSimilarity,
+      score: furnisherSimilarity + (originalSimilarity === null ? 0 : originalSimilarity * 0.35),
+    };
+  };
+
   if (f.account_last4) {
     // Anchor on last-4. This is what lets a renamed/sold tradeline still
     // match its prior identity.
     const l4 = candidates.filter((e) => e.account_last4 && e.account_last4 === f.account_last4);
     if (l4.length === 1) {
+      const support = supportScore(l4[0]);
+      if (support.furnisherSimilarity < 0.2
+        && (support.originalSimilarity === null || support.originalSimilarity < 0.2)) {
+        return {
+          identityId: null,
+          ambiguous: true,
+          reason: `last-4 ${f.account_last4} collides with an identity whose furnisher and original-creditor anchors both conflict`,
+          basis: 'ambiguous',
+        };
+      }
       return { identityId: l4[0].id, ambiguous: false, reason: `last-4 ${f.account_last4} exact match`, basis: 'last4' };
     }
     if (l4.length > 1) {
       // Several existing identities share this last-4 — disambiguate by
       // furnisher-name similarity; only accept a clear winner.
       const ranked = l4
-        .map((e) => ({ e, sim: nameSimilarity(f.norm_furnisher, e.norm_furnisher || '') }))
-        .sort((a, b) => b.sim - a.sim);
-      if (ranked[0].sim - (ranked[1] ? ranked[1].sim : 0) >= 0.3) {
-        return { identityId: ranked[0].e.id, ambiguous: false, reason: `last-4 + furnisher name`, basis: 'last4+name' };
+        .map((e) => ({ e, ...supportScore(e) }))
+        .sort((a, b) => b.score - a.score);
+      if (ranked[0].score >= 0.5 && ranked[0].score - (ranked[1] ? ranked[1].score : 0) >= 0.3) {
+        return { identityId: ranked[0].e.id, ambiguous: false, reason: 'last-4 + independent creditor identity support', basis: 'last4+support' };
       }
       return { identityId: null, ambiguous: true, reason: `${l4.length} existing identities share last-4 ${f.account_last4} with indistinguishable names`, basis: 'ambiguous' };
     }
@@ -59,10 +81,10 @@ export function matchAccount(account, existing) {
     // it with the newly-seen number so future matches get the strong anchor.
     const nameable = candidates
       .filter((e) => !e.account_last4)
-      .map((e) => ({ e, sim: nameSimilarity(f.norm_furnisher, e.norm_furnisher || '') }))
-      .filter((x) => x.sim >= 0.6)
-      .sort((a, b) => b.sim - a.sim);
-    if (nameable.length === 1 || (nameable.length > 1 && nameable[0].sim - nameable[1].sim >= 0.3)) {
+      .map((e) => ({ e, ...supportScore(e) }))
+      .filter((x) => x.furnisherSimilarity >= 0.9 && x.originalSimilarity !== null && x.originalSimilarity >= 0.8)
+      .sort((a, b) => b.score - a.score);
+    if (nameable.length === 1 || (nameable.length > 1 && nameable[0].score - nameable[1].score >= 0.3)) {
       return { identityId: nameable[0].e.id, ambiguous: false, reason: `furnisher name (enriching identity with newly-seen last-4 ${f.account_last4})`, basis: 'name->enrich', enrichLast4: f.account_last4 };
     }
     if (nameable.length > 1) {
@@ -72,25 +94,15 @@ export function matchAccount(account, existing) {
     return { identityId: null, ambiguous: false, reason: `last-4 ${f.account_last4} not seen for this client`, basis: 'new' };
   }
 
-  // No last-4 available — fall back to furnisher name + original creditor,
-  // with a higher bar since we've lost the strongest signal.
-  const scored = candidates
-    .map((e) => {
-      const sim = nameSimilarity(f.norm_furnisher, e.norm_furnisher || '');
-      const ocMatch = f.original_creditor && e.original_creditor && f.original_creditor === e.original_creditor;
-      return { e, score: sim + (ocMatch ? 0.2 : 0) };
-    })
-    .sort((a, b) => b.score - a.score);
-  if (scored.length === 0) return { identityId: null, ambiguous: false, reason: 'no existing identities for this client', basis: 'new' };
-  const best = scored[0];
-  const second = scored[1];
-  if (best.score >= 0.8) {
-    if (!second || best.score - second.score >= 0.2) {
-      return { identityId: best.e.id, ambiguous: false, reason: 'furnisher name / original creditor (no account number)', basis: 'fuzzy' };
-    }
-    return { identityId: null, ambiguous: true, reason: 'multiple similar candidates and no account number to disambiguate', basis: 'ambiguous' };
-  }
-  return { identityId: null, ambiguous: false, reason: 'no confident match without an account number', basis: 'new' };
+  // A name is not a durable tradeline identifier. Without a report-derived
+  // suffix, neither matching an old row nor minting a supposedly exact new
+  // identity is safe enough to initialize account tracks.
+  return {
+    identityId: null,
+    ambiguous: true,
+    reason: 'account-number last-4 is missing; reconcile against the source report before assigning a canonical account id',
+    basis: 'ambiguous',
+  };
 }
 
 // Orchestrates a whole audit's accounts against the existing identities,

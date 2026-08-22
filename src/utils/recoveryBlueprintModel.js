@@ -1,310 +1,259 @@
-export const RECOVERY_BLUEPRINT_TEMPLATE_VERSION = 'recovery_blueprint_v2';
+import {
+  buildCccInitializationRpcArgs,
+  buildR1CampaignPlan,
+  CLASSIFICATION_REVIEW_METHOD_VERSION,
+  FLOW_LABELS,
+} from './disputeFlow.js';
+
+export const RECOVERY_BLUEPRINT_TEMPLATE_VERSION = 'recovery_blueprint_v3';
 
 const BUREAU_LABELS = { EQ: 'Equifax', EXP: 'Experian', TU: 'TransUnion' };
-
-function finiteNumber(value) {
-  const number = typeof value === 'string'
-    ? Number(value.replace(/[$,]/g, ''))
-    : Number(value);
-  return Number.isFinite(number) ? number : 0;
-}
 
 function cleanText(value, fallback = '') {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
   return text || fallback;
 }
 
-function unique(values) {
-  return [...new Set(values.filter(Boolean))];
+function finiteNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = typeof value === 'string' ? Number(value.replace(/[$,]/g, '')) : Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
-function bureauLabels(bureaus) {
-  return unique((Array.isArray(bureaus) ? bureaus : [])
-    .map((bureau) => BUREAU_LABELS[String(bureau || '').toUpperCase()] || cleanText(bureau)))
-    .join(', ');
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
 }
 
 function reportDateLabel(value) {
   if (!value) return 'Date not provided';
   const raw = String(value);
-  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(raw)
-    ? new Date(`${raw}T12:00:00`)
-    : new Date(raw);
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T12:00:00`) : new Date(raw);
   return Number.isNaN(parsed.getTime())
     ? raw
     : parsed.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-function scoreBand(score) {
-  if (score == null || !Number.isFinite(Number(score))) return null;
-  const n = Number(score);
-  if (n >= 800) return 'Exceptional';
-  if (n >= 740) return 'Very Good';
-  if (n >= 670) return 'Good';
-  if (n >= 580) return 'Fair';
-  return 'Poor';
+function normalizeScores(scores = {}) {
+  return {
+    equifax: finiteNumberOrNull(scores.equifax),
+    experian: finiteNumberOrNull(scores.experian),
+    transunion: finiteNumberOrNull(scores.transunion),
+  };
 }
 
-/**
- * Presentation-only route label for the client PDF.
- * Does not change campaign routing — mirrors staff-facing guidance only.
- */
-function routeLabelFor(account) {
-  const type = String(account?.type || '').toUpperCase();
-  const status = String(account?.status || '').toLowerCase();
-  const name = String(account?.furnisher || '').toLowerCase();
-  const isCollector = type === 'C' || type === '0C' || type === '48' || type === '77'
-    || status.includes('collection')
-    || /lvnv|midland|portfolio|resurgent|jefferson|jeffcap|credence/.test(name);
-  if (isCollector) return 'FDCPA + Bureau';
-  if (status.includes('charge') || status.includes('charge-off') || status.includes('charged')) {
-    return 'Direct + Bureau';
-  }
-  if ((account?.bureaus || []).length >= 2) return 'Bureau packet';
-  return 'Direct + Bureau';
+function scoreObservation(scores) {
+  const rows = [
+    { bureau: 'Equifax', score: scores.equifax },
+    { bureau: 'Experian', score: scores.experian },
+    { bureau: 'TransUnion', score: scores.transunion },
+  ].filter((row) => row.score !== null);
+  if (rows.length < 2) return null;
+  const sorted = [...rows].sort((left, right) => right.score - left.score);
+  return {
+    high: sorted[0],
+    low: sorted[sorted.length - 1],
+    points: sorted[0].score - sorted[sorted.length - 1].score,
+  };
+}
+
+function exactAccountId(account) {
+  return cleanText(account?.id);
+}
+
+function exactClientAccountId(account) {
+  return cleanText(account?.clientAccountId || account?.client_account_id);
+}
+
+function normalizeEvidence(account) {
+  return (Array.isArray(account?.routingFacts?.evidence) ? account.routingFacts.evidence : [])
+    .map((item) => ({
+      bureauCode: cleanText(item?.bureau).toUpperCase(),
+      field: cleanText(item?.field),
+      value: cleanText(item?.value ?? item?.rawValue),
+      page: Number.isInteger(Number(item?.page)) && Number(item.page) > 0 ? Number(item.page) : null,
+      source: cleanText(item?.source, item?.autoEligible ? 'structured_report' : 'reviewed_report'),
+    }))
+    .filter((item) => item.field || item.value);
+}
+
+function normalizeFindings(account) {
+  const source = Array.isArray(account?.violations) && account.violations.length
+    ? account.violations
+    : (Array.isArray(account?.findings) ? account.findings : []);
+  return source.map((finding, index) => {
+    const firstPageRef = (Array.isArray(finding?.evidenceRefs) ? finding.evidenceRefs : [])
+      .find((reference) => Number.isInteger(Number(reference?.page)) && Number(reference.page) > 0);
+    const page = finding?.page ?? firstPageRef?.page;
+    return {
+      id: cleanText(finding?.id || finding?.ruleId || finding?.type, `${exactAccountId(account)}-finding-${index + 1}`),
+      field: cleanText(finding?.field, 'Report field'),
+      issue: cleanText(finding?.issue || finding?.reason || finding?.challengeStatement),
+      statute: cleanText(finding?.statute),
+      outcome: cleanText(finding?.outcome || finding?.adjudication),
+      page: Number.isInteger(Number(page)) && Number(page) > 0 ? Number(page) : null,
+    };
+  }).filter((finding) => finding.issue);
 }
 
 function normalizeAccount(account, index) {
-  const violations = Array.isArray(account?.violations) ? account.violations : [];
-  const primaryChallenge = cleanText(
-    account?.primaryChallengeStatement
-      || violations[0]?.challengeStatement
-      || account?.primaryViolation
-      || violations[0]?.issue
-      || 'Reporting accuracy issue documented in the forensic audit.',
-  );
-  const normalized = {
-    id: cleanText(account?.id, `account-${index + 1}`),
-    furnisher: cleanText(account?.furnisher, 'Account under review'),
+  const id = exactAccountId(account);
+  const clientAccountId = exactClientAccountId(account);
+  if (!id || !clientAccountId) {
+    throw new Error(`Blueprint account ${index + 1} is missing its exact audit or canonical account id.`);
+  }
+  const bureaus = unique((Array.isArray(account?.bureaus) ? account.bureaus : []).map((code) => cleanText(code).toUpperCase()));
+  return {
+    id,
+    clientAccountId,
+    furnisher: cleanText(account?.furnisher, 'Furnisher not extracted'),
     originalCreditor: cleanText(account?.originalCreditor),
-    accountNumberMasked: cleanText(account?.accountNumberMasked, 'Not shown'),
-    type: cleanText(account?.type),
-    status: cleanText(account?.status, 'Reported status unavailable'),
-    balance: Math.max(0, finiteNumber(account?.balance)),
-    bureaus: Array.isArray(account?.bureaus) ? account.bureaus : [],
-    bureauLabel: bureauLabels(account?.bureaus) || 'Bureau not identified',
-    batch: Number(account?.batch) === 1 ? 1 : 2,
-    priorityScore: finiteNumber(account?.priorityScore),
-    violations: violations.map((violation) => ({
-      field: cleanText(violation?.field, 'Reporting accuracy'),
-      issue: cleanText(violation?.issue, 'The reporting requires documented review.'),
-      challengeStatement: cleanText(
-        violation?.challengeStatement,
-        violation?.issue || 'The reporting requires documented review.',
-      ),
-      statute: cleanText(violation?.statute),
-      severity: cleanText(violation?.severity, 'med'),
-      evidenceQuality: cleanText(violation?.evidenceQuality, ''),
-    })),
-    primaryViolation: cleanText(
-      account?.primaryViolation,
-      violations[0]?.issue || 'Reporting accuracy issue documented in the forensic audit.',
-    ),
-    primaryChallengeStatement: primaryChallenge,
-    strategy: cleanText(
-      account?.strategy,
-      'Challenge the documented reporting discrepancy with account-specific evidence.',
-    ),
-  };
-  normalized.routeLabel = cleanText(account?.routeLabel, routeLabelFor(normalized));
-  return normalized;
-}
-
-function buildScoreGap(scores) {
-  const values = [
-    { key: 'equifax', label: 'Equifax', score: scores?.equifax },
-    { key: 'experian', label: 'Experian', score: scores?.experian },
-    { key: 'transunion', label: 'TransUnion', score: scores?.transunion },
-  ].filter((entry) => entry.score != null && Number.isFinite(Number(entry.score)));
-
-  if (values.length < 2) {
-    return { points: 0, high: null, low: null, narrative: null };
-  }
-
-  const sorted = [...values].sort((a, b) => Number(b.score) - Number(a.score));
-  const high = sorted[0];
-  const low = sorted[sorted.length - 1];
-  const points = Math.round(Number(high.score) - Number(low.score));
-  if (points < 15) {
-    return {
-      points,
-      high,
-      low,
-      narrative: 'Scores are relatively aligned across bureaus. Priority is still the documented accuracy conflicts below.',
-    };
-  }
-  return {
-    points,
-    high: { ...high, band: scoreBand(high.score) },
-    low: { ...low, band: scoreBand(low.score) },
-    narrative: `${high.label} is reading a stronger file than ${low.label} by about ${points} points. That gap is the map — the accounts and accuracy failures below are where it lives.`,
+    accountNumberMasked: cleanText(account?.accountNumberMasked, 'Not extracted'),
+    accountKind: cleanText(account?.accountKind || account?.routingFacts?.accountKind),
+    status: cleanText(account?.status, 'Not extracted'),
+    balance: finiteNumberOrNull(account?.balance),
+    bureaus,
+    bureauLabel: bureaus.map((code) => BUREAU_LABELS[code] || code).join(', '),
+    findings: normalizeFindings(account),
+    evidence: normalizeEvidence(account),
   };
 }
 
-function buildAccuracyIssues(accounts) {
-  const issues = [];
-  for (const account of accounts) {
-    for (const violation of account.violations) {
-      issues.push({
-        title: cleanText(
-          `${account.furnisher} — ${violation.field}`,
-          account.furnisher,
-        ),
-        body: cleanText(
-          violation.challengeStatement || violation.issue,
-          'Documented reporting accuracy issue.',
-        ),
-        severity: violation.severity || 'med',
-        accountId: account.id,
-      });
-    }
+function validateReviewIdentity(audit, options = {}) {
+  const auditId = cleanText(audit?.id || audit?.auditId || options.auditId);
+  const clientId = cleanText(audit?.client?.id || options.clientId);
+  const review = audit?.classificationReview;
+  if (!auditId || !clientId) throw new Error('Blueprint requires the exact saved audit and canonical client ids.');
+  if (review?.status !== 'confirmed'
+    || review?.auditId !== auditId
+    || review?.clientId !== clientId
+    || review?.methodVersion !== CLASSIFICATION_REVIEW_METHOD_VERSION
+    || !Number.isInteger(Number(review?.version))
+    || Number(review.version) < 1) {
+    throw new Error('Confirm and save the exact deterministic classification review before generating a Recovery Blueprint.');
   }
-  // Cap for client PDF readability; full set remains on the audit.
-  return issues.slice(0, 12);
-}
-
-function buildIdentity(audit) {
-  const personal = audit?.personalInfo || {};
-  const formerAddresses = unique(Array.isArray(personal.formerAddresses) ? personal.formerAddresses : []);
-  const nameVariants = unique(Array.isArray(personal.nameVariants) ? personal.nameVariants : []);
-  const currentAddress = cleanText(personal.currentAddress || audit?.client?.address);
-  const flags = [];
-  if (formerAddresses.length) {
-    flags.push({
-      title: 'Address history',
-      body: 'Former or alternate addresses appear on file. Confirm the current primary address before Batch 1 mails so letters do not bounce.',
-    });
-  }
-  if (nameVariants.length) {
-    flags.push({
-      title: 'Name variants',
-      body: 'More than one name variation is present across bureau files. Align the legal name used on disputes before mailing.',
-    });
-  }
-  if (!flags.length) {
-    flags.push({
-      title: 'Identity hygiene',
-      body: 'Confirm current address and legal name on each bureau before the first mailing. Dirty header data is the quietest way letters fail.',
-    });
-  }
-  return {
-    currentAddress,
-    formerAddresses,
-    nameVariants,
-    flags,
-    hasMaterialFlags: formerAddresses.length > 0 || nameVariants.length > 0,
-  };
+  return { auditId, clientId, review };
 }
 
 /**
- * Presentation-only mapping from the reviewed forensic audit to the Recovery
- * Blueprint / Client Audit. Contains no credit-analysis logic: it preserves
- * the deterministic audit's account order, batches, violations, priority
- * scores, and challenge statements.
+ * Fail-closed readiness check shared by the server and PDF model. It rebuilds
+ * the deterministic states and compares them to the immutable saved review;
+ * no model/API call participates in classification or R1 selection.
  */
-export function buildRecoveryBlueprintModel(audit, options = {}) {
-  if (!audit || typeof audit !== 'object') throw new Error('A saved forensic audit is required.');
-
-  let accounts = (Array.isArray(audit.accounts) ? audit.accounts : []).map(normalizeAccount);
-  // Prefer the audit's already-ranked order (priorityScore). If scores are
-  // present, re-sort defensively so opening move stays consistent.
-  if (accounts.some((a) => a.priorityScore > 0)) {
-    accounts = [...accounts].sort((a, b) => (b.priorityScore - a.priorityScore) || (b.violations.length - a.violations.length));
-  }
-  const targets = accounts.filter((account) => account.violations.length > 0);
-  const effectiveTargets = targets.length ? targets : accounts;
-  const batch1Accounts = accounts.filter((account) => account.batch === 1);
-  const batch2Accounts = accounts.filter((account) => account.batch === 2 && account.violations.length > 0);
-  const openingMove = batch1Accounts[0] || effectiveTargets[0] || null;
-  const violationCount = accounts.reduce((total, account) => total + account.violations.length, 0);
-  const allBureaus = unique(accounts.flatMap((account) => account.bureaus));
-  const citationDebtCount = Math.max(0, finiteNumber(audit.citationDebt?.count));
-
-  const clientName = cleanText(audit.client?.name, 'Client');
-  const reportDate = cleanText(audit.client?.reportDate || options.reportDate);
-  const firstName = clientName.split(' ')[0] || 'Client';
-  const scores = {
-    equifax: audit.scores?.equifax ?? null,
-    experian: audit.scores?.experian ?? null,
-    transunion: audit.scores?.transunion ?? null,
+export function assertRecoveryBlueprintReady(audit, options = {}) {
+  if (!audit || typeof audit !== 'object') throw new Error('A saved audit is required.');
+  const identity = validateReviewIdentity(audit, options);
+  const exactAudit = {
+    ...audit,
+    id: identity.auditId,
+    client: { ...(audit.client || {}), id: identity.clientId },
   };
-  const scoreGap = buildScoreGap(scores);
-  const accuracyIssues = buildAccuracyIssues(effectiveTargets);
-  const identity = buildIdentity(audit);
+  const initialization = buildCccInitializationRpcArgs(exactAudit, {
+    auditId: identity.auditId,
+    clientId: identity.clientId,
+  });
+  const plan = buildR1CampaignPlan(exactAudit);
+  const deferredCount = plan.bureaus.reduce((total, bureau) => total + bureau.deferred.length, 0);
+  if (plan.needsReview.length || deferredCount || !plan.recommendedLetterCount) {
+    throw new Error('Blueprint generation is blocked until every account/bureau route is complete and at least one R1 letter is recommended.');
+  }
+  return { ...identity, exactAudit, initialization, plan };
+}
 
-  const batch1Names = batch1Accounts.map((a) => a.furnisher).filter(Boolean);
-  const batch1Label = batch1Names.length
-    ? batch1Names.slice(0, 4).join(', ') + (batch1Names.length > 4 ? ', and additional targets' : '')
-    : 'highest-priority accounts';
+export function buildRecoveryBlueprintModel(audit, options = {}) {
+  const ready = assertRecoveryBlueprintReady(audit, options);
+  const accounts = ready.exactAudit.accounts.map(normalizeAccount);
+  const accountByClientId = new Map(accounts.map((account) => [account.clientAccountId, account]));
+  const recommendations = ready.plan.bureaus.flatMap((bureauPlan) => bureauPlan.recommendations.map((recommendation, index) => {
+    const routedAccounts = recommendation.accountIds.map((clientAccountId) => accountByClientId.get(clientAccountId));
+    if (routedAccounts.some((account) => !account)) {
+      throw new Error(`Blueprint route ${bureauPlan.bureau.code}/${recommendation.trackCode} does not match the reviewed canonical accounts.`);
+    }
+    return {
+      id: `${bureauPlan.bureau.code}:${recommendation.trackCode}:${recommendation.round}:${index + 1}`,
+      bureauCode: bureauPlan.bureau.code,
+      bureauName: bureauPlan.bureau.name,
+      flow: recommendation.trackCode,
+      flowLabel: recommendation.label || FLOW_LABELS[recommendation.flow] || recommendation.flow,
+      round: recommendation.round,
+      law: recommendation.law,
+      templateFlow: recommendation.templateFlow,
+      templateRound: recommendation.templateRound,
+      accountIds: [...recommendation.accountIds],
+      accounts: routedAccounts,
+    };
+  }));
+  const routedPairCount = recommendations.reduce((total, recommendation) => total + recommendation.accountIds.length, 0);
+  const routedAccountIds = unique(recommendations.flatMap((recommendation) => recommendation.accountIds));
+  const routedAccounts = routedAccountIds.map((id) => accountByClientId.get(id));
+  const documentedFindings = routedAccounts.flatMap((account) => account.findings.map((finding) => ({
+    ...finding,
+    accountId: account.id,
+    clientAccountId: account.clientAccountId,
+    furnisher: account.furnisher,
+  })));
+  const clientName = cleanText(ready.exactAudit.client?.name, 'Client');
+  const reportDate = cleanText(ready.exactAudit.client?.reportDate || options.reportDate);
+  const scores = normalizeScores(ready.exactAudit.scores);
+  const coverage = ready.exactAudit.reportCoverage || {};
 
   return {
     templateVersion: RECOVERY_BLUEPRINT_TEMPLATE_VERSION,
-    pageCount: 9,
+    pageCount: 7,
     client: {
-      id: audit.client?.id || options.clientId || null,
+      id: ready.clientId,
       name: clientName,
-      firstName,
-      location: cleanText(audit.client?.address).split(',').slice(-2).join(',').trim(),
+      firstName: clientName.split(' ')[0] || 'Client',
+      address: cleanText(ready.exactAudit.client?.address || ready.exactAudit.personalInfo?.currentAddress),
       reportDate,
       reportDateLabel: reportDateLabel(reportDate),
     },
     scores,
-    scoreGap,
+    scoreObservation: scoreObservation(scores),
     executiveSummary: cleanText(
-      audit.executiveSummary,
-      'Your reports contain account-level reporting issues that warrant a documented, evidence-led recovery strategy.',
+      ready.exactAudit.executiveSummary,
+      'This Blueprint maps the confirmed report facts to the deterministic CCC R1 mailing plan.',
     ),
     metrics: {
-      accountsScanned: Math.max(0, finiteNumber(audit.accountsScanned)),
-      priorityTargetCount: effectiveTargets.length,
-      accuracyIssueCount: violationCount,
-      targetedNegativeBalance: effectiveTargets.reduce((sum, account) => sum + account.balance, 0),
-      batch1StrikeZone: batch1Accounts.reduce((sum, account) => sum + account.balance, 0),
-      bureauCoverage: allBureaus.length || Object.values(scores).filter((score) => score != null).length,
-      citationDebtCount,
+      accountsReviewed: accounts.length,
+      disputeEligibleAccounts: routedAccounts.length,
+      recommendedLetters: recommendations.length,
+      routedAccountBureauPairs: routedPairCount,
+      documentedFindings: documentedFindings.length,
     },
-    citationDebt: {
-      count: citationDebtCount,
-      // Staff-facing only; never render raw pending items to the client PDF.
-      items: Array.isArray(audit.citationDebt?.items) ? audit.citationDebt.items : [],
+    reportCoverage: {
+      complete: coverage.complete === true,
+      counts: { EQ: Number(coverage?.counts?.EQ || 0), EXP: Number(coverage?.counts?.EXP || 0), TU: Number(coverage?.counts?.TU || 0) },
     },
-    openingMove,
-    batch1Accounts,
-    batch2Accounts,
-    accuracyIssues,
-    identity,
-    recoveryPath: [
-      {
-        number: '01',
-        title: 'Forensic audit — done',
-        body: `Three-bureau disclosure pulled apart. ${effectiveTargets.length} priority target${effectiveTargets.length === 1 ? '' : 's'} ranked. ${violationCount} accuracy issue${violationCount === 1 ? '' : 's'} documented. Identity cleanup queued before the first mailing.`,
-      },
-      {
-        number: '02',
-        title: 'Batch 1 — the heavy hitters',
-        body: `Opening disputes focused on ${batch1Label}. Mix of direct, bureau packets, and FDCPA-first where the collector profile fits — concentrated firepower, not spray-and-pray.`,
-      },
-      {
-        number: '03',
-        title: 'Batch 2 — clean the rest',
-        body: batch2Accounts.length
-          ? `Remaining targets (${batch2Accounts.map((a) => a.furnisher).slice(0, 3).join(', ')}${batch2Accounts.length > 3 ? ', and others' : ''}) sequenced after Batch 1 responses land so leverage is not diluted.`
-          : 'Remaining lower-priority items and personal-info cleanup are sequenced after Batch 1 responses land so we do not dilute leverage.',
-      },
-      {
-        number: '04',
-        title: 'Rebuild & protect',
-        body: 'As negatives fall, guide positive tradeline strategy and watch for re-aging or reinsertion. The goal is a file lenders trust — not a temporary bump.',
-      },
+    accounts,
+    routedAccounts,
+    recommendations,
+    documentedFindings,
+    provenance: {
+      auditId: ready.auditId,
+      clientId: ready.clientId,
+      auditRevision: cleanText(options.auditRevision || ready.exactAudit.auditRevision || ready.exactAudit.savedAt),
+      auditSha256: cleanText(options.auditSha256 || ready.exactAudit.auditSha256),
+      classificationReviewVersion: Number(ready.review.version),
+      classificationReviewedAt: cleanText(ready.review.reviewedAt),
+      classificationReviewedBy: cleanText(ready.review.reviewedBy),
+      classificationMethodVersion: ready.review.methodVersion,
+      routesSha256: cleanText(ready.review.routesSha256),
+      routingSnapshotSha256: cleanText(ready.review.routingSnapshotSha256),
+      ruleAuthority: 'Skool flow documents/original course letters + explicit CCC owner policies',
+    },
+    nextSteps: [
+      'Confirm the client identity documents, proof of address, and required account screenshots for each mailing packet.',
+      'Prepare every listed R1 letter separately for the bureau shown; do not collapse independent recommendations.',
+      'Mail the approved packets by USPS First-Class Mail and record the exact sent date.',
+      'Record the response outcome for each account. Outcomes - not elapsed time alone - control the next deterministic state.',
+      'If CCC returns a review hold, stop. Direct, Solo, and unconfirmed end-cycle decisions require owner/course clarification.',
     ],
-    disclaimer: 'This audit is a working forensic package from your bureau disclosures for client presentation and campaign scoping. Results vary; credit repair companies cannot guarantee removal of accurate information. Production dispute letters should be generated from the live CCC engine before mailing. Not legal advice.',
+    disclaimer: 'This Blueprint summarizes report facts and the saved CCC classification review. It does not guarantee a deletion, score increase, or specific result. Accurate information cannot be promised for removal. This is not legal advice.',
   };
 }
 
 export function recoveryBlueprintFilename(auditOrModel) {
-  const model = auditOrModel?.templateVersion
-    ? auditOrModel
-    : buildRecoveryBlueprintModel(auditOrModel);
+  const model = auditOrModel?.templateVersion ? auditOrModel : buildRecoveryBlueprintModel(auditOrModel);
   const slug = model.client.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'client';
   const date = model.client.reportDate || new Date().toISOString().slice(0, 10);
   return `ccc-recovery-blueprint-${slug}-${date}.pdf`;

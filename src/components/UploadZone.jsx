@@ -7,16 +7,19 @@ import {
   listBureauParsesForClient,
   summarizeBureauParses,
 } from '../utils/auditBureauParses';
+import { ADMIN_BRAND } from '../utils/adminBrand.js';
 
 // Brand tokens — matches the dashboard / clients card system
 const T = {
-  navy: '#1B2A4A',
-  gold: '#C9A84C',
-  border: '#E7EAF0',
-  ink: '#111827',
-  muted: '#6B7280',
-  faint: '#9CA3AF',
-  cardShadow: '0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)',
+  primary: ADMIN_BRAND.ink,
+  accent: ADMIN_BRAND.accent,
+  accentStrong: ADMIN_BRAND.accentStrong,
+  accentSoft: ADMIN_BRAND.accentSoft,
+  border: ADMIN_BRAND.border,
+  ink: ADMIN_BRAND.ink,
+  muted: ADMIN_BRAND.muted,
+  faint: ADMIN_BRAND.faint,
+  cardShadow: ADMIN_BRAND.shadow,
 };
 
 const MODES = [
@@ -52,9 +55,9 @@ function DropZone({ label, file, onFile, onClear }) {
     <label
       className="flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-colors text-center"
       style={{
-        border: '2px dashed ' + (dragging ? T.navy : '#D9DEE8'),
+        border: '2px dashed ' + (dragging ? T.accent : T.border),
         borderRadius: 10, padding: '20px 16px',
-        background: dragging ? '#F5F7FB' : '#fff',
+        background: dragging ? T.accentSoft : '#fff',
       }}
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
@@ -106,7 +109,7 @@ export default function UploadZone({ onAuditStart }) {
   }, [mode, clientSelection]);
 
   const canSubmit = () => {
-    if (!clientSelection) return false;
+    if (clientSelection?.type !== 'existing' || !clientSelection.id) return false;
     if (mode === 'combined') return !!files.combined;
     if (mode === 'individual') return !!(files.Equifax && files.Experian && files.TransUnion);
     if (mode === 'single') return !!files[selectedBureau];
@@ -129,7 +132,7 @@ export default function UploadZone({ onAuditStart }) {
     <div className="max-w-3xl mx-auto" style={{ padding: '20px 0 32px' }}>
       {/* Branded page header */}
       <div className="flex items-center gap-3 mb-6">
-        <span style={{ width: 4, height: 30, borderRadius: 2, background: T.gold, display: 'inline-block' }} />
+        <span style={{ width: 4, height: 30, borderRadius: 2, background: T.accent, display: 'inline-block' }} />
         <div>
           <h1 className="ccc-display text-[22px] font-medium leading-tight" style={{ color: T.ink }}>New Forensic Audit</h1>
           <p className="text-[11px]" style={{ color: T.muted }}>Upload a report → extract 3B facts → receive exact R1 start instructions</p>
@@ -145,22 +148,22 @@ export default function UploadZone({ onAuditStart }) {
             <div key={m.id} onClick={() => setMode(m.id)}
               className="cursor-pointer transition-all"
               style={{
-                border: '1px solid ' + (on ? T.navy : T.border),
+                border: '1px solid ' + (on ? T.accent : T.border),
                 borderRadius: 12, padding: 16,
-                background: on ? '#F5F7FB' : '#fff',
+                background: on ? T.accentSoft : '#fff',
                 boxShadow: on ? 'none' : T.cardShadow,
               }}>
               <div className="flex items-center gap-3">
                 <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0"
-                  style={{ border: '2px solid ' + (on ? T.navy : '#D1D5DB') }}>
-                  {on && <div className="w-2 h-2 rounded-full" style={{ background: T.gold }} />}
+                  style={{ border: '2px solid ' + (on ? T.accentStrong : '#D1D5DB') }}>
+                  {on && <div className="w-2 h-2 rounded-full" style={{ background: T.accent }} />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-[13px] font-semibold" style={{ color: T.ink }}>{m.label}</span>
                     {m.badge && (
                       <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
-                        style={{ background: on ? T.navy : '#EEF1F7', color: on ? T.gold : T.muted }}>
+                        style={{ background: on ? T.primary : '#F1F5F9', color: on ? '#fff' : T.muted }}>
                         {m.badge}
                       </span>
                     )}
@@ -205,9 +208,9 @@ export default function UploadZone({ onAuditStart }) {
                   <button key={b} onClick={() => { setSelectedBureau(b); clearFile(b); }}
                     className="rounded-full px-3 py-1 text-[11px] transition-colors"
                     style={{
-                      background: on ? T.navy : '#fff',
-                      color: on ? T.gold : T.muted,
-                      border: '1px solid ' + (on ? T.navy : T.border),
+                      background: on ? T.primary : '#fff',
+                      color: on ? '#fff' : T.muted,
+                      border: '1px solid ' + (on ? T.primary : T.border),
                       fontWeight: on ? 600 : 400,
                     }}>
                     {b}
@@ -248,7 +251,7 @@ export default function UploadZone({ onAuditStart }) {
                     type="button"
                     onClick={handleMerge}
                     className="w-full py-2.5 text-[12px] uppercase tracking-wider rounded-lg font-medium"
-                    style={{ backgroundColor: T.navy, color: T.gold }}
+                    style={{ backgroundColor: T.primary, color: '#fff' }}
                   >
                     Merge 3 bureau parses into unified audit
                   </button>
@@ -261,7 +264,7 @@ export default function UploadZone({ onAuditStart }) {
 
       <button onClick={handleSubmit} disabled={!canSubmit()}
         className="w-full py-3 text-[13px] uppercase tracking-wider rounded-lg transition-colors font-medium"
-        style={{ backgroundColor: canSubmit() ? T.navy : '#B5BBC9', color: canSubmit() ? T.gold : '#FFFFFF' }}>
+        style={{ backgroundColor: canSubmit() ? T.primary : '#B5BBC9', color: '#FFFFFF', boxShadow: canSubmit() ? '0 8px 20px rgba(7,17,31,.14)' : 'none' }}>
         {!clientSelection
           ? 'Select a client to continue'
           : <>

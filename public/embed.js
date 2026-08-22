@@ -19,6 +19,9 @@
   // 2. Create the floating action button
   const button = document.createElement('button');
   button.id = 'ccc-widget-button';
+  button.type = 'button';
+  button.setAttribute('aria-label', 'Open Credit Comeback Club assistant');
+  button.setAttribute('aria-expanded', 'false');
   button.style.width = '56px';
   button.style.height = '56px';
   button.style.borderRadius = '50%';
@@ -77,6 +80,11 @@
     if (!isOpen) toggleChat();
   };
 
+  // On narrow screens the tooltip can cover the page's primary CTA. Keep the
+  // full-size, 56px launcher available without the extra overlay.
+  const narrowViewport = window.matchMedia('(max-width: 480px)');
+  if (narrowViewport.matches) tooltip.style.display = 'none';
+
   // 3. Create the iframe
   const iframeContainer = document.createElement('div');
   iframeContainer.style.position = 'absolute';
@@ -96,7 +104,9 @@
   iframeContainer.style.backgroundColor = 'transparent';
 
   const iframe = document.createElement('iframe');
-  iframe.src = BASE_URL + '/widget';
+  const iframeUrl = BASE_URL + '/widget';
+  iframe.dataset.src = iframeUrl;
+  iframe.title = 'Credit Comeback Club assistant';
   iframe.style.width = '100%';
   iframe.style.height = '100%';
   iframe.style.border = 'none';
@@ -111,10 +121,23 @@
 
   // 4. Toggle Logic
   let isOpen = false;
+  let iframeLoaded = false;
+
+  const loadChat = () => {
+    if (iframeLoaded) return;
+    iframe.src = iframe.dataset.src;
+    iframeLoaded = true;
+  };
   
   const toggleChat = () => {
     isOpen = !isOpen;
+    button.setAttribute('aria-expanded', String(isOpen));
+    button.setAttribute(
+      'aria-label',
+      isOpen ? 'Close Credit Comeback Club assistant' : 'Open Credit Comeback Club assistant',
+    );
     if (isOpen) {
+      loadChat();
       tooltip.style.display = 'none';
       iframeContainer.style.display = 'block';
       // Small timeout to allow display:block to apply before animating opacity
@@ -144,7 +167,7 @@
 
   // Listen for close events from inside the iframe
   window.addEventListener('message', (event) => {
-    if (event.data === 'close_ccc_chat' && isOpen) {
+    if (event.source === iframe.contentWindow && event.data === 'close_ccc_chat' && isOpen) {
       toggleChat();
     }
   });

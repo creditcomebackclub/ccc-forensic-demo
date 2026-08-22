@@ -34,6 +34,137 @@
   .pill-red { background-color: #FBEDEB; color: #C44A3F; border-color: #F0CFCB; }
   .pill-green { background-color: #E6F0EA; color: #2E7D5C; border-color: #C8DDD0; }
   .pill-neutral { background-color: #F4F2EB; color: #6B6B66; border-color: #E8E6DF; }
+
+  /* Authenticated admin/auditor workspace. Public and portal surfaces are
+     intentionally outside this scope and retain their independent themes. */
+  .ccc-ops-shell {
+    background: var(--ccc-admin-bg);
+    color: var(--ccc-admin-ink);
+  }
+
+  .ccc-ops-main {
+    min-width: 0;
+    background-color: var(--ccc-admin-bg);
+    background-image:
+      radial-gradient(circle at 92% 0%, rgba(56, 169, 255, 0.11), transparent 28rem),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(244, 248, 252, 0) 18rem);
+  }
+
+  .ccc-ops-content { scrollbar-gutter: stable; }
+
+  .ccc-ops-sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    flex-shrink: 0;
+    overflow: hidden;
+    border-color: var(--ccc-admin-border);
+    background: var(--ccc-admin-surface);
+    box-shadow: 8px 0 28px rgba(7, 17, 31, 0.035);
+  }
+
+  .ccc-ops-sidebar::before {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 4px;
+    content: '';
+    background: linear-gradient(90deg, var(--ccc-admin-accent-strong), var(--ccc-admin-accent));
+  }
+
+  .ccc-ops-brand {
+    border-color: var(--ccc-admin-border);
+    background: linear-gradient(145deg, #ffffff, #f5fbff);
+  }
+
+  .ccc-ops-logo {
+    border: 1px solid var(--ccc-admin-border-strong);
+    box-shadow: 0 5px 15px rgba(56, 169, 255, 0.16);
+  }
+
+  .ccc-ops-brand-title { color: var(--ccc-admin-ink); }
+  .ccc-ops-brand-kicker { color: var(--ccc-admin-accent-strong); }
+  .ccc-ops-nav {
+    min-height: 0;
+    overflow-y: auto;
+    background: rgba(255, 255, 255, 0.92);
+  }
+  .ccc-ops-nav-section { color: var(--ccc-admin-faint); }
+
+  .ccc-ops-nav-item {
+    position: relative;
+    border-left: 3px solid transparent;
+    color: var(--ccc-admin-muted);
+  }
+
+  .ccc-ops-nav-item:hover {
+    color: var(--ccc-admin-ink);
+    background: #f7fbfe;
+  }
+
+  .ccc-ops-nav-item[data-active='true'] {
+    border-left-color: var(--ccc-admin-accent);
+    color: var(--ccc-admin-ink);
+    background: var(--ccc-admin-accent-soft);
+    font-weight: 600;
+  }
+
+  .ccc-ops-nav-item[data-active='true'] svg { color: var(--ccc-admin-accent-strong); }
+
+  .ccc-ops-nav-item:focus-visible,
+  .ccc-ops-icon-button:focus-visible {
+    outline: 2px solid var(--ccc-admin-accent);
+    outline-offset: -2px;
+  }
+
+  .ccc-ops-nav-badge {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    color: #fff;
+    background: #dc2626;
+    box-shadow: 0 0 0 2px #fff;
+  }
+
+  .ccc-ops-user {
+    border-color: var(--ccc-admin-border);
+    background: #fbfdff;
+  }
+
+  .ccc-ops-avatar {
+    color: #fff;
+    background: var(--ccc-admin-ink);
+    box-shadow: inset 0 0 0 2px rgba(56, 169, 255, 0.48);
+  }
+
+  .ccc-ops-icon-button { color: var(--ccc-admin-faint); }
+  .ccc-ops-icon-button:hover { color: var(--ccc-admin-accent-strong); }
+
+  .ccc-ops-topbar {
+    border-color: var(--ccc-admin-border);
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(14px);
+  }
+}
+
+@layer utilities {
+  /* Bridge legacy Tailwind brand utilities to the scoped operational theme.
+     This gives dense, not-yet-redesigned admin screens the same foundation
+     without changing the client or affiliate portals. */
+  .ccc-ops-shell .bg-bg { background-color: var(--ccc-admin-bg); }
+  .ccc-ops-shell .bg-navy,
+  .ccc-ops-shell .bg-navy-dark { background-color: var(--ccc-admin-ink); }
+  .ccc-ops-shell .bg-navy-light { background-color: var(--ccc-admin-accent-soft); }
+  .ccc-ops-shell .bg-gold { background-color: var(--ccc-admin-accent); }
+  .ccc-ops-shell .text-navy { color: var(--ccc-admin-ink); }
+  .ccc-ops-shell .text-gold { color: var(--ccc-admin-accent-strong); }
+  .ccc-ops-shell .text-ink { color: var(--ccc-admin-ink); }
+  .ccc-ops-shell .text-ink-muted { color: var(--ccc-admin-muted); }
+  .ccc-ops-shell .text-ink-faint { color: var(--ccc-admin-faint); }
+  .ccc-ops-shell .border-border { border-color: var(--ccc-admin-border); }
+  .ccc-ops-shell .border-navy { border-color: var(--ccc-admin-ink); }
+  .ccc-ops-shell .border-gold { border-color: var(--ccc-admin-accent); }
+  .ccc-ops-shell .hover\:text-gold:hover { color: var(--ccc-admin-accent-strong); }
+  .ccc-ops-shell .hover\:bg-navy-dark:hover { background-color: #111c2c; }
 }
 
 /* Print styles for letter export */

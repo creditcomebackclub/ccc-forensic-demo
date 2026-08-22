@@ -1,4 +1,6 @@
 export const USPS_FIRST_CLASS = 'usps_first_class';
+// Historical records may still contain this value. It is not an available
+// service for a new CCC mailpiece.
 export const USPS_CERTIFIED_RETURN_RECEIPT = 'usps_first_class_certified_return_receipt';
 
 export function isCccDisputePhase(phase) {
@@ -23,19 +25,20 @@ export function requiresCccR1IdentityDocuments(letter) {
 export function mailServiceForLetter(letter) {
   return isCccDisputePhase(letter?.phase)
     ? USPS_FIRST_CLASS
-    : USPS_CERTIFIED_RETURN_RECEIPT;
+    : null;
 }
 
 export function isFirstClassCccLetter(letter) {
   return isCccDisputePhase(letter?.phase)
-    && (letter?.mailService ?? letter?.mail_service ?? USPS_FIRST_CLASS) === USPS_FIRST_CLASS;
+    && (letter?.mailService ?? letter?.mail_service) === USPS_FIRST_CLASS;
 }
 
 export function cccReviewClock(letter) {
   if (!isFirstClassCccLetter(letter)) return { start: null, basis: null };
-  const delivered = letter?.deliveredAt ?? letter?.delivered_at;
-  if (delivered) return { start: String(delivered).slice(0, 10), basis: 'delivered' };
+  const mailed = letter?.mailedDate ?? letter?.mailed_date;
   const expected = letter?.expectedDeliveryDate ?? letter?.expected_delivery_date;
-  if (expected) return { start: String(expected).slice(0, 10), basis: 'expected_delivery' };
+  const status = letter?.trackingStatus ?? letter?.tracking_status;
+  const terminal = ['Failed', 'Cancelled', 'Returned to Sender'].includes(status);
+  if (mailed && expected && !terminal) return { start: String(expected).slice(0, 10), basis: 'expected_delivery' };
   return { start: null, basis: null };
 }

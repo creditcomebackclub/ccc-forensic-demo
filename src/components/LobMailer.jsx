@@ -1,46 +1,36 @@
 import React, { useEffect, useState } from 'react';
-import { X, Send, CheckCircle, AlertCircle, MapPin } from 'lucide-react';
-import { getDocuments, getDocumentBase64 } from '../utils/documents';
-import {
-  assertFollowUpEnclosureContract,
-  buildFollowUpEnclosurePlan,
-  extractHtmlBody,
-  extractHtmlStyles,
-  isPhase3FollowUpLetter,
-  validateFollowUpSourceRelationships,
-} from '../utils/followUpEnclosures';
-import { listMailArtifacts } from '../utils/mailArtifacts';
-import { inferMediaType } from '../utils/responseFiles';
-import { supabase } from '../utils/supabase';
+import { AlertCircle, CheckCircle, MapPin, Send, X } from 'lucide-react';
+import { getDocuments } from '../utils/documents.js';
+import { inferMediaType } from '../utils/responseFiles.js';
+import { supabase } from '../utils/supabase.js';
 import {
   USPS_FIRST_CLASS,
   isCccDisputePhase,
-  mailServiceForLetter,
   requiresCccR1IdentityDocuments,
-} from '../utils/cccMailRules';
-import { canMailLetter, generationErrorMessage, isGenerationRunning, letterSignatureState } from '../utils/letterGeneration.js';
-import { embedCanonicalSignatureInHistoricalHtml, embeddedSignatureSource, remoteImageSources } from '../utils/signatureInjection.js';
-import { isBureauAccountDisputeLetter, isFileUpdateLetter, isPersonalInfoCleanupLetter } from '../utils/letterMailing.js';
+} from '../utils/cccMailRules.js';
 import {
-  fetchLpoaHtmlForPrint,
-  tempLetterAssetsPrefix,
-  tempLetterPath,
-} from '../utils/storagePaths';
+  DISPUTE_SCREENSHOT_BUCKET,
+  resolveDisputeScreenshotPolicy,
+  validateDisputeScreenshotManifest,
+} from '../utils/disputeScreenshots.js';
+import {
+  assembleBoundCccMailpiece,
+  canonicalizeCccLetterHtml,
+  cccLetterBindingInput,
+  renderCccImageExhibit,
+} from '../utils/cccMailpieceIntegrity.js';
+import {
+  canMailLetter,
+  generationErrorMessage,
+  isGenerationRunning,
+} from '../utils/letterGeneration.js';
+import { cccLetterIdentityDocumentIssues } from '../utils/cccLetterIdentity.js';
+import { remoteImageSources } from '../utils/signatureInjection.js';
+import { tempLetterPath } from '../utils/storagePaths.js';
 
 const LOB_FUNCTION_URL = '/.netlify/functions/lob';
-
-// The standalone LPOA page's own decorative navy header (title + "Executed
-// <date>") is redundant once embedded as an enclosure — our own "Enclosure
-// X of Y — Limited Power of Attorney" banner already says what this page
-// is. Stripping it isn't just cosmetic: that header block is tall enough
-// (padding + line-height + margin) that leaving it in was pushing the
-// LPOA just past one physical page in Lob's real rendering, spilling its
-// last two lines onto an otherwise-blank extra page — confirmed by
-// downloading and inspecting the actual mailed PDF for a real letter.
-// Removing it reclaims comfortably more height than that overflow.
-function stripLpoaHeader(lpoaBody) {
-  return lpoaBody.replace(/<div class="header">[\s\S]*?<\/div>/i, '');
-}
+const RETIRED_MAIL_MESSAGE =
+  'This historical letter belongs to a retired dispute workflow. It remains available for review, but it cannot be mailed or regenerated. Start new correspondence in the CCC Consent / Accuracy / Collection campaign.';
 
 const FROM_ADDRESS = {
   name: 'Credit Comeback Club',
@@ -54,7 +44,7 @@ const FROM_ADDRESS = {
 async function callLob(action, payload) {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
-  const res = await fetch(LOB_FUNCTION_URL, {
+  const response = await fetch(LOB_FUNCTION_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -62,9 +52,9 @@ async function callLob(action, payload) {
     },
     body: JSON.stringify({ action, ...payload }),
   });
-  const data = await res.json();
-  if (!res.ok) {
-    const details = Array.isArray(data.issues) && data.issues.length ? ' ' + data.issues.join(' ') : '';
+  const data = await response.json();
+  if (!response.ok) {
+    const details = Array.isArray(data.issues) && data.issues.length ? ` ${data.issues.join(' ')}` : '';
     throw new Error((data.error || data.message || 'Lob request failed') + details);
   }
   return data;
@@ -77,16 +67,26 @@ function AddressField({ label, value, onChange }) {
       <input
         type="text"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(event) => onChange(event.target.value)}
         className="w-full border border-border rounded-sm px-3 py-1.5 text-[12px] text-ink focus:outline-none focus:border-navy"
       />
     </div>
   );
 }
 
+function sha256Hex(buffer) {
+  return crypto.subtle.digest('SHA-256', buffer).then((digest) =>
+    [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join(''));
+}
+
 export default function LobMailer({ letter, furnisherAddress, onClose, onSent, onNext, batchRemaining = 0 }) {
+  const isCurrentCccLetter = isCccDisputePhase(letter?.phase);
+  const explicitMailService = letter?.mailService ?? letter?.mail_service ?? null;
+  const wrongMailService = !!explicitMailService && explicitMailService !== USPS_FIRST_CLASS;
   const [step, setStep] = useState('confirm');
-  const [toAddr, setToAddr] = useState(furnisherAddress || { name: letter.furnisher, line1: '', line2: '', city: '', state: '', zip: '' });
+  const [toAddr, setToAddr] = useState(furnisherAddress || {
+    name: letter?.furnisher || '', line1: '', line2: '', city: '', state: '', zip: '',
+  });
   const [docs, setDocs] = useState([]);
   const [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [sending, setSending] = useState(false);
@@ -97,767 +97,340 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
   const [selectedOtherDocIds, setSelectedOtherDocIds] = useState(() => new Set());
 
   useEffect(() => {
+    setStep('confirm');
+    setToAddr(furnisherAddress || {
+      name: letter?.furnisher || '', line1: '', line2: '', city: '', state: '', zip: '',
+    });
+    setSending(false);
+    setResult(null);
+    setError(null);
+    setVerifying(false);
+    setVerified(false);
+    setSelectedOtherDocIds(new Set());
+  }, [letter?.id]);
+
+  useEffect(() => {
     let active = true;
-    setDocumentsLoaded(false);
     setDocs([]);
-    if (!letter.clientId) {
-      console.warn('LobMailer: letter missing clientId — skipping document enclosure lookup');
-      setDocs([]);
+    setDocumentsLoaded(false);
+    if (!isCurrentCccLetter || !letter?.clientId) {
       setDocumentsLoaded(true);
       return () => { active = false; };
     }
     getDocuments(letter.clientName, letter.clientId)
-      .then((rows) => { if (active) setDocs(rows); })
-      .catch((e) => { if (active) console.error(e); })
+      .then((rows) => { if (active) setDocs(rows || []); })
+      .catch((loadError) => { if (active) setError(`Could not load client documents: ${loadError.message}`); })
       .finally(() => { if (active) setDocumentsLoaded(true); });
     return () => { active = false; };
-  }, [letter.clientName, letter.clientId]);
+  }, [isCurrentCccLetter, letter?.clientId, letter?.clientName]);
 
-  const idDoc = docs.find((d) => d.doc_type === 'id');
-  const addressDoc = docs.find((d) => d.doc_type === 'address');
-  const isCccDispute = isCccDisputePhase(letter.phase);
   const requiresIdentityDocuments = requiresCccR1IdentityDocuments(letter);
-  const mailService = mailServiceForLetter(letter);
-  const identityDocumentsMissing = requiresIdentityDocuments && (!idDoc || !addressDoc);
-  const isBureauFollowUp = isPhase3FollowUpLetter(letter);
-  const isFileUpdate = isFileUpdateLetter(letter);
-  const isPersonalInfoCleanup = isPersonalInfoCleanupLetter(letter);
-  // Identity documents are managed by the required-enclosure rules. Showing
-  // them again as optional made the same files appear twice in later rounds.
-  const optionalDocs = docs.filter((doc) => !isPersonalInfoCleanup && doc.doc_type?.startsWith('other-'));
+  const identitySnapshot = letter?.cccLetterIdentitySnapshot || {};
+  const idDoc = docs.find((document) => document.id === identitySnapshot.identityDocumentId)
+    || docs.find((document) => document.doc_type === 'id');
+  const addressDoc = docs.find((document) => document.id === identitySnapshot.addressDocumentId)
+    || docs.find((document) => document.doc_type === 'address');
+  const identityDocumentIssues = requiresIdentityDocuments
+    ? cccLetterIdentityDocumentIssues(identitySnapshot, docs)
+    : [];
+  const identityDocumentsMissing = identityDocumentIssues.length > 0;
+  const screenshotManifest = Array.isArray(letter?.disputeScreenshotManifest)
+    ? letter.disputeScreenshotManifest
+    : [];
+  const screenshotPolicy = resolveDisputeScreenshotPolicy({
+    snapshot: letter?.disputeScreenshotPolicySnapshot,
+    templateText: letter?.disputeTemplateSnapshot,
+  });
+  const screenshotManifestIssues = isCurrentCccLetter
+    ? validateDisputeScreenshotManifest({
+      accounts: letter?.disputeAccountSnapshot || [],
+      manifest: screenshotManifest,
+      policy: screenshotPolicy,
+    })
+    : [];
+  const screenshotPacketMissing = screenshotManifestIssues.length > 0;
+  const optionalDocs = docs.filter((document) => document.doc_type?.startsWith('other-'));
+
   const toggleOtherDoc = (id) => {
-    setSelectedOtherDocIds((prev) => {
-      const next = new Set(prev);
+    setSelectedOtherDocIds((current) => {
+      const next = new Set(current);
       if (next.has(id)) next.delete(id);
-      else if (next.size < 5) next.add(id);
+      else if (next.size < 4) next.add(id);
       return next;
     });
   };
-  let followUpContractError = null;
-  let followUpPlan = [];
-  if (isBureauFollowUp) {
-    try {
-      followUpPlan = buildFollowUpEnclosurePlan(letter);
-    } catch (e) {
-      followUpContractError = e.message;
-    }
-  }
 
   const handleVerify = async () => {
+    if (!isCurrentCccLetter || wrongMailService) {
+      setError(RETIRED_MAIL_MESSAGE);
+      return;
+    }
     setVerifying(true);
     setError(null);
     try {
-      const res = await callLob('verify_address', { address: toAddr });
-      if (res.deliverability === 'undeliverable') {
-        setError('Address appears undeliverable — please verify and correct it');
+      const response = await callLob('verify_address', { address: toAddr });
+      if (response.deliverability === 'undeliverable') {
+        setError('Address appears undeliverable — please verify and correct it.');
       } else {
         setVerified(true);
-        if (res.primary_line) {
-          setToAddr((prev) => ({
-            ...prev,
-            line1: res.primary_line,
-            line2: res.secondary_line || '',
-            city: res.components?.city || prev.city,
-            state: res.components?.state || prev.state,
-            zip: res.components?.zip_code || prev.zip,
+        if (response.primary_line) {
+          setToAddr((current) => ({
+            ...current,
+            line1: response.primary_line,
+            line2: response.secondary_line || '',
+            city: response.components?.city || current.city,
+            state: response.components?.state || current.state,
+            zip: response.components?.zip_code || current.zip,
           }));
         }
       }
-    } catch (e) {
-      setError('Address verification failed: ' + e.message);
+    } catch (verifyError) {
+      setError(`Address verification failed: ${verifyError.message}`);
     } finally {
       setVerifying(false);
     }
   };
 
   const handleSend = async () => {
-    // Client-side guard mirrors the real, server-side block in lob.cjs
-    // (which checks the DB row directly and cannot be bypassed) — this one
-    // just avoids a wasted round-trip and gives an immediate, specific
-    // error instead of a generic Lob failure.
+    if (!isCurrentCccLetter) {
+      setError(RETIRED_MAIL_MESSAGE);
+      return;
+    }
+    if (wrongMailService) {
+      setError('MAIL SERVICE BLOCKED — current CCC correspondence must use USPS First-Class Mail. Nothing was sent.');
+      return;
+    }
+    if (!letter?.clientId) {
+      setError('CLIENT ID MISSING — reconcile this letter to the exact client before mailing. Nothing was sent.');
+      return;
+    }
     if (!canMailLetter(letter)) {
-      const signatureState = letterSignatureState(letter);
       setError(isGenerationRunning(letter)
         ? 'LETTER GENERATION IS STILL RUNNING — nothing was sent.'
-        : signatureState === 'missing'
-          ? 'CLIENT SIGNATURE REQUIRED — wait for the signed LPOA/signature capture before mailing. Nothing was sent.'
-          : signatureState === 'remote'
-            ? 'CLIENT SIGNATURE LINK IS NOT DURABLE — embed the canonical signature before mailing. Nothing was sent.'
-            : signatureState === 'invalid'
-              ? 'CLIENT SIGNATURE IS INVALID — rebuild it from the canonical stored signature before mailing. Nothing was sent.'
-              : `LETTER GENERATION FAILED — ${generationErrorMessage(letter)} Nothing was sent.`);
+        : `LETTER NOT MAIL-READY — ${generationErrorMessage(letter)} Nothing was sent.`);
       return;
     }
     if (letter.enclosureParseBlocked) {
-      setError('ENCLOSURE UNPARSED — MANUAL RECONCILIATION REQUIRED. This letter cannot be sent until the enclosure is re-uploaded and re-analyzed.');
+      setError('ENCLOSURE UNPARSED — MANUAL RECONCILIATION REQUIRED. Re-upload and review the enclosure before mailing. Nothing was sent.');
       return;
     }
-    if (isBureauAccountDisputeLetter(letter)
-      && (!Array.isArray(letter.coveredFurnishers) || letter.coveredFurnishers.length === 0)) {
-      setError('PHASE 3 COVERAGE MISSING — assign the specific furnisher(s) this bureau letter covers before mailing. Nothing was sent.');
-      return;
-    }
-    if (isPersonalInfoCleanup && !documentsLoaded) {
-      setError('IDENTITY DOCUMENTS ARE STILL LOADING — wait a moment and try again. Nothing was sent.');
-      return;
-    }
-    if (isPersonalInfoCleanup && (!idDoc || !addressDoc)) {
-      setError('PI/INQUIRY ENCLOSURES MISSING — upload both a government-issued photo ID and proof of current address before mailing. Nothing was sent.');
-      return;
-    }
-    if (isBureauFollowUp && followUpContractError) {
-      setError(followUpContractError);
-      return;
-    }
-    if (requiresIdentityDocuments && (!documentsLoaded || !idDoc || !addressDoc)) {
+    if (requiresIdentityDocuments && (!documentsLoaded || !idDoc || !addressDoc || identityDocumentsMissing)) {
       setError(!documentsLoaded
         ? 'R1 DOCUMENT CHECK IN PROGRESS — wait for the client document record to finish loading.'
-        : 'R1 DOCUMENTS REQUIRED — upload both a government-issued photo ID and proof of current address before mailing. Nothing was sent.');
+        : `R1 DOCUMENTS REQUIRED OR CHANGED — ${identityDocumentIssues.join(' ')} Nothing was sent.`);
       return;
     }
-    if (letter.roundId && Number(letter.roundNumber) === 1 && (!idDoc || !addressDoc)) {
-      setError('Round 1 requires a government ID and proof of current address before mailing. Nothing was sent.');
+    if (screenshotPacketMissing) {
+      setError(`ACCOUNT SCREENSHOT PACKET INCOMPLETE — ${screenshotManifestIssues.join(' ')} Nothing was sent.`);
       return;
     }
+    if (!verified) {
+      setError('VERIFY THE MAILING ADDRESS FIRST — nothing was sent.');
+      return;
+    }
+
     setSending(true);
     setError(null);
     const tempPathsToClean = [];
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
-      const batchId = String(Date.now());
+      if (!user?.id) throw new Error('Your staff session expired. Sign in again before mailing. Nothing was sent.');
 
-      // Lob fetches the hosted HTML itself.  Keeping full-page base64 images
-      // inside that HTML made larger Phase 3 packets exceed Lob's renderer
-      // buffer (and fail after an initial accepted response).  Store small,
-      // temporary raster pages privately instead and give Lob expiring URLs;
-      // the source HTML stays compact without omitting any evidence.
-      const assetPrefix = tempLetterAssetsPrefix(user.id, batchId);
-      let assetNumber = 0;
-      let optionalPageCount = 0;
-      const attachmentManifest = [];
-      // Every remote URL this send legitimately puts in front of Lob. Anything
-      // else in the final HTML is a link we did not mint and cannot vouch for.
+      const scopedScreenshotIssues = validateDisputeScreenshotManifest({
+        accounts: letter.disputeAccountSnapshot || [],
+        manifest: screenshotManifest,
+        policy: screenshotPolicy,
+        userId: user.id,
+        clientId: letter.clientId,
+      });
+      if (scopedScreenshotIssues.length) {
+        throw new Error(`ACCOUNT SCREENSHOT PACKET INCOMPLETE — ${scopedScreenshotIssues.join(' ')} Nothing was sent.`);
+      }
+
       const mailAssetUrls = new Set();
-      const uploadMailImage = async (blob) => {
-        const contentType = ['image/jpeg', 'image/png', 'image/webp'].includes(blob.type) ? blob.type : 'image/jpeg';
-        const extension = contentType === 'image/png' ? 'png' : (contentType === 'image/webp' ? 'webp' : 'jpg');
-        const storagePath = assetPrefix + '/page-' + (++assetNumber) + '.' + extension;
-        const { error: assetError } = await supabase.storage.from('documents').upload(storagePath, blob, {
-          upsert: false,
-          contentType,
-        });
-        if (assetError) throw new Error('Could not prepare a print enclosure: ' + assetError.message);
-        tempPathsToClean.push(storagePath);
-        const { data, error: urlError } = await supabase.storage.from('documents').createSignedUrl(storagePath, 3600);
-        if (urlError || !data?.signedUrl) throw urlError || new Error('Could not prepare a print enclosure URL');
+      const signedSourceMailImage = async (storagePath, bucket = 'documents') => {
+        const { data, error: urlError } = await supabase.storage.from(bucket).createSignedUrl(storagePath, 3600);
+        if (urlError || !data?.signedUrl) throw urlError || new Error('Could not prepare a source-bound enclosure URL.');
         mailAssetUrls.add(data.signedUrl);
         return data.signedUrl;
       };
 
-      // Lob prints HTML, not a multi-file attachment bundle. To include an
-      // immutable PDF as evidence, render each original PDF page to an image
-      // and embed it in the outgoing HTML. The archived source PDF remains
-      // untouched in private storage for CFPB/AG portal uploads and audit.
-      const blobToBase64 = (blob) => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-
-      const renderPdfBase64 = async (b64, heading, optional = false) => {
-        const binary = atob(b64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const pdfjsLib = await import('pdfjs-dist');
-        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
-        const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
-        if (optional) {
-          optionalPageCount += pdf.numPages;
-          if (optionalPageCount > 4) throw new Error('Optional supporting documents may contain at most 4 total pages.');
-        }
-        let html = '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
-          + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">' + heading + '</div>';
-        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-          const page = await pdf.getPage(pageNum);
-          // A 612px-wide page is more than enough for B&W letter printing
-          // and is dramatically smaller than the prior 1.5x/0.9 JPEG data.
-          const viewport = page.getViewport({ scale: 1 });
-          const canvas = document.createElement('canvas');
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-          const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.7));
-          if (!blob) throw new Error('Could not rasterize PDF enclosure page');
-          html += '<img src="' + await uploadMailImage(blob) + '" style="max-width:100%;display:block;margin-bottom:10px;" />';
-        }
-        return html + '</div>';
-      };
-
-      const renderPdfPages = async (storagePath, heading) =>
-        renderPdfBase64(await getDocumentBase64(storagePath), heading);
-
-      // Furnisher-response evidence is kept in the private `responses`
-      // bucket, not the client documents bucket. Read it directly while a
-      // staff member is sending the Phase 3 letter, then turn each original
-      // PDF/image into print-ready Lob HTML. This keeps the response itself
-      // in the mailed record rather than merely linking to a transient URL.
-      const renderResponseFile = async (storagePath, fileName, heading) => {
-        const { data, error: downloadError } = await supabase.storage
-          .from('responses')
-          .download(storagePath);
-        if (downloadError || !data) throw downloadError || new Error('Response file could not be downloaded.');
-
-        const mediaType = inferMediaType(fileName, data.type);
-        if (mediaType === 'application/pdf') return renderPdfBase64(await blobToBase64(data), heading);
+      const downloadVerifiedImage = async (document, heading, bucket = 'documents') => {
+        const storagePath = document.storage_path || document.storagePath;
+        const { data: blob, error: downloadError } = await supabase.storage.from(bucket).download(storagePath);
+        if (downloadError || !blob) throw downloadError || new Error(`Could not read ${heading}.`);
+        const mediaType = inferMediaType(document.file_name || document.fileName, blob.type || document.content_type || document.mediaType);
         if (!['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)) {
-          throw new Error('Unsupported response evidence type: ' + (fileName || storagePath));
+          throw new Error(`${document.file_name || document.fileName || heading} must be JPG, PNG, or WebP before this CCC packet can be mailed. Nothing was sent.`);
         }
-        const imageUrl = await uploadMailImage(data);
-        return '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;">'
-          + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">' + heading + '</div>'
-          + '<img src="' + imageUrl + '" style="max-width:100%;display:block;margin-bottom:8px;" />'
-          + '</div>';
-      };
-
-      const buildDocumentEnclosure = async (doc, heading) => {
-        if (!doc) return '';
-        const isImg = doc.file_name && /\.(jpg|jpeg|png)$/i.test(doc.file_name);
-        if (!isImg) return renderPdfPages(doc.storage_path, heading);
-        const { data, error: documentDownloadError } = await supabase.storage.from('documents').download(doc.storage_path);
-        if (documentDownloadError || !data) throw documentDownloadError || new Error('Could not read document enclosure');
-        const imageUrl = await uploadMailImage(data);
-        return '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;filter:grayscale(100%);-webkit-filter:grayscale(100%);">'
-          + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">' + heading + '</div>'
-          + '<img src="' + imageUrl + '" style="max-width:100%;max-height:700px;" />'
-          + '</div>';
-      };
-
-      // Government ID + proof of address enclosure pages — shared by the
-      // Phase 1 branch (always) and, conditionally, the Phase 3 branch
-      // below (only when no Phase 1 letter was ever actually mailed, so
-      // the bureau has no identity documentation from us on file at all).
-      const buildIdAddressPages = async () => {
-        let pages = '';
-        pages += await buildDocumentEnclosure(idDoc, 'Enclosure — Government-Issued Photo ID');
-        pages += await buildDocumentEnclosure(addressDoc, 'Enclosure — Proof of Current Address');
-        return pages;
-      };
-
-      // Staff-selected supporting documents (police report, bank statement,
-      // etc.) — only whichever ones were checked in the Enclosures panel.
-      const buildSelectedOtherDocPages = async () => {
-        let pages = '';
-        for (const doc of optionalDocs) {
-          if (!selectedOtherDocIds.has(doc.id)) continue;
-          const { data: blob, error: downloadError } = await supabase.storage.from('documents').download(doc.storage_path);
-          if (downloadError || !blob) throw downloadError || new Error('Could not read optional supporting document.');
-          if (blob.size > 5 * 1024 * 1024) throw new Error(`${doc.file_name} exceeds the 5 MB optional-document limit.`);
-          const heading = 'Enclosure — ' + (doc.label || doc.file_name);
-          const mediaType = inferMediaType(doc.file_name, blob.type);
-          let pageCount = 1;
-          if (mediaType === 'application/pdf') {
-            const pdfjsLib = await import('pdfjs-dist');
-            pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
-            const bytes = new Uint8Array(await blob.arrayBuffer());
-            const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
-            pageCount = pdf.numPages;
-            pages += await renderPdfBase64(await blobToBase64(blob), heading, true);
-          } else if (['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)) {
-            optionalPageCount += 1;
-            if (optionalPageCount > 4) throw new Error('Optional supporting documents may contain at most 4 total pages.');
-            const imageUrl = await uploadMailImage(blob);
-            pages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;filter:grayscale(100%);">'
-              + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;">' + heading + '</div>'
-              + '<img src="' + imageUrl + '" style="max-width:100%;max-height:700px;" /></div>';
-          } else {
-            throw new Error(`${doc.file_name} must be a PDF, JPG, PNG, or WEBP file.`);
-          }
-          attachmentManifest.push({ document_id: doc.id, file_name: doc.file_name, storage_path: doc.storage_path, byte_size: blob.size, page_count: pageCount });
+        const expectedSize = document.byte_size ?? document.size;
+        if (expectedSize != null && blob.size !== Number(expectedSize)) {
+          throw new Error(`${document.file_name || document.fileName || heading} no longer matches its reviewed file size. Nothing was sent.`);
         }
-        return pages;
+        const expectedSha = document.sha256;
+        if (expectedSha && await sha256Hex(await blob.arrayBuffer()) !== expectedSha) {
+          throw new Error(`${document.file_name || document.fileName || heading} failed its reviewed file fingerprint. Nothing was sent.`);
+        }
+        return { blob, mediaType, storagePath };
       };
 
-      // Build enclosure pages — different for follow-up Phase 3, initial
-      // Phase 3, and Phase 1.
       let enclosurePages = '';
-      const isPhase3 = isBureauAccountDisputeLetter(letter);
-      let followUpEnclosureManifest = null;
-      const canonicalSignature = embeddedSignatureSource(letter.html);
-
-      if (isBureauFollowUp) {
-        const sources = assertFollowUpEnclosureContract(letter);
-        const [{ data: priorLetter, error: priorError }, { data: evidence, error: evidenceError }] = await Promise.all([
-          supabase
-            .from('letters')
-            .select('id,user_id,client_id,client_name,phase,furnisher,covered_furnishers,html,date,saved_at')
-            .eq('id', sources.sourcePhase3LetterId)
-            .eq('client_id', letter.clientId)
-            .maybeSingle(),
-          supabase
-            .from('response_evidence')
-            .select('id,firm_user_id,client_id,letter_id,response_kind,storage_bucket,storage_paths,file_names,upload_status,received_at')
-            .eq('id', sources.sourceBureauResponseEvidenceId)
-            .eq('client_id', letter.clientId)
-            .maybeSingle(),
-        ]);
-        if (priorError) throw priorError;
-        if (evidenceError) throw evidenceError;
-
-        const relationship = validateFollowUpSourceRelationships({ followUp: letter, priorLetter, evidence });
-        const priorDate = priorLetter.date || (priorLetter.saved_at ? String(priorLetter.saved_at).slice(0, 10) : '');
-        const priorHtmlForPrint = embedCanonicalSignatureInHistoricalHtml(priorLetter.html, canonicalSignature);
-        enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
-          + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">'
-          + 'EXHIBIT A — Prior Phase 3 CRA Dispute Letter' + (priorDate ? ' (' + priorDate + ')' : '') + '</div>'
-          + extractHtmlStyles(priorHtmlForPrint)
-          + extractHtmlBody(priorHtmlForPrint)
-          + '</div>';
-
-        const bureauName = priorLetter.furnisher || letter.furnisher || 'Bureau';
-        const responseHeading = 'EXHIBIT B — ' + bureauName + ' Investigation Results';
-        for (let index = 0; index < relationship.paths.length; index += 1) {
-          enclosurePages += await renderResponseFile(
-            relationship.paths[index],
-            relationship.names[index],
-            responseHeading
-          );
-        }
-
-        const clientMetaQuery = supabase
-          .from('clients')
-          .select('lpoa_signature_data')
-          .eq('id', letter.clientId)
-          .limit(1);
-        const { data: clientMeta, error: clientMetaError } = await clientMetaQuery;
-        if (clientMetaError) throw clientMetaError;
-        const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data, { clientSignatureDataUrl: canonicalSignature });
-        if (!lpoaHtml) {
-          throw new Error('FOLLOW-UP EXHIBIT C MISSING — this client has no signed Limited Power of Attorney. Nothing was sent.');
-        }
-        const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-        const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
-        const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-        const lpoaBody = stripLpoaHeader(bodyMatch ? bodyMatch[1] : lpoaHtml);
-        if (!lpoaBody.trim()) {
-          throw new Error('FOLLOW-UP EXHIBIT C EMPTY — the Limited Power of Attorney has no printable content. Nothing was sent.');
-        }
-        enclosurePages += '<div style="page-break-before:always;font-family:Arial,sans-serif;font-size:12px;">'
-          + lpoaStyle
-          + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">EXHIBIT C — Limited Power of Attorney</div>'
-          + lpoaBody + '</div>';
-
-        followUpEnclosureManifest = {
-          kind: 'bureau_follow_up_v1',
-          source_phase3_letter_id: sources.sourcePhase3LetterId,
-          source_bureau_response_evidence_id: sources.sourceBureauResponseEvidenceId,
-          response_storage_paths: relationship.paths,
-        };
-        enclosurePages += await buildSelectedOtherDocPages();
-      } else if (letter.roundId && Number(letter.roundNumber || 1) > 1) {
-        // Every later adaptive round—bureau *or* furnisher—uses the exact
-        // staff-selected source pairs. Never fall back to the generic Phase 1
-        // enclosure path, which would silently omit the evidence chain.
-        const { data: links, error: linkError } = await supabase.from('letter_source_links')
-          .select('source_letter_id,response_evidence_id,source_order')
-          .eq('letter_id', letter.id)
-          .order('source_order');
-        if (linkError) throw linkError;
-        const sourceLetterIds = (links || []).map((link) => link.source_letter_id);
-        const evidenceIds = (links || []).map((link) => link.response_evidence_id).filter(Boolean);
-        const [{ data: sourceLetters, error: sourceError }, { data: evidenceRows, error: evidenceError }] = await Promise.all([
-          sourceLetterIds.length ? supabase.from('letters').select('id,html,furnisher,date,saved_at').in('id', sourceLetterIds) : { data: [], error: null },
-          evidenceIds.length ? supabase.from('response_evidence').select('id,letter_id,evidence_kind,storage_bucket,storage_paths,file_names,review_status,analysis_status').in('id', evidenceIds) : { data: [], error: null },
-        ]);
-        if (sourceError) throw sourceError;
-        if (evidenceError) throw evidenceError;
-        const sourceById = new Map((sourceLetters || []).map((source) => [source.id, source]));
-        const evidenceById = new Map((evidenceRows || []).map((record) => [record.id, record]));
-        let sourceArtifactsByLetter = new Map();
-        try {
-          const sourceArtifacts = await listMailArtifacts(sourceLetterIds);
-          sourceArtifactsByLetter = new Map(sourceArtifacts
-            .filter((artifact) => artifact.artifact_type === 'mailpiece_pdf')
-            .map((artifact) => [artifact.letter_id, artifact]));
-        } catch (e) { console.warn('Could not load archived adaptive-round mailpieces:', e); }
-        for (const [index, link] of (links || []).entries()) {
-          const source = sourceById.get(link.source_letter_id);
-          const evidence = evidenceById.get(link.response_evidence_id);
-          const sourceArtifact = sourceArtifactsByLetter.get(link.source_letter_id);
-          if ((!source?.html && !sourceArtifact) || !evidence || evidence.analysis_status !== 'analyzed' || evidence.review_status === 'not_reviewed') {
-            throw new Error('A selected prior letter/evidence pair is incomplete or no longer reviewed. Nothing was sent.');
-          }
-          const sourceHeading = 'EXHIBIT ' + String.fromCharCode(65 + index) + ' — Prior Reviewed Dispute (' + (source?.furnisher || 'Account') + ')';
-          if (sourceArtifact) {
-            enclosurePages += await renderPdfPages(sourceArtifact.storage_path, sourceHeading + ' — Exact Lob Mailpiece');
-          } else {
-            const sourceHtmlForPrint = embedCanonicalSignatureInHistoricalHtml(source.html, canonicalSignature);
-            enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
-              + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">' + sourceHeading + '</div>'
-              + extractHtmlStyles(sourceHtmlForPrint) + extractHtmlBody(sourceHtmlForPrint) + '</div>';
-          }
-          const paths = Array.isArray(evidence.storage_paths) ? evidence.storage_paths : [];
-          const names = Array.isArray(evidence.file_names) ? evidence.file_names : [];
-          for (let fileIndex = 0; fileIndex < paths.length; fileIndex += 1) {
-            enclosurePages += await renderResponseFile(paths[fileIndex], names[fileIndex] || paths[fileIndex].split('/').pop(), 'Reviewed Response Evidence — ' + (source.furnisher || 'Account'));
-          }
-        }
-        const { data: clientMeta, error: clientMetaError } = await supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1);
-        if (clientMetaError) throw clientMetaError;
-        const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, clientMeta?.[0]?.lpoa_signature_data, { clientSignatureDataUrl: canonicalSignature });
-        if (!lpoaHtml) throw new Error('A signed Limited Power of Attorney is required for this dispute round. Nothing was sent.');
-        const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-        const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-        const lpoaBody = stripLpoaHeader(bodyMatch ? bodyMatch[1] : lpoaHtml);
-        if (!lpoaBody.trim()) throw new Error('The Limited Power of Attorney has no printable content. Nothing was sent.');
-        enclosurePages += '<div style="page-break-before:always;font-family:Arial,sans-serif;font-size:12px;">'
-          + (styleMatch ? '<style>' + styleMatch[1] + '</style>' : '')
-          + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Limited Power of Attorney</div>'
-          + lpoaBody + '</div>';
-        if (!(links || []).length) enclosurePages += await buildIdAddressPages();
-        enclosurePages += await buildSelectedOtherDocPages();
-      } else if (isPersonalInfoCleanup && letter.targetType === 'bureau') {
-        // PI/inquiry and other file-update letters go to a bureau, but they
-        // are not Phase 3 account disputes. Attach only identity documents
-        // and any explicitly selected supporting records—never prior account
-        // letters, furnisher responses, or an LPOA.
-        enclosurePages += await buildIdAddressPages();
-        enclosurePages += await buildSelectedOtherDocPages();
-      } else if (isPhase3) {
-        // Phase 3 enclosures: Exhibit A (Phase 1 letter(s)) + Exhibit B (furnisher response(s)) + LPOA
-        // A single bureau letter can legitimately cover more than one
-        // original furnisher (grouped by which bureau each account
-        // reports to) — letter.furnisher on a bureau-facing Phase 3 row
-        // is the bureau itself, not any one of the furnishers it covers,
-        // so fetch every Phase 1 letter for this client rather than
-        // filtering by furnisher (that filter can never match). When the
-        // Phase 3 row's own coveredFurnishers is populated, narrow down
-        // to just those — it's the authoritative record of which
-        // furnishers this specific bureau letter actually discusses.
-        let allPhase1Letters = [];
-        let phase1Letters = [];
-        try {
-          // clientId preferred — client_name alone can pull in another
-          // same-named client's Phase 1 letters as exhibits.
-          const phase1Query = letter.clientId
-            ? supabase.from('letters').select('id, furnisher, html, saved_at, lob_id').eq('client_id', letter.clientId).ilike('phase', 'Phase 1%').order('saved_at', { ascending: true })
-            : supabase.from('letters').select('id, furnisher, html, saved_at, lob_id').eq('client_name', letter.clientName).ilike('phase', 'Phase 1%').order('saved_at', { ascending: true });
-          const { data } = await phase1Query;
-          allPhase1Letters = data || [];
-          phase1Letters = allPhase1Letters.filter((p1) => letter.coveredFurnishers.includes(p1.furnisher));
-          if (phase1Letters.length === 0) {
-            throw new Error('No matching Phase 1 letter exists for this Phase 3 coverage. Review the covered furnisher before mailing.');
-          }
-        } catch(e) { console.warn('Could not fetch Phase 1 letters:', e); }
-
-        // Exhibit A — use the immutable Lob mailpiece whenever it was
-        // archived. Historic mail without an artifact falls back to the
-        // stored HTML so no existing case is blocked by this improvement.
-        let artifactsByLetter = new Map();
-        try {
-          const artifacts = await listMailArtifacts(phase1Letters.map((p1) => p1.id));
-          artifactsByLetter = new Map(artifacts
-            .filter((artifact) => artifact.artifact_type === 'mailpiece_pdf')
-            .map((artifact) => [artifact.letter_id, artifact]));
-        } catch (e) { console.warn('Could not load archived Phase 1 mailpieces:', e); }
-        for (const p1 of phase1Letters) {
-          const mailpiece = artifactsByLetter.get(p1.id);
-          if (mailpiece) {
-            try {
-              enclosurePages += await renderPdfPages(
-                mailpiece.storage_path,
-                'EXHIBIT A — Exact Lob Phase 1 Mailpiece (' + (p1.furnisher || 'Furnisher') + ')'
-              );
-              continue;
-            } catch (e) { console.warn('Could not render archived Phase 1 mailpiece:', p1.id, e); }
-          }
-          if (!p1.html) continue;
-          const p1HtmlForPrint = embedCanonicalSignatureInHistoricalHtml(p1.html, canonicalSignature);
-          const p1Body = p1HtmlForPrint.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-          const p1Content = p1Body ? p1Body[1] : p1HtmlForPrint;
-          enclosurePages += '<div style="page-break-before:always;padding:40px;font-family:Arial,sans-serif;font-size:12px;">'
-            + '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#1B2A4A;font-weight:700;margin-bottom:8px;border-bottom:2px solid #1B2A4A;padding-bottom:8px;">EXHIBIT A — Phase 1 Direct Furnisher Dispute Letter (' + (p1.furnisher || 'Furnisher') + ')</div>'
-            + p1Content + '</div>';
-        }
-
-        // Exhibit B — first use the durable response-evidence records. The
-        // old application stored files directly under `<clientUserId>/<p1Id>`
-        // without a DB record, so retain that folder scan as a migration
-        // fallback. A persisted evidence row is deliberately fail-closed:
-        // never send a Phase 3 packet that says an attached response exists
-        // while silently omitting one of its original files.
-        const p1Ids = phase1Letters.map((p1) => p1.id).filter(Boolean);
-        const durableEvidenceByLetter = new Map();
-        if (p1Ids.length > 0) {
-          const { data: durableEvidence, error: durableEvidenceError } = await supabase
-            .from('response_evidence')
-            .select('id,letter_id,storage_bucket,storage_paths,file_names,received_at,created_at')
-            .in('letter_id', p1Ids)
-            .eq('response_kind', 'furnisher')
-            .eq('upload_status', 'received')
-            .order('received_at', { ascending: true });
-          if (durableEvidenceError) throw durableEvidenceError;
-          for (const record of durableEvidence || []) {
-            const current = durableEvidenceByLetter.get(record.letter_id) || [];
-            current.push(record);
-            durableEvidenceByLetter.set(record.letter_id, current);
-          }
-        }
-
-        for (const p1 of phase1Letters) {
-          const responseHeading = 'EXHIBIT B — Furnisher Response (' + (p1.furnisher || letter.furnisher) + ')';
-          const durableEvidence = durableEvidenceByLetter.get(p1.id) || [];
-          for (const record of durableEvidence) {
-            const paths = Array.isArray(record.storage_paths) ? record.storage_paths : [];
-            const names = Array.isArray(record.file_names) ? record.file_names : [];
-            if (record.storage_bucket !== 'responses' || paths.length === 0) {
-              throw new Error('Received response evidence is incomplete for ' + (p1.furnisher || 'this furnisher') + '. Resolve it before mailing Phase 3.');
-            }
-            for (let index = 0; index < paths.length; index += 1) {
-              const fileName = names[index] || String(paths[index]).split('/').pop();
-              enclosurePages += await renderResponseFile(paths[index], fileName, responseHeading);
-            }
-          }
-        }
-
-        // Durable response_evidence rows are required for Phase 3 Exhibit B.
-        // Legacy {clientAuthUid}/{letterId}/ folder crawls were removed after
-        // the storage reorg migration moves those objects into evidence rows.
-
-        // LPOA still included for Phase 3
-        let phase3LpoaData = null;
-        try {
-          const clientMetaQuery = letter.clientId
-            ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
-            : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
-          const { data: clientMeta, error: clientMetaError } = await clientMetaQuery;
-          if (clientMetaError) throw clientMetaError;
-          phase3LpoaData = clientMeta?.[0]?.lpoa_signature_data || null;
-          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, phase3LpoaData, { clientSignatureDataUrl: canonicalSignature });
-          if (letter.roundId && !lpoaHtml) throw new Error('A signed Limited Power of Attorney is required for this dispute round. Nothing was sent.');
-          if (lpoaHtml) {
-            const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-            const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
-            const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-            const lpoaBody = stripLpoaHeader(bodyMatch ? bodyMatch[1] : lpoaHtml);
-            enclosurePages += '<div style="page-break-before:always;font-family:Arial,sans-serif;font-size:12px;">'
-              + lpoaStyle
-              + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure — Limited Power of Attorney</div>'
-              + lpoaBody + '</div>';
-          }
-        } catch(e) {
-          // A client with an LPOA on file must never mail without it because
-          // its signature images could not be embedded. Dropping the enclosure
-          // silently downgrades the packet's authority; only a client with no
-          // LPOA record at all may proceed.
-          if (phase3LpoaData) throw e;
-          console.warn('Could not fetch LPOA for Phase 3:', e);
-        }
-
-        // If no Phase 1 letter was ever actually transmitted through our
-        // own Lob integration (lob_id — not mailed_date, which on a
-        // migrated client can just be a historical annotation of a real
-        // mailing sent through a different channel, e.g. Dispute Fox),
-        // the bureau has never received identity verification from us at
-        // all — include it directly rather than assuming it's on file.
-        // Checked against every Phase 1 letter for the client (not just
-        // the coveredFurnishers-narrowed subset above) since this is a
-        // client-wide fact, not specific to this one bureau letter.
-        const anyPhase1SentViaLob = allPhase1Letters.some((p1) => p1.lob_id);
-        if (!anyPhase1SentViaLob) {
-          enclosurePages += await buildIdAddressPages();
-        }
-
-        enclosurePages += await buildSelectedOtherDocPages();
-
-      } else if (isCccDispute) {
-        // CCC sends the identity enclosure pair in R1 only. R2+ does not
-        // resend it, and this bureau-directed flow does not add the legacy
-        // Limited Power of Attorney packet.
-        if (requiresIdentityDocuments) enclosurePages += await buildIdAddressPages();
-        enclosurePages += await buildSelectedOtherDocPages();
-
-      } else {
-        // Phase 1 enclosures: LPOA + ID + Address
-        let phase1LpoaData = null;
-        try {
-          const clientMetaQuery = letter.clientId
-            ? supabase.from('clients').select('lpoa_signature_data').eq('id', letter.clientId).limit(1)
-            : supabase.from('clients').select('lpoa_signature_data').eq('name', letter.clientName).limit(1);
-          const { data: clientMeta } = await clientMetaQuery;
-          phase1LpoaData = clientMeta?.[0]?.lpoa_signature_data || null;
-          const lpoaHtml = await fetchLpoaHtmlForPrint(supabase, phase1LpoaData, { clientSignatureDataUrl: canonicalSignature });
-          if (lpoaHtml) {
-            const styleMatch = lpoaHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-            const lpoaStyle = styleMatch ? '<style>' + styleMatch[1] + '</style>' : '';
-            const bodyMatch = lpoaHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-            const lpoaBody = stripLpoaHeader(bodyMatch ? bodyMatch[1] : lpoaHtml);
-            enclosurePages += '<div style="page-break-before:always;font-family:Arial,sans-serif;font-size:12px;">'
-              + lpoaStyle
-              + '<div style="padding:8px 40px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:8px;border-bottom:1px solid #eee;padding-bottom:8px;">Enclosure 1 of ' + (idDoc ? (addressDoc ? '3' : '2') : '1') + ' — Limited Power of Attorney</div>'
-              + lpoaBody + '</div>';
-          }
-        } catch(e) {
-          // Same rule as Phase 3: an LPOA on file is not optional just because
-          // it failed to load.
-          if (phase1LpoaData || letter.roundId) throw e;
-          console.warn('Could not fetch LPOA:', e);
-        }
-
-        enclosurePages += await buildIdAddressPages();
-        enclosurePages += await buildSelectedOtherDocPages();
+      for (const screenshot of screenshotManifest) {
+        const verifiedImage = await downloadVerifiedImage(screenshot, 'a required account screenshot', DISPUTE_SCREENSHOT_BUCKET);
+        enclosurePages += renderCccImageExhibit({
+          kind: 'screenshot',
+          id: screenshot.id,
+          heading: `Credit Report Exhibit — ${screenshot.furnisher || 'Account'} — ${screenshot.accountNumberMasked || 'account number not shown'}`,
+          imageUrl: await signedSourceMailImage(verifiedImage.storagePath, DISPUTE_SCREENSHOT_BUCKET),
+          screenshot: true,
+        });
       }
 
-      // Merge letter HTML with enclosure pages, then upload once
-      let finalHtml = letter.html;
-      if (enclosurePages) {
-        if (finalHtml.includes('</body>')) finalHtml = finalHtml.replace('</body>', enclosurePages + '</body>');
-        else finalHtml += enclosurePages;
-      }
-      // Several stored letters are bare content fragments with no
-      // <html>/<head> at all — with no charset declared anywhere, Lob's
-      // PDF renderer has been guessing a single-byte encoding and garbling
-      // every multi-byte UTF-8 character (—, §, ®) in the actual mailed
-      // letter, even though the source text itself is stored correctly.
-      if (!/<meta[^>]+charset/i.test(finalHtml)) {
-        if (/<head[^>]*>/i.test(finalHtml)) {
-          finalHtml = finalHtml.replace(/<head[^>]*>/i, (m) => m + '<meta charset="UTF-8">');
-        } else {
-          finalHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>' + finalHtml + '</body></html>';
+      if (requiresIdentityDocuments) {
+        for (const [document, kind, heading] of [
+          [idDoc, 'identity-id', 'Enclosure — Government-Issued Photo ID'],
+          [addressDoc, 'identity-address', 'Enclosure — Proof of Current Address'],
+        ]) {
+          const verifiedImage = await downloadVerifiedImage(document, heading);
+          enclosurePages += renderCccImageExhibit({
+            kind,
+            id: document.id,
+            heading,
+            imageUrl: await signedSourceMailImage(verifiedImage.storagePath),
+          });
         }
       }
-      // clientId (when known) alongside the readable slug — Date.now() already
-      // makes an exact collision unlikely, but this is a temp path for a
-      // physical-mail send, not worth leaving on name alone when the id is
-      // sitting right there.
-      // Lob fetches remote images while rendering, long after this code ran.
-      // A link that 404s there fails the entire mailpiece — which is exactly
-      // how retired public client-docs signature URLs broke legacy LPOA
-      // enclosures. Refuse to send anything we did not mint this run.
+
+      const attachmentManifest = [];
+      let optionalPageCount = 0;
+      for (const document of optionalDocs) {
+        if (!selectedOtherDocIds.has(document.id)) continue;
+        optionalPageCount += 1;
+        if (optionalPageCount > 4) throw new Error('Optional supporting documents may contain at most 4 total pages.');
+        const heading = `Enclosure — ${document.label || document.file_name}`;
+        const verifiedImage = await downloadVerifiedImage(document, heading);
+        if (verifiedImage.blob.size > 5 * 1024 * 1024) throw new Error(`${document.file_name} exceeds the 5 MB optional-document limit.`);
+        enclosurePages += renderCccImageExhibit({
+          kind: 'optional',
+          id: document.id,
+          heading,
+          imageUrl: await signedSourceMailImage(verifiedImage.storagePath),
+        });
+        attachmentManifest.push({
+          document_id: document.id,
+          file_name: document.file_name,
+          storage_path: document.storage_path,
+          byte_size: verifiedImage.blob.size,
+          page_count: 1,
+        });
+      }
+
+      const canonicalLetterHtml = canonicalizeCccLetterHtml(letter.html);
+      const letterSha256 = await sha256Hex(new TextEncoder().encode(
+        cccLetterBindingInput(letter.id, canonicalLetterHtml),
+      ));
+      const finalHtml = assembleBoundCccMailpiece({
+        letterId: letter.id,
+        letterHtml: letter.html,
+        letterSha256,
+        enclosureHtml: enclosurePages,
+      });
       const foreignImages = remoteImageSources(finalHtml).filter((url) => !mailAssetUrls.has(url));
-      if (foreignImages.length > 0) {
-        throw new Error(
-          'MAILPIECE CONTAINS NON-DURABLE IMAGE LINKS — Lob would fail to render it. Embed these before sending: '
-          + foreignImages.slice(0, 5).join(', ')
-          + (foreignImages.length > 5 ? ` (+${foreignImages.length - 5} more)` : '')
-          + ' Nothing was sent.'
-        );
+      if (foreignImages.length) {
+        throw new Error(`MAILPIECE CONTAINS NON-DURABLE IMAGE LINKS — remove or embed them before sending: ${foreignImages.slice(0, 5).join(', ')} Nothing was sent.`);
       }
 
-      const tempFileName = slug(letter.clientName) + (letter.clientId ? '-' + letter.clientId : '') + '-' + slug(letter.furnisher) + '.html';
+      const slug = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'unknown';
+      const batchId = String(Date.now());
+      const tempFileName = `${slug(letter.clientName)}-${letter.clientId}-${slug(letter.furnisher)}.html`;
       const tempPath = tempLetterPath(user.id, batchId, tempFileName);
       const htmlBlob = new Blob([finalHtml], { type: 'text/html;charset=utf-8' });
-      const { error: uploadErr } = await supabase.storage.from('documents').upload(tempPath, htmlBlob, { upsert: true, contentType: 'text/html;charset=utf-8' });
-      if (uploadErr) throw new Error('Could not upload letter for mailing: ' + uploadErr.message);
+      const { error: uploadError } = await supabase.storage.from('documents').upload(tempPath, htmlBlob, {
+        upsert: true,
+        contentType: 'text/html;charset=utf-8',
+      });
+      if (uploadError) throw new Error(`Could not upload the letter for mailing: ${uploadError.message}`);
       tempPathsToClean.push(tempPath);
-      const { data: urlData, error: urlErr } = await supabase.storage.from('documents').createSignedUrl(tempPath, 3600);
-      if (urlErr || !urlData) throw new Error('Could not get letter URL' + (urlErr ? ': ' + urlErr.message : ''));
+      const { data: urlData, error: urlError } = await supabase.storage.from('documents').createSignedUrl(tempPath, 3600);
+      if (urlError || !urlData?.signedUrl) throw urlError || new Error('Could not prepare the mailpiece URL.');
 
-      const res = await callLob('send_letter', {
+      const response = await callLob('send_letter', {
         toAddress: toAddr,
         fromAddress: FROM_ADDRESS,
         remoteUrl: urlData.signedUrl,
-        description: letter.clientName + ' — ' + letter.furnisher + ' — ' + letter.phase + (enclosurePages ? ' (w/ enclosures)' : ''),
-        // The server creates and persists the idempotency key before it asks
-        // Lob to print. A browser timestamp is unsafe: retrying after a
-        // timeout would otherwise create a second physical letter.
+        description: `${letter.clientName} — ${letter.furnisher} — ${letter.phase}${enclosurePages ? ' (with enclosures)' : ''}`,
         metadata: { letter_id: String(letter.id) },
-        enclosureManifest: followUpEnclosureManifest || (requiresIdentityDocuments ? {
-          kind: 'ccc_r1_identity_v1',
-          document_ids: [idDoc.id, addressDoc.id],
-          storage_paths: [idDoc.storage_path, addressDoc.storage_path],
-        } : null),
+        enclosureManifest: {
+          kind: 'ccc_packet_v1',
+          screenshot_storage_paths: screenshotManifest.map((item) => item.storagePath),
+          identity_document_ids: requiresIdentityDocuments ? [idDoc.id, addressDoc.id] : [],
+          identity_storage_paths: requiresIdentityDocuments ? [idDoc.storage_path, addressDoc.storage_path] : [],
+          identity_document_sha256: requiresIdentityDocuments ? [idDoc.sha256, addressDoc.sha256] : [],
+        },
         attachmentManifest,
       });
 
-      // A duplicate response means Lob already accepted this exact durable
-      // submission. Do not overwrite an existing delivered/mail date or send
-      // the client a second "mailed" email. An accepted-but-unreconciled
-      // record is the one exception: its local letter row still needs repair.
-      const alreadyRecorded = res.duplicate && res.mail_submission_status === 'submitted';
-
-      // Show the irreversible-send confirmation before asking the parent to
-      // refresh its letter list. That refresh can remount this modal; doing
-      // it first made a successful send look like it had reset to Verify.
-      setResult(res);
+      const alreadyRecorded = response.duplicate && response.mail_submission_status === 'submitted';
+      setResult(response);
       setStep('sent');
 
-      // The letter IS mailed at this point — persist the record with retries,
-      // and never let a save failure look like a send failure (resend = double postage)
-      let saveErr = null;
+      let saveError = null;
       if (!alreadyRecorded) {
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
           try {
             await onSent({
-              lobId: res.id,
-              mailedDate: res.mailed_date || new Date().toISOString().slice(0, 10),
-              trackingNumber: res.tracking_number || null,
-              mailService: res.mail_service || mailService,
-              expectedDeliveryDate: res.expected_delivery_date || null,
+              lobId: response.id,
+              mailedDate: response.mailed_date || new Date().toISOString().slice(0, 10),
+              trackingNumber: null,
+              mailService: USPS_FIRST_CLASS,
+              expectedDeliveryDate: response.expected_delivery_date || null,
             });
-            saveErr = null;
+            saveError = null;
             break;
-          } catch (e) {
-            saveErr = e;
-            await new Promise((r) => setTimeout(r, attempt * 1000));
+          } catch (persistError) {
+            saveError = persistError;
+            await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
           }
         }
       }
-
-      if (saveErr) {
-        setError('The letter WAS mailed (Lob ID ' + res.id + '), but saving the mail record failed: '
-          + (saveErr.message || saveErr) + '. Do NOT resend — note the Lob ID and set the mail date on the letter manually.');
+      if (saveError) {
+        setError(`The letter WAS mailed (Lob ID ${response.id}), but saving the local mail record failed: ${saveError.message || saveError}. Do NOT resend.`);
       }
 
-      // Fire phase notification (non-blocking) only for a new physical
-      // submission. clientId is preferred — the
-      // ilike match here vs. exact-match elsewhere in the app was a known
-      // inconsistency where a case-mismatched client could get this email
-      // while other client_name-keyed reads (e.g. the portal) silently
-      // returned nothing for them.
-      if (!res.duplicate && !letter.roundId && !isFileUpdate) {
+      if (!response.duplicate) {
         try {
-          // No name/ilike fallthrough when clientId is set — a miss means no email.
-          const notifyCpQuery = letter.clientId
-            ? supabase.from('client_profiles').select('email,full_name').eq('client_id', letter.clientId).limit(1)
-            : supabase.from('client_profiles').select('email,full_name').eq('full_name', letter.clientName).limit(1);
-          const { data: cp } = await notifyCpQuery;
-          if (cp && cp.length > 0 && cp[0].email) {
+          const { data: profiles } = await supabase.from('client_profiles')
+            .select('email,full_name')
+            .eq('client_id', letter.clientId)
+            .limit(1);
+          const profile = profiles?.[0];
+          if (profile?.email) {
             const { data: { session } } = await supabase.auth.getSession();
-            const token = session?.access_token;
             fetch('/.netlify/functions/send-lpoa', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
               },
               body: JSON.stringify({
                 action: 'send_phase_notification',
-                clientName: cp[0].full_name,
-                clientEmail: cp[0].email,
-                // Pre-existing bug, independent of mail class: this was
-                // hardcoded 'phase1_mailed' for every send, so a Phase 3
-                // bureau letter's client email said "Your Phase 1 dispute
-                // letter... mailed via Certified Mail" — wrong phase label
-                // regardless of what actually mailed. isPhase3 above already
-                // tracks this correctly for the enclosure logic.
-                phase: isCccDispute ? 'ccc_dispute_mailed' : isPhase3 ? 'phase3_mailed' : 'phase1_mailed',
-                details: isCccDispute ? `${letter.phase} campaign letter` : undefined,
+                clientName: profile.full_name,
+                clientEmail: profile.email,
+                phase: 'ccc_dispute_mailed',
+                details: `${letter.phase} campaign letter`,
                 furnisher: letter.furnisher,
-                trackingNumber: res.tracking_number || '',
               }),
-            }).catch((e) => console.warn('Phase notification failed:', e));
+            }).catch((notificationError) => console.warn('CCC mail notification failed:', notificationError));
           }
-        } catch (e) { console.warn('Phase notification error:', e); }
+        } catch (notificationError) {
+          console.warn('CCC mail notification failed:', notificationError);
+        }
       }
-    } catch (e) {
-      setError(e.message || 'Send failed');
-      // Only delete on failure — Lob may still fetch enclosure image URLs
-      // asynchronously after an accepted send. Successful temps age out via daily-cron.
+    } catch (sendError) {
+      setError(sendError.message || 'Send failed.');
       if (tempPathsToClean.length) {
-        supabase.storage.from('documents').remove(tempPathsToClean).catch((err) => {
-          console.warn('Could not clean temp mail assets:', err?.message || err);
+        supabase.storage.from('documents').remove(tempPathsToClean).catch((cleanupError) => {
+          console.warn('Could not clean temporary mail assets:', cleanupError?.message || cleanupError);
         });
       }
     } finally {
@@ -865,128 +438,73 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
     }
   };
 
+  const retired = !isCurrentCccLetter || wrongMailService;
+  const sendDisabled = sending || retired || !documentsLoaded || identityDocumentsMissing
+    || screenshotPacketMissing || !verified || !toAddr.line1 || !toAddr.city
+    || !toAddr.state || !toAddr.zip || letter?.enclosureParseBlocked;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded border border-border w-full max-w-lg flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-navy rounded-t">
           <div>
-            <div className="text-white text-[14px] font-medium ccc-display">Send via Lob</div>
-            <div className="text-gold text-[11px] uppercase tracking-wider mt-0.5">{letter.furnisher} · {letter.clientName}</div>
+            <div className="text-white text-[14px] font-medium ccc-display">{retired ? 'Historical Letter' : 'Send via Lob'}</div>
+            <div className="text-gold text-[11px] uppercase tracking-wider mt-0.5">{letter?.furnisher} · {letter?.clientName}</div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={18} strokeWidth={1.75} /></button>
+          <button onClick={onClose} className="text-gray-400 hover:text-white" aria-label="Close mailer"><X size={18} strokeWidth={1.75} /></button>
         </div>
 
         <div className="flex-1 overflow-auto p-6">
-          {letter.enclosureParseBlocked && (
-            <div className="mb-4 p-3 rounded border-2 border-red-500 bg-red-50">
-              <div className="text-[12px] font-bold text-red-800 uppercase tracking-wider mb-1">
-                Blocked — Manual Review Required
-              </div>
-              <div className="text-[12px] text-red-700 mb-2">
-                Phase 2 analysis flagged a problem with this letter — either an enclosed document that couldn't be reliably read (reversed/mirrored scan, misaligned rows, inconsistent dates), or a citation-lint failure in the generated letter text. It may assert facts that are unverified, wrong, or legally exposed. Sending is blocked until this is resolved and re-analyzed (re-upload a clean enclosure scan if that's the issue).
-              </div>
-              {letter.enclosureParseIssues && letter.enclosureParseIssues.length > 0 && (
-                <ul className="text-[11px] text-red-700 list-disc pl-4 space-y-0.5">
-                  {letter.enclosureParseIssues.map((issue, i) => <li key={i}>{issue}</li>)}
-                </ul>
-              )}
+          {retired ? (
+            <div className="rounded border border-amber-200 bg-amber-50 p-4">
+              <div className="text-[12px] font-bold uppercase tracking-wider text-amber-900">Read-only historical record</div>
+              <p className="mt-2 text-[12px] leading-relaxed text-amber-800">{RETIRED_MAIL_MESSAGE}</p>
             </div>
-          )}
-          {isBureauFollowUp && followUpContractError && (
-            <div className="mb-4 p-3 rounded border-2 border-red-500 bg-red-50">
-              <div className="text-[12px] font-bold text-red-800 uppercase tracking-wider mb-1">
-                Blocked — Follow-up Sources Missing
-              </div>
-              <div className="text-[12px] text-red-700">{followUpContractError}</div>
-            </div>
-          )}
-          {step === 'confirm' && (
+          ) : step === 'confirm' ? (
             <div className="space-y-4">
+              {letter?.enclosureParseBlocked && (
+                <div className="rounded border-2 border-red-500 bg-red-50 p-3 text-[12px] text-red-700">
+                  <strong className="block uppercase tracking-wider text-red-800">Blocked — manual review required</strong>
+                  Re-upload and review the enclosure before mailing. Nothing was sent.
+                </div>
+              )}
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2 flex items-center gap-1.5">
-                  <MapPin size={11} strokeWidth={2} /> Sending To
-                </div>
+                <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2 flex items-center gap-1.5"><MapPin size={11} strokeWidth={2} /> Sending To</div>
                 <div className="space-y-2">
-                  <AddressField label="Name / Entity" value={toAddr.name} onChange={(v) => { setToAddr((p) => ({ ...p, name: v })); setVerified(false); }} />
-                  <AddressField label="Address Line 1" value={toAddr.line1} onChange={(v) => { setToAddr((p) => ({ ...p, line1: v })); setVerified(false); }} />
-                  <AddressField label="Address Line 2 (optional)" value={toAddr.line2} onChange={(v) => { setToAddr((p) => ({ ...p, line2: v })); setVerified(false); }} />
+                  <AddressField label="Name / Entity" value={toAddr.name} onChange={(value) => { setToAddr((current) => ({ ...current, name: value })); setVerified(false); }} />
+                  <AddressField label="Address Line 1" value={toAddr.line1} onChange={(value) => { setToAddr((current) => ({ ...current, line1: value })); setVerified(false); }} />
+                  <AddressField label="Address Line 2 (optional)" value={toAddr.line2} onChange={(value) => { setToAddr((current) => ({ ...current, line2: value })); setVerified(false); }} />
                   <div className="grid grid-cols-3 gap-2">
-                    <AddressField label="City" value={toAddr.city} onChange={(v) => { setToAddr((p) => ({ ...p, city: v })); setVerified(false); }} />
-                    <AddressField label="State" value={toAddr.state} onChange={(v) => { setToAddr((p) => ({ ...p, state: v })); setVerified(false); }} />
-                    <AddressField label="ZIP" value={toAddr.zip} onChange={(v) => { setToAddr((p) => ({ ...p, zip: v })); setVerified(false); }} />
+                    <AddressField label="City" value={toAddr.city} onChange={(value) => { setToAddr((current) => ({ ...current, city: value })); setVerified(false); }} />
+                    <AddressField label="State" value={toAddr.state} onChange={(value) => { setToAddr((current) => ({ ...current, state: value })); setVerified(false); }} />
+                    <AddressField label="ZIP" value={toAddr.zip} onChange={(value) => { setToAddr((current) => ({ ...current, zip: value })); setVerified(false); }} />
                   </div>
                 </div>
-                {verified && (
-                  <div className="flex items-center gap-1.5 text-[11px] text-green-700 mt-2">
-                    <CheckCircle size={12} strokeWidth={2} /> Address verified by USPS
-                  </div>
-                )}
+                {verified && <div className="flex items-center gap-1.5 text-[11px] text-green-700 mt-2"><CheckCircle size={12} strokeWidth={2} /> Address verified by USPS</div>}
               </div>
 
               <div className="border border-border rounded-sm p-3">
-                <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Enclosures</div>
-                {isBureauFollowUp ? (
-                  <div className="space-y-1.5">
-                    {followUpPlan.map((item) => (
-                      <div key={item.kind} className="flex items-start gap-2 text-[12px]">
-                        {item.kind === 'lpoa'
-                          ? <AlertCircle size={12} strokeWidth={2} className="text-amber-500 shrink-0 mt-0.5" />
-                          : <CheckCircle size={12} strokeWidth={2} className="text-green-600 shrink-0 mt-0.5" />}
-                        <span className="text-ink">
-                          {item.label}
-                          {item.sourceId && <span className="block text-[9px] text-ink-faint font-mono break-all">{item.sourceId}</span>}
-                          {item.kind === 'lpoa' && <span className="block text-[9px] text-ink-faint">Validated when the packet is built</span>}
-                        </span>
-                      </div>
-                    ))}
-                    <div className="text-[10px] text-ink-muted pt-1">
-                      Phase 1, furnisher responses, ID, and proof of address are intentionally excluded.
-                    </div>
-                  </div>
-                ) : isCccDispute ? (
-                  requiresIdentityDocuments ? (
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2 text-[12px]">
-                        {idDoc
-                          ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Government ID — {idDoc.file_name}</span></>
-                          : <><AlertCircle size={12} strokeWidth={2} className="text-red-500" /><span className="text-red-700">Required government ID is missing</span></>}
-                      </div>
-                      <div className="flex items-center gap-2 text-[12px]">
-                        {addressDoc
-                          ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Proof of Address — {addressDoc.file_name}</span></>
-                          : <><AlertCircle size={12} strokeWidth={2} className="text-red-500" /><span className="text-red-700">Required proof of current address is missing</span></>}
-                      </div>
-                      <div className="text-[10px] text-ink-muted pt-1">CCC R1 requires both documents. Mailing is blocked until both are present.</div>
-                    </div>
-                  ) : (
-                    <div className="text-[11px] text-ink-muted">No ID or proof of address — the CCC rule attaches them to R1 only.</div>
-                  )
-                ) : (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-2 text-[12px]">
-                      {idDoc
-                        ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Government ID — {idDoc.file_name}</span></>
-                        : <><AlertCircle size={12} strokeWidth={2} className="text-amber-500" /><span className="text-ink-muted">No ID uploaded — upload in client Documents section</span></>}
-                    </div>
-                    <div className="flex items-center gap-2 text-[12px]">
-                      {addressDoc
-                        ? <><CheckCircle size={12} strokeWidth={2} className="text-green-600" /><span className="text-ink">Proof of Address — {addressDoc.file_name}</span></>
-                        : <><AlertCircle size={12} strokeWidth={2} className="text-amber-500" /><span className="text-ink-muted">No proof of address — upload in client Documents section</span></>}
-                    </div>
-                  </div>
-                )}
+                <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-2">Required packet</div>
+                <div className="space-y-1.5 text-[12px]">
+                  <div className="flex items-start gap-2"><CheckCircle size={12} className="text-green-600 mt-0.5" /><span>Approved CCC letter and required account screenshot exhibits</span></div>
+                  {requiresIdentityDocuments && (
+                    <>
+                      <div className="flex items-start gap-2">{idDoc ? <CheckCircle size={12} className="text-green-600 mt-0.5" /> : <AlertCircle size={12} className="text-red-500 mt-0.5" />}<span className={idDoc ? '' : 'text-red-700'}>{idDoc ? `Government ID — ${idDoc.file_name}` : 'Required government ID is missing'}</span></div>
+                      <div className="flex items-start gap-2">{addressDoc ? <CheckCircle size={12} className="text-green-600 mt-0.5" /> : <AlertCircle size={12} className="text-red-500 mt-0.5" />}<span className={addressDoc ? '' : 'text-red-700'}>{addressDoc ? `Proof of Address — ${addressDoc.file_name}` : 'Required proof of current address is missing'}</span></div>
+                    </>
+                  )}
+                  {!requiresIdentityDocuments && <div className="text-[11px] text-ink-muted">ID and proof of address attach to CCC R1 only.</div>}
+                </div>
                 {optionalDocs.length > 0 && (
                   <div className="pt-2 mt-2 border-t border-border">
-                    <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Optional Supporting Documents</div>
-                    <div className="space-y-1">
-                      {optionalDocs.map((doc) => (
-                        <label key={doc.id} className="flex items-center gap-2 text-[12px] cursor-pointer">
-                          <input type="checkbox" checked={selectedOtherDocIds.has(doc.id)} onChange={() => toggleOtherDoc(doc.id)} className="accent-navy" />
-                          <span className="text-ink">{doc.label || doc.file_name}</span>
-                        </label>
-                      ))}
-                    </div>
-                    <div className="text-[10px] text-ink-faint mt-1">Up to 5 files, 5 MB each, and 4 optional pages total. Checked documents are hashed and snapshotted with this mailing.</div>
+                    <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium mb-1.5">Optional supporting images</div>
+                    <div className="space-y-1">{optionalDocs.map((document) => (
+                      <label key={document.id} className="flex items-center gap-2 text-[12px] cursor-pointer">
+                        <input type="checkbox" checked={selectedOtherDocIds.has(document.id)} onChange={() => toggleOtherDoc(document.id)} className="accent-navy" />
+                        <span>{document.label || document.file_name}</span>
+                      </label>
+                    ))}</div>
+                    <div className="text-[10px] text-ink-faint mt-1">Up to 4 JPG, PNG, or WebP pages; 5 MB each.</div>
                   </div>
                 )}
               </div>
@@ -996,108 +514,33 @@ export default function LobMailer({ letter, furnisherAddress, onClose, onSent, o
                 <div className="text-[12px] text-ink">{FROM_ADDRESS.name}</div>
                 <div className="text-[11px] text-ink-muted">{FROM_ADDRESS.line1}, {FROM_ADDRESS.city}, {FROM_ADDRESS.state} {FROM_ADDRESS.zip}</div>
               </div>
-
-              <div className="border border-border rounded-sm p-3 bg-amber-50">
-                <div className="text-[11px] text-amber-800 leading-relaxed">
-                  {mailService === USPS_FIRST_CLASS ? (
-                    <><strong>USPS First Class</strong> — Lob will print and mail one packet. CCC saves the Lob mailpiece status and expected delivery date; no Certified tracking number or signed receipt is created.</>
-                  ) : (
-                    <><strong>USPS Certified Mail</strong> — Letter will be printed and mailed by Lob. Mail date and tracking number saved automatically. Verify address before sending.</>
-                  )}
-                </div>
+              <div className="border border-blue-200 rounded-sm p-3 bg-blue-50 text-[11px] text-blue-900 leading-relaxed">
+                <strong>USPS First-Class Mail</strong> — Lob prints and mails one packet. CCC records the mailpiece status and expected delivery estimate; this service does not create a certified tracking number or signed receipt.
               </div>
-
-              {error && (
-                <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>
-              )}
+              {error && <div className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-sm px-3 py-2">{error}</div>}
             </div>
-          )}
-
-          {step === 'sent' && result && (
+          ) : result ? (
             <div className="text-center py-6">
               <CheckCircle size={36} className="text-green-600 mx-auto mb-3" strokeWidth={1.5} />
               <div className="text-[14px] text-ink font-medium ccc-display mb-1">{result.duplicate ? 'Already Submitted' : 'Letter Sent'}</div>
-              <div className="text-[12px] text-ink-muted mb-4">
-                {result.duplicate
-                  ? 'Lob had already accepted this letter. No additional mailpiece was created.'
-                  : mailService === USPS_FIRST_CLASS
-                    ? 'Lob is printing and mailing your packet via USPS First Class.'
-                    : 'Lob is printing and mailing your certified letter with return receipt'}
-              </div>
+              <div className="text-[12px] text-ink-muted mb-4">{result.duplicate ? 'Lob already accepted this exact letter; no duplicate was created.' : 'Lob is printing and mailing the packet via USPS First-Class Mail.'}</div>
               <div className="border border-border rounded-sm p-4 text-left space-y-2">
-                <div className="text-[11px]">
-                  <span className="text-ink-faint uppercase tracking-wider">Lob ID: </span>
-                  <span className="text-ink font-medium">{result.id}</span>
-                </div>
-                {result.tracking_number && (
-                  <div className="text-[11px]">
-                    <span className="text-ink-faint uppercase tracking-wider">Tracking: </span>
-                    <span className="text-ink font-medium">{result.tracking_number}</span>
-                  </div>
-                )}
-                <div className="text-[11px]">
-                  <span className="text-ink-faint uppercase tracking-wider">Expected Delivery: </span>
-                  <span className="text-ink">
-                    {result.expected_delivery_date
-                      ? new Date(result.expected_delivery_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                      : '3-5 business days'}
-                  </span>
-                </div>
-                {result.url && (
-                  <div className="text-[11px]">
-                    <span className="text-ink-faint uppercase tracking-wider">Proof: </span>
-                    <a href={result.url} target="_blank" rel="noopener noreferrer" className="text-navy hover:text-gold underline underline-offset-2">
-                      View the exact PDF that was mailed
-                    </a>
-                  </div>
-                )}
+                <div className="text-[11px]"><span className="text-ink-faint uppercase tracking-wider">Lob ID: </span><span className="text-ink font-medium">{result.id}</span></div>
+                <div className="text-[11px]"><span className="text-ink-faint uppercase tracking-wider">Expected Delivery: </span><span className="text-ink">{result.expected_delivery_date ? new Date(`${result.expected_delivery_date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'Pending Lob estimate'}</span></div>
+                {result.url && <div className="text-[11px]"><span className="text-ink-faint uppercase tracking-wider">Mailpiece: </span><a href={result.url} target="_blank" rel="noopener noreferrer" className="text-navy hover:text-gold underline underline-offset-2">View the exact PDF mailed</a></div>}
               </div>
-              {error && (
-                <div className="mt-4 text-[12px] text-left text-amber-800 bg-amber-50 border border-amber-300 rounded-sm px-3 py-2">{error}</div>
-              )}
+              {error && <div className="mt-4 text-[12px] text-left text-amber-800 bg-amber-50 border border-amber-300 rounded-sm px-3 py-2">{error}</div>}
             </div>
-          )}
+          ) : null}
         </div>
 
         <div className="px-6 py-4 border-t border-border flex items-center justify-between">
-          <button onClick={step === 'sent' && batchRemaining > 0 ? onNext : onClose} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">
-            {step === 'sent' ? (batchRemaining > 0 ? `Next Letter (${batchRemaining})` : 'Close') : 'Cancel'}
-          </button>
-          {step === 'confirm' && (
+          <button onClick={step === 'sent' && batchRemaining > 0 ? onNext : onClose} className="text-[11px] uppercase tracking-wider text-ink-muted hover:text-ink">{step === 'sent' ? (batchRemaining > 0 ? `Next Letter (${batchRemaining})` : 'Close') : retired ? 'Close' : 'Cancel'}</button>
+          {!retired && step === 'confirm' && (
             <div className="flex items-center gap-3">
-              {!verified && (
-                <span className="text-[10px] text-ink-faint">Verify the address to enable sending</span>
-              )}
-              {!verified && (
-                <button
-                  onClick={handleVerify}
-                  disabled={verifying || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip}
-                  className="px-4 py-2 text-[11px] uppercase tracking-wider rounded-sm border border-navy text-navy hover:bg-navy hover:text-gold transition-colors"
-                  style={{ opacity: (!toAddr.line1 || verifying) ? 0.5 : 1 }}
-                >
-                  {verifying ? 'Verifying…' : 'Verify Address'}
-                </button>
-              )}
-              {/* Address verification is a hard gate — methodology hard stop.
-                  enclosureParseBlocked is a second, independent hard stop —
-                  see the server-side check in lob.cjs, which is what
-                  actually enforces this; disabling here is just so staff
-                  aren't clicking a button that's guaranteed to fail. */}
-              <button
-                onClick={handleSend}
-                disabled={sending || !documentsLoaded || identityDocumentsMissing || !verified || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip || letter.enclosureParseBlocked || !!followUpContractError}
-                title={letter.enclosureParseBlocked
-                  ? 'Blocked: enclosure could not be reliably parsed — re-upload and re-analyze first'
-                  : (followUpContractError
-                    || (identityDocumentsMissing ? 'Blocked: CCC R1 requires both ID and proof of address' : null)
-                    || (!documentsLoaded ? 'Checking client documents' : null)
-                    || (!verified ? 'Verify the address first' : undefined))}
-                className="flex items-center gap-2 px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
-                style={{ backgroundColor: (sending || !documentsLoaded || identityDocumentsMissing || !verified || !toAddr.line1 || letter.enclosureParseBlocked || followUpContractError) ? '#B5BBC9' : '#1B2A4A', color: (sending || !documentsLoaded || identityDocumentsMissing || !verified || !toAddr.line1 || letter.enclosureParseBlocked || followUpContractError) ? '#FFFFFF' : '#C9A84C' }}
-              >
-                <Send size={13} strokeWidth={2} />
-                {sending ? 'Sending…' : mailService === USPS_FIRST_CLASS ? 'Send First Class' : 'Send Certified Mail'}
-              </button>
+              {!verified && <span className="text-[10px] text-ink-faint">Verify the address to enable sending</span>}
+              {!verified && <button onClick={handleVerify} disabled={verifying || !toAddr.line1 || !toAddr.city || !toAddr.state || !toAddr.zip} className="px-4 py-2 text-[11px] uppercase tracking-wider rounded-sm border border-navy text-navy hover:bg-navy hover:text-gold transition-colors disabled:opacity-40">{verifying ? 'Verifying…' : 'Verify Address'}</button>}
+              <button onClick={handleSend} disabled={sendDisabled} title={identityDocumentsMissing ? 'Blocked: CCC R1 requires the exact verified ID and proof of address' : screenshotPacketMissing ? 'Blocked: required account screenshots are missing or invalid' : !verified ? 'Verify the address first' : undefined} className="flex items-center gap-2 px-5 py-2 text-[12px] uppercase tracking-wider rounded-sm transition-colors disabled:bg-gray-400 disabled:text-white" style={{ backgroundColor: sendDisabled ? undefined : '#1B2A4A', color: sendDisabled ? undefined : '#C9A84C' }}><Send size={13} strokeWidth={2} />{sending ? 'Sending…' : 'Send First Class'}</button>
             </div>
           )}
         </div>

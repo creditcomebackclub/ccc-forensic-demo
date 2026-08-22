@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, Download, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ScoreDeltaBadge, getScoreColor } from './ScoreMeter';
-import { clientCampaignLabel } from '../../utils/clientCampaignCopy.js';
 import { downloadProgressUpdatePdf, progressSnapshotMetrics } from '../../utils/progressUpdatePdf.js';
 
 const BUREAUS = [
@@ -97,28 +96,6 @@ function DetailTable({ deleted, added, changed }) {
   );
 }
 
-function PhaseProgressList({ items }) {
-  if (!Array.isArray(items) || items.length === 0) return null;
-  return (
-    <div>
-      <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 mb-2.5">Campaign status</div>
-      <div className="overflow-hidden rounded-xl border border-gray-100 divide-y divide-gray-50">
-        {items.map((item, index) => (
-          <div key={(item.accountKey || item.furnisher || 'account') + '-' + index} className="flex items-start justify-between gap-3 bg-white px-3.5 py-3">
-            <div className="min-w-0">
-              <div className="text-[13px] font-semibold text-slate-800 truncate">{item.furnisher}</div>
-              <div className="mt-0.5 text-[11px] text-slate-400">{item.reportLabel} · {item.label}</div>
-            </div>
-            <span className="shrink-0 rounded-md bg-[#121F38] px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#C9A84C]">
-              {clientCampaignLabel(/^phase\b/i.test(String(item.phase || '')) ? item.phase : 'Phase ' + item.phase)}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function ProgressCard({ update, expanded, onToggle }) {
   const metrics = useMemo(() => progressSnapshotMetrics(update.diff || {}), [update.diff]);
   const neg = metrics.negativeCounts;
@@ -133,7 +110,7 @@ function ProgressCard({ update, expanded, onToggle }) {
       toReportDate: update.to_report_date,
       narrative: update.narrative || '',
       diff: update.diff,
-      phaseProgress: update.phase_progress,
+      phaseProgress: [],
     });
   };
 
@@ -192,8 +169,6 @@ function ProgressCard({ update, expanded, onToggle }) {
               ) : (
                 <p className="text-[13px] text-slate-400 italic">Your update for this report is being prepared and will appear here shortly.</p>
               )}
-
-              <PhaseProgressList items={update.phase_progress} />
 
               {detailCount > 0 && (
                 <div>

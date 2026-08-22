@@ -1,5 +1,7 @@
 import { supabase } from './supabase.js';
 import { dateAfterDays } from './disputeTemplateSelection.js';
+import { disputeScreenshotPolicyDetails } from './disputeScreenshots.js';
+import { validateTemplateTokenContract } from './disputeTemplateEngine.js';
 export { templatesForRecommendation } from './disputeTemplateSelection.js';
 
 function normalizeTemplate(row) {
@@ -14,6 +16,8 @@ function normalizeTemplate(row) {
     version: row.version_label,
     body: row.body_text,
     notes: row.notes || '',
+    screenshotPolicyCode: row.screenshot_policy_code || 'none',
+    screenshotStaffInstructions: row.screenshot_staff_instructions || '',
     active: row.is_active,
     familyKey: row.template_family_key || `${String(row.flow_code || '').toUpperCase()}:R${row.round_number}:${row.bureau_code}`,
     publishedOn: row.published_on || null,
@@ -56,6 +60,10 @@ export async function saveDisputeTemplate(template) {
   if (!userId) throw new Error('Not signed in.');
 
   const publishedOn = template.publishedOn || new Date().toISOString().slice(0, 10);
+  const screenshotPolicy = disputeScreenshotPolicyDetails(
+    template.screenshotPolicyCode,
+    template.screenshotStaffInstructions,
+  );
   const row = {
     name: String(template.name || '').trim(),
     flow_code: template.flow,
@@ -64,14 +72,22 @@ export async function saveDisputeTemplate(template) {
     version_label: String(template.version || 'v1').trim(),
     body_text: String(template.body || '').trim(),
     notes: String(template.notes || '').trim() || null,
+    screenshot_policy_code: screenshotPolicy.code,
+    screenshot_staff_instructions: screenshotPolicy.staffInstructions || null,
     is_active: template.active !== false,
     template_family_key: String(template.familyKey || `${String(template.flow || '').toUpperCase()}:R${Number(template.round)}:${template.bureau || 'ALL'}`).trim(),
     published_on: publishedOn,
-    review_due_on: template.reviewDueOn || dateAfterDays(publishedOn, 90),
+    review_due_on: template.reviewDueOn || dateAfterDays(publishedOn, 49),
     supersedes_template_id: template.supersedesTemplateId || null,
     updated_at: new Date().toISOString(),
   };
   if (!row.name || !row.body_text) throw new Error('Template name and body are required.');
+  const tokenContractError = validateTemplateTokenContract({
+    flow: row.flow_code,
+    body: row.body_text,
+    active: row.is_active,
+  });
+  if (tokenContractError) throw new Error(tokenContractError);
 
   let query;
   if (template.id) {

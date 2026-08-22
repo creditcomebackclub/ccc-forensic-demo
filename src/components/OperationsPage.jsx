@@ -1,21 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity, AlertTriangle, CheckCircle2, Clock3, FileSearch,
-  MailWarning, RefreshCw, ShieldCheck, UserRoundCheck, Zap,
+  FileText, GitBranch, MailWarning, RefreshCw, ShieldCheck,
+  UserRoundCheck, Zap,
 } from 'lucide-react';
 import {
   getClientProductionReadiness, getOperationsQueue, listCertificationClients,
   operationArea, summarizeOperations,
 } from '../utils/operations';
+import { ADMIN_BRAND } from '../utils/adminBrand.js';
 
 const T = {
-  navy: '#1B2A4A',
-  navyDark: '#141F38',
-  gold: '#C9A84C',
-  border: '#E7EAF0',
-  ink: '#111827',
-  muted: '#6B7280',
-  faint: '#9CA3AF',
+  navy: ADMIN_BRAND.accentStrong,
+  navyDark: ADMIN_BRAND.ink,
+  gold: ADMIN_BRAND.accent,
+  border: ADMIN_BRAND.border,
+  ink: ADMIN_BRAND.ink,
+  muted: ADMIN_BRAND.muted,
+  faint: ADMIN_BRAND.faint,
   red: '#B42318',
   amber: '#B54708',
   green: '#067647',
@@ -24,8 +26,10 @@ const T = {
 const AREA_META = {
   All: { icon: Activity },
   Audits: { icon: FileSearch },
-  Responses: { icon: Zap },
+  Classification: { icon: GitBranch },
+  Letters: { icon: FileText },
   Mailing: { icon: MailWarning },
+  Outcomes: { icon: Zap },
   Blueprints: { icon: MailWarning },
   Onboarding: { icon: UserRoundCheck },
 };
@@ -42,7 +46,7 @@ function ageLabel(value) {
 
 function StatCard({ label, value, icon: Icon, tone = 'navy', sub }) {
   const color = tone === 'red' ? T.red : tone === 'amber' ? T.amber : tone === 'green' ? T.green : T.navy;
-  const bg = tone === 'red' ? '#FEF3F2' : tone === 'amber' ? '#FFFAEB' : tone === 'green' ? '#ECFDF3' : '#EEF1F7';
+  const bg = tone === 'red' ? '#FEF3F2' : tone === 'amber' ? '#FFFAEB' : tone === 'green' ? '#ECFDF3' : ADMIN_BRAND.accentSoft;
   return (
     <div className="bg-white border rounded-xl p-4" style={{ borderColor: T.border }}>
       <div className="flex items-center justify-between">
@@ -99,8 +103,9 @@ export default function OperationsPage({ onNavigate }) {
     return true;
   }), [items, area, severity]);
 
-  const areas = ['All', 'Audits', 'Responses', 'Mailing', 'Blueprints', 'Onboarding'];
+  const areas = ['All', 'Audits', 'Classification', 'Letters', 'Mailing', 'Outcomes', 'Blueprints', 'Onboarding'];
   const passedChecks = checks.filter((check) => check.status === 'passed').length;
+  const blockedChecks = checks.filter((check) => check.status === 'blocked').length;
 
   const loadCertification = async (clientId) => {
     setCertClientId(clientId);
@@ -127,22 +132,22 @@ export default function OperationsPage({ onNavigate }) {
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      <section className="rounded-2xl px-7 py-6 text-white" style={{ background: `linear-gradient(135deg, ${T.navy} 0%, ${T.navyDark} 100%)`, borderBottom: `3px solid ${T.gold}` }}>
+      <section className="rounded-2xl px-7 py-6" style={{ background: `linear-gradient(135deg, ${ADMIN_BRAND.surface} 0%, ${ADMIN_BRAND.accentSoft} 100%)`, border: `1px solid ${T.border}`, borderTop: `4px solid ${T.gold}`, boxShadow: ADMIN_BRAND.shadow }}>
         <div className="flex items-center justify-between gap-6 flex-wrap">
           <div>
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] font-semibold" style={{ color: T.gold }}>
-              <ShieldCheck size={14} /> Production control center
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] font-bold" style={{ color: T.navy }}>
+              <ShieldCheck size={14} /> New-method operations
             </div>
-            <h1 className="ccc-display text-[25px] mt-2">Exceptions before they become client problems</h1>
-            <p className="text-[12px] mt-2 max-w-2xl" style={{ color: 'rgba(255,255,255,0.62)' }}>
-              Live workflow health for Claude processing, response review, Lob mailing, Blueprint delivery, and portal onboarding.
+            <h1 className="text-[25px] font-semibold mt-2" style={{ color: T.ink }}>Consent · Accuracy · Collection lifecycle</h1>
+            <p className="text-[12px] mt-2 max-w-2xl" style={{ color: T.muted }}>
+              Live evidence for deterministic 3B routing, R1 account tracks, state-bound letters, First Class mailing, and course win/fail review.
             </p>
           </div>
           <button
             onClick={() => load(true)}
             disabled={refreshing}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-[11px] uppercase tracking-wider font-semibold disabled:opacity-50"
-            style={{ background: T.gold, color: T.navyDark }}
+            style={{ background: T.navyDark, color: '#fff', boxShadow: '0 7px 18px rgba(7,17,31,.14)' }}
           >
             <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
             Refresh
@@ -161,9 +166,9 @@ export default function OperationsPage({ onNavigate }) {
         <div className="px-5 py-4 border-b flex items-center justify-between gap-4 flex-wrap" style={{ borderColor: T.border }}>
           <div>
             <div className="flex items-center gap-2 text-[12px] font-semibold" style={{ color: T.ink }}>
-              <ShieldCheck size={15} style={{ color: T.gold }} /> Golden-client certification
+              <ShieldCheck size={15} style={{ color: T.gold }} /> Latest-letter lifecycle check
             </div>
-            <p className="text-[11px] mt-1" style={{ color: T.muted }}>Select one controlled client to verify the entire production lifecycle from stored evidence.</p>
+            <p className="text-[11px] mt-1" style={{ color: T.muted }}>Verify the client’s latest physical CCC letter path from immutable evidence. Multi-letter bureau and flow coverage is evaluated letter by letter.</p>
           </div>
           <select
             value={certClientId}
@@ -179,9 +184,9 @@ export default function OperationsPage({ onNavigate }) {
         {certClientId && !certError && (
           <div className="p-5">
             <div className="flex items-center justify-between mb-4">
-              <div className="text-[11px] uppercase tracking-wider" style={{ color: T.muted }}>Production evidence</div>
-              <div className="text-[12px] font-semibold" style={{ color: passedChecks === checks.length && checks.length ? T.green : T.navy }}>
-                {certLoading ? 'Checking…' : `${passedChecks} of ${checks.length} verified`}
+              <div className="text-[11px] uppercase tracking-wider" style={{ color: T.muted }}>Latest-path evidence</div>
+              <div className="text-[12px] font-semibold" style={{ color: blockedChecks ? T.red : passedChecks === checks.length && checks.length ? T.green : T.navy }}>
+                {certLoading ? 'Checking…' : `${passedChecks} of ${checks.length} verified${blockedChecks ? ` · ${blockedChecks} blocked` : ''}`}
               </div>
             </div>
             <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-5">
@@ -190,11 +195,15 @@ export default function OperationsPage({ onNavigate }) {
             <div className="grid md:grid-cols-2 gap-3">
               {checks.map((check) => {
                 const passed = check.status === 'passed';
+                const blocked = check.status === 'blocked';
                 return (
-                  <div key={check.key} className="border rounded-xl p-3 flex items-start gap-3" style={{ borderColor: passed ? '#ABEFC6' : T.border, background: passed ? '#F6FEF9' : '#fff' }}>
-                    {passed ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" style={{ color: T.green }} /> : <Clock3 size={16} className="mt-0.5 shrink-0" style={{ color: T.amber }} />}
+                  <div key={check.key} className="border rounded-xl p-3 flex items-start gap-3" style={{ borderColor: passed ? '#ABEFC6' : blocked ? '#FECDCA' : T.border, background: passed ? '#F6FEF9' : blocked ? '#FEF3F2' : '#fff' }}>
+                    {passed ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" style={{ color: T.green }} /> : blocked ? <AlertTriangle size={16} className="mt-0.5 shrink-0" style={{ color: T.red }} /> : <Clock3 size={16} className="mt-0.5 shrink-0" style={{ color: T.amber }} />}
                     <div>
-                      <div className="text-[12px] font-semibold" style={{ color: T.ink }}>{check.sequence}. {check.label}</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="text-[12px] font-semibold" style={{ color: T.ink }}>{check.sequence}. {check.label}</div>
+                        {blocked && <span className="text-[8px] uppercase tracking-wider font-semibold" style={{ color: T.red }}>Blocked</span>}
+                      </div>
                       <div className="text-[11px] mt-1 leading-relaxed" style={{ color: T.muted }}>{check.detail}</div>
                       {check.evidenceAt && <div className="text-[10px] mt-1.5" style={{ color: T.faint }}>Evidence {new Date(check.evidenceAt).toLocaleString()}</div>}
                     </div>

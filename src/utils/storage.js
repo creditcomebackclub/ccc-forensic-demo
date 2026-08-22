@@ -1,6 +1,16 @@
 import { supabase } from './supabase';
 import { diffAuditAccounts, normalizeFurnisher } from './diffEngine';
 import { buildPhaseProgress } from './phaseProgress';
+import { normalizeCccAccountTrackSnapshots } from './cccLetterTrackSnapshots';
+import { buildCccLetterIdentitySnapshot } from './cccLetterIdentity.js';
+import { normalizeDeletionOutcome } from './deletionOutcomes.js';
+
+const DELETION_OUTCOME_COLUMNS = 'id,client_id,client_account_id,furnisher,account_type,bureau,bureau_code,account_last4,deletion_confirmed_at,source_kind,source_audit_id,source_letter_id,created_at,updated_at';
+
+function deletionRegistryUnavailable(error) {
+  return !!error && /deletions[\s\S]*(client_id|client_account_id|bureau_code|source_kind|source_letter_id)|column[\s\S]*(client_id|client_account_id|bureau_code|source_kind|source_letter_id)[\s\S]*(does not exist|schema cache)/i
+    .test(error.message || '');
+}
 
 function slug(s) {
   return String(s || 'unknown')
@@ -13,6 +23,17 @@ function todayISO() {
   const d = new Date();
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
+}
+
+function validatedAutomaticValuesSnapshot(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('CCC automatic merge inputs must be saved as a JSON object.');
+  }
+  const serialized = JSON.stringify(value);
+  if (new TextEncoder().encode(serialized).byteLength > 262144) {
+    throw new Error('CCC automatic merge inputs exceed the 256 KB evidence limit.');
+  }
+  return value;
 }
 
 async function getUserId() {
@@ -160,6 +181,22 @@ export async function saveLetter(account, client, html, summary, phase, idSuffix
   const accountId = (account && (account.id || account.accountNumberMasked)) || '';
   const clientAccountId = (account && account.clientAccountId) || null;
   const date = todayISO();
+  const isCccDispute = String(phase || '').startsWith('CCC Dispute —');
+  const cccAccountTrackSnapshots = isCccDispute
+    ? normalizeCccAccountTrackSnapshots(metadata.cccAccountTrackSnapshots)
+    : ('cccAccountTrackSnapshots' in metadata
+      ? normalizeCccAccountTrackSnapshots(metadata.cccAccountTrackSnapshots, { allowEmpty: true })
+      : null);
+  const cccLetterIdentitySnapshot = isCccDispute
+    ? buildCccLetterIdentitySnapshot(metadata.cccLetterIdentitySnapshot)
+    : ('cccLetterIdentitySnapshot' in metadata
+      ? buildCccLetterIdentitySnapshot(metadata.cccLetterIdentitySnapshot)
+      : null);
+  const disputeAutomaticValuesSnapshot = isCccDispute
+    ? validatedAutomaticValuesSnapshot(metadata.disputeAutomaticValuesSnapshot)
+    : ('disputeAutomaticValuesSnapshot' in metadata
+      ? validatedAutomaticValuesSnapshot(metadata.disputeAutomaticValuesSnapshot)
+      : null);
   // New records carry the canonical client/tradeline identity. The legacy
   // name-only form is retained only where an old caller genuinely has no id.
   const clientSuffix = clientId ? '__' + clientId : '';
@@ -226,6 +263,11 @@ export async function saveLetter(account, client, html, summary, phase, idSuffix
     ...('disputeTemplateSnapshot' in metadata ? { dispute_template_snapshot: metadata.disputeTemplateSnapshot || null } : {}),
     ...('disputeEditableSections' in metadata ? { dispute_editable_sections: metadata.disputeEditableSections || {} } : {}),
     ...('disputeAccountSnapshot' in metadata ? { dispute_account_snapshot: metadata.disputeAccountSnapshot || [] } : {}),
+    ...(cccAccountTrackSnapshots ? { ccc_account_track_snapshots: cccAccountTrackSnapshots } : {}),
+    ...(cccLetterIdentitySnapshot ? { ccc_letter_identity_snapshot: cccLetterIdentitySnapshot } : {}),
+    ...(disputeAutomaticValuesSnapshot ? { dispute_automatic_values_snapshot: disputeAutomaticValuesSnapshot } : {}),
+    ...('disputeScreenshotPolicySnapshot' in metadata ? { dispute_screenshot_policy_snapshot: metadata.disputeScreenshotPolicySnapshot || {} } : {}),
+    ...('disputeScreenshotManifest' in metadata ? { dispute_screenshot_manifest: metadata.disputeScreenshotManifest || [] } : {}),
     ...('campaignId' in metadata ? { campaign_id: metadata.campaignId || null } : {}),
     ...('campaignItemId' in metadata ? { campaign_item_id: metadata.campaignItemId || null } : {}),
     ...('campaignRouteId' in metadata ? { campaign_route_id: metadata.campaignRouteId || null } : {}),
@@ -357,6 +399,11 @@ function normalizeLetter(l) {
     disputeTemplateSnapshot: l.dispute_template_snapshot || null,
     disputeEditableSections: l.dispute_editable_sections || {},
     disputeAccountSnapshot: l.dispute_account_snapshot || [],
+    cccAccountTrackSnapshots: l.ccc_account_track_snapshots || [],
+    cccLetterIdentitySnapshot: l.ccc_letter_identity_snapshot || {},
+    disputeAutomaticValuesSnapshot: l.dispute_automatic_values_snapshot || {},
+    disputeScreenshotPolicySnapshot: l.dispute_screenshot_policy_snapshot || {},
+    disputeScreenshotManifest: l.dispute_screenshot_manifest || [],
     clientAccountId: l.client_account_id || null,
     roundId: l.round_id || null,
     roundNumber: l.round_number || null,
@@ -398,6 +445,7 @@ function normalizeClientSummary(row) {
     address: row.address || null,
     audits: (row.audits || []).map(normalizeAudit),
     letters: (row.letters || []).map(normalizeLetter),
+    deletions: [],
     rounds: [],
     activeCampaign: null,
     auditCount: Number(row.audit_count || 0),
@@ -427,12 +475,13 @@ function normalizeClientSummary(row) {
 
 const CLIENT_DETAIL_COLUMNS = 'id,name,is_vip,user_id,email,lpoa_signed,lpoa_signed_at,lpoa_signature_data,sign_token,phone,date_of_birth,current_employer,monitoring_service,monitoring_email,monitoring_enrolled,monitoring_portal_url,referral_source,notes,tags,enrollment_date,score_eq_start,score_exp_start,score_tu_start,address,monitoring_not_required,status,lead_source,lead_phone,lead_notes,lead_created_at,lead_viewed_at,billing_status,billing_type,billing_start_date,billing_tier,billing_recurring_amount,referred_by,referral_fee,commission_paid,ledger,exit_reason,status_changed_at,engagement_status,engagement_status_changed_at,service_agreement_mode,service_agreement_label,service_agreement_amount,service_agreement_fee_text';
 
-function hydrateClientRecord(row, audits, letters, portal = null) {
+function hydrateClientRecord(row, audits, letters, portal = null, deletions = []) {
   const latestActivity = [
     row.lead_created_at,
     row.status_changed_at,
     ...audits.map((a) => a.savedAt),
     ...letters.map((l) => l.savedAt),
+    ...deletions.map((outcome) => outcome.confirmedAt),
   ].filter(Boolean).sort().slice(-1)[0] || '';
 
   return {
@@ -443,6 +492,7 @@ function hydrateClientRecord(row, audits, letters, portal = null) {
     address: row.address || audits.find((a) => a.clientAddress)?.clientAddress || null,
     audits,
     letters,
+    deletions,
     lastActivity: latestActivity,
     isVip: !!row.is_vip,
     email: row.email || portal?.email || null,
@@ -514,7 +564,7 @@ export async function listClientSummaries({ limit = 50, cursor = null, search = 
   const page = rows.slice(0, pageSize).map(normalizeClientSummary);
   const clientIds = page.map((client) => client.id).filter(Boolean);
   if (clientIds.length) {
-    const [structuredLettersRes, roundsRes, campaignsRes] = await Promise.all([
+    const [structuredLettersRes, roundsRes, campaignsRes, deletionsRes] = await Promise.all([
       supabase.from('letters')
         .select('id,client_id,round_id,round_number,letter_kind,target_type,target_bureau,response_due_at,response_window_extension_days,round_review_status,round_next_action,round_reviewed_at')
         .in('client_id', clientIds)
@@ -526,11 +576,31 @@ export async function listClientSummaries({ limit = 50, cursor = null, search = 
         .select('id,client_id,round_number,stage,builder_mode,opened_at')
         .in('client_id', clientIds)
         .in('stage', ['select_disputes', 'configure_letters', 'letter_review', 'mailing', 'awaiting_responses', 'response_review']),
+      supabase.from('deletions')
+        .select(DELETION_OUTCOME_COLUMNS)
+        .in('client_id', clientIds)
+        .not('deletion_confirmed_at', 'is', null)
+        .order('deletion_confirmed_at', { ascending: false }),
     ]);
     const adaptiveUnavailable = (error) => error && /round_id|round_number|letter_kind|target_type|target_bureau|response_due_at|dispute_round_summary/i.test(error.message || '');
     if (structuredLettersRes.error && !adaptiveUnavailable(structuredLettersRes.error)) throw structuredLettersRes.error;
     if (roundsRes.error && !adaptiveUnavailable(roundsRes.error)) throw roundsRes.error;
     if (campaignsRes.error && !/client_campaigns/i.test(campaignsRes.error.message || '')) throw campaignsRes.error;
+    if (deletionsRes.error && !deletionRegistryUnavailable(deletionsRes.error)) throw deletionsRes.error;
+
+    const deletionsByClientId = new Map();
+    if (!deletionsRes.error) {
+      for (const row of deletionsRes.data || []) {
+        const outcome = normalizeDeletionOutcome(row);
+        const current = deletionsByClientId.get(outcome.clientId) || [];
+        current.push(outcome);
+        deletionsByClientId.set(outcome.clientId, current);
+      }
+    }
+    for (const client of page) {
+      client.deletions = deletionsByClientId.get(client.id) || [];
+    }
+
     if (structuredLettersRes.error || roundsRes.error) {
       // Keep the existing CRM usable while the additive adaptive-round
       // migration is pending in a preview/production database. Structured
@@ -664,7 +734,7 @@ export async function getClientDetails(clientId) {
   if (sameNameError) throw sameNameError;
   const canUseLegacyNameFallback = sameNameCount === 1;
 
-  const [auditsRes, lettersRes, portalRes, legacyAuditsRes, legacyLettersRes, roundsRes, campaignsRes] = await Promise.all([
+  const [auditsRes, lettersRes, portalRes, legacyAuditsRes, legacyLettersRes, roundsRes, campaignsRes, deletionsRes] = await Promise.all([
     supabase.from('audits').select('*').eq('user_id', client.user_id).eq('client_id', clientId).order('saved_at', { ascending: false }),
     supabase.from('letters').select('*').eq('user_id', client.user_id).eq('client_id', clientId).order('saved_at', { ascending: false }),
     supabase.from('client_profiles').select('full_name,email,signature_data,onboarding_complete,agreement_signed_at').eq('client_id', clientId).limit(1),
@@ -679,6 +749,11 @@ export async function getClientDetails(clientId) {
       .eq('client_id', clientId)
       .in('stage', ['select_disputes', 'configure_letters', 'letter_review', 'mailing', 'awaiting_responses', 'response_review'])
       .order('round_number', { ascending: false }).limit(1),
+    supabase.from('deletions')
+      .select(DELETION_OUTCOME_COLUMNS)
+      .eq('client_id', clientId)
+      .not('deletion_confirmed_at', 'is', null)
+      .order('deletion_confirmed_at', { ascending: false }),
   ]);
   if (auditsRes.error) throw auditsRes.error;
   if (lettersRes.error) throw lettersRes.error;
@@ -687,6 +762,7 @@ export async function getClientDetails(clientId) {
   if (legacyLettersRes.error) throw legacyLettersRes.error;
   if (roundsRes.error && !/dispute_round_summary/i.test(roundsRes.error.message || '')) throw roundsRes.error;
   if (campaignsRes.error && !/client_campaigns/i.test(campaignsRes.error.message || '')) throw campaignsRes.error;
+  if (deletionsRes.error && !deletionRegistryUnavailable(deletionsRes.error)) throw deletionsRes.error;
 
   const rawAudits = [...(auditsRes.data || []), ...(legacyAuditsRes.data || [])]
     .sort((a, b) => (b.saved_at || '').localeCompare(a.saved_at || ''));
@@ -714,9 +790,12 @@ export async function getClientDetails(clientId) {
     const author = authorMap.get(letter.created_by);
     return { ...normalizeLetter(letter), auditorName: author ? (author.full_name || author.email) : null };
   });
+  const deletions = deletionsRes.error
+    ? []
+    : (deletionsRes.data || []).map(normalizeDeletionOutcome);
 
   return {
-    ...hydrateClientRecord(client, audits, letters, (portalRes.data || [])[0] || null),
+    ...hydrateClientRecord(client, audits, letters, (portalRes.data || [])[0] || null, deletions),
     rounds: roundsRes.error ? [] : (roundsRes.data || []),
     activeCampaign: campaignsRes.error ? null : (campaignsRes.data || [])[0] || null,
   };

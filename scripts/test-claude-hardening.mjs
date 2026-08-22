@@ -4,32 +4,11 @@ import { generatedLetterValidationError, unauthorizedFieldCitations } from '../s
 import { buildPriorRoundEvidenceDigest, priorLetterPlainText } from '../src/utils/roundEvidence.js';
 import { LETTER_CONTENT_SCHEMA, renderStructuredLetter } from '../src/utils/structuredLetter.js';
 
-const content = {
-  subject: 'Direct Furnisher Dispute | Account No. XXXX1234',
-  summary: 'The account contains conflicting reported values. We are asking the furnisher to investigate and correct the supported inaccuracies.',
-  opening: ['This is a direct dispute based on the documented reporting conflicts below.'],
-  sections: [{
-    heading: 'Supported reporting conflicts',
-    paragraphs: ['The record reports a paid status while still reporting an amount past due.'],
-    bullets: ['Metro 2 Field 22 — Amount Past Due must be investigated and corrected if inaccurate.'],
-  }],
-  demands: ['Conduct a reasonable investigation and correct each unsupported value.'],
-  closing: 'Please complete the investigation and provide written results within the applicable period.',
-};
-
-const html = renderStructuredLetter({
-  content,
-  client: { name: 'Alex Example', address: '100 Main Street\nDenver, CO 80202', date_of_birth: '01/01/1990' },
-  account: {
-    furnisher: 'Example Bank',
-    furnisherAddress: { name: 'Example Bank', line1: '200 Bank Way', city: 'Dallas', state: 'TX', zip: '75001' },
-    accountNumberMasked: 'XXXX1234',
-  },
-  letter: { client_name: 'Alex Example', furnisher: 'Example Bank', account_id: 'XXXX1234', target_type: 'furnisher', round_number: 2 },
-  enclosures: ['Exhibit A: Prior Dispute Letter', 'Exhibit B: Reviewed Response Evidence', 'Exhibit C: Limited Power of Attorney'],
-});
-
-assert.equal(generatedLetterValidationError(html, { requireSections: true }), null);
+const currentShape = '<!doctype html><html><body><div class="enclosures">Reviewed exhibits</div></body></html>';
+assert.equal(generatedLetterValidationError(currentShape, { requireSections: true }), null,
+  'current validation no longer requires a signature or certified-mail notation');
+assert.throws(() => renderStructuredLetter(), /renderer is retired.*template library/i,
+  'the former free-form letter renderer fails closed');
 assert.deepEqual(unauthorizedFieldCitations('Field 25 is disputed. Field 21 is also disputed.', {
   findings: [{ outcome: 'FLAG', field: 'Field 25 (Date of First Delinquency)' }],
 }), ['Cites Metro 2 Field 21, which is not present in the authorized deterministic findings.']);
@@ -37,22 +16,6 @@ assert.deepEqual(unauthorizedFieldCitations('Field 25 is disputed.', { violation
 assert.deepEqual(unauthorizedFieldCitations('Field 20 must be reported.', {
   findings: [{ outcome: 'FLAG', field: 'Field 25 (Date of First Delinquency)' }],
 }, { additionalAllowed: ['20'] }), []);
-assert.match(html, /<div class="date-line">/);
-assert.match(html, /<div class="sender-block">Alex Example<br>100 Main Street/);
-assert.match(html, /<div class="recipient-block">Example Bank<br>200 Bank Way/);
-assert.match(html, /class="section-header"/);
-assert.match(html, /Sent via Certified Mail/);
-assert.doesNotMatch(html, /undefined|\[object Object\]/);
-
-const injected = renderStructuredLetter({
-  content: { ...content, opening: ['<script>alert(1)</script>'] },
-  client: { name: 'Alex Example', address: '100 Main Street\nDenver, CO 80202' },
-  account: { furnisher: 'Example Bank', furnisherAddress: '200 Bank Way\nDallas, TX 75001' },
-  letter: { target_type: 'furnisher' },
-});
-assert.doesNotMatch(injected, /<script>alert/);
-assert.match(injected, /&lt;script&gt;/);
-
 const oldHtml = '<html><head><style>secret css</style></head><body><p>Supported dispute fact.</p><div class="signature-block"><img src="data:image/png;base64,SECRET">Alex</div><div class="mail-notation">mail</div><div class="enclosures">docs</div></body></html>';
 const normalized = priorLetterPlainText(oldHtml);
 assert.equal(normalized, 'Supported dispute fact.');
@@ -85,11 +48,16 @@ assert.match(audit, /preflightTokenCount/);
 assert.match(phase2, /MAX_TOTAL_RESPONSE_BYTES/);
 assert.match(phase2, /splitPdfByPages/);
 assert.match(phase2, /preflightTokenCount/);
-assert.match(phase2, /renderFollowUpLetter/);
+assert.match(phase2, /LEGACY FOLLOW-UP GENERATION RETIRED/);
+assert.match(phase2, /Do not draft correspondence/);
+assert.doesNotMatch(phase2, /renderFollowUpLetter|BUREAU_FOLLOW_UP_SCHEMA|normalizeFollowUpPresentation/);
 assert.match(followUpPrompt, /letterContent/);
 assert.doesNotMatch(followUpPrompt, /letterHtml|complete HTML document/);
-assert.match(phase4, /const EFFORT = 'high'/);
-assert.match(phase4, /preflightTokenCount/);
+assert.match(phase4, /LEGACY PHASE 4 GENERATION RETIRED/);
+assert.match(phase4, /statusCode: 410/);
+assert.match(phase4, /requireStaff\(event\)/);
+assert.doesNotMatch(phase4, /@anthropic-ai|preflightTokenCount|messages\.(?:stream|create)|output_config|const (?:MODEL|EFFORT)\b/,
+  'the retired Phase 4 endpoint must not retain a model-generation path');
 assert.match(intake, /MAX_TOTAL_FILE_SIZE = 18 \* 1024 \* 1024/);
 assert.match(migration, /create table if not exists public\.claude_call_logs/);
 assert.match(migration, /generation_context jsonb/);

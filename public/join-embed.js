@@ -112,7 +112,7 @@
       '  </div>' +
       '  <div class="ccc-eyebrow-wrap"><span class="ccc-eyebrow" data-ccc-eyebrow></span></div>' +
       '  <h2>Start Your Credit Comeback</h2>' +
-      '  <p class="ccc-sub">We dispute inaccurate accounts directly with the companies reporting them — not just the bureaus — targeting Metro 2 and FCRA violations they\'re legally required to fix.</p>' +
+      '  <p class="ccc-sub">We review how accounts appear across your three credit reports, build factual disputes around the details that do not match, and track each response.</p>' +
       '  <form data-ccc-form>' +
       '    <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true"><label>Leave this field blank</label><input type="text" data-ccc-website tabindex="-1" autocomplete="off"></div>' +
       '    <div><label>Full Name</label><input type="text" data-ccc-name required autocomplete="name"></div>' +
@@ -164,7 +164,6 @@
     var form = container.querySelector('[data-ccc-form]');
     var submitBtn = container.querySelector('[data-ccc-submit]');
     var errorMsg = container.querySelector('[data-ccc-error]');
-    var intakeLeadId = null;
     var calendlyPrefill = null;
 
     function showCalendly() {
@@ -215,8 +214,7 @@
       }).then(function (res) {
         if (!res.ok) throw new Error('Something went wrong — please try again.');
         return res.json();
-      }).then(function (intake) {
-        intakeLeadId = intake && intake.leadId || null;
+      }).then(function () {
         calendlyPrefill = {
           name: String(payload.name || '').trim(),
           email: String(payload.email || '').trim().toLowerCase()
@@ -231,16 +229,6 @@
       });
     });
 
-    window.addEventListener('message', function (event) {
-      if (event.origin !== 'https://calendly.com' || !event.data || event.data.event !== 'calendly.event_scheduled' || !intakeLeadId) return;
-      fetch(BASE + '/api/intake-booked', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: intakeLeadId })
-      }).catch(function (err) {
-        console.error('Could not send consultation preparation email:', err);
-      });
-    });
   }
 
   function init() {

@@ -6,19 +6,17 @@ import {
   hasMailedContentWarning,
   hasMailedDeliveryEvidence,
   letterGenerationState,
-  letterSignatureState,
 } from '../../utils/letterGeneration.js';
+import { isCccDisputePhase } from '../../utils/cccMailRules.js';
 
 export const WINDOW_DAYS = 30;
 
-export const LETTER_STAGES = ['Generated', 'Mailed', 'Delivered', 'Outcome'];
+export const LETTER_STAGES = ['Prepared', 'Mailed', 'Delivered', 'Outcome'];
 
 export const MAIL_FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'generation_failed', label: 'Failed' },
   { key: 'content_warning', label: 'Content warnings' },
-  { key: 'signature_required', label: 'Signature required' },
-  { key: 'historical_signature', label: 'Historical previews' },
   { key: 'generating', label: 'Generating' },
   { key: 'not_mailed', label: 'Not mailed' },
   { key: 'in_transit', label: 'In transit' },
@@ -38,10 +36,10 @@ export const LIST_FILTER_TO_LETTER = {
 };
 
 export function letterStatusCode(l) {
+  if (!isCccDisputePhase(l?.phase) && !hasMailedDeliveryEvidence(l)) return 'historical_read_only';
   const generation = letterGenerationState(l);
   if (generation === 'failed' && !hasMailedContentWarning(l)) return 'generation_failed';
   if (generation === 'generating') return 'generating';
-  if (letterSignatureState(l) !== 'embedded' && !hasMailedDeliveryEvidence(l)) return 'signature_required';
   const code = responseWindowStatus(l).code;
   if (code === 'draft') return 'not_mailed';
   if (code === 'due_soon') return 'awaiting';
@@ -57,17 +55,12 @@ export function letterStageIndex(l) {
 
 export function letterMatchesMailFilter(l, filterKey, client = null) {
   if (!filterKey || filterKey === 'all') return true;
+  if (!isCccDisputePhase(l?.phase)) return false;
   if (filterKey === 'content_warning') return hasMailedContentWarning(l);
-  if (filterKey === 'signature_required') return letterStatusCode(l) === 'signature_required';
-  if (filterKey === 'historical_signature') {
-    return hasMailedDeliveryEvidence(l) && letterGenerationState(l) === 'ready' && letterSignatureState(l) !== 'embedded';
-  }
   const code = letterStatusCode(l);
   if (filterKey === 'outcome') return code === 'received' || code === 'no_response';
   if (filterKey === 'received') {
-    return code === 'received' && (l.roundId
-      ? isPendingRoundReview(client, l)
-      : !(l.phase || '').startsWith('Phase 3'));
+    return code === 'received' && (!l.roundId || isPendingRoundReview(client, l));
   }
   return code === filterKey;
 }
@@ -78,8 +71,6 @@ export function countMailStatuses(letters = [], rounds = []) {
     all: letters.length,
     generation_failed: 0,
     content_warning: 0,
-    signature_required: 0,
-    historical_signature: 0,
     generating: 0,
     not_mailed: 0,
     in_transit: 0,
@@ -90,10 +81,8 @@ export function countMailStatuses(letters = [], rounds = []) {
     no_response: 0,
   };
   for (const l of letters) {
+    if (!isCccDisputePhase(l?.phase)) continue;
     if (hasMailedContentWarning(l)) counts.content_warning += 1;
-    if (hasMailedDeliveryEvidence(l) && letterGenerationState(l) === 'ready' && letterSignatureState(l) !== 'embedded') {
-      counts.historical_signature += 1;
-    }
     const code = letterStatusCode(l);
     if (counts[code] != null) counts[code] += 1;
     if (code === 'received' || code === 'no_response') counts.outcome += 1;
@@ -135,11 +124,11 @@ export function deriveNextAction(client) {
     if (copy) return { label: copy[0], detail: copy[1], letterFilter: 'all', tone: copy[2] };
   }
   const letters = client?.letters || [];
-  const open = letters.filter((l) => l.roundId ? isOpenRoundLetter(client, l) : !(l.phase || '').startsWith('Phase 3'));
+  const currentLetters = letters.filter((letter) => isCccDisputePhase(letter?.phase));
+  const open = currentLetters.filter((letter) => !letter.roundId || isOpenRoundLetter(client, letter));
 
   const notMailed = open.filter((l) => letterStatusCode(l) === 'not_mailed');
   const failedGeneration = open.filter((l) => letterStatusCode(l) === 'generation_failed');
-  const signatureRequired = open.filter((l) => letterStatusCode(l) === 'signature_required');
   const reviewDue = open.filter((l) => {
     const code = letterStatusCode(l);
     return (code === 'window_closed' || code === 'no_response')
@@ -187,18 +176,10 @@ export function deriveNextAction(client) {
       tone: 'urgent',
     };
   }
-  if (signatureRequired.length > 0) {
-    return {
-      label: signatureRequired.length === 1 ? '1 signature required' : `${signatureRequired.length} signatures required`,
-      detail: 'Mailing is blocked until a valid client signature is embedded',
-      letterFilter: 'signature_required',
-      tone: 'urgent',
-    };
-  }
   if (notMailed.length > 0) {
     return {
       label: notMailed.length === 1 ? 'Mail 1 letter' : `Mail ${notMailed.length} letters`,
-      detail: 'Drafts ready to send via Lob',
+      detail: 'Reviewed CCC letters are ready for First-Class mailing',
       letterFilter: 'not_mailed',
       tone: 'action',
     };
@@ -206,7 +187,7 @@ export function deriveNextAction(client) {
   if (awaiting.length > 0) {
     return {
       label: awaiting.length === 1 ? '1 letter awaiting' : `${awaiting.length} letters awaiting`,
-      detail: 'Inside the FCRA response window',
+      detail: 'Inside the current campaign review window',
       letterFilter: 'awaiting',
       tone: 'wait',
     };
@@ -219,10 +200,10 @@ export function deriveNextAction(client) {
       tone: 'wait',
     };
   }
-  if (letters.length === 0) {
+  if (currentLetters.length === 0) {
     return {
-      label: 'Run an audit',
-      detail: 'No letters yet — prepare an explicit dispute round from an audit',
+      label: 'Start at R1',
+      detail: 'Confirm the audit classification, then prepare the approved CCC R1 template route',
       letterFilter: 'all',
       tone: 'neutral',
     };

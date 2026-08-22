@@ -146,11 +146,15 @@ assert.match(auditWorker, /CREDIT_BUREAU_EXTRACTION_SCHEMA/);
 assert.doesNotMatch(auditWorker, /schema: AUDIT_SCHEMA|schema: BUREAU_SCHEMA/);
 assert.match(responseWorker, /evaluateFurnisherResponse/);
 assert.match(responseWorker, /evaluateBureauResponse/);
-assert.match(responseWorker, /schema: isBureauFollowUp \? BUREAU_FOLLOW_UP_SCHEMA : RESPONSE_EXTRACTION_SCHEMA/);
+assert.match(responseWorker, /queuedJob\.kind === 'bureau_follow_up'/);
+assert.match(responseWorker, /statusCode: 410, body: RETIRED_FOLLOW_UP_ERROR/);
+assert.match(responseWorker, /schema: RESPONSE_EXTRACTION_SCHEMA/);
+assert.doesNotMatch(responseWorker, /BUREAU_FOLLOW_UP_SCHEMA/,
+  'retired bureau follow-up generation must not retain its model schema');
 assert.doesNotMatch(extractionPrompt, /Perform a full forensic|Identify every violation|Rank top 5|strongest.*leverage/i);
 
-// ─── v3: prioritization, adjudication, challenge statements, citation debt ───
-assert.equal(DETERMINISTIC_AUDIT_SCHEMA_VERSION, 'deterministic-audit-v3');
+// ─── v4: v3 fields plus deterministic routing facts / 3B coverage ───
+assert.equal(DETERMINISTIC_AUDIT_SCHEMA_VERSION, 'deterministic-audit-v4');
 assert.equal(REPORT_MAX_AGE_DAYS, 45);
 assert.equal(auditFreshness('2026-01-01', { now: new Date('2026-03-01') }).maxAgeDays, REPORT_MAX_AGE_DAYS);
 
@@ -214,12 +218,13 @@ const afterRestore = adjudicateAccountFindingAt(afterSuppress, dofdIndex, { stat
 assert.equal(afterRestore.violations.length, beforeCount);
 assert.ok(recomputeAccountFromFindings(afterRestore).priorityScore >= 0);
 
-// Blueprint consumes challenge statements and priority scores
-const blueprintModel = buildRecoveryBlueprintModel(ranked);
-assert.ok(blueprintModel.openingMove);
-assert.ok(blueprintModel.openingMove.primaryChallengeStatement);
-assert.equal(typeof blueprintModel.metrics.citationDebtCount, 'number');
-assert.ok(blueprintModel.batch1Accounts.every((a) => a.batch === 1));
+// A deterministic extraction alone is not authority to create a client
+// Blueprint. Exact canonical IDs + a saved current classification review are
+// required at this boundary.
+assert.throws(
+  () => buildRecoveryBlueprintModel(ranked),
+  /exact saved audit and canonical client ids|classification review/,
+);
 
 // Multi-signal: last-4 alone with weak name should not fold different furnishers
 const weakName = buildDeterministicAudit([

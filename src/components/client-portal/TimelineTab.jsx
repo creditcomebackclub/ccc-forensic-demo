@@ -1,17 +1,20 @@
 import React from 'react';
 import TimelineEvent from './TimelineEvent';
-import { portalLetterGroup } from '../../utils/portalCampaigns';
+import { hasClientVisibleDelivery, hasPortalReviewStarted, portalLetterGroup, portalMailPresentation, portalReviewStartDate } from '../../utils/portalCampaigns';
 
 // Client-facing lifecycle. The last state deliberately describes what the
 // team does next — a response or a closed window is not automatically a
 // "resolution" for the client's overall case.
-const CAMPAIGN_STEPS = ['Prepared', 'Mailed', 'In Transit', 'Delivered', 'Response Window', 'Next Action'];
+const TRACKED_CAMPAIGN_STEPS = ['Prepared', 'Mailed', 'Mail Processing', 'Delivery Record', 'Case Review', 'Next Action'];
+const UNTRACKED_CAMPAIGN_STEPS = ['Prepared', 'Mailed', 'Review Scheduled', 'Review Start', 'Case Review', 'Next Action'];
 
 function letterPhaseStep(l) {
   if (l.response_outcome === 'deleted' || l.response_outcome === 'received' || l.response_outcome === 'no_response') return 5;
-  if (l.tracking_status === 'Delivered') return 3; // Delivered → Awaiting Response
-  if (l.tracking_status === 'Out for Delivery') return 2;
-  if (l.tracking_status === 'In Transit') return 2;
+  if (hasPortalReviewStarted(l) || hasClientVisibleDelivery(l)) return 4;
+  const mail = portalMailPresentation(l);
+  if (mail.currentFirstClass && l.mailed_date) return portalReviewStartDate(l) ? 2 : 1;
+  if (mail.legacyCertified && l.tracking_status === 'Out for Delivery') return 2;
+  if (mail.legacyCertified && l.tracking_status === 'In Transit') return 2;
   if (l.mailed_date) return 1; // Mailed
   return 0; // Prepared
 }
@@ -35,8 +38,11 @@ function PhaseProgressBar({ letters, campaigns = [] }) {
         {Object.entries(groups).map(([groupKey, group]) => {
           const campaign = group.label;
           const campaignLetters = group.letters;
+          const campaignSteps = campaignLetters.every((letter) => portalMailPresentation(letter).legacyCertified)
+            ? TRACKED_CAMPAIGN_STEPS
+            : UNTRACKED_CAMPAIGN_STEPS;
           const maxStep = Math.max(...campaignLetters.map(letterPhaseStep));
-          const currentLabel = CAMPAIGN_STEPS[maxStep] === 'Delivered' ? 'Response Window' : CAMPAIGN_STEPS[maxStep];
+          const currentLabel = campaignSteps[maxStep];
           const allHaveOutcome = campaignLetters.every(l => l.response_outcome);
           const deletions = campaignLetters.filter(l => l.response_outcome === 'deleted').length;
           const responses = campaignLetters.filter(l => l.response_outcome === 'received').length;
@@ -62,7 +68,7 @@ function PhaseProgressBar({ letters, campaigns = [] }) {
               </div>
               {/* Step dots */}
               <div className="flex items-center gap-0">
-                {CAMPAIGN_STEPS.map((step, idx) => {
+                {campaignSteps.map((step, idx) => {
                   const done = idx <= maxStep;
                   const active = idx === maxStep && !allHaveOutcome;
                   return (
@@ -75,7 +81,7 @@ function PhaseProgressBar({ letters, campaigns = [] }) {
                           : 'bg-white border-gray-300'}`}
                         />
                       </div>
-                      {idx < CAMPAIGN_STEPS.length - 1 && (
+                      {idx < campaignSteps.length - 1 && (
                         <div className={`flex-1 h-0.5 mx-0.5 transition-all ${idx < maxStep ? (deletions > 0 ? 'bg-green-400' : 'bg-slate-900') : 'bg-gray-200'}`} />
                       )}
                     </React.Fragment>
@@ -84,9 +90,9 @@ function PhaseProgressBar({ letters, campaigns = [] }) {
               </div>
               {/* Step labels */}
               <div className="flex justify-between mt-1">
-                {CAMPAIGN_STEPS.map((step, idx) => (
+                {campaignSteps.map((step, idx) => (
                   <span key={step} className={`text-[9px] uppercase tracking-wide ${idx === maxStep ? 'text-slate-900 font-bold' : 'text-gray-400'}`}
-                    style={{ width: idx === 0 ? 'auto' : idx === CAMPAIGN_STEPS.length - 1 ? 'auto' : undefined }}>
+                    style={{ width: idx === 0 ? 'auto' : idx === campaignSteps.length - 1 ? 'auto' : undefined }}>
                     {step}
                   </span>
                 ))}

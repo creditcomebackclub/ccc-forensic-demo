@@ -4,14 +4,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 const SUGGESTIONS = [
   "When is my next update?",
-  "How long does the process take?",
-  "What happens during credit bureau review?"
+  "What casework has been mailed?",
+  "Has a result been recorded?"
 ];
 
-export default function ConciergeChat({ clientId, accessToken }) {
+export default function ConciergeChat({ accessToken }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
-    { role: 'assistant', text: 'Hi! I am the CCC Concierge. How can I help you with your credit repair journey today?' }
+    { role: 'assistant', text: 'Hi! I’m the CCC Concierge. I can explain the status already recorded in your portal. How can I help?' }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -33,20 +33,23 @@ export default function ConciergeChat({ clientId, accessToken }) {
     setLoading(true);
 
     try {
-      const apiUrl = import.meta.env.VITE_AGENTS_API_URL || 'http://localhost:8000';
-      const res = await fetch(`${apiUrl}/chat`, {
+      if (!accessToken) throw new Error('Your session expired. Please sign in again.');
+      const apiUrl = String(import.meta.env.VITE_AGENTS_API_URL || 'http://localhost:8000').replace(/\/$/, '');
+      const res = await fetch(`${apiUrl}/portal/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
-        body: JSON.stringify({ client_id: clientId, message: userMsg })
+        body: JSON.stringify({ message: userMsg })
       });
-      const data = await res.json();
-      setMessages(prev => [...prev, { role: 'assistant', text: data.reply }]);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.error || 'The concierge could not answer right now.');
+      if (!data.reply || typeof data.reply !== 'string') throw new Error('The concierge returned an invalid response.');
+      setMessages(prev => [...prev, { role: 'assistant', text: data.reply, handoff: data.handoff === true }]);
     } catch (e) {
       console.error(e);
-      setMessages(prev => [...prev, { role: 'assistant', text: "I'm sorry, I'm having trouble connecting right now." }]);
+      setMessages(prev => [...prev, { role: 'assistant', text: e.message || "I'm sorry, I'm having trouble connecting right now." }]);
     } finally {
       setLoading(false);
     }
@@ -79,6 +82,7 @@ export default function ConciergeChat({ clientId, accessToken }) {
                   <div className={`max-w-[85%] rounded-2xl px-4 py-2 text-[13px] leading-relaxed shadow-sm ${m.role === 'user' ? 'text-white rounded-br-sm' : 'bg-white text-gray-800 border border-gray-100 rounded-bl-sm'}`}
                        style={m.role === 'user' ? { backgroundColor: '#1B2A4A' } : {}}>
                     {m.text}
+                    {m.handoff && <div className="mt-1 text-[10px] font-bold uppercase tracking-wider text-blue-700">Staff handoff recorded</div>}
                   </div>
                 </div>
               ))}
@@ -109,12 +113,14 @@ export default function ConciergeChat({ clientId, accessToken }) {
             </div>
 
             <div className="p-3 bg-white border-t border-gray-100">
+              <p className="mb-2 px-1 text-[10px] leading-snug text-slate-400">Never send an SSN, card number, password, or monitoring login in chat.</p>
               <div className="relative">
                 <input
                   type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && sendMessage()}
+                  maxLength={1500}
                   placeholder="Ask a question..."
                   className="w-full bg-slate-50 border border-gray-200 rounded-full pl-4 pr-10 py-2.5 text-[16px] focus:outline-none focus:border-navy focus:ring-1 transition-all"
                 />
@@ -134,6 +140,7 @@ export default function ConciergeChat({ clientId, accessToken }) {
 
       <button
         onClick={() => setIsOpen(!isOpen)}
+        aria-label={isOpen ? 'Close CCC Concierge' : 'Open CCC Concierge'}
         className="w-14 h-14 text-white rounded-full flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-105 transition-all"
         style={{ backgroundColor: '#1B2A4A' }}
       >

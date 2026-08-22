@@ -14,14 +14,15 @@ const T = {
 
 // Explicit client attribution, chosen by staff before the audit runs — the
 // replacement for inferring attribution from the name the model extracts off
-// the report after the fact, which broke silently on a case mismatch (see
-// the Cameron May incident). `value` is either null (nothing chosen yet),
-// { type: 'new' }, or { type: 'existing', id, name }.
+// the report after the fact. New leads are created first and immediately
+// become an exact { type: 'existing', id, name } selection.
 export default function ClientPicker({ value, onChange }) {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,9 +38,32 @@ export default function ClientPicker({ value, onChange }) {
     ? clients.filter((c) => c.name.toLowerCase().includes(query.trim().toLowerCase()))
     : clients;
 
-  const selectedLabel = value?.type === 'existing' ? value.name : value?.type === 'new' ? 'New Lead' : null;
+  const selectedLabel = value?.type === 'existing' ? value.name : null;
 
   const pick = (next) => { onChange(next); setOpen(false); setQuery(''); };
+  const newLeadName = query.trim().replace(/\s+/g, ' ');
+  const createNewLead = async () => {
+    if (creating || newLeadName.length < 2 || newLeadName.length > 120) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Your staff session has expired.');
+      const { data, error } = await supabase.from('clients').insert({
+        user_id: user.id,
+        name: newLeadName,
+        status: 'lead',
+        lead_source: 'Audit upload',
+        lead_created_at: new Date().toISOString(),
+      }).select('id,name').single();
+      if (error || !data?.id) throw error || new Error('The lead was not created.');
+      pick({ type: 'existing', id: data.id, name: data.name });
+    } catch (error) {
+      setCreateError(error?.message || 'Could not create the lead.');
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <div className="mb-6">
@@ -75,11 +99,15 @@ export default function ClientPicker({ value, onChange }) {
               />
             </div>
             <div style={{ maxHeight: 240, overflowY: 'auto' }}>
-              <div onClick={() => pick({ type: 'new' })}
-                className="px-4 py-2.5 text-[12px] cursor-pointer hover:bg-gray-50"
+              <button type="button" onClick={createNewLead}
+                disabled={creating || newLeadName.length < 2 || newLeadName.length > 120}
+                className="w-full px-4 py-2.5 text-[12px] text-left hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ color: T.navy, fontWeight: 600, borderBottom: '1px solid ' + T.border }}>
-                + New Lead
-              </div>
+                {newLeadName.length >= 2
+                  ? `${creating ? 'Creating' : 'Create separate new lead'} “${newLeadName}”`
+                  : 'Type the new lead’s full name above'}
+              </button>
+              {createError && <div className="px-4 py-2 text-[11px] text-red-600">{createError}</div>}
               {loading && <div className="px-4 py-3 text-[11px]" style={{ color: T.faint }}>Loading clients…</div>}
               {!loading && filtered.length === 0 && (
                 <div className="px-4 py-3 text-[11px]" style={{ color: T.faint }}>No matching clients</div>
@@ -102,10 +130,8 @@ export default function ClientPicker({ value, onChange }) {
 
       <p className="text-[10px] mt-1.5" style={{ color: T.faint }}>
         {value?.type === 'existing'
-          ? 'This audit will attach to the selected client — no name-matching guesswork.'
-          : value?.type === 'new'
-          ? 'This will be saved as a brand-new lead.'
-          : 'Pick the client this report belongs to, or explicitly start a new lead.'}
+          ? 'This audit will attach to this exact CRM record — no name-matching guesswork.'
+          : 'Pick an existing CRM record, or type a name and create a separate new lead first.'}
       </p>
     </div>
   );

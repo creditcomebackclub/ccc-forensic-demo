@@ -1,8 +1,22 @@
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { buildRecoveryBlueprintModel, RECOVERY_BLUEPRINT_TEMPLATE_VERSION, recoveryBlueprintFilename } from '../../src/utils/recoveryBlueprintModel.js';
+import {
+  assertRecoveryBlueprintReady,
+  buildRecoveryBlueprintModel,
+  RECOVERY_BLUEPRINT_TEMPLATE_VERSION,
+  recoveryBlueprintFilename,
+} from '../../src/utils/recoveryBlueprintModel.js';
 import { buildRecoveryBlueprintPdf } from '../../src/utils/recoveryBlueprintPdf.js';
+import {
+  buildClassificationReviewSnapshot,
+  buildInitialAccountTrackStates,
+  canonicalClassificationReviewSnapshotJson,
+  canonicalClassificationRoutesJson,
+  classificationRoutesFromStates,
+  CLASSIFICATION_REVIEW_METHOD_VERSION,
+} from '../../src/utils/disputeFlow.js';
+import { hardRoutingBlockers, validateLatePaymentFacts } from '../../src/utils/disputeRoutingFacts.js';
 import authHelpers from './_requireAuth.cjs';
 import storagePaths from './_storagePaths.cjs';
 import emailHelpers from './_email.cjs';
@@ -17,7 +31,8 @@ const { requireStaff } = authHelpers;
 const { BLUEPRINTS_BUCKET: BUCKET, recoveryBlueprintPath } = storagePaths;
 const { sendEmail } = emailHelpers;
 const ACCOUNT_KINDS = new Set(['charge_off', 'collection', 'repossession', 'bankruptcy', 'student_loan', 'late_payment', 'positive', 'other']);
-const LATE_PAYMENT_BANDS = new Set(['none', 'two_or_fewer', 'three_or_more', 'mixed', 'unclear']);
+const BUREAU_CODES = new Set(['EQ', 'EXP', 'TU']);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function response(statusCode, body) {
   return { statusCode, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }, body: JSON.stringify(body) };
@@ -35,11 +50,13 @@ async function loadAudit(db, payload, caller) {
   if (payload.auditId) {
     query = query.eq('id', payload.auditId);
   } else if (payload.clientId) {
+    if (!payload.reportDate) throw badRequest('The report date is required to resolve the exact saved audit record.');
     query = query.eq('client_id', payload.clientId);
-    if (payload.reportDate) query = query.eq('report_date', payload.reportDate);
+    query = query.eq('report_date', payload.reportDate);
   } else if (payload.clientName) {
+    if (!payload.reportDate) throw badRequest('The report date is required to resolve the exact saved audit record.');
     query = query.eq('client_name', payload.clientName);
-    if (payload.reportDate) query = query.eq('report_date', payload.reportDate);
+    query = query.eq('report_date', payload.reportDate);
     if (caller.role !== 'admin') query = query.eq('user_id', caller.userId);
   } else {
     throw Object.assign(new Error('An audit id or client identifier is required.'), { statusCode: 400 });
@@ -55,6 +72,91 @@ async function loadAudit(db, payload, caller) {
 
 function auditHash(audit) {
   return crypto.createHash('sha256').update(JSON.stringify(audit)).digest('hex');
+}
+
+function conflict(message) {
+  return Object.assign(new Error(message), { statusCode: 409 });
+}
+
+function badRequest(message) {
+  return Object.assign(new Error(message), { statusCode: 400 });
+}
+
+function sameAuditRevision(expected, actual) {
+  if (expected == null || actual == null) return expected == null && actual == null;
+  if (expected === actual) return true;
+  const expectedTime = Date.parse(expected);
+  const actualTime = Date.parse(actual);
+  return Number.isFinite(expectedTime) && Number.isFinite(actualTime) && expectedTime === actualTime;
+}
+
+function exactAccountId(account) {
+  return String(account?.id || '').trim();
+}
+
+function exactClientAccountId(account) {
+  return String(account?.clientAccountId || account?.client_account_id || '').trim();
+}
+
+function normalizedBureauCode(value) {
+  const aliases = { eq: 'EQ', equifax: 'EQ', exp: 'EXP', experian: 'EXP', tu: 'TU', transunion: 'TU' };
+  return aliases[String(value || '').trim().toLowerCase()] || null;
+}
+
+function reportedBureaus(account) {
+  const bureaus = Array.isArray(account?.bureaus)
+    ? account.bureaus.map(normalizedBureauCode)
+    : [];
+  if (!bureaus.length || bureaus.some((code) => !BUREAU_CODES.has(code)) || new Set(bureaus).size !== bureaus.length) {
+    throw conflict(`Account ${account?.furnisher || exactAccountId(account) || 'unknown'} does not have an exact, unique reported-bureau list.`);
+  }
+  return [...bureaus].sort();
+}
+
+function assertAuditCoverage(audit) {
+  const coverage = audit?.reportCoverage;
+  if (!coverage?.complete
+    || (coverage?.missing || []).length
+    || (coverage?.duplicates || []).length
+    || [...BUREAU_CODES].some((code) => Number(coverage?.counts?.[code]) !== 1)) {
+    throw conflict('Classification review is blocked until the source contains exactly one Equifax, Experian, and TransUnion report.');
+  }
+}
+
+function assertExactActionRevision(payload, auditRow) {
+  if (!payload.auditId || payload.auditId !== auditRow.id) throw badRequest('The exact saved audit id is required for this Blueprint action.');
+  if (!payload.clientId || payload.clientId !== auditRow.client_id) throw badRequest('The exact canonical client id is required for this Blueprint action.');
+  if (!Object.prototype.hasOwnProperty.call(payload, 'expectedAuditRevision')
+    || !/^[0-9a-f]{64}$/.test(String(payload.expectedAuditSha256 || ''))) {
+    throw badRequest('Reload the exact saved audit revision before generating, approving, or sending a Blueprint.');
+  }
+  const currentSha256 = auditHash(auditRow.audit);
+  if (!sameAuditRevision(payload.expectedAuditRevision ?? null, auditRow.saved_at ?? null)
+    || payload.expectedAuditSha256 !== currentSha256) {
+    throw conflict('This audit changed after it was opened. Reload the current saved review before continuing.');
+  }
+  return currentSha256;
+}
+
+function reviewedLateFacts(correction, account, bureauCode) {
+  const supplied = correction?.latePaymentByBureau?.[bureauCode]
+    || correction?.routingFacts?.bureauFacts?.[bureauCode]
+    || null;
+  if (!supplied) throw conflict(`${account.furnisher || exactAccountId(account)} needs confirmed late-payment facts for ${bureauCode}.`);
+  const count = supplied.latePaymentCount === '' || supplied.latePaymentCount === null || supplied.latePaymentCount === undefined
+    ? null
+    : Number(supplied.latePaymentCount);
+  const band = String(supplied.latePaymentBand || '').trim().toLowerCase();
+  const validationError = validateLatePaymentFacts(count, band);
+  if (validationError) throw conflict(`${account.furnisher || exactAccountId(account)} (${bureauCode}): ${validationError}`);
+  return {
+    ...(account?.routingFacts?.bureauFacts?.[bureauCode] || {}),
+    accountKind: 'late_payment',
+    latePaymentCount: count,
+    latePaymentBand: band,
+    latePaymentStatus: 'confirmed',
+    reviewedSource: 'staff_review',
+  };
 }
 
 function safeArtifact(row, signedUrl = null, currentAuditHash = null) {
@@ -93,8 +195,22 @@ async function signedUrl(db, path) {
   return data?.signedUrl || null;
 }
 
-function pdfBuffer(audit, clientId, reportDate) {
-  const model = buildRecoveryBlueprintModel(audit, { clientId, reportDate });
+function pdfBuffer(auditRow) {
+  const auditSha256 = auditHash(auditRow.audit);
+  const exactAudit = {
+    ...auditRow.audit,
+    id: auditRow.id,
+    auditRevision: auditRow.saved_at ?? null,
+    auditSha256,
+    client: { ...(auditRow.audit?.client || {}), id: auditRow.client_id, reportDate: auditRow.report_date },
+  };
+  const model = buildRecoveryBlueprintModel(exactAudit, {
+    auditId: auditRow.id,
+    clientId: auditRow.client_id,
+    reportDate: auditRow.report_date,
+    auditRevision: auditRow.saved_at ?? null,
+    auditSha256,
+  });
   const doc = buildRecoveryBlueprintPdf(model);
   return { model, buffer: Buffer.from(doc.output('arraybuffer')) };
 }
@@ -138,63 +254,203 @@ export const handler = async (event) => {
 
     if (action === 'status') {
       const artifact = await latestArtifact(db, auditRow.id);
-      return response(200, { auditId: auditRow.id, artifact: safeArtifact(artifact, artifact ? await signedUrl(db, artifact.storage_path) : null, auditHash(auditRow.audit)) });
+      return response(200, {
+        auditId: auditRow.id,
+        auditRevision: auditRow.saved_at ?? null,
+        auditSha256: auditHash(auditRow.audit),
+        audit: auditRow.audit,
+        classificationReview: auditRow.audit?.classificationReview || null,
+        artifact: safeArtifact(artifact, artifact ? await signedUrl(db, artifact.storage_path) : null, auditHash(auditRow.audit)),
+      });
     }
 
     if (action === 'save_corrections') {
-      const corrections = new Map((Array.isArray(payload.accounts) ? payload.accounts : []).map((account) => [account.id, account]));
-      const nextAudit = { ...auditRow.audit, accounts: (auditRow.audit.accounts || []).map((account) => {
-        const correction = corrections.get(account.id);
-        if (!correction) return account;
-        const accountKind = String(correction.accountKind || account.accountKind || 'other').trim();
-        const latePaymentBand = String(correction.latePaymentBand || account.latePaymentBand || 'unclear').trim();
-        const parsedLateCount = correction.latePaymentCount === null || correction.latePaymentCount === ''
-          ? null
-          : Number(correction.latePaymentCount);
-        if (!ACCOUNT_KINDS.has(accountKind)) {
-          throw Object.assign(new Error('An account correction contains an unsupported category.'), { statusCode: 400 });
+      if (!payload.auditId || payload.auditId !== auditRow.id) throw badRequest('The exact saved audit id is required for classification review.');
+      if (!payload.clientId || payload.clientId !== auditRow.client_id) throw badRequest('The exact canonical client id is required for classification review.');
+      if (!auditRow.client_id) throw conflict('This audit must be linked to a canonical client before classification review.');
+      if (!Object.prototype.hasOwnProperty.call(payload, 'expectedAuditRevision')
+        || !/^[0-9a-f]{64}$/.test(String(payload.expectedAuditSha256 || ''))) {
+        throw badRequest('Reload the exact saved audit revision before confirming classifications.');
+      }
+      const currentAuditSha256 = auditHash(auditRow.audit);
+      if (!sameAuditRevision(payload.expectedAuditRevision ?? null, auditRow.saved_at ?? null)
+        || payload.expectedAuditSha256 !== currentAuditSha256) {
+        throw conflict('This audit changed after it was opened. Reload it and confirm the classifications against the current report facts.');
+      }
+      const { count: initializedTrackCount, error: initializedTrackError } = await db.from('ccc_account_tracks')
+        .select('id', { count: 'exact', head: true })
+        .eq('source_audit_id', auditRow.id)
+        .eq('track_scope', 'cra');
+      if (initializedTrackError) throw initializedTrackError;
+      if (Number(initializedTrackCount) > 0) {
+        throw conflict('This classification review is immutable because CRA tracks have already been initialized from it. Start from a new saved audit instead.');
+      }
+      assertAuditCoverage(auditRow.audit);
+
+      const sourceAccounts = Array.isArray(auditRow.audit?.accounts) ? auditRow.audit.accounts : [];
+      const suppliedCorrections = Array.isArray(payload.accounts) ? payload.accounts : [];
+      if (!sourceAccounts.length || suppliedCorrections.length !== sourceAccounts.length) {
+        throw badRequest('The classification review must include every account from the exact saved audit.');
+      }
+      const corrections = new Map();
+      for (const correction of suppliedCorrections) {
+        const correctionId = exactAccountId(correction);
+        if (!correctionId || corrections.has(correctionId)) throw badRequest('Classification review contains a missing or duplicate audit account id.');
+        corrections.set(correctionId, correction);
+      }
+
+      const reviewedAt = new Date().toISOString();
+      const canonicalIds = [];
+      const reviewedAccounts = sourceAccounts.map((account) => {
+        const accountId = exactAccountId(account);
+        const correction = corrections.get(accountId);
+        if (!accountId || !correction) throw badRequest('A classification correction does not match the exact saved audit account ids.');
+        if (correction.classificationAttested !== true) {
+          throw conflict(`${account.furnisher || accountId} requires staff attestation after reviewing the displayed source evidence.`);
         }
-        if (!LATE_PAYMENT_BANDS.has(latePaymentBand)) {
-          throw Object.assign(new Error('An account correction contains an unsupported late-payment pattern.'), { statusCode: 400 });
+        const clientAccountId = exactClientAccountId(account);
+        if (!UUID_PATTERN.test(clientAccountId) || exactClientAccountId(correction) !== clientAccountId) {
+          throw conflict(`${account.furnisher || accountId} is not reconciled to the exact canonical client account.`);
         }
-        if (parsedLateCount !== null && (!Number.isInteger(parsedLateCount) || parsedLateCount < 0 || parsedLateCount > 500)) {
-          throw Object.assign(new Error('Late-payment count must be a whole number from 0 to 500.'), { statusCode: 400 });
+        canonicalIds.push(clientAccountId);
+
+        const originalHardBlockers = new Set(hardRoutingBlockers(account.routingFacts));
+        if ((account.findings || []).some((finding) => finding?.ruleId === 'ACCOUNT_MATCH_AMBIGUOUS' || finding?.type === 'ACCOUNT_MATCH_AMBIGUOUS')) {
+          originalHardBlockers.add('ACCOUNT_MATCH_AMBIGUOUS');
         }
+        if (originalHardBlockers.size) {
+          throw conflict(`${account.furnisher || accountId} cannot be confirmed until ${[...originalHardBlockers].join(', ')} is resolved in the source report match.`);
+        }
+
+        const accountKind = String(correction.accountKind || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+        if (!ACCOUNT_KINDS.has(accountKind)) throw badRequest('An account correction contains an unsupported category.');
+        if (accountKind === 'other') throw conflict(`${account.furnisher || accountId} still needs a supported account category.`);
+        const bureaus = reportedBureaus(account);
+        const suppliedLateEntries = Object.entries(correction.latePaymentByBureau || {}).map(([code, fact]) => [normalizedBureauCode(code), fact]);
+        if (suppliedLateEntries.some(([code]) => !code || !bureaus.includes(code))
+          || new Set(suppliedLateEntries.map(([code]) => code)).size !== suppliedLateEntries.length) {
+          throw badRequest(`${account.furnisher || accountId} contains late-payment facts for a bureau where the account is not reported.`);
+        }
+        const normalizedCorrection = {
+          ...correction,
+          latePaymentByBureau: Object.fromEntries(suppliedLateEntries),
+        };
+        const bureauFacts = Object.fromEntries(bureaus.map((bureauCode) => [bureauCode, accountKind === 'late_payment'
+          ? reviewedLateFacts(normalizedCorrection, account, bureauCode)
+          : {
+            ...(account?.routingFacts?.bureauFacts?.[bureauCode] || {}),
+            accountKind,
+            latePaymentCount: null,
+            latePaymentBand: 'none',
+            latePaymentStatus: 'not_applicable',
+            reviewedSource: 'staff_review',
+          }]));
+        const lateCounts = Object.values(bureauFacts).map((fact) => fact.latePaymentCount).filter(Number.isInteger);
+        const lateBands = Object.values(bureauFacts).map((fact) => fact.latePaymentBand);
         const next = {
           ...account,
-          balance: Number.isFinite(Number(correction.balance)) ? Number(correction.balance) : account.balance,
-          status: String(correction.status || account.status || '').trim(),
-          accountNumberMasked: String(correction.accountNumberMasked || account.accountNumberMasked || '').trim(),
-          originalCreditor: correction.originalCreditor == null ? account.originalCreditor : String(correction.originalCreditor).trim() || null,
+          clientAccountId,
+          bureaus,
+          classificationAttested: true,
           accountKind,
-          latePaymentCount: parsedLateCount,
-          latePaymentBand,
+          latePaymentCount: accountKind === 'late_payment' && new Set(lateCounts).size === 1 ? lateCounts[0] : null,
+          latePaymentBand: accountKind === 'late_payment' && new Set(lateBands).size === 1 ? lateBands[0] : (accountKind === 'late_payment' ? 'per_bureau' : 'none'),
+          latePaymentByBureau: bureauFacts,
+          routingFacts: {
+            ...(account.routingFacts || {}),
+            status: 'confirmed',
+            source: 'staff_review',
+            accountKind,
+            blockingCodes: [],
+            reportCoverage: account?.routingFacts?.reportCoverage || auditRow.audit.reportCoverage,
+            evidence: Array.isArray(account?.routingFacts?.evidence) ? account.routingFacts.evidence : [],
+            bureauFacts,
+            reviewedAt,
+            reviewedBy: caller.userId,
+            staffAttested: true,
+          },
         };
-        // Staff adjudication of deterministic findings (Authorize / Suppress / Needs fact)
-        if (Array.isArray(correction.findings)) next.findings = correction.findings;
-        if (Array.isArray(correction.violations)) next.violations = correction.violations;
-        if (Array.isArray(correction.authorizedFindingIds)) next.authorizedFindingIds = correction.authorizedFindingIds;
-        if (correction.primaryViolation != null) next.primaryViolation = String(correction.primaryViolation);
-        if (correction.primaryChallengeStatement != null) next.primaryChallengeStatement = String(correction.primaryChallengeStatement);
-        if (correction.strategy != null) next.strategy = String(correction.strategy);
-        if (Number.isFinite(Number(correction.priorityScore))) next.priorityScore = Number(correction.priorityScore);
-        if (correction.batch === 1 || correction.batch === 2) next.batch = correction.batch;
+        delete next._edited;
         return next;
-      }) };
-      const { error } = await db.from('audits').update({ audit: nextAudit }).eq('id', auditRow.id).eq('user_id', auditRow.user_id);
+      });
+
+      const uniqueCanonicalIds = [...new Set(canonicalIds)];
+      if (uniqueCanonicalIds.length !== canonicalIds.length) throw conflict('Two audit accounts resolve to the same canonical client account; reconcile the match before review.');
+      const { data: ownedAccounts, error: ownedError } = await db.from('client_accounts')
+        .select('id,user_id,client_id,needs_review')
+        .in('id', uniqueCanonicalIds);
+      if (ownedError) throw ownedError;
+      const ownedById = new Map((ownedAccounts || []).map((account) => [account.id, account]));
+      for (const canonicalId of uniqueCanonicalIds) {
+        const owned = ownedById.get(canonicalId);
+        if (!owned || owned.user_id !== auditRow.user_id || owned.client_id !== auditRow.client_id || owned.needs_review) {
+          throw conflict(`Canonical client account ${canonicalId} is missing, belongs to another client, or still requires reconciliation.`);
+        }
+      }
+
+      const routingAudit = {
+        ...auditRow.audit,
+        id: auditRow.id,
+        client: { ...(auditRow.audit.client || {}), id: auditRow.client_id },
+        accounts: reviewedAccounts,
+        classificationReview: null,
+      };
+      const states = buildInitialAccountTrackStates(routingAudit, CLASSIFICATION_REVIEW_METHOD_VERSION);
+      const routes = classificationRoutesFromStates(states);
+      if (!routes.length) throw conflict('No dispute-eligible CRA routes remain after classification review.');
+      const routeJson = canonicalClassificationRoutesJson(routes);
+      const previousReviewVersion = Number(auditRow.audit?.classificationReview?.version || 0);
+      const reviewVersion = Number.isInteger(previousReviewVersion) && previousReviewVersion >= 0 ? previousReviewVersion + 1 : 1;
+      const routingSnapshot = buildClassificationReviewSnapshot(routingAudit, routes, CLASSIFICATION_REVIEW_METHOD_VERSION);
+      const routingSnapshotCanonical = canonicalClassificationReviewSnapshotJson(routingSnapshot);
+      const classificationReview = {
+        status: 'confirmed',
+        version: reviewVersion,
+        reviewedAt,
+        reviewedBy: caller.userId,
+        methodVersion: CLASSIFICATION_REVIEW_METHOD_VERSION,
+        auditId: auditRow.id,
+        clientId: auditRow.client_id,
+        routes,
+        routesSha256: crypto.createHash('sha256').update(routeJson).digest('hex'),
+        routingSnapshot,
+        routingSnapshotCanonical,
+        routingSnapshotSha256: crypto.createHash('sha256').update(routingSnapshotCanonical).digest('hex'),
+      };
+      const nextAudit = { ...routingAudit, classificationReview };
+      let saveQuery = db.from('audits')
+        .update({ audit: nextAudit, saved_at: reviewedAt })
+        .eq('id', auditRow.id)
+        .eq('user_id', auditRow.user_id);
+      saveQuery = payload.expectedAuditRevision == null
+        ? saveQuery.is('saved_at', null)
+        : saveQuery.eq('saved_at', payload.expectedAuditRevision);
+      const { data: savedRow, error } = await saveQuery
+        .select('id,saved_at,audit')
+        .maybeSingle();
       if (error) throw error;
-      return response(200, { saved: true, auditId: auditRow.id });
+      if (!savedRow) throw conflict('This audit changed while it was being reviewed. Reload it and confirm the classifications again.');
+      return response(200, {
+        saved: true,
+        auditId: auditRow.id,
+        auditRevision: savedRow.saved_at ?? reviewedAt,
+        auditSha256: auditHash(savedRow.audit || nextAudit),
+        audit: savedRow.audit || nextAudit,
+        classificationReview,
+      });
     }
 
     if (action === 'preview') {
-      const { model, buffer } = pdfBuffer(auditRow.audit, auditRow.client_id, auditRow.report_date);
+      assertExactActionRevision(payload, auditRow);
+      const { model, buffer } = pdfBuffer(auditRow);
       return response(200, { auditId: auditRow.id, fileName: recoveryBlueprintFilename(model), pdfBase64: buffer.toString('base64'), templateVersion: model.templateVersion });
     }
 
     if (action === 'approve') {
+      assertExactActionRevision(payload, auditRow);
       const latest = await latestArtifact(db, auditRow.id);
       const version = (latest?.version || 0) + 1;
-      const { model, buffer } = pdfBuffer(auditRow.audit, auditRow.client_id, auditRow.report_date);
+      const { model, buffer } = pdfBuffer(auditRow);
       const sha = crypto.createHash('sha256').update(buffer).digest('hex');
       const fileName = recoveryBlueprintFilename(model);
       if (!auditRow.client_id) {
@@ -226,6 +482,13 @@ export const handler = async (event) => {
     }
 
     if (action === 'send') {
+      assertExactActionRevision(payload, auditRow);
+      const exactAudit = {
+        ...auditRow.audit,
+        id: auditRow.id,
+        client: { ...(auditRow.audit?.client || {}), id: auditRow.client_id },
+      };
+      assertRecoveryBlueprintReady(exactAudit, { auditId: auditRow.id, clientId: auditRow.client_id });
       const artifact = payload.artifactId
         ? (await db.from('recovery_blueprints').select('*').eq('id', payload.artifactId).eq('audit_id', auditRow.id).single()).data
         : await latestArtifact(db, auditRow.id);

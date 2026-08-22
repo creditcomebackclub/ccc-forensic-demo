@@ -2,6 +2,7 @@
 // never gets permission to create CRM rows directly; this function verifies
 // the partner identity and stamps the referral with the firm administrator.
 const { requireAuth } = require('./_requireAuth.cjs');
+const { requireAffiliatePortalAccess } = require('./_affiliateAccess.cjs');
 
 async function notifyAffiliateInternal(serviceKey, payload) {
   const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
@@ -22,9 +23,10 @@ exports.handler = async (event) => {
   let caller;
   try { caller = await requireAuth(event); }
   catch (error) { if (error.statusCode) return error; throw error; }
+  if (caller.isSystem) return { statusCode: 403, body: JSON.stringify({ error: 'A partner session is required' }) };
 
   try {
-    const { name, email, phone, notes, notifyAdmin = true } = JSON.parse(event.body || '{}');
+    const { name, email, phone, notes } = JSON.parse(event.body || '{}');
     const cleanName = String(name || '').trim();
     const cleanEmail = String(email || '').trim().toLowerCase();
     const cleanPhone = String(phone || '').trim();
@@ -41,27 +43,37 @@ exports.handler = async (event) => {
     if (!url || !key) return { statusCode: 500, body: JSON.stringify({ error: 'Server not configured' }) };
     const headers = { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
 
-    const affiliateRes = await fetch(`${url}/rest/v1/affiliates?user_id=eq.${encodeURIComponent(caller.userId)}&select=id,name,company&limit=1`, { headers });
-    const affiliateRows = await affiliateRes.json();
-    const affiliate = Array.isArray(affiliateRows) ? affiliateRows[0] : null;
-    if (!affiliate) return { statusCode: 403, body: JSON.stringify({ error: 'Your affiliate portal is not linked yet. Contact Credit Comeback Club.' }) };
+    let affiliate;
+    try {
+      affiliate = await requireAffiliatePortalAccess({ url, key, userId: caller.userId });
+    } catch (accessError) {
+      return {
+        statusCode: accessError.statusCode || 403,
+        body: JSON.stringify({ error: accessError.message, code: accessError.code, programStatus: accessError.programStatus }),
+      };
+    }
 
-    const adminRes = await fetch(`${url}/rest/v1/profiles?role=eq.admin&select=id&limit=1`, { headers });
-    const adminRows = await adminRes.json();
-    const admin = Array.isArray(adminRows) ? adminRows[0] : null;
-    if (!admin?.id) return { statusCode: 500, body: JSON.stringify({ error: 'No administrator is configured' }) };
+    if (!affiliate.owner_user_id) {
+      return { statusCode: 409, body: JSON.stringify({ error: 'This partner record needs owner assignment before referrals can be accepted.' }) };
+    }
+    const adminRes = await fetch(`${url}/rest/v1/profiles?id=eq.${encodeURIComponent(affiliate.owner_user_id)}&role=eq.admin&select=id&limit=2`, { headers });
+    const adminRows = await adminRes.json().catch(() => null);
+    if (!adminRes.ok || !Array.isArray(adminRows)) throw new Error('Could not validate the partner program owner');
+    if (adminRows.length !== 1) return { statusCode: 409, body: JSON.stringify({ error: 'This partner record needs a valid program owner before referrals can be accepted.' }) };
+    const admin = adminRows[0];
 
     // Make normal double-clicks/idempotent resubmissions harmless. The same
     // affiliate + email can have one open lead; staff can still intentionally
     // create a new record later after the first lead is progressed.
     const existingRes = await fetch(`${url}/rest/v1/clients?user_id=eq.${encodeURIComponent(admin.id)}&referred_by=eq.${encodeURIComponent(affiliate.id)}&email=eq.${encodeURIComponent(cleanEmail)}&status=eq.lead&select=id,lead_drips_sent&limit=1`, { headers });
-    const existingRows = await existingRes.json();
+    const existingRows = await existingRes.json().catch(() => null);
+    if (!existingRes.ok || !Array.isArray(existingRows)) throw new Error('Could not validate an existing referral');
     let lead = Array.isArray(existingRows) ? existingRows[0] : null;
     const duplicate = Boolean(lead);
 
     if (!lead) {
       const source = affiliate.company || affiliate.name;
-      const insertRes = await fetch(`${url}/rest/v1/clients`, {
+      const insertRes = await fetch(`${url}/rest/v1/clients?select=id,lead_drips_sent`, {
         method: 'POST',
         headers: { ...headers, Prefer: 'return=representation' },
         body: JSON.stringify({
@@ -78,7 +90,7 @@ exports.handler = async (event) => {
           referral_fee: null,
         }),
       });
-      const insertedRows = await insertRes.json();
+      const insertedRows = await insertRes.json().catch(() => null);
       if (!insertRes.ok || !Array.isArray(insertedRows) || !insertedRows[0]) throw new Error('Could not create referral lead');
       lead = insertedRows[0];
     }
@@ -86,7 +98,7 @@ exports.handler = async (event) => {
     let notificationSent = false;
     const notificationMarker = 'affiliate_referral_admin_notification';
     const markers = Array.isArray(lead.lead_drips_sent) ? lead.lead_drips_sent : [];
-    if (notifyAdmin !== false && !markers.includes(notificationMarker)) {
+    if (!markers.includes(notificationMarker)) {
       const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
       // Forward the affiliate JWT — send-lpoa rejects service-role for this action.
       const affiliateAuth = event.headers.authorization || event.headers.Authorization;
@@ -97,10 +109,11 @@ exports.handler = async (event) => {
       });
       notificationSent = notificationRes.ok;
       if (notificationSent) {
-        await fetch(`${url}/rest/v1/clients?id=eq.${encodeURIComponent(lead.id)}`, {
+        const markerRes = await fetch(`${url}/rest/v1/clients?id=eq.${encodeURIComponent(lead.id)}`, {
           method: 'PATCH', headers: { ...headers, Prefer: 'return=minimal' },
           body: JSON.stringify({ lead_drips_sent: [...markers, notificationMarker] }),
         });
+        if (!markerRes.ok) console.error('Affiliate referral notification marker failed:', markerRes.status);
       } else {
         console.error('Affiliate referral notification failed:', await notificationRes.text());
       }
@@ -118,6 +131,6 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ success: true, duplicate, clientId: lead.id, notificationSent }) };
   } catch (error) {
     console.error('Affiliate referral failed:', error.message);
-    return { statusCode: 500, body: JSON.stringify({ error: error.message || 'Could not submit referral' }) };
+    return { statusCode: 500, body: JSON.stringify({ error: 'Could not submit referral.' }) };
   }
 };

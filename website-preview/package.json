@@ -1,0 +1,12 @@
+{
+  "name": "ccc-website-preview",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Production-disconnected local preview for the Credit Comeback Club marketing site.",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "test": "node test-contracts.mjs && node test-live-contracts.mjs"
+  }
+}

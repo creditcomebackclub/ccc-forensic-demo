@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, TrendingUp, Clock, Zap, Star, Activity, FileText, Mail, ChevronRight, Upload, CheckCircle, X, BarChart2, Award, Target, Timer, Users, Table2 } from 'lucide-react';
+import { TrendingUp, Clock, Zap, Star, Activity, FileText, Mail, ChevronRight, Upload, CheckCircle, X, BarChart2, Award, Target, Timer, Users, Table2 } from 'lucide-react';
 import { listClientSummaries, updateLetter } from '../utils/storage';
 import { letterStatus as responseWindowStatus } from '../utils/responseWindow.js';
 import { isOpenRoundLetter, isPendingRoundReview } from '../utils/roundState.js';
 import { calculateDeletionShare, countOngoingDisputeClients, selectVipClients, summarizeStructuredRoundWorkload } from '../utils/dashboardMetrics.js';
+import { standaloneDeletionResults } from '../utils/deletionOutcomes.js';
+import { ADMIN_BRAND } from '../utils/adminBrand.js';
+import { isCccDisputePhase } from '../utils/cccMailRules.js';
 
 const WINDOW_DAYS = 30;
 const VIP_RESPONSE_HOURS = 24;
@@ -14,21 +17,22 @@ const STD_RESPONSE_DAYS = 3;
 // more clients than this, rather than silently presenting partial totals.
 const DASHBOARD_CLIENT_LIMIT = 100;
 
-// Brand + chart tokens. Chart mark colors are validated steps of the brand
-// hues (navy/gold are chrome colors — too dark / low-contrast for marks).
+// Operational brand + chart tokens. Chart marks use a validated light-blue
+// ramp while semantic warning/error/success colors remain independent.
 const T = {
-  navy: '#1B2A4A',
-  navyDark: '#141F38',
-  gold: '#C9A84C',
-  chartBlue: '#3D5A9E',
-  chartGold: '#96741F',
-  funnelRamp: ['#9CAED8', '#6E87BC', '#48669F', '#2A4577'],
-  border: '#E7EAF0',
-  ink: '#111827',
-  muted: '#6B7280',
-  faint: '#9CA3AF',
-  grid: '#EEF0F4',
-  cardShadow: '0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06)',
+  navy: ADMIN_BRAND.accentStrong,
+  navyDark: ADMIN_BRAND.ink,
+  gold: ADMIN_BRAND.accent,
+  chartBlue: '#178BD8',
+  chartGold: '#07111F',
+  funnelRamp: ['#BFE5FF', '#7BC7FA', '#38A9FF', '#0B7FD3'],
+  border: ADMIN_BRAND.border,
+  borderStrong: ADMIN_BRAND.borderStrong,
+  ink: ADMIN_BRAND.ink,
+  muted: ADMIN_BRAND.muted,
+  faint: ADMIN_BRAND.faint,
+  grid: '#E8F0F6',
+  cardShadow: ADMIN_BRAND.shadow,
 };
 
 function todayISO() {
@@ -92,10 +96,21 @@ function computeDashboard(clients) {
   const actions = [];
   const windowCountdown = [];
   const recentActivity = [];
+  const operationalClients = clients.map((client) => {
+    const currentLetters = (client?.letters || []).filter((letter) => isCccDisputePhase(letter?.phase));
+    const currentRoundIds = new Set(currentLetters.map((letter) => letter.roundId).filter(Boolean));
+    const campaignId = client?.activeCampaign?.id || null;
+    return {
+      ...client,
+      letters: currentLetters,
+      rounds: (client?.rounds || []).filter((round) => currentRoundIds.has(round.round_id)
+        || (campaignId && (round.campaign_id === campaignId || round.campaignId === campaignId))),
+    };
+  });
   const vipClients = selectVipClients(clients);
-  let awaiting = 0, escalate = 0, phase3 = 0, phase4 = 0, readyForPhase4 = 0;
-  const { openDisputeRounds, activeRoundClients } = summarizeStructuredRoundWorkload(clients);
-  const ongoingDisputeClients = countOngoingDisputeClients(clients);
+  let awaiting = 0, reviewDue = 0, bureauDisputes = 0, staffEscalationDecisions = 0;
+  const { openDisputeRounds, activeRoundClients } = summarizeStructuredRoundWorkload(operationalClients);
+  const ongoingDisputeClients = countOngoingDisputeClients(operationalClients);
 
   // Outcomes — deletions are the product; measure them
   let deletedAll = 0, deletedThisMonth = 0, deletedLastMonth = 0, outcomeCount = 0;
@@ -130,16 +145,20 @@ function computeDashboard(clients) {
     if (c.status === 'lead') continue;
     const letters = c.letters || [];
     const audits = c.audits || [];
+    const standaloneDeletions = standaloneDeletionResults(letters, c.deletions || []);
 
     for (const l of letters) {
-      weeklyData.forEach((w) => {
-        const saved = new Date(l.savedAt);
-        if (saved >= w.start && saved < w.end) w.letters++;
-        if (l.mailedDate) {
-          const mailed = new Date(l.mailedDate + 'T00:00:00');
-          if (mailed >= w.start && mailed < w.end) w.mailed++;
-        }
-      });
+      const isCurrentCcc = isCccDisputePhase(l?.phase);
+      if (isCurrentCcc) {
+        weeklyData.forEach((w) => {
+          const saved = new Date(l.savedAt);
+          if (saved >= w.start && saved < w.end) w.letters++;
+          if (l.mailedDate) {
+            const mailed = new Date(l.mailedDate + 'T00:00:00');
+            if (mailed >= w.start && mailed < w.end) w.mailed++;
+          }
+        });
+      }
 
       if (l.responseOutcome) {
         outcomeCount++;
@@ -152,8 +171,23 @@ function computeDashboard(clients) {
         }
       }
 
+      if (!isCurrentCcc) {
+        recentActivity.push({
+          client: c.name,
+          clientId: c.id,
+          furnisher: l.furnisher,
+          phase: `Historical · ${l.phase || 'prior correspondence'}`,
+          savedAt: l.responseDate || l.savedAt,
+          type: l.responseOutcome === 'deleted' ? 'deletion' : 'letter',
+          auditorName: l.auditorName,
+        });
+        continue;
+      }
+
+      const isBureauLetter = l.targetType === 'bureau' || l.target_type === 'bureau';
+      if (isBureauLetter) bureauDisputes++;
+
       if (l.roundId) {
-        if (l.targetType === 'bureau') phase3++;
         funnel.generated++;
         if (l.mailedDate) funnel.mailed++;
         if (l.responseOutcome === 'received' || l.responseOutcome === 'deleted') funnel.responded++;
@@ -167,7 +201,7 @@ function computeDashboard(clients) {
         }
         const notReviewed = isPendingRoundReview(c, l);
         if (notReviewed && ['received', 'no_response', 'window_closed'].includes(structuredStatus.code)) {
-          escalate++;
+          reviewDue++;
           actions.push({
             type: structuredStatus.code === 'received' ? 'review_round' : 'review_window',
             priority: c.isVip ? 0 : 1,
@@ -188,59 +222,6 @@ function computeDashboard(clients) {
         continue;
       }
 
-      // Phase 4 letters don't exist yet (no generation flow built), but this
-      // guard is here from day one so Phase 4 rows are never miscounted as
-      // still-open Phase 3 once they do.
-      if (l.phase?.startsWith('Phase 4')) { phase4++; continue; }
-
-      if (l.phase?.startsWith('Phase 3')) {
-        phase3++;
-        // Previously this just `continue`d — every Phase 3 (CRA) letter
-        // vanished from tracking the moment it was mailed. No 30/45-day
-        // clock, no "did the bureau respond" signal, nothing: staff had no
-        // way to know a bureau dispute had gone stale short of manually
-        // opening each client. This is the prerequisite for Phase 4 (CFPB/AG
-        // escalation) — that trigger is "Phase 3 got no result," which
-        // didn't exist as a derivable signal at all until now.
-        //
-        // A bureau response is a staff decision point. The old check looked
-        // for a nonexistent "Phase 4" letter, which kept a case in the ready
-        // queue even after staff had selected follow-up, documents, closure,
-        // or escalation.
-        const hasBureauDecision = l.bureauReviewStatus && l.bureauReviewStatus !== 'not_reviewed';
-        if (l.bureauNextAction === 'escalation') {
-          readyForPhase4++;
-          actions.push({
-            type: 'escalate_phase4', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip,
-            label: 'Staff approved CFPB / State AG escalation',
-            tone: 'red', savedAt: l.savedAt, filter: 'phase4', letter: l,
-          });
-        } else if (!hasBureauDecision) {
-          const st3 = letterStatus(l);
-          if (st3.code === 'received') {
-            actions.push({
-              type: l.bureauResponseStatus === 'review_ready' ? 'review_bureau' : 'analyze_bureau',
-              priority: c.isVip ? 0 : 1,
-              client: c.name,
-              clientId: c.id,
-              furnisher: l.furnisher,
-              isVip: c.isVip,
-              label: l.bureauResponseStatus === 'review_ready'
-                ? 'Bureau response analyzed — record next action'
-                : 'Bureau response received — analyze before deciding',
-              tone: 'amber',
-              savedAt: l.responseDate || l.savedAt,
-              filter: 'phase4',
-              letter: l,
-            });
-          } else if (st3.code === 'window_closed' || st3.code === 'no_response') {
-            escalate++;
-            actions.push({ type: 'review_bureau', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'Bureau response window closed — staff review due', tone: 'red', savedAt: l.savedAt, filter: 'phase3', letter: l });
-          }
-        }
-        continue;
-      }
-
       funnel.generated++;
       if (l.mailedDate) funnel.mailed++;
       if (l.responseOutcome === 'received' || l.responseOutcome === 'deleted') funnel.responded++;
@@ -251,31 +232,31 @@ function computeDashboard(clients) {
         recentActivity.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, phase: l.phase, savedAt: l.responseDate || l.savedAt, type: 'deletion', auditorName: l.auditorName });
         continue;
       }
-      const hasPhase3 = letters.some((pl) => pl.phase?.startsWith('Phase 3') && (pl.furnisher === l.furnisher || (pl.coveredFurnishers || []).includes(l.furnisher)));
-
       if (st.code === 'awaiting') {
         awaiting++;
         windowCountdown.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, remaining: st.remaining, mailedDate: l.mailedDate });
       }
 
-      if (st.code === 'window_closed' && !hasPhase3) {
-        escalate++;
-        const item = { type: 'review_window', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'Window closed — staff review due', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
+      if (st.code === 'window_closed') {
+        reviewDue++;
+        const item = { type: isBureauLetter ? 'review_bureau' : 'review_window', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'Window closed — staff review due', tone: 'red', savedAt: l.savedAt, filter: isBureauLetter ? 'bureau' : 'escalate', letter: l };
         actions.push(item);
       }
 
-      if (st.code === 'no_response' && !hasPhase3) {
-        const item = { type: 'no_response', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'No response — document and review', tone: 'red', savedAt: l.savedAt, filter: 'escalate', letter: l };
+      if (st.code === 'no_response') {
+        const item = { type: isBureauLetter ? 'review_bureau' : 'no_response', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label: 'No response — document and review', tone: 'red', savedAt: l.savedAt, filter: isBureauLetter ? 'bureau' : 'escalate', letter: l };
         actions.push(item);
       }
 
-      if (st.code === 'received' && !hasPhase3) {
+      if (st.code === 'received') {
         const deadline = c.isVip ? VIP_RESPONSE_HOURS : STD_RESPONSE_DAYS * 24;
         const hoursLeft = deadline - hoursSince(l.responseDate || l.savedAt);
         if (hoursLeft < deadline) {
-          const label = hoursLeft <= 0 ? 'Response review overdue' : (c.isVip ? Math.max(0, Math.round(hoursLeft)) + 'h to review (VIP)' : Math.ceil(hoursLeft / 24) + 'd to review');
+          const label = isBureauLetter
+            ? (l.bureauResponseStatus === 'review_ready' ? 'Bureau response analyzed — record next action' : 'Bureau response received — analyze before deciding')
+            : hoursLeft <= 0 ? 'Response review overdue' : (c.isVip ? Math.max(0, Math.round(hoursLeft)) + 'h to review (VIP)' : Math.ceil(hoursLeft / 24) + 'd to review');
           const tone = hoursLeft <= 0 ? 'red' : c.isVip ? 'red' : 'amber';
-          const item = { type: 'respond', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label, tone, savedAt: l.responseDate || l.savedAt, filter: 'received', letter: l };
+          const item = { type: isBureauLetter ? (l.bureauResponseStatus === 'review_ready' ? 'review_bureau' : 'analyze_bureau') : 'respond', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: l.furnisher, isVip: c.isVip, label, tone, savedAt: l.responseDate || l.savedAt, filter: isBureauLetter ? 'bureau' : 'received', letter: l };
           actions.push(item);
         }
       }
@@ -283,12 +264,35 @@ function computeDashboard(clients) {
       recentActivity.push({ client: c.name, clientId: c.id, furnisher: l.furnisher, phase: l.phase, savedAt: l.savedAt, type: 'letter', auditorName: l.auditorName });
     }
 
+    // Historical/manual confirmed outcomes are real results, even when there
+    // is no surviving CCC letter row. They belong in result/share/activity
+    // metrics only. They never inflate the ordinal letter funnel or the
+    // mailed-to-deletion average. A registry row linked to an already-deleted
+    // letter is removed by standaloneDeletionResults() so it counts once.
+    for (const deletion of standaloneDeletions) {
+      outcomeCount++;
+      deletedAll++;
+      const when = String(deletion.confirmedAt || '').slice(0, 7);
+      if (when === thisMonth) deletedThisMonth++;
+      if (when === lastMonth) deletedLastMonth++;
+      recentActivity.push({
+        client: c.name,
+        clientId: c.id,
+        furnisher: deletion.furnisher,
+        phase: `${deletion.bureauLabel} confirmed result`,
+        savedAt: deletion.confirmedAt,
+        type: 'deletion',
+        auditorName: null,
+      });
+    }
+
+    // An escalation disposition remains part of the historical decision trail,
+    // but the retired Phase 4 generator must never become an action or route.
     for (const round of c.rounds || []) {
       if (round.status !== 'closed' || round.final_disposition !== 'escalate') continue;
       const roundLetter = letters.find((letter) => letter.roundId === round.round_id);
-      if (!roundLetter) continue;
-      readyForPhase4++;
-      actions.push({ type: 'escalate_phase4', priority: c.isVip ? 0 : 1, client: c.name, clientId: c.id, furnisher: roundLetter.furnisher, isVip: c.isVip, label: `Round ${round.round_number} — escalation approved by staff`, tone: 'red', savedAt: round.closed_at || roundLetter.savedAt, filter: 'phase4', letter: roundLetter });
+      if (!roundLetter || !isCccDisputePhase(roundLetter.phase)) continue;
+      staffEscalationDecisions++;
     }
 
     for (const a of audits) {
@@ -316,7 +320,8 @@ function computeDashboard(clients) {
 
   return {
     actions: actions.slice(0, 6), actionGroups: actionGroups.slice(0, 6), actionTotal: actions.length, actionClientTotal: actionGroups.length,
-    windowCountdown: windowCountdown.slice(0, 10), weeklyData, awaiting, escalate, phase3, openDisputeRounds, activeRoundClients, ongoingDisputeClients, phase4, readyForPhase4,
+    windowCountdown: windowCountdown.slice(0, 10), weeklyData, awaiting, reviewDue, bureauDisputes,
+    openDisputeRounds, activeRoundClients, ongoingDisputeClients, staffEscalationDecisions,
     recentActivity: recentActivity.slice(0, 10), vipClients,
     funnel, deletedAll, deletedThisMonth, deletedLastMonth, deletionShare, avgDeleteDays, outcomeCount, portal,
   };
@@ -388,21 +393,21 @@ function HeroHeader({ displayName, dash }) {
     { label: 'Ongoing dispute clients', value: dash.ongoingDisputeClients },
   ];
   return (
-    <div style={{ background: 'linear-gradient(135deg, ' + T.navy + ' 0%, ' + T.navyDark + ' 100%)', borderRadius: 16, padding: '26px 30px', boxShadow: '0 4px 16px rgba(27,42,74,0.25)', borderBottom: '3px solid ' + T.gold }}>
+    <div style={{ background: `linear-gradient(135deg, ${ADMIN_BRAND.surface} 0%, ${ADMIN_BRAND.accentSoft} 100%)`, borderRadius: 16, padding: '26px 30px', boxShadow: T.cardShadow, border: `1px solid ${T.border}`, borderTop: `4px solid ${T.gold}` }}>
       <div className="flex items-center justify-between gap-6 flex-wrap">
         <div className="flex items-center gap-4">
-          <img src="/logo.jpg" alt="Credit Comeback Club" style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'cover', border: '2px solid ' + T.gold }} onError={(e) => e.target.style.display = 'none'} />
+          <img src="/logo.jpg" alt="Credit Comeback Club" style={{ width: 52, height: 52, borderRadius: 12, objectFit: 'cover', border: `1px solid ${T.gold}`, boxShadow: '0 6px 18px rgba(56,169,255,.18)' }} onError={(e) => e.target.style.display = 'none'} />
           <div>
-            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.2em', color: T.gold, fontWeight: 600, marginBottom: 3 }}>Credit Comeback Club · Forensic Suite</div>
-            <h1 className="ccc-display" style={{ fontSize: 24, color: '#fff', fontWeight: 500, lineHeight: 1.15 }}>{greeting}, {firstName}</h1>
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginTop: 2 }}>{dateStr}</div>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.2em', color: T.navy, fontWeight: 700, marginBottom: 3 }}>Credit Comeback Club · Operations Suite</div>
+            <h1 style={{ fontSize: 24, color: T.ink, fontWeight: 650, lineHeight: 1.15 }}>{greeting}, {firstName}</h1>
+            <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>{dateStr}</div>
           </div>
         </div>
         <div className="flex items-center">
           {heroStats.map((s, i) => (
-            <div key={s.label} className="text-right" style={{ paddingLeft: 24, marginLeft: i === 0 ? 0 : 24, borderLeft: i === 0 ? 'none' : '1px solid rgba(255,255,255,0.14)' }}>
-              <div style={{ fontSize: 26, fontWeight: 650, lineHeight: 1, color: s.gold ? T.gold : '#fff' }}>{s.value}</div>
-              <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'rgba(255,255,255,0.5)', marginTop: 5 }}>{s.label}</div>
+            <div key={s.label} className="text-right" style={{ paddingLeft: 24, marginLeft: i === 0 ? 0 : 24, borderLeft: i === 0 ? 'none' : `1px solid ${T.borderStrong}` }}>
+              <div style={{ fontSize: 26, fontWeight: 700, lineHeight: 1, color: s.gold ? T.navy : T.ink }}>{s.value}</div>
+              <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: T.muted, marginTop: 5 }}>{s.label}</div>
             </div>
           ))}
         </div>
@@ -441,8 +446,8 @@ function FunnelChart({ funnel }) {
   const [tip, setTip] = useState(null);
   const stages = [
     { key: 'Generated', value: funnel.generated, hint: 'Letters prepared' },
-    { key: 'Mailed', value: funnel.mailed, hint: 'Sent via certified mail' },
-    { key: 'Responded', value: funnel.responded, hint: 'Furnisher replied' },
+    { key: 'Mailed', value: funnel.mailed, hint: 'Sent by first-class mail' },
+    { key: 'Responded', value: funnel.responded, hint: 'Recipient replied' },
     { key: 'Deleted', value: funnel.deleted, hint: 'Removed from report' },
   ];
   const max = Math.max(stages[0].value, 1);
@@ -674,7 +679,7 @@ function QuickActionPanel({ action, onDone, onCancel, onNavigate }) {
       )}
       {mode === null && (
         <div className="flex items-center gap-2 flex-wrap">
-          {(action.type === 'escalate' || action.type === 'no_response' || action.type === 'escalate_phase4' || action.type === 'analyze_bureau' || action.type === 'review_bureau' || action.type === 'review_round' || action.type === 'review_window' || action.type === 'documents') && (
+          {(action.type === 'escalate' || action.type === 'no_response' || action.type === 'analyze_bureau' || action.type === 'review_bureau' || action.type === 'review_round' || action.type === 'review_window' || action.type === 'documents') && (
             <button
               onClick={() => onNavigate('clients', { jumpTo: action.clientId || action.client })}
               className="text-[11px] uppercase tracking-wider text-navy hover:text-gold"
@@ -803,16 +808,16 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={Activity} label="Open structured rounds" value={dash.openDisputeRounds} sub={`tracked across ${dash.activeRoundClients} client${dash.activeRoundClients === 1 ? '' : 's'}`} tone="navy" clickable={dash.openDisputeRounds > 0} onClick={() => handleStatClick('open_rounds')} />
         <StatTile icon={Clock} label="Awaiting response" value={dash.awaiting} sub={WINDOW_DAYS + '-day windows open'} tone={dash.awaiting > 0 ? 'amber' : 'navy'} clickable={dash.awaiting > 0} onClick={() => handleStatClick('awaiting')} />
-        <StatTile icon={Zap} label="Response review due" value={dash.escalate} sub="received or window closed" tone={dash.escalate > 0 ? 'red' : 'navy'} clickable={dash.escalate > 0} onClick={() => handleStatClick('attention')} />
-        <StatTile icon={TrendingUp} label="Bureau disputes" value={dash.phase3} sub="structured and legacy letters" tone={dash.phase3 > 0 ? 'green' : 'navy'} clickable={dash.phase3 > 0} onClick={() => handleStatClick('phase3')} />
-        <StatTile icon={AlertCircle} label="Escalation approved" value={dash.readyForPhase4} sub="explicit staff disposition" tone={dash.readyForPhase4 > 0 ? 'red' : 'navy'} clickable={dash.readyForPhase4 > 0} onClick={() => handleStatClick('phase4')} />
+        <StatTile icon={Zap} label="Response review due" value={dash.reviewDue} sub="received or window closed" tone={dash.reviewDue > 0 ? 'red' : 'navy'} clickable={dash.reviewDue > 0} onClick={() => handleStatClick('attention')} />
+        <StatTile icon={TrendingUp} label="Bureau disputes" value={dash.bureauDisputes} sub="current CCC correspondence" tone={dash.bureauDisputes > 0 ? 'green' : 'navy'} clickable={dash.bureauDisputes > 0} onClick={() => handleStatClick('bureau')} />
+        <StatTile icon={FileText} label="Staff escalation decisions" value={dash.staffEscalationDecisions} sub="recorded decisions · no automatic draft" tone="navy" />
       </div>
 
       {/* Results — what clients pay for */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile icon={Award} label="Deletions this month" value={dash.deletedThisMonth} delta={dash.deletedThisMonth - dash.deletedLastMonth} sub={'vs ' + dash.deletedLastMonth + ' last month'} goldChip />
-        <StatTile icon={CheckCircle} label="Confirmed deletions" value={dash.deletedAll} sub="letter outcomes marked deleted" goldChip />
-        <StatTile icon={Target} label="Deletion share" value={dash.deletionShare != null ? dash.deletionShare + '%' : '—'} sub={dash.outcomeCount > 0 ? `${dash.deletedAll} of ${dash.outcomeCount} recorded letter outcomes` : 'no outcomes recorded yet'} goldChip />
+        <StatTile icon={CheckCircle} label="Confirmed deletions" value={dash.deletedAll} sub="verified letter and historical outcomes" goldChip />
+        <StatTile icon={Target} label="Deletion share" value={dash.deletionShare != null ? dash.deletionShare + '%' : '—'} sub={dash.outcomeCount > 0 ? `${dash.deletedAll} of ${dash.outcomeCount} recorded outcomes` : 'no outcomes recorded yet'} goldChip />
         <StatTile icon={Timer} label="Avg days to deletion" value={dash.avgDeleteDays != null ? dash.avgDeleteDays : '—'} sub="mailed → confirmed deleted" goldChip />
       </div>
 
@@ -859,9 +864,10 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
             <Card title="VIP Clients" style={{ border: '1px solid ' + T.gold }}>
               <div className="space-y-0">
                 {dash.vipClients.map((c, i) => {
-                  const openLetters = c.letters.filter((l) => l.roundId || !l.phase?.startsWith('Phase 3'));
+                  const openLetters = c.letters.filter((letter) => isCccDisputePhase(letter?.phase)
+                    && (!letter.roundId || isOpenRoundLetter(c, letter)));
                   const ripe = openLetters.filter((l) => letterStatus(l).code === 'window_closed' && (!l.roundId || isPendingRoundReview(c, l))).length;
-                  const needsPhase3 = openLetters.filter((l) => l.responseOutcome === 'received' && (!l.roundId || isPendingRoundReview(c, l))).length;
+                  const needsResponseReview = openLetters.filter((l) => l.responseOutcome === 'received' && (!l.roundId || isPendingRoundReview(c, l))).length;
                   return (
                     <div key={c.id || i} onClick={() => onNavigate('clients', { jumpTo: c.id || c.name })}
                       className="flex items-center justify-between py-2 border-b last:border-b-0 cursor-pointer hover:bg-amber-50 rounded px-1 transition-colors group"
@@ -871,9 +877,9 @@ export default function DashboardPage({ isAdmin, onNavigate, displayName }) {
                         <div className="text-[12px] text-ink font-medium group-hover:text-navy">{c.name}</div>
                       </div>
                       <div className="flex items-center gap-2">
-                        {needsPhase3 > 0 && <Pill label="response review" tone="amber" />}
+                        {needsResponseReview > 0 && <Pill label="response review" tone="amber" />}
                         {ripe > 0 && <Pill label="window review" tone="red" />}
-                        {!ripe && !needsPhase3 && <Pill label="on track" tone="green" />}
+                        {!ripe && !needsResponseReview && <Pill label="on track" tone="green" />}
                         <ChevronRight size={11} strokeWidth={2} className="text-ink-faint group-hover:text-navy" />
                       </div>
                     </div>

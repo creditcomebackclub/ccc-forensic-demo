@@ -65,13 +65,14 @@ assert(shouldSuppressGenericNurture({ consultation_status: 'canceled', tags: [] 
 assert(shouldSuppressGenericNurture({ consultation_status: 'requested', tags: ['lead-stage:contacted'] }), 'staff contact suppresses generic nurture');
 assert(shouldSuppressGenericNurture({ consultation_status: null, tags: ['lead-stage:audit'] }), 'audit stage suppresses generic nurture');
 assert(leadNurtureContext({ consultation_status: 'requested', tags: [] }).consultationRequested, 'requested consultation carries abandonment context');
-assert(leadNurtureContext({ tags: ['guide:downloaded'] }).guideDownloaded, 'recorded guide click carries download context');
+assert(leadNurtureContext({ tags: ['guide:viewed'] }).guideDownloaded, 'recorded guide view carries source context');
+assert(leadNurtureContext({ tags: ['guide:downloaded'] }).guideDownloaded, 'historic guide tags remain compatible');
 
 const consultationDay1 = sourceAwareNurtureBody(1, { consultationRequested: true });
 assert(/haven't selected a time/i.test(consultationDay1), 'unbooked consultation gets completion-specific day-one copy');
 assert(!/download/i.test(consultationDay1), 'unbooked consultation copy never claims a guide download');
 const guideDay1 = sourceAwareNurtureBody(1, { guideDownloaded: true });
-assert(/downloading our free dispute guide/i.test(guideDay1), 'recorded guide download gets guide-specific day-one copy');
+assert(/reviewing our free credit report accuracy guide/i.test(guideDay1), 'recorded guide view gets guide-specific day-one copy');
 assert(!/guide you downloaded/i.test(sourceAwareNurtureBody(3, {})), 'generic day-three copy never claims a guide download');
 
 assert(normalizeIntent() === 'consultation' && normalizeIntent('guide_download') === 'guide_download', 'public intake recognizes consultation and guide intents');
@@ -122,11 +123,12 @@ for (const file of ['public/home.html', 'public/freeguide.html', 'public/join.ht
 }
 const guideSource = readFileSync(new URL('../public/freeguide.html', import.meta.url), 'utf8');
 assert(!/no[ -]?email required/i.test(guideSource), 'guide page no longer claims that email is unnecessary');
-assert((guideSource.match(/openIntake\('Guide Download'\)/g) || []).length === 2, 'both guide download buttons open email capture');
+assert(!/openIntake\('Guide Download'\)/.test(guideSource), 'the on-page guide does not pretend a download is required');
 assert(!/href="downloads\/7-Metro2-Dispute-Templates\.pdf"/i.test(guideSource), 'guide PDF is no longer exposed through a direct untracked link');
-assert(guideSource.includes("intent: intakeIntent") && guideSource.includes('intake.downloadUrl'), 'guide capture requests a tracked download link');
+assert(!guideSource.includes('intake.downloadUrl'), 'the current guide does not request a retired downloadable asset');
 const guideEndpoint = readFileSync(new URL('../netlify/functions/guide-download.cjs', import.meta.url), 'utf8');
-assert(guideEndpoint.includes("'guide:downloaded'") && /statusCode:\s*302/.test(guideEndpoint), 'tracked guide endpoint records the click and redirects to the PDF');
+assert(guideEndpoint.includes("'guide:viewed'") && /statusCode:\s*302/.test(guideEndpoint), 'historic tracked links record a guide view and redirect to the current page');
+assert(!/7-Metro2-Dispute-Templates/.test(guideEndpoint), 'the tracked endpoint cannot issue the retired PDF');
 
 function response(body, status = 200) {
   return new Response(body == null || status === 204 ? null : JSON.stringify(body), {
@@ -260,9 +262,9 @@ globalThis.fetch = async (url, options = {}) => {
 };
 const trackedGuideToken = createGuideDownloadToken('lead-1', 'test-service-key');
 const guideDownloadResult = await guideDownloadHandler({ httpMethod: 'GET', queryStringParameters: { token: trackedGuideToken } });
-assert(guideDownloadResult.statusCode === 302 && /7-Metro2-Dispute-Templates\.pdf$/.test(guideDownloadResult.headers.Location), 'valid guide token redirects to the PDF');
+assert(guideDownloadResult.statusCode === 302 && guideDownloadResult.headers.Location === '/freeguide.html', 'valid historic guide token redirects to the current guide');
 const guideTrackingPatch = calls.find((call) => call.options.method === 'PATCH');
-assert(JSON.parse(guideTrackingPatch?.options.body || '{}').tags?.includes('guide:downloaded'), 'guide redirect records the actual download click');
+assert(JSON.parse(guideTrackingPatch?.options.body || '{}').tags?.includes('guide:viewed'), 'guide redirect records the current guide view');
 
 globalThis.fetch = originalFetch;
 

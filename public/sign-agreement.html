@@ -3,265 +3,44 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex, nofollow">
-  <meta name="referrer" content="no-referrer">
-  <title>Review Your Agreement | Credit Comeback Club</title>
+  <title>Signing Route Retired | Credit Comeback Club</title>
   <style>
-    body { margin: 0; background: #f3f4f6; font-family: Arial, sans-serif; color: #172033; }
-    .wrap { max-width: 720px; margin: 32px auto; padding: 0 16px; }
-    .card { overflow: hidden; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
-    .head { padding: 24px 28px; background: #1b2a4a; }
-    .head h1 { margin: 0; color: #c9a84c; font-size: 20px; }
-    .head p { margin: 6px 0 0; color: #fff; font-size: 12px; }
-    .body { padding: 28px; }
-    .plan { margin: 18px 0; padding: 14px; background: #f8fafc; border: 1px solid #dbe2ea; border-radius: 5px; font-size: 13px; }
-    .plan-row { display: grid; grid-template-columns: 120px 1fr; gap: 8px; margin-bottom: 7px; }
-    .plan-row:last-child { margin-bottom: 0; }
-    .plan dt { font-weight: bold; }
-    .plan dd { margin: 0; }
-    .preview-banner { margin: 0 0 18px; padding: 12px 14px; color: #92400e; background: #fff7ed; border: 1px solid #f59e0b; border-radius: 5px; font-size: 12px; font-weight: bold; line-height: 1.45; }
-    .packet-section { margin: 22px 0; padding-top: 4px; border-top: 1px solid #dbe2ea; }
-    .packet-section h3 { margin: 14px 0 8px; color: #1b2a4a; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
-    .legal-copy { max-height: 280px; overflow: auto; padding: 14px; color: #334155; background: #f8fafc; border: 1px solid #dbe2ea; border-radius: 5px; font-size: 12px; line-height: 1.6; white-space: pre-line; }
-    .checks label { display: flex; gap: 9px; margin: 13px 0; font-size: 13px; line-height: 1.45; }
-    .sigbox { margin: 12px 0; background: #fff; border: 1px solid #cbd5e1; border-radius: 5px; }
-    .sigbox canvas { display: block; width: 100%; height: 150px; touch-action: none; }
-    .actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; }
-    .btn { padding: 12px 18px; color: #c9a84c; background: #1b2a4a; border: 0; border-radius: 4px; font-weight: bold; cursor: pointer; }
-    .btn:disabled { opacity: .5; cursor: not-allowed; }
-    .clear { color: #475569; background: none; border: 0; text-decoration: underline; cursor: pointer; }
-    .note { color: #64748b; font-size: 11px; line-height: 1.45; }
-    .error { margin: 16px 0; padding: 12px; color: #991b1b; background: #fef2f2; border: 1px solid #fecaca; border-radius: 5px; font-size: 13px; line-height: 1.45; }
-    .hidden { display: none; }
-    @media (max-width: 520px) {
-      .wrap { margin: 16px auto; }
-      .body, .head { padding: 22px; }
-      .plan-row { grid-template-columns: 1fr; gap: 2px; }
+    :root { color-scheme: light; font-family: Inter, Arial, sans-serif; }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: #07111f;
+      background: linear-gradient(145deg, #f8fcff, #e5f5ff);
     }
+    main {
+      width: min(620px, 100%);
+      padding: 40px;
+      border: 1px solid #b9e2fa;
+      border-radius: 20px;
+      background: #fff;
+      box-shadow: 0 24px 70px rgba(7, 17, 31, 0.12);
+    }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: #087fbd;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0 0 16px; font-size: clamp(30px, 6vw, 46px); line-height: 1.05; }
+    p { margin: 0; color: #4b5d70; font-size: 17px; line-height: 1.7; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <div class="head">
-        <h1>Credit Comeback Club</h1>
-        <p>Secure Agreement Signing</p>
-      </div>
-      <main class="body">
-        <div id="loading">Loading your secure agreement…</div>
-        <div id="app" class="hidden">
-          <div id="preview-banner" class="preview-banner hidden">DESIGN PREVIEW ONLY — COUNSEL REVIEW REQUIRED. This sample cannot be signed. A live packet is populated from the client’s saved plan after Start Onboarding.</div>
-          <h2 style="margin-top:0;font-size:18px">Review and sign your packet</h2>
-          <p id="intro"></p>
-          <dl class="plan" id="plan"></dl>
-          <section class="packet-section" aria-labelledby="service-heading">
-            <h3 id="service-heading">Service Agreement</h3>
-            <div class="legal-copy" id="service-terms"></div>
-          </section>
-          <section class="packet-section" aria-labelledby="lpoa-heading">
-            <h3 id="lpoa-heading">Limited Power of Attorney</h3>
-            <div class="legal-copy" id="lpoa-terms"></div>
-          </section>
-          <p class="note">Review the Service Agreement, selected plan terms, and Limited Power of Attorney carefully before acknowledging and signing.</p>
-          <div class="checks">
-            <label><input id="service" type="checkbox"> <span>I acknowledge the Service Agreement and the selected plan terms above.</span></label>
-            <label><input id="lpoa" type="checkbox"> <span>I acknowledge the Limited Power of Attorney and its limited scope.</span></label>
-            <label><input id="esign" type="checkbox"> <span>I consent to electronic records and signatures for this packet.</span></label>
-          </div>
-          <label style="display:block;font-size:13px;margin-top:18px">
-            Your legal name
-            <input id="signer" autocomplete="name" style="display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:10px;border:1px solid #cbd5e1;border-radius:4px" required>
-          </label>
-          <p style="font-size:13px;margin-bottom:6px">Draw your signature</p>
-          <div class="sigbox"><canvas id="canvas" width="1280" height="300" aria-label="Signature canvas"></canvas></div>
-          <div class="actions">
-            <button class="clear" id="clear" type="button">Clear signature</button>
-            <button class="btn" id="submit" type="button">Sign agreement</button>
-          </div>
-          <p class="note" id="expiry-note">The link is single-use and expires at <span id="expires"></span>. No payment is created by signing this packet.</p>
-        </div>
-        <div id="message" class="error hidden" role="alert" aria-live="polite"></div>
-      </main>
-    </div>
-  </div>
-
-  <script>
-    const $ = (id) => document.getElementById(id);
-    const token = new URLSearchParams(window.location.search).get('token') || '';
-    const isWebPage = window.location.protocol === 'http:' || window.location.protocol === 'https:';
-    const previewRequested = !isWebPage || new URLSearchParams(window.location.search).get('preview') === '1';
-    const api = isWebPage ? '/.netlify/functions/agreement-sign' : '';
-    const lpoaPreviewText = 'The client authorizes Credit Comeback Club only to prepare and submit dispute correspondence, send certified mail, receive and respond to dispute-related correspondence, and prepare appropriate consumer-protection complaints. This authorization does not permit financial decisions, account access, settlement of claims, or disputing information the client knows is accurate. It remains effective until revoked in writing or the dispute work is complete.';
-    const localPreviewAgreement = {
-      clientName: 'Sample Client',
-      plan: {
-        label: 'Standard',
-        serviceTerm: 'Month-to-month service plan',
-        feeText: 'Sample plan terms appear here from the plan selected and saved by staff.',
-      },
-      serviceAgreementText: 'The complete counsel-approved Service Agreement will appear here, including the service description, required disclosures, fee timing and performed-service milestones, cancellation rights, and cancellation materials.\n\nThis local design preview intentionally does not substitute draft language for counsel-approved contract terms.',
-      lpoaText: lpoaPreviewText,
-    };
-    const canvas = $('canvas');
-    const ctx = canvas.getContext('2d');
-    let data = null;
-    let dirty = false;
-
-    ctx.lineWidth = 5;
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = '#172033';
-
-    function show(message) {
-      $('message').textContent = message;
-      $('message').classList.remove('hidden');
-    }
-
-    function clearMessage() {
-      $('message').textContent = '';
-      $('message').classList.add('hidden');
-    }
-
-    function drawPoint(event) {
-      const rect = canvas.getBoundingClientRect();
-      return {
-        x: (event.clientX - rect.left) * (canvas.width / rect.width),
-        y: (event.clientY - rect.top) * (canvas.height / rect.height),
-      };
-    }
-
-    canvas.addEventListener('pointerdown', (event) => {
-      event.preventDefault();
-      canvas.setPointerCapture(event.pointerId);
-      const point = drawPoint(event);
-      ctx.beginPath();
-      ctx.moveTo(point.x, point.y);
-      dirty = true;
-    });
-
-    canvas.addEventListener('pointermove', (event) => {
-      if (!event.buttons) return;
-      const point = drawPoint(event);
-      ctx.lineTo(point.x, point.y);
-      ctx.stroke();
-    });
-
-    $('clear').addEventListener('click', () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      dirty = false;
-      clearMessage();
-    });
-
-    async function request(body) {
-      let response;
-      try {
-        response = await fetch(api, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-      } catch {
-        throw new Error('The secure signing service could not be reached. Open the original HTTPS signing link from your email and try again.');
-      }
-
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        throw new Error('The secure signing service is not available at this address. Open the original HTTPS signing link from your agreement email.');
-      }
-      const output = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(output.error || 'Could not complete the agreement request.');
-      return output;
-    }
-
-    function addPlanRow(label, value) {
-      const row = document.createElement('div');
-      const term = document.createElement('dt');
-      const detail = document.createElement('dd');
-      row.className = 'plan-row';
-      term.textContent = label;
-      detail.textContent = value || '—';
-      row.append(term, detail);
-      $('plan').append(row);
-    }
-
-    function renderAgreement(agreement, preview = false) {
-      $('intro').textContent = preview
-        ? 'This is a sample of the signing experience. Live packets use the client’s saved name, plan, and immutable agreement snapshot.'
-        : `Hi ${agreement.clientName}, please confirm the service plan selected for you.`;
-      $('signer').value = preview ? 'Sample Client' : agreement.clientName;
-      $('plan').replaceChildren();
-      addPlanRow('Plan', agreement.plan.label || 'Custom package');
-      addPlanRow('Service term', agreement.plan.serviceTerm);
-      addPlanRow('Plan terms', agreement.plan.feeText);
-      addPlanRow('Collection', 'No payment is created by this packet.');
-      $('service-terms').textContent = agreement.serviceAgreementText || 'Service Agreement text is unavailable.';
-      $('lpoa-terms').textContent = agreement.lpoaText || lpoaPreviewText;
-
-      if (preview) {
-        $('preview-banner').classList.remove('hidden');
-        $('expiry-note').textContent = 'Preview only. Live signing links are single-use, expire after seven days, and do not create a payment.';
-        $('submit').textContent = 'Preview only';
-        $('submit').disabled = true;
-        $('clear').disabled = true;
-        canvas.style.pointerEvents = 'none';
-        document.querySelectorAll('#app input').forEach((input) => { input.disabled = true; });
-      } else {
-        $('expires').textContent = new Date(agreement.expiresAt).toLocaleString();
-      }
-
-      $('loading').classList.add('hidden');
-      $('app').classList.remove('hidden');
-    }
-
-    async function load() {
-      if (previewRequested) {
-        renderAgreement(localPreviewAgreement, true);
-        return;
-      }
-      if (!token) {
-        $('loading').classList.add('hidden');
-        show('This signing link is missing its secure token. Open the original link from the agreement email, or ask Credit Comeback Club to reissue it.');
-        return;
-      }
-
-      try {
-        data = await request({ action: 'load', token });
-        renderAgreement(data.agreement);
-      } catch (error) {
-        $('loading').classList.add('hidden');
-        show(error.message);
-      }
-    }
-
-    $('submit').addEventListener('click', async () => {
-      clearMessage();
-      if (!dirty) return show('Please draw your signature.');
-      if (!$('service').checked || !$('lpoa').checked || !$('esign').checked) {
-        return show('Please acknowledge every required item.');
-      }
-      const signerName = $('signer').value.trim();
-      if (!signerName) return show('Enter your legal name.');
-
-      $('submit').disabled = true;
-      try {
-        await request({
-          action: 'sign',
-          token,
-          signerName,
-          signatureData: canvas.toDataURL('image/png'),
-          acknowledgements: {
-            service_agreement: true,
-            limited_power_of_attorney: true,
-            electronic_records: true,
-          },
-        });
-        $('app').innerHTML = '<h2>Agreement completed</h2><p>Thank you. Your agreement has been recorded and your client-portal invitation is being sent separately.</p>';
-      } catch (error) {
-        show(error.message);
-        $('submit').disabled = false;
-      }
-    });
-
-    load();
-  </script>
+  <main>
+    <p class="eyebrow">Credit Comeback Club</p>
+    <h1>This signing route has retired.</h1>
+    <p>Use the secure service-agreement onboarding wizard sent by the Credit Comeback Club team.</p>
+  </main>
 </body>
 </html>

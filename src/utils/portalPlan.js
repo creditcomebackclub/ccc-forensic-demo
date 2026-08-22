@@ -3,6 +3,8 @@
  * Pure functions over data ClientPortal already loads — no staff-only fields.
  */
 
+import { isPortalMailTerminal } from './portalCampaigns.js';
+
 function finiteScore(value) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -47,12 +49,14 @@ export function derivePortalStage({
   blueprints = [],
   mailed = [],
   delivered = [],
+  reviewStarted = null,
   responded = [],
   deletions = [],
   rounds = [],
   campaigns = [],
   docsComplete = false,
 }) {
+  const activeReviews = Array.isArray(reviewStarted) ? reviewStarted : delivered;
   const hasBlueprint = (blueprints || []).some((b) => b.status === 'approved' || b.status === 'sent');
   const openRounds = (rounds || []).filter((r) => r.status === 'open');
   const closedRounds = (rounds || []).filter((r) => r.status === 'closed' || r.closed_at);
@@ -63,24 +67,24 @@ export function derivePortalStage({
     {
       id: 'plan',
       label: 'Plan ready',
-      detail: hasBlueprint ? 'Recovery Blueprint on file' : 'Forensic plan being prepared',
+      detail: hasBlueprint ? 'Recovery Blueprint on file' : 'Recovery plan being prepared',
       done: hasBlueprint || mailed.length > 0,
     },
     {
       id: 'mailed',
       label: 'Letters sent',
-      detail: mailed.length ? `${mailed.length} certified package${mailed.length === 1 ? '' : 's'}` : 'Waiting on first mailing',
+      detail: mailed.length ? `${mailed.length} mailed package${mailed.length === 1 ? '' : 's'}` : 'Waiting on first mailing',
       done: mailed.length > 0,
     },
     {
       id: 'waiting',
-      label: 'Waiting on bureaus',
-      detail: delivered.length
-        ? 'Response window active'
+      label: 'Review window',
+      detail: activeReviews.length
+        ? 'Case review clock active'
         : mailed.length
-          ? 'In transit / delivery pending'
-          : 'Starts after delivery',
-      done: delivered.length > 0 || responded.length > 0 || deletions.length > 0,
+          ? 'Starts from the saved expected-delivery date'
+          : 'Starts after mailing',
+      done: activeReviews.length > 0 || responded.length > 0 || deletions.length > 0,
     },
     {
       id: 'results',
@@ -94,7 +98,7 @@ export function derivePortalStage({
     },
     {
       id: 'next',
-      label: hasRound2 || maxRound >= 2 ? 'Next wave' : 'Next wave',
+      label: 'Next wave',
       detail: hasRound2 || maxRound >= 2
         ? 'Follow-up round in progress'
         : closedRounds.length && !openRounds.length
@@ -141,7 +145,7 @@ export function buildActionQueue({
     actions.push({
       id: 'upload-id',
       title: 'Upload government ID',
-      body: 'Needed so dispute letters match your legal identity.',
+      body: 'Needed so case letters match your legal identity.',
       tab: 'documents',
       tone: 'amber',
     });
@@ -158,7 +162,7 @@ export function buildActionQueue({
 
   // Letters awaiting a bureau response that the client may have received by mail.
   const waitingOnClientScan = (letters || []).filter((letter) => {
-    const mailed = !!(letter.mailed_date || letter.lob_id);
+    const mailed = Boolean(letter.mailed_date) && !isPortalMailTerminal(letter);
     const hasStaffResponse = !!(letter.bureau_response_status || letter.bureau_response_received_at || letter.response_outcome);
     const clientUploaded = uploadSuccess === letter.id || (stagedFiles && stagedFiles[letter.id]?.length);
     return mailed && !hasStaffResponse && !clientUploaded && isBureauish(letter);
@@ -180,7 +184,7 @@ export function buildActionQueue({
     actions.push({
       id: 'clear',
       title: 'You’re clear for now',
-      body: 'Nothing needed from you this week — we’re on the bureaus and furnishers.',
+      body: 'Nothing is needed from you right now. Your team is continuing the documented casework.',
       tab: null,
       tone: 'green',
     });
@@ -201,12 +205,21 @@ export function buildAccountResults({ packetCoverage = [], letters = [] }) {
   const rows = [];
 
   (packetCoverage || []).forEach((row) => {
-    const outcome = String(row.final_disposition || row.account_outcome || row.response_outcome || row.status || '').toLowerCase();
-    if (!outcome || outcome === 'open' || outcome === 'pending' || outcome === 'in_flight') return;
+    const outcome = String(
+      row.final_disposition
+      || row.account_outcome
+      || row.response_outcome
+      || row.status
+      || row.client_progress
+      || row.response_status
+      || '',
+    ).toLowerCase();
+    if (!outcome || ['open', 'pending', 'in_flight', 'not_received', 'received', 'analyzing', 'review_ready'].includes(outcome)) return;
+    const accountName = row.account_label || row.furnisher || row.account_name || row.creditor_name || 'Account';
     rows.push({
-      id: row.id || `${row.campaign_id}-${row.account_id || row.client_account_id}`,
-      name: row.furnisher || row.account_name || row.creditor_name || 'Account',
-      bureau: row.bureau || row.target_bureau || null,
+      id: row.coverage_id || row.id || `${row.campaign_id}-${row.account_id || row.client_account_id}`,
+      name: `${accountName}${row.masked_account ? ` · ${row.masked_account}` : ''}`,
+      bureau: row.bureau || row.target_bureau || row.bureau_code || null,
       outcome,
       outcomeLabel: labelOutcome(outcome),
       positive: isPositiveOutcome(outcome),
@@ -247,6 +260,10 @@ function labelOutcome(outcome) {
   if (/updat|correct/.test(o)) return 'Updated';
   if (/partial/.test(o)) return 'Partial result';
   if (/no_response|expired|no response/.test(o)) return 'No response yet';
+  if (o === 'resolved') return 'Review complete';
+  if (o === 'documents_requested') return 'Documents requested';
+  if (o === 'next_step_being_prepared') return 'Next step being prepared';
+  if (o === 'reviewed') return 'Reviewed';
   return o.replace(/_/g, ' ') || 'Recorded';
 }
 

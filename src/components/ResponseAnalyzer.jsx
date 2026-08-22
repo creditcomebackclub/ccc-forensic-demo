@@ -6,6 +6,7 @@ import { ANALYZABLE_TYPES, CONVERTED_PREFIX, isAnalyzable, slugBase, UNSUPPORTED
 import { uploadResponseEvidence } from '../utils/responseEvidence';
 import { getLatestRound, markRoundClosePrompted, reviewRoundLetter } from '../utils/rounds.js';
 import { updateResponseEvidenceReview } from '../utils/responseEvidence.js';
+import { isCccDisputePhase } from '../utils/cccMailRules.js';
 import RoundCloseModal from './RoundCloseModal.jsx';
 import PacketAccountResponseReview from './PacketAccountResponseReview.jsx';
 
@@ -27,6 +28,7 @@ const OUTCOME_CONFIG = {
 };
 
 export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
+  const isCurrentCccLetter = isCccDisputePhase(letter?.phase);
   const isNonResponse = letter.responseOutcome === 'no_response';
   // A previously stored analysis opens straight into results — unless fresh
   // files were explicitly passed in for (re-)analysis
@@ -43,7 +45,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
 
   // Auto-analyze if preloaded files were passed in
   React.useEffect(() => {
-    if (letter._preloadedFiles?.length && !analyzing && !analysis) {
+    if (isCurrentCccLetter && letter._preloadedFiles?.length && !analyzing && !analysis) {
       handleAnalyze();
     }
   }, []);
@@ -95,6 +97,10 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
   // uploads first become a private response-evidence record; the analysis job
   // then receives only the server-validated storage paths.
   const handleAnalyze = async () => {
+    if (!isCurrentCccLetter) {
+      setError('Historical response evidence is read-only. Nothing was analyzed.');
+      return;
+    }
     if (!useStoredPaths && !files.length) return;
     if (!useStoredPaths) {
       const unanalyzable = files.find((f) => !isAnalyzable(f.type));
@@ -116,9 +122,9 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
         ? analyzeFilePaths[0].slice(0, analyzeFilePaths[0].lastIndexOf('/'))
         : null;
 
-      // A single-PDF response is also converted to JPEG pages for Lob exhibit
-      // embedding — unrelated to the Claude call, still done client-side
-      // (pdfjs + canvas, no Node-canvas dependency needed on the server).
+      // Preserve a page-level image copy for evidence review. This is
+      // unrelated to the model call and does not select an enclosure or draft
+      // correspondence.
       if (basePath && analyzeFilePaths?.length === 1 && /\.pdf$/i.test(analyzeFilePaths[0])) {
         try {
           const arrayBuffer = useStoredPaths
@@ -147,7 +153,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
               await supabase.storage.from('responses').upload(basePath + '/' + base + '_p' + pagePad + '.jpg', blob, { upsert: true, contentType: 'image/jpeg' });
             }
           }
-        } catch (e) { console.error('Could not convert PDF for Lob embedding:', e); }
+        } catch (e) { console.error('Could not convert PDF into page-level evidence:', e); }
       }
 
       const result = await runPhase2Job(
@@ -167,6 +173,10 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
   };
 
   const handleSave = async () => {
+    if (!isCurrentCccLetter) {
+      setError('Historical response evidence is read-only. Nothing was saved.');
+      return;
+    }
     if (!analysis || !reviewChoice) return;
     setSaving(true);
     try {
@@ -213,6 +223,36 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
 
   const cfg = analysis ? CLASSIFICATION_CONFIG[analysis.classification] : null;
 
+  if (!isCurrentCccLetter) {
+    const historical = analysis || storedAnalysis || letter?.phase2Analysis || null;
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={(event) => { if (event.target === event.currentTarget) onClose?.(); }}>
+        <div className="bg-white rounded border border-border w-full max-w-xl p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-[15px] font-semibold text-ink">Historical response evidence</div>
+              <div className="text-[11px] uppercase tracking-wider text-ink-muted mt-1">{letter?.furnisher} · {letter?.phase}</div>
+            </div>
+            <button onClick={onClose} className="text-ink-faint hover:text-ink" aria-label="Close"><X size={18} /></button>
+          </div>
+          <div className="mt-4 rounded border border-slate-200 bg-slate-50 px-4 py-3 text-[12px] leading-relaxed text-slate-700">
+            This analysis belongs to a retired correspondence workflow. It remains readable as historical evidence, but this screen cannot upload, re-analyze, change a disposition, or create another letter.
+          </div>
+          {historical && (
+            <div className="mt-4 rounded border border-border p-3">
+              <div className="text-[10px] uppercase tracking-wider text-ink-faint font-medium">Stored analysis</div>
+              {historical.classification && <div className="text-[12px] font-medium text-ink mt-2">{CLASSIFICATION_CONFIG[historical.classification]?.label || historical.classification}</div>}
+              {historical.summary && <div className="text-[12px] text-ink-muted mt-1">{historical.summary}</div>}
+            </div>
+          )}
+          <div className="flex justify-end mt-5">
+            <button onClick={onClose} className="px-4 py-2 rounded-sm bg-navy text-[11px] uppercase tracking-wider text-white">Close</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded border border-border w-full max-w-3xl max-h-[90vh] flex flex-col">
@@ -251,8 +291,8 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
             <div>
               <p className="text-[13px] text-ink-muted mb-5 max-w-xl">
                 Upload the furnisher response. If it's multiple pages or photos, add them all —
-                they'll be analyzed together as one document. The original Phase 1 letter is Exhibit A — attached automatically.
-                AI extracts only the response&apos;s visible statements. Deterministic rules compare them with the original demands, and any later letter requires a reviewed disposition and explicit round target.
+                they&apos;ll be analyzed together as one document and bound to this exact CCC letter.
+                AI extracts only the response&apos;s visible statements. Deterministic rules compare them with the original demands. This review does not draft a letter or choose packet enclosures.
               </p>
               <div
                 onDrop={handleDrop}
@@ -394,7 +434,7 @@ export default function ResponseAnalyzer({ letter, onClose, onSaved }) {
                     setViewingStored(false);
                     setStep('results');
                   } catch (e) {
-                    setError(e.message || 'Generation failed');
+                    setError(e.message || 'Analysis failed');
                   } finally {
                     setAnalyzing(false);
                   }

@@ -3,7 +3,7 @@ import { embedRemoteSignatureImages, remoteImageSources, classifyRemoteSignature
 // Canonical Supabase Storage path contract for client documents.
 //
 // documents/{firmUid}/
-//   {clientId}/identity/{docType}.{ext}
+//   {clientId}/identity/{docType}[-{sha256 first 16}].{ext}
 //   {clientId}/lpoa/signature.png | lpoa-signed.html
 //   mail-artifacts/{lobId}/…
 //   temp/{kind}/{batchId}/…
@@ -68,8 +68,12 @@ export async function loadClientSignatureDataUrl(supabase, lpoaData) {
   return blobToDataUrl(data, 'image/png');
 }
 
-export function identityDocPath(firmUserId, clientId, docType, ext) {
-  return `${firmUserId}/${clientId}/identity/${docType}.${ext}`;
+export function identityDocPath(firmUserId, clientId, docType, ext, contentHash) {
+  if (contentHash !== undefined && !/^[0-9a-f]{64}$/.test(String(contentHash))) {
+    throw new Error('identityDocPath contentHash must be a lowercase SHA-256.');
+  }
+  const immutableSuffix = contentHash ? `-${String(contentHash).slice(0, 16)}` : '';
+  return `${firmUserId}/${clientId}/identity/${docType}${immutableSuffix}.${ext}`;
 }
 
 export function lpoaSignaturePath(firmUserId, clientId) {

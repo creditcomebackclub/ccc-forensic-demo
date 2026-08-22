@@ -157,8 +157,8 @@ assert(
 
 const lobMailer = readFileSync(new URL('../src/components/LobMailer.jsx', import.meta.url), 'utf8');
 assert(
-  (lobMailer.match(/fetchLpoaHtmlForPrint\([^)]*\{ clientSignatureDataUrl: canonicalSignature \}\)/g) || []).length === 4,
-  'every LPOA enclosure path can resolve a retired client signature link'
+  !/fetchLpoaHtmlForPrint|lpoa_signature_data|stripLpoaHeader/i.test(lobMailer),
+  'the active Lob mailer has no legacy authorization fetch or enclosure path'
 );
 assert(
   /remoteImageSources\(finalHtml\)[\s\S]{0,200}mailAssetUrls\.has/.test(lobMailer)
@@ -167,8 +167,10 @@ assert(
 );
 
 assert(
-  /if \(phase3LpoaData\) throw e;/.test(lobMailer) && /if \(phase1LpoaData \|\| letter\.roundId\) throw e;/.test(lobMailer),
-  'a client with an LPOA on file cannot mail without it when the enclosure fails to build'
+  /isCurrentCccLetter = isCccDisputePhase/.test(lobMailer)
+  && /if \(!isCurrentCccLetter\)/.test(lobMailer)
+  && /Historical Letter/.test(lobMailer),
+  'historical letters are read-only before the active mail path can run'
 );
 
 const lobFunction = readFileSync(new URL('../netlify/functions/lob.cjs', import.meta.url), 'utf8');
@@ -190,7 +192,10 @@ assert(
   lobFunction.indexOf('durableMailpieceUrl(remoteUrl, supabaseUrl)') < lobFunction.indexOf('const letter = await findLetter(letterId'),
   'the caller-supplied mailpiece URL is validated before the server fetches it'
 );
-assert(lobFunction.includes('file: mailpieceUrl,'), 'Lob prints the validated URL, not the raw payload value');
+assert(
+  lobFunction.includes('file: scannedMailpiece.html,'),
+  'the only active Lob send path prints exact server-re-read CCC HTML',
+);
 
 if (failed) {
   console.error(`\n${failed} failure(s)`);

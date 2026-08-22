@@ -64,26 +64,13 @@ export default function AffiliatePortal({ session, onSignOut }) {
       const s = await getSettings();
       setSettings(s);
 
-      // Load affiliate profile by user_id OR email
-      let { data: aff } = await supabase
+      // Identity linking is server-controlled during onboarding (or through
+      // the one-time legacy claim RPC). The browser never patches affiliates.
+      const { data: aff } = await supabase
         .from('affiliates')
         .select('*')
         .eq('user_id', session.user.id)
         .single();
-
-      if (!aff && session.user.email) {
-        const { data: affByEmail } = await supabase
-          .from('affiliates')
-          .select('*')
-          .eq('email', session.user.email)
-          .single();
-          
-        if (affByEmail) {
-          aff = affByEmail;
-          // Auto-link the user_id for future logins
-          await supabase.from('affiliates').update({ user_id: session.user.id }).eq('id', aff.id);
-        }
-      }
 
       setAffiliate(aff);
 
@@ -170,20 +157,26 @@ export default function AffiliatePortal({ session, onSignOut }) {
     document.body.removeChild(link);
   };
 
-  const lettersForClient = (client) => letters.filter((l) => (
-    (client?.id && l.client_id === client.id)
-    || (!l.client_id && l.client_name === client?.name)
-  ));
+  const lettersForClient = (client) => letters.filter((letter) => client?.id && letter.client_id === client.id);
+
+  const reviewHasStarted = (letter) => {
+    const start = letter.mail_service === 'usps_first_class'
+      ? letter.expected_delivery_date
+      : letter.delivered_at;
+    if (!start) return false;
+    const startTime = new Date(`${String(start).slice(0, 10)}T00:00:00`).getTime();
+    return Number.isFinite(startTime) && startTime <= Date.now();
+  };
 
   const getClientStatus = (client) => {
     const clientLetters = lettersForClient(client);
     if (clientLetters.length === 0) return { label: 'Pending Start', tone: 'neutral' };
     const deleted = clientLetters.filter(l => l.response_outcome === 'deleted');
     if (deleted.length > 0) return { label: deleted.length + ' Deletion' + (deleted.length > 1 ? 's' : ''), tone: 'green' };
-    const delivered = clientLetters.filter(l => l.tracking_status === 'Delivered');
+    const activeReviews = clientLetters.filter(reviewHasStarted);
     const mailed = clientLetters.filter(l => l.mailed_date);
-    if (delivered.length > 0) return { label: delivered.length + ' Letter' + (delivered.length > 1 ? 's' : '') + ' Delivered', tone: 'blue' };
-    if (mailed.length > 0) return { label: mailed.length + ' Letter' + (mailed.length > 1 ? 's' : '') + ' In Transit', tone: 'amber' };
+    if (activeReviews.length > 0) return { label: activeReviews.length + ' Review' + (activeReviews.length > 1 ? 's' : '') + ' Active', tone: 'blue' };
+    if (mailed.length > 0) return { label: mailed.length + ' Letter' + (mailed.length > 1 ? 's' : '') + ' Sent', tone: 'amber' };
     return { label: 'Campaign Starting', tone: 'amber' };
   };
 
@@ -469,7 +462,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   const style = toneStyles[status.tone];
                   const clientLetters = lettersForClient(c);
                   const mailed = clientLetters.filter(l => l.mailed_date).length;
-                  const delivered = clientLetters.filter(l => l.tracking_status === 'Delivered').length;
+                  const activeReviews = clientLetters.filter(reviewHasStarted).length;
                   const deleted = clientLetters.filter(l => l.response_outcome === 'deleted').length;
 
                   const scoreIncrease = c.scoreIncrease != null ? `+${c.scoreIncrease} pts` : 'N/A';
@@ -489,7 +482,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                       <div className="affiliate-client-metrics" style={{ display: 'flex', gap: 24 }}>
                         {[
                           { label: 'Letters Sent', value: mailed },
-                          { label: 'Delivered', value: delivered },
+                          { label: 'Review Active', value: activeReviews },
                           { label: 'Deletions', value: deleted },
                           { label: 'Score Increase', value: scoreIncrease },
                         ].map(({ label, value }) => (
@@ -518,12 +511,12 @@ export default function AffiliatePortal({ session, onSignOut }) {
           <>
             <div style={{ marginBottom: 24 }}>
               <h2 style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 4 }}>Commissions</h2>
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{Math.round((affiliate?.commission_rate || 0.20) * 100)}% of the total revenue per referred client.</p>
+              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{Math.round((affiliate?.commission_rate || 0.20) * 100)}% of eligible collected revenue per referred client.</p>
             </div>
 
             <div className="affiliate-commission-grid">
               <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
-                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Total Revenue</div>
+                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Eligible Collected Revenue</div>
                 <div style={{ color: '#fff', fontSize: 36, fontWeight: 700, lineHeight: 1 }}>${totalRevenue.toFixed(2)}</div>
               </div>
               <div style={{ background: '#111', border: '1px solid #1E1E1E', borderRadius: 8, padding: 24 }}>
@@ -553,7 +546,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
                   <thead>
                     <tr style={{ borderBottom: '1px solid #1A1A1A' }}>
                       <th style={{ padding: '12px 20px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Client</th>
-                      <th style={{ padding: '12px 20px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Total Paid</th>
+                      <th style={{ padding: '12px 20px', textAlign: 'left', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Eligible Collected</th>
                       <th style={{ padding: '12px 20px', textAlign: 'right', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Your Commission</th>
                       <th style={{ padding: '12px 20px', textAlign: 'right', fontSize: 10, textTransform: 'uppercase', color: 'rgba(255,255,255,0.3)', fontWeight: 600, letterSpacing: '0.05em' }}>Status</th>
                     </tr>
@@ -599,7 +592,7 @@ export default function AffiliatePortal({ session, onSignOut }) {
             </div>
 
             <div style={{ marginTop: 16, padding: 16, background: '#0A0A0A', borderRadius: 6, border: '1px solid #1A1A1A', fontSize: 11, color: 'rgba(255,255,255,0.3)', lineHeight: 1.6 }}>
-              Commissions are calculated at {Math.round((affiliate?.commission_rate || 0.20) * 100)}% of the First Work Fee and every ongoing monthly payment a referred client makes, for as long as they remain a client. Commissions are paid manually by Credit Comeback Club as revenue comes in. Questions? Contact chris@cccpartners.co or call 970-644-0063.
+              Commissions are calculated at {Math.round((affiliate?.commission_rate || 0.20) * 100)}% of actual eligible client revenue recorded as collected under your saved partner terms. Forecasts, plan prices, open invoices, refunds, and voided transactions do not create commission. Commissions are paid manually by Credit Comeback Club as eligible revenue is recorded. Questions? Contact chris@cccpartners.co or call 970-644-0063.
             </div>
           </>
         )}

@@ -1,26 +1,11 @@
 import React, { useState } from 'react';
-import { supabase } from '../utils/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Toaster, toast } from 'react-hot-toast';
-import { Check, ChevronRight, Lock, UserCheck, FileText, PenTool } from 'lucide-react';
-import { getSettings } from '../utils/settings';
-import { getTierPricing, describeTierFee, resolveClientFeeText } from '../utils/pricing';
-import {
-  DOCUMENTS_BUCKET,
-} from '../utils/storagePaths';
+import { Check, ChevronRight, FileText, Lock, PenTool, ShieldCheck, UserCheck } from 'lucide-react';
+import { supabase } from '../utils/supabase';
 import { notifyStaff } from '../utils/notifyStaff';
 
-// The signed LPOA this wizard builds is stored and later served as a real HTML
-// document by portal-agreement-view.cjs, from our own origin — so any
-// client-supplied text interpolated into it has to be escaped first. Mirrors
-// escapeHtml in netlify/functions/_email.cjs (that one is CJS, server-only).
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
+const CCC_PHONE = '970-644-0063';
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -31,47 +16,67 @@ function fileToBase64(file) {
   });
 }
 
-/** Server-side enrollment upload — bypasses brittle documents-bucket RLS. */
+function sanitizeDisclosurePresentationHtml(value) {
+  const withoutActivePresentation = String(value || '')
+    .replace(/<(style|script)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, '')
+    .replace(/<link\b[^>]*>/gi, '');
+  return withoutActivePresentation.replace(/<[^>]*>/g, (tag) => {
+    const match = tag.match(/^<\s*(\/?)\s*(h[1-6]|p|br|strong|em|ul|ol|li)\b[^>]*>$/i);
+    if (!match) return '';
+    const closing = match[1] === '/';
+    const name = match[2].toLowerCase();
+    if (name === 'br') return '<br>';
+    return `<${closing ? '/' : ''}${name}>`;
+  });
+}
+
 async function portalEnrollUpload(accessToken, { kind, dataBase64, contentType, fileName }) {
-  const res = await fetch('/.netlify/functions/portal-enroll-upload', {
+  const response = await fetch('/.netlify/functions/portal-enroll-upload', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({ kind, dataBase64, contentType, fileName }),
   });
-  let body = null;
-  try { body = await res.json(); } catch { /* ignore */ }
-  if (!res.ok) {
-    throw new Error((body && body.error) || `Upload failed (${res.status})`);
-  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || `Upload failed (${response.status})`);
+  return body;
+}
+
+async function portalAgreementRequest(accessToken, payload) {
+  const response = await fetch('/.netlify/functions/portal-service-agreement', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || `Agreement request failed (${response.status})`);
   return body;
 }
 
 export default function ClientSetupFlow({ session, onComplete, initialStep = 'password', requireOnboarding = true }) {
-  const [step, setStep] = useState(initialStep); // password | onboarding
+  const [step, setStep] = useState(initialStep);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
-  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const handleSetPassword = async () => {
-    if (password.length < 8) { toast.error('Password must be at least 8 characters.'); return; }
-    if (password !== confirm) { toast.error('Passwords do not match.'); return; }
+    if (password.length < 8) {
+      toast.error('Password must be at least 8 characters.');
+      return;
+    }
+    if (password !== confirm) {
+      toast.error('Passwords do not match.');
+      return;
+    }
     setLoading(true);
     const toastId = toast.loading('Setting up your account...');
     try {
       const { error } = await supabase.auth.updateUser({ password, data: { password_set: true } });
       if (error) throw error;
       toast.success('Password created securely!', { id: toastId });
-      if (requireOnboarding) {
-        setStep('onboarding');
-      } else {
-        onComplete();
-      }
-    } catch (e) {
-      toast.error(e.message || 'Could not set password', { id: toastId });
+      if (requireOnboarding) setStep('onboarding');
+      else onComplete();
+    } catch (error) {
+      toast.error(error.message || 'Could not set password', { id: toastId });
     } finally {
       setLoading(false);
     }
@@ -81,39 +86,21 @@ export default function ClientSetupFlow({ session, onComplete, initialStep = 'pa
     return (
       <div className="min-h-screen bg-gray-50/50 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] flex items-center justify-center p-6">
         <Toaster position="top-center" toastOptions={{ style: { fontSize: '13px', fontWeight: '500' } }} />
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}
-          className="w-full max-w-sm">
-          <div className="text-center mb-8">
-            <img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="CCC" 
-              className="w-16 h-16 object-cover rounded-2xl mx-auto mb-4 shadow-[0_0_20px_rgba(251,191,36,0.3)] border-2 border-amber-400" />
-            <h1 className="ccc-display text-2xl text-slate-900 font-bold mb-2">Welcome to Credit Comeback Club</h1>
-            <p className="text-sm text-gray-500 leading-relaxed">Create a password to secure your account and access your client portal.</p>
-          </div>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="w-full max-w-sm">
+          <BrandHeader title="Welcome to Credit Comeback Club" subtitle="Create a password to secure your account and access your client portal." />
           <div className="bg-white/80 backdrop-blur-xl border border-gray-100 shadow-xl shadow-slate-200/50 rounded-2xl p-8 space-y-5">
-            <div>
-              <label className="text-xs uppercase tracking-[0.08em] text-gray-500 font-bold block mb-1.5 flex items-center gap-1.5"><Lock size={14} /> New Password</label>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-                placeholder="At least 8 characters"
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white transition-all"
-                onKeyDown={(e) => e.key === 'Enter' && handleSetPassword()} />
-            </div>
-            <div>
-              <label className="text-xs uppercase tracking-[0.08em] text-gray-500 font-bold block mb-1.5 flex items-center gap-1.5"><Lock size={14} /> Confirm Password</label>
-              <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
-                placeholder="Repeat password"
-                className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white transition-all"
-                onKeyDown={(e) => e.key === 'Enter' && handleSetPassword()} />
-            </div>
-            <button onClick={handleSetPassword} disabled={loading}
+            <PasswordField label="New Password" value={password} onChange={setPassword} placeholder="At least 8 characters" onEnter={handleSetPassword} />
+            <PasswordField label="Confirm Password" value={confirm} onChange={setConfirm} placeholder="Repeat password" onEnter={handleSetPassword} />
+            <button
+              onClick={handleSetPassword} disabled={loading}
               className="w-full py-3.5 mt-2 text-xs font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-70"
-              style={{ backgroundColor: loading ? '#94a3b8' : '#0f172a', color: loading ? '#f1f5f9' : '#fbbf24' }}>
+              style={{ backgroundColor: loading ? '#94a3b8' : '#0f172a', color: loading ? '#f1f5f9' : '#fbbf24' }}
+            >
               {loading ? 'Setting up…' : 'Create Password'}
               {!loading && <ChevronRight size={16} strokeWidth={2.5} />}
             </button>
             <div className="pt-3 text-center">
-              <button onClick={() => supabase.auth.signOut()} 
-                className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors uppercase tracking-widest">
+              <button onClick={() => supabase.auth.signOut()} className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors uppercase tracking-widest">
                 Cancel & Sign Out
               </button>
             </div>
@@ -123,596 +110,288 @@ export default function ClientSetupFlow({ session, onComplete, initialStep = 'pa
     );
   }
 
-  if (step === 'onboarding') {
-    return <ClientOnboardingModal session={session} onComplete={onComplete} />;
-  }
-
+  if (step === 'onboarding') return <ClientOnboardingModal session={session} onComplete={onComplete} />;
   return null;
 }
 
 function ClientOnboardingModal({ session, onComplete }) {
   const [step, setStep] = useState(1);
+  const [agreement, setAgreement] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [loadingAgreement, setLoadingAgreement] = useState(true);
   const [idFile, setIdFile] = useState(null);
   const [addressFile, setAddressFile] = useState(null);
   const [signature, setSignature] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [agreedToTerms, setAgreedToTerms] = useState(false);
-  const [hasAudit, setHasAudit] = useState(false);
-  const [settings, setSettings] = useState(null);
-  const [billingTier, setBillingTier] = useState(null);
-  const [monitoringService, setMonitoringService] = useState('Privacy Guard');
-  const [serviceAgreement, setServiceAgreement] = useState({ mode: 'tier', feeText: null });
+  const [agreementAccepted, setAgreementAccepted] = useState(false);
+  const [cancellationAccepted, setCancellationAccepted] = useState(false);
+  const [disclosureOpened, setDisclosureOpened] = useState(false);
+  const [disclosureAccepted, setDisclosureAccepted] = useState(false);
+  const [electronicAccepted, setElectronicAccepted] = useState(false);
+  const [signedDocuments, setSignedDocuments] = useState(null);
   const canvasRef = React.useRef(null);
-  const isDrawing = React.useRef(false);
+  const drawingRef = React.useRef(false);
+  const inkRef = React.useRef(false);
+  const completionRef = React.useRef(false);
 
-  React.useEffect(() => {
-    async function loadData() {
-      try {
-        const s = await getSettings();
-        setSettings(s);
-
-        // Real fee schedule for the LPOA/agreement depends on which service
-        // tier this client was actually assigned (set separately in the
-        // Billing panel) — never a single flat number, since Standard/VIP/
-        // Paid In Full have genuinely different real fees.
-        const { data: cpRows } = await supabase.from('client_profiles').select('full_name,client_id').eq('user_id', session.user.id).limit(1);
-        const clientProfile = cpRows && cpRows[0];
-        if (clientProfile) {
-          const auditQuery = clientProfile.client_id
-            ? supabase.from('audits').select('id').eq('client_id', clientProfile.client_id).limit(1)
-            : supabase.from('audits').select('id').eq('client_name', clientProfile.full_name).limit(1);
-          const { data: auditRows, error: auditError } = await auditQuery;
-          if (!auditError && auditRows?.length) setHasAudit(true);
-
-          let clientRow = null;
-          const agreementSelect = 'billing_tier,monitoring_service,service_agreement_mode,service_agreement_fee_text';
-          const basicSelect = 'billing_tier,monitoring_service';
-          const byId = !!clientProfile.client_id;
-          let clientRes = byId
-            ? await supabase.from('clients').select(agreementSelect).eq('id', clientProfile.client_id).limit(1)
-            : await supabase.from('clients').select(agreementSelect).eq('name', clientProfile.full_name).limit(1);
-          if (clientRes.error) {
-            clientRes = byId
-              ? await supabase.from('clients').select(basicSelect).eq('id', clientProfile.client_id).limit(1)
-              : await supabase.from('clients').select(basicSelect).eq('name', clientProfile.full_name).limit(1);
-          }
-          clientRow = clientRes.data && clientRes.data[0];
-          if (clientRow) {
-            setBillingTier(clientRow.billing_tier || null);
-            setMonitoringService(clientRow.monitoring_service || 'Privacy Guard');
-            setServiceAgreement({
-              mode: clientRow.service_agreement_mode || 'tier',
-              feeText: clientRow.service_agreement_fee_text || null,
-            });
-          }
-        }
-      } catch (e) {
-        console.error('Failed to load onboarding data:', e);
+  const loadAgreement = React.useCallback(async () => {
+    setLoadingAgreement(true);
+    setLoadError(null);
+    try {
+      const body = await portalAgreementRequest(session.access_token, { action: 'load' });
+      if (body.completed) {
+        setStep(6);
+        return;
       }
+      if (!body.agreement?.signingAllowed) throw new Error(body.agreement?.blockedReason || 'Your agreement is not ready to sign yet.');
+      setAgreement(body.agreement);
+    } catch (error) {
+      setLoadError(error.message || 'Could not load your prepared Client Service Agreement.');
+    } finally {
+      setLoadingAgreement(false);
     }
-    loadData();
-  }, [session]);
+  }, [session.access_token]);
 
-  // Real fee-schedule text: custom service agreement wins; otherwise the
-  // assigned tier (or all three if staff hasn't set a tier yet).
-  const tierPricing = settings ? getTierPricing(settings) : null;
-  const feeScheduleLine = (() => {
-    const custom = resolveClientFeeText(
-      {
-        serviceAgreementMode: serviceAgreement.mode,
-        serviceAgreementFeeText: serviceAgreement.feeText,
-        billingTier,
-      },
-      settings,
-      { lpoaType: 'standard' }
-    );
-    if (serviceAgreement.mode === 'custom' && serviceAgreement.feeText) {
-      return custom;
-    }
-    if (tierPricing && billingTier && tierPricing[billingTier]) {
-      return `${billingTier} Plan: ${describeTierFee(billingTier, tierPricing)}`;
-    }
-    if (tierPricing) {
-      return Object.keys(tierPricing).map((t) => `${t}: ${describeTierFee(t, tierPricing)}`).join(' ');
-    }
-    return '';
-  })();
-  const monitoringFeeAmount = settings?.pricing?.monitoringFee ?? 16;
+  React.useEffect(() => { loadAgreement(); }, [loadAgreement]);
 
-  const startDraw = (e) => {
-    isDrawing.current = true;
+  const canvasPoint = (event) => {
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
     const rect = canvas.getBoundingClientRect();
-    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
-    const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
+    const source = event.touches ? event.touches[0] : event;
+    return {
+      x: (source.clientX - rect.left) * (canvas.width / rect.width),
+      y: (source.clientY - rect.top) * (canvas.height / rect.height),
+    };
   };
 
-  const draw = (e) => {
-    if (!isDrawing.current) return;
-    e.preventDefault();
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
-    const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
-    ctx.lineTo(x, y);
-    ctx.strokeStyle = '#0f172a';
-    ctx.lineWidth = 2.5;
-    ctx.lineCap = 'round';
-    ctx.stroke();
+  const startDraw = (event) => {
+    drawingRef.current = true;
+    inkRef.current = false;
+    const context = canvasRef.current.getContext('2d');
+    const point = canvasPoint(event);
+    context.beginPath();
+    context.moveTo(point.x, point.y);
+  };
+
+  const draw = (event) => {
+    if (!drawingRef.current) return;
+    event.preventDefault();
+    const context = canvasRef.current.getContext('2d');
+    const point = canvasPoint(event);
+    context.lineTo(point.x, point.y);
+    context.strokeStyle = '#0f172a';
+    context.lineWidth = 2.5;
+    context.lineCap = 'round';
+    context.stroke();
+    inkRef.current = true;
   };
 
   const stopDraw = () => {
-    isDrawing.current = false;
-    const canvas = canvasRef.current;
-    if (canvas) setSignature(canvas.toDataURL('image/png'));
+    drawingRef.current = false;
+    if (inkRef.current && canvasRef.current) setSignature(canvasRef.current.toDataURL('image/png'));
   };
 
   const clearSignature = () => {
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    inkRef.current = false;
     setSignature(null);
   };
 
   const handleComplete = async () => {
-    if (!signature) {
-      toast.error('Please draw your signature in Step 3 before completing enrollment.');
-      setStep(3);
+    if (completionRef.current) return;
+    if (!agreement || !agreementAccepted || !cancellationAccepted || !disclosureAccepted || !electronicAccepted) {
+      toast.error('Review and accept all required documents before signing.');
       return;
     }
+    if (!idFile || !addressFile) {
+      toast.error('Government ID and proof of address are required.');
+      return;
+    }
+    if (!signature) {
+      toast.error('Draw your signature before completing enrollment.');
+      return;
+    }
+
+    completionRef.current = true;
     setLoading(true);
-    const toastId = toast.loading('Finalizing your enrollment...');
-    const userId = session.user.id;
-    const accessToken = session.access_token;
-
-    // Helper to label errors with the step that failed
-    const labeled = async (label, fn) => {
-      try { return await fn(); }
-      catch (e) { throw new Error(`${label}: ${e.message || e}`); }
-    };
-
+    const toastId = toast.loading('Signing and securing your enrollment packet...');
     try {
-      // Signature / ID / address / LPOA go through portal-enroll-upload so we
-      // don't depend on documents-bucket storage RLS from the browser session.
-      // The function returns firm/client ids used for the rest of enrollment.
-      const sigUpload = await labeled('Upload signature', () =>
-        portalEnrollUpload(accessToken, {
-          kind: 'signature',
-          dataBase64: signature,
-          contentType: 'image/png',
-          fileName: 'signature.png',
-        })
-      );
-
-      let docsClientId = sigUpload.clientId;
-      let docsOwnerUserId = sigUpload.firmUserId;
-
-      if (idFile) {
-        const idData = await fileToBase64(idFile);
-        await labeled('Upload ID', () =>
-          portalEnrollUpload(accessToken, {
-            kind: 'id',
-            dataBase64: idData,
-            contentType: idFile.type || 'image/jpeg',
-            fileName: idFile.name,
-          })
-        );
-      }
-      if (addressFile) {
-        const addrData = await fileToBase64(addressFile);
-        await labeled('Upload address doc', () =>
-          portalEnrollUpload(accessToken, {
-            kind: 'address',
-            dataBase64: addrData,
-            contentType: addressFile.type || 'image/jpeg',
-            fileName: addressFile.name,
-          })
-        );
+      const idUpload = await portalEnrollUpload(session.access_token, {
+        kind: 'id',
+        dataBase64: await fileToBase64(idFile),
+        contentType: idFile.type || 'application/octet-stream',
+        fileName: idFile.name,
+      });
+      const addressUpload = await portalEnrollUpload(session.access_token, {
+        kind: 'address',
+        dataBase64: await fileToBase64(addressFile),
+        contentType: addressFile.type || 'application/octet-stream',
+        fileName: addressFile.name,
+      });
+      if (!idUpload.clientId || idUpload.clientId !== addressUpload.clientId
+        || !idUpload.firmUserId || idUpload.firmUserId !== addressUpload.firmUserId) {
+        throw new Error('The required documents did not resolve to the same client record. Contact Credit Comeback Club.');
       }
 
-      if (!docsClientId || !docsOwnerUserId) {
-        throw new Error(
-          'Could not resolve your client record for enrollment documents. Contact Credit Comeback Club before finishing enrollment so your files are saved correctly.'
-        );
-      }
-
-      // The portal no longer has broad direct UPDATE access to profile/client
-      // rows. Completion is recorded by a server-side, client-bound endpoint.
-
-      const { data: cp } = await supabase.from('client_profiles').select('full_name').eq('user_id', userId).single();
-      const signedAt = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-      const clientFullName = (cp && cp.full_name) || session.user.email;
-      // Attorney signature is applied server-side in portal-enrollment-complete
-      // (service-role storage read). Calling loadAttorneySignatureDataUrl in the
-      // browser throws "Can't find variable" on Safari/iOS.
-      const attorneySignatureDataUrl = null;
-      const attorneySigImg = attorneySignatureDataUrl
-        ? '<img src="' + attorneySignatureDataUrl + '" style="max-height:56px;max-width:220px;" />'
-        : '<span style="font-size:14px;font-weight:bold;">Christopher Holland</span>';
-
-      // Embed the canvas signature data URL so the stored HTML is self-contained
-      // (signed URLs expire; public client-docs URLs are being retired).
-      const lpoaHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>'
-        + 'body{font-family:Arial,sans-serif;font-size:12px;line-height:1.6;margin:0;padding:40px;color:#000;}'
-        + '.header{background:#0f172a;color:#fbbf24;padding:20px 32px;margin:-40px -40px 32px;}'
-        + '.header h1{margin:0;font-size:20px;}'
-        + '.header p{margin:4px 0 0;font-size:11px;color:#fff;opacity:0.8;}'
-        + 'h2{font-size:12px;background:#0f172a;color:#fff;padding:6px 12px;margin:24px -12px 12px;}'
-        + 'ul{padding-left:20px;margin:8px 0;}'
-        + 'li{margin:4px 0;}'
-        + '.sig-block{margin-top:32px;padding-top:16px;border-top:1px solid #ddd;}'
-        + '.sig-row{display:flex;gap:40px;margin-top:16px;}'
-        + '.sig-col{flex:1;}'
-        + '.sig-line{border-bottom:1px solid #000;margin-bottom:4px;min-height:60px;display:flex;align-items:flex-end;}'
-        + '.sig-label{font-size:10px;color:#666;}'
-        + '.footer{margin-top:40px;padding-top:12px;border-top:1px solid #eee;font-size:10px;color:#999;text-align:center;}'
-        + '</style></head><body>'
-        + '<div class="header"><h1>Credit Comeback Club — Limited Power of Attorney</h1><p>Credit Dispute Authorization | Executed ' + signedAt + '</p></div>'
-        + '<h2>1. Parties</h2>'
-        + '<p>This Limited Power of Attorney is executed between <strong>' + escapeHtml(clientFullName) + '</strong> ("Principal") and Credit Comeback Club, a DBA of Christopher Holland, Grand Junction, CO, 970-644-0063 ("Attorney-in-Fact").</p>'
-        + '<h2>2. Grant of Authority</h2>'
-        + '<p>Principal authorizes Credit Comeback Club to act exclusively for credit dispute activities, including:</p>'
-        + '<ul><li>Prepare and submit dispute letters to data furnishers under 15 U.S.C. §1681s-2(b)</li>'
-        + '<li>Prepare and submit dispute letters to Equifax, Experian, and TransUnion under 15 U.S.C. §1681i</li>'
-        + '<li>Send certified mail on behalf of Principal for credit disputes</li>'
-        + '<li>Receive and respond to furnisher and bureau correspondence</li>'
-        + '<li>Submit CFPB, FTC, and state AG complaints for FCRA/FDCPA violations</li>'
-        + '<li>Review credit reports and sign correspondence as "By: Credit Comeback Club, Authorized Representative"</li></ul>'
-        + '<h2>3. Limitations</h2>'
-        + '<p>This authorization does NOT grant authority to make financial decisions, access financial accounts, dispute accurate information, create a new credit identity, or settle legal claims without explicit written consent.</p>'
-        + '<h2>4. Fee Structure</h2>'
-        + '<p>' + feeScheduleLine + ' Credit monitoring (' + monitoringService + '): approx. $' + monitoringFeeAmount + '/month (Principal responsibility).</p>'
-        + '<h2>5. No Guarantee</h2>'
-        + '<p>No specific outcome is guaranteed. Results vary by credit profile and creditor response.</p>'
-        + '<h2>6. Duration & Revocation</h2>'
-        + '<p>Effective until written revocation, dispute completion, or agreement termination. To revoke: email creditcomebackclub@gmail.com with subject "LPOA REVOCATION — [Your Name]."</p>'
-        + '<h2>7. ESIGN Disclosure</h2>'
-        + '<p>This document was executed electronically. The drawn signature below constitutes a legally binding electronic signature under the ESIGN Act (15 U.S.C. §7001). Execution timestamp, IP address, and user agent are recorded.</p>'
-        + '<div class="sig-block">'
-        + '<div class="sig-row">'
-        + '<div class="sig-col"><div class="sig-line"><img src="' + escapeHtml(signature) + '" style="max-height:56px;max-width:220px;" /></div><div class="sig-label">Principal Signature — ' + escapeHtml(clientFullName) + '</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
-        + '<div class="sig-col"><div class="sig-line">' + attorneySigImg + '</div><div class="sig-label">Christopher Holland — Attorney-in-Fact, Credit Comeback Club</div><div class="sig-label">Date: ' + signedAt + '</div></div>'
-        + '</div></div>'
-        + '<div class="footer">Credit Comeback Club | Grand Junction, CO | 970-644-0063 | creditcomebackclub.com | Executed under ESIGN Act 15 U.S.C. §7001</div>'
-        + '</body></html>';
-
-      // Hashed from the exact string about to be uploaded — lets anyone
-      // later confirm the stored document hasn't been altered since signing.
-      const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(lpoaHtml));
-      const documentHash = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
-
-      const documentPath = `${docsOwnerUserId}/${docsClientId}/lpoa/lpoa-signed.html`;
-      let lpoaUploaded = false;
-      try {
-        const lpoaBlob = new Blob([lpoaHtml], { type: 'text/html' });
-        const lpoaFile = new File([lpoaBlob], 'lpoa-signed.html', { type: 'text/html' });
-        const lpoaData = await fileToBase64(lpoaFile);
-        await labeled('Upload LPOA', () =>
-          portalEnrollUpload(accessToken, {
-            kind: 'lpoa',
-            dataBase64: lpoaData,
-            contentType: 'text/html',
-            fileName: 'lpoa-signed.html',
-          })
-        );
-        lpoaUploaded = true;
-      } catch (lpoaUploadErr) {
-        console.warn('LPOA upload failed (non-fatal):', lpoaUploadErr);
-      }
-
-      if (lpoaUploaded) {
-        await labeled('Save enrollment record', async () => {
-          const res = await fetch('/.netlify/functions/portal-enrollment-complete', {
-            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` }, body: '{}',
-          });
-          const out = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(out.error || 'Could not save portal enrollment.');
-        });
-      }
-
-      // Append-only audit trail entry (lpoa_audit_log) — captures a
-      // server-observed IP/user-agent this client-side flow can't produce
-      // itself, and unlike the update above, is never overwritten by a
-      // later re-sign. Best-effort: the signature is already recorded on
-      // the clients row by this point, so a logging failure here must not
-      // block onboarding completion.
-      try {
-        await fetch('/.netlify/functions/record-lpoa-audit', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            documentHash,
-            documentUrl: null,
-            storageBucket: DOCUMENTS_BUCKET,
-            storagePath: documentPath,
-            signerName: clientFullName,
-            lpoaType: 'standard',
-          }),
-        });
-      } catch (auditErr) {
-        console.warn('LPOA audit log entry failed (non-fatal):', auditErr);
-      }
-
-      // Staff alert — fire-and-forget; never blocks enrollment success UI
+      const completed = await portalAgreementRequest(session.access_token, {
+        action: 'sign',
+        agreementId: agreement.id,
+        templateVersion: agreement.templateVersion,
+        hashes: agreement.hashes,
+        acknowledgements: {
+          service_agreement: agreementAccepted,
+          consumer_rights_disclosure: disclosureAccepted,
+          cancellation_notices_received: cancellationAccepted,
+          electronic_records: electronicAccepted,
+        },
+        signatureData: signature,
+      });
+      setSignedDocuments(completed.documents || null);
       notifyStaff('onboarding_complete');
-
-      toast.success('Agreements signed securely!', { id: toastId });
-      setStep(5);
-    } catch (e) {
-      console.error('[Enrollment] handleComplete failed:', e);
-      toast.error(e.message || 'Could not complete setup', { id: toastId });
+      toast.success('Enrollment completed securely!', { id: toastId });
+      setStep(6);
+    } catch (error) {
+      console.error('[Enrollment] completion failed:', error);
+      toast.error(error.message || 'Could not complete setup', { id: toastId });
+    } finally {
+      completionRef.current = false;
       setLoading(false);
     }
   };
 
-  const steps = [
-    { title: 'Government ID', icon: <UserCheck size={16} /> },
-    { title: 'Proof of Address', icon: <FileText size={16} /> },
-    { title: 'Your Signature', icon: <PenTool size={16} /> },
-    { title: 'Review & Sign', icon: <Check size={16} /> },
-    { title: 'Success', icon: <Check size={16} /> }
-  ];
+  const steps = ['Agreement', 'Your Rights', 'Government ID', 'Proof of Address', 'Sign', 'Complete'];
+  if (loadingAgreement && step !== 6) return <EnrollmentStatus title="Loading your prepared agreement…" />;
+  if (loadError && step !== 6) {
+    return <EnrollmentStatus title="Enrollment is not ready" message={loadError} actionLabel="Try Again" onAction={loadAgreement} />;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50/50 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] flex items-center justify-center p-6">
       <Toaster position="top-center" toastOptions={{ style: { fontSize: '13px', fontWeight: '500' } }} />
-      <div className="w-full max-w-2xl">
-        <div className="text-center mb-8">
-          <img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="CCC" 
-            className="w-16 h-16 object-cover rounded-2xl mx-auto mb-4 shadow-[0_0_20px_rgba(251,191,36,0.3)] border-2 border-amber-400" />
-          <h1 className="ccc-display text-2xl text-slate-900 font-bold mb-2">Complete Your Enrollment</h1>
-          <p className="text-sm text-gray-500 font-medium">Step {step} of 4 — {steps[step - 1].title}</p>
-        </div>
+      <div className="w-full max-w-3xl">
+        <BrandHeader
+          title="Complete Your Enrollment"
+          subtitle={step === 6 ? 'Enrollment complete' : `Step ${step} of 5 — ${steps[step - 1]}`}
+        />
+        <p className="text-xs text-gray-400 -mt-6 mb-6 text-center">Credit Comeback Club · {CCC_PHONE}</p>
 
-        {/* Progress bar */}
-        <div className="flex gap-2 mb-8 px-4 max-w-lg mx-auto">
-          {steps.map((s, i) => (
-            <div key={i} className="flex-1">
-              <div className={`h-2 rounded-full transition-all duration-300 ${i + 1 <= step ? 'bg-slate-900' : 'bg-gray-200'}`} />
-              <div className={`text-[9px] uppercase tracking-wider font-bold mt-2 text-center transition-colors duration-300 ${i + 1 === step ? 'text-slate-900' : 'text-gray-400'}`}>
-                {s.title}
-              </div>
+        <div className="flex gap-2 mb-8 px-4 max-w-2xl mx-auto">
+          {steps.map((title, index) => (
+            <div key={title} className="flex-1">
+              <div className={`h-2 rounded-full transition-all duration-300 ${index + 1 <= step ? 'bg-slate-900' : 'bg-gray-200'}`} />
+              <div className={`text-[9px] uppercase tracking-wider font-bold mt-2 text-center ${index + 1 === step ? 'text-slate-900' : 'text-gray-400'}`}>{title}</div>
             </div>
           ))}
         </div>
 
-        <div className="bg-white/80 backdrop-blur-xl border border-gray-100 shadow-xl shadow-slate-200/50 rounded-2xl p-8 relative overflow-hidden">
+        <div className="bg-white/90 backdrop-blur-xl border border-gray-100 shadow-xl shadow-slate-200/50 rounded-2xl p-8 relative overflow-hidden">
           <AnimatePresence mode="wait">
-            <motion.div
-              key={step}
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.3 }}
-            >
-              {/* Step 1 */}
+            <motion.div key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.3 }}>
               {step === 1 && (
-                <div className="space-y-6">
-                  <div className="text-center">
-                    <h2 className="text-lg font-bold text-slate-900 mb-2">Upload Government ID</h2>
-                    <p className="text-sm text-gray-500 leading-relaxed max-w-sm mx-auto">Driver's license, passport, or state ID. Used to verify your identity on dispute letters sent to bureaus.</p>
-                  </div>
-                  <label className="block border-2 border-dashed border-gray-300 bg-gray-50/50 rounded-xl p-10 text-center cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
-                    {idFile ? (
-                      <div className="text-sm text-green-600 font-bold flex items-center justify-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center"><Check size={16} /></div>
-                        {idFile.name}
-                      </div>
-                    ) : (
-                      <>
-                        <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-sm border border-gray-100"><UserCheck size={20} className="text-amber-500" /></div>
-                        <div className="text-sm font-semibold text-slate-900">Click to browse or drop file here</div>
-                        <div className="text-xs text-gray-400 mt-2">Accepts JPG, PNG, or PDF</div>
-                      </>
-                    )}
-                    <input type="file" accept=".jpg,.jpeg,.png,.pdf" className="hidden"
-                      onChange={(e) => e.target.files[0] && setIdFile(e.target.files[0])} />
-                  </label>
-                  <div className="flex flex-col gap-3 pt-2">
-                    <button onClick={() => setStep(2)} disabled={!idFile}
-                      className="w-full py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-md disabled:opacity-50 disabled:shadow-none"
-                      style={{ backgroundColor: idFile ? '#0f172a' : '#cbd5e1', color: idFile ? '#fbbf24' : '#64748b' }}>
-                      Continue to Step 2
-                    </button>
-                    <button onClick={() => setStep(2)} className="w-full text-xs font-semibold text-gray-400 hover:text-slate-900 uppercase tracking-wider py-2 transition-colors">
-                      Skip for now
-                    </button>
-                  </div>
-                </div>
+                <WizardSection title={`Review Your ${agreement?.title || 'Client Service Agreement'}`} description={`Prepared for ${agreement?.clientName || 'you'} using the plan selected by Credit Comeback Club.`}>
+                  <PlanSummary plan={agreement?.plan} />
+                  <AgreementDocument title="Client Service Agreement" html={agreement?.serviceAgreementHtml} height={430} />
+                  {agreement?.cancellationNoticeHtml && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+                      <strong>Notice of Cancellation:</strong> Two completed copies of the notice shown in this agreement packet will be retained with your signed documents. Your exact cancellation deadline is calculated when you sign.
+                    </div>
+                  )}
+                  <Acknowledgement checked={agreementAccepted} onChange={setAgreementAccepted}>
+                    I have read and agree to this exact Client Service Agreement, selected plan, fee terms, and cancellation terms.
+                  </Acknowledgement>
+                  <Acknowledgement checked={cancellationAccepted} onChange={setCancellationAccepted}>
+                    I acknowledge that my completed packet will provide two copies of the Notice of Cancellation and state my exact cancellation deadline.
+                  </Acknowledgement>
+                  <NextButton disabled={!agreementAccepted || !cancellationAccepted} onClick={() => setStep(2)}>Continue to Consumer Rights</NextButton>
+                </WizardSection>
               )}
 
-              {/* Step 2 */}
               {step === 2 && (
-                <div className="space-y-6">
-                  <div className="text-center">
-                    <h2 className="text-lg font-bold text-slate-900 mb-2">Upload Proof of Address</h2>
-                    <p className="text-sm text-gray-500 leading-relaxed max-w-sm mx-auto">Utility bill, bank statement, or lease agreement dated within the last 90 days.</p>
-                  </div>
-                  <label className="block border-2 border-dashed border-gray-300 bg-gray-50/50 rounded-xl p-10 text-center cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
-                    {addressFile ? (
-                      <div className="text-sm text-green-600 font-bold flex items-center justify-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center"><Check size={16} /></div>
-                        {addressFile.name}
-                      </div>
-                    ) : (
-                      <>
-                        <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-sm border border-gray-100"><FileText size={20} className="text-amber-500" /></div>
-                        <div className="text-sm font-semibold text-slate-900">Click to browse or drop file here</div>
-                        <div className="text-xs text-gray-400 mt-2">Accepts JPG, PNG, or PDF</div>
-                      </>
-                    )}
-                    <input type="file" accept=".jpg,.jpeg,.png,.pdf" className="hidden"
-                      onChange={(e) => e.target.files[0] && setAddressFile(e.target.files[0])} />
-                  </label>
-                  <div className="flex gap-3 pt-2">
-                    <button onClick={() => setStep(1)} className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-slate-900 transition-colors">
-                      Back
+                <WizardSection title="Consumer Credit File Rights" description="This disclosure is provided separately from your Client Service Agreement.">
+                  {!disclosureOpened ? (
+                    <button onClick={() => setDisclosureOpened(true)} className="w-full rounded-xl border-2 border-slate-900 bg-slate-50 p-6 text-sm font-bold text-slate-900 hover:bg-slate-100">
+                      Open Separate Consumer Rights Disclosure
                     </button>
-                    <button onClick={() => setStep(3)} disabled={!addressFile}
-                      className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-md disabled:opacity-50 disabled:shadow-none"
-                      style={{ backgroundColor: addressFile ? '#0f172a' : '#cbd5e1', color: addressFile ? '#fbbf24' : '#64748b' }}>
-                      Continue
-                    </button>
-                  </div>
-                  <button onClick={() => setStep(3)} className="w-full text-xs font-semibold text-gray-400 hover:text-slate-900 uppercase tracking-wider py-2 transition-colors">
-                    Skip for now
-                  </button>
-                </div>
+                  ) : (
+                    <AgreementDocument title={agreement?.consumerDisclosureTitle || 'Consumer Rights Disclosure'} html={agreement?.consumerDisclosureHtml} height={430} disclosure />
+                  )}
+                  <Acknowledgement checked={disclosureAccepted} onChange={setDisclosureAccepted} disabled={!disclosureOpened}>
+                    I acknowledge that I opened and received this separate Consumer Credit File Rights disclosure before signing the Client Service Agreement.
+                  </Acknowledgement>
+                  <WizardButtons back={() => setStep(1)} next={() => setStep(3)} nextDisabled={!disclosureOpened || !disclosureAccepted} />
+                </WizardSection>
               )}
 
-              {/* Step 3 */}
               {step === 3 && (
-                <div className="space-y-6">
-                  <div className="text-center">
-                    <h2 className="text-lg font-bold text-slate-900 mb-2">Draw Your Signature</h2>
-                    <p className="text-sm text-gray-500 leading-relaxed max-w-sm mx-auto">This signature will securely authorize dispute letters sent on your behalf.</p>
+                <WizardSection title="Upload Government ID" description="Driver’s license, passport, or state ID. This required document verifies your identity for your account work.">
+                  <FilePicker file={idFile} onFile={setIdFile} icon={<UserCheck size={20} className="text-amber-500" />} />
+                  <WizardButtons back={() => setStep(2)} next={() => setStep(4)} nextDisabled={!idFile} />
+                </WizardSection>
+              )}
+
+              {step === 4 && (
+                <WizardSection title="Upload Proof of Address" description="Upload a current utility bill, bank statement, lease agreement, or other proof of your present address. This document is required.">
+                  <FilePicker file={addressFile} onFile={setAddressFile} icon={<FileText size={20} className="text-amber-500" />} />
+                  <WizardButtons back={() => setStep(3)} next={() => setStep(5)} nextDisabled={!addressFile} />
+                </WizardSection>
+              )}
+
+              {step === 5 && (
+                <WizardSection title="Sign and Complete" description={`Your signature applies to the exact prepared agreement and separate disclosure shown above for ${agreement?.clientName || 'you'}.`}>
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+                    <DocumentRow title="Client Service Agreement" detail={`${agreement?.templateVersion} · ${agreement?.plan?.label || 'Selected plan'}`} />
+                    <DocumentRow title="Consumer Rights Disclosure" detail="Opened and acknowledged separately" ok={disclosureAccepted} />
+                    <DocumentRow title="Government ID" detail={idFile?.name || 'Required'} ok={Boolean(idFile)} />
+                    <DocumentRow title="Proof of Address" detail={addressFile?.name || 'Required'} ok={Boolean(addressFile)} />
                   </div>
                   <div className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-inner">
-                    <canvas ref={canvasRef} width={600} height={180}
+                    <canvas
+                      ref={canvasRef} width={600} height={180}
                       className="block w-full touch-none cursor-crosshair bg-[url('https://www.transparenttextures.com/patterns/graphy.png')]"
                       onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw}
-                      onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw} />
+                      onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw}
+                    />
                     <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
-                      <span className="text-[10px] text-gray-400 uppercase tracking-[0.1em] font-bold">Sign above the line</span>
-                      <button onClick={clearSignature} className="text-[10px] font-bold text-red-500 hover:text-red-700 uppercase tracking-[0.1em] bg-red-50 px-3 py-1.5 rounded-md transition-colors">Clear</button>
+                      <span className="text-[10px] text-gray-400 uppercase tracking-[0.1em] font-bold">Draw your signature above</span>
+                      <button onClick={clearSignature} className="text-[10px] font-bold text-red-500 hover:text-red-700 uppercase tracking-[0.1em] bg-red-50 px-3 py-1.5 rounded-md">Clear</button>
                     </div>
                   </div>
+                  <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-950">
+                    You may cancel this contract without penalty or obligation at any time before midnight of the third business day after the date you sign it. Your completed packet includes two copies of the Notice of Cancellation.
+                  </div>
+                  <Acknowledgement checked={electronicAccepted} onChange={setElectronicAccepted}>
+                    I consent to electronic records and signatures and understand that this drawn signature is applied to the documents identified above.
+                  </Acknowledgement>
                   <div className="flex gap-3 pt-2">
-                    <button onClick={() => setStep(2)} className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-slate-900 transition-colors">
-                      Back
-                    </button>
-                    <button onClick={() => setStep(4)} disabled={!signature}
-                      className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-md disabled:opacity-50 disabled:shadow-none"
-                      style={{ backgroundColor: signature ? '#0f172a' : '#cbd5e1', color: signature ? '#fbbf24' : '#64748b' }}>
-                      Continue
+                    <button onClick={() => setStep(4)} disabled={loading} className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-60">Back</button>
+                    <button
+                      onClick={handleComplete}
+                      disabled={loading || !signature || !electronicAccepted || !agreementAccepted || !cancellationAccepted || !disclosureAccepted || !idFile || !addressFile}
+                      className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl shadow-md flex items-center justify-center gap-2 disabled:opacity-60"
+                      style={{ backgroundColor: '#0f172a', color: '#fbbf24' }}
+                    >
+                      {loading ? 'Securing…' : 'Sign & Complete'}
+                      {!loading && <PenTool size={16} />}
                     </button>
                   </div>
-                </div>
+                </WizardSection>
               )}
 
-              {/* Step 4 */}
-              {step === 4 && (
-                <div className="space-y-6">
-                  <div className="text-center">
-                    <h2 className="text-lg font-bold text-slate-900 mb-2">Review & Complete</h2>
-                    <p className="text-sm text-gray-500 leading-relaxed mx-auto">By completing enrollment, you authorize Credit Comeback Club to dispute information on your behalf.</p>
-                  </div>
-                  
-                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${idFile ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>
-                        {idFile ? <Check size={16} strokeWidth={2.5} /> : <div className="w-2 h-2 bg-amber-600 rounded-full" />}
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-slate-900 uppercase tracking-wider">Government ID</div>
-                        <div className="text-xs text-gray-500">{idFile ? idFile.name : 'Not uploaded (Will need later)'}</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${addressFile ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-600'}`}>
-                        {addressFile ? <Check size={16} strokeWidth={2.5} /> : <div className="w-2 h-2 bg-amber-600 rounded-full" />}
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-slate-900 uppercase tracking-wider">Proof of Address</div>
-                        <div className="text-xs text-gray-500">{addressFile ? addressFile.name : 'Not uploaded (Will need later)'}</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${signature ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                        {signature ? <Check size={16} strokeWidth={2.5} /> : <div className="text-red-600 font-bold">!</div>}
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-slate-900 uppercase tracking-wider">Signature</div>
-                        <div className="text-xs text-gray-500">{signature ? 'Drawn securely' : 'Required to proceed'}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
-                    <div className="bg-slate-900 px-4 py-3 flex items-center gap-2">
-                      <FileText size={16} className="text-amber-400" />
-                      <span className="text-xs uppercase tracking-[0.1em] text-amber-400 font-bold">Client Service Agreement</span>
-                    </div>
-                    <div className="p-5 max-h-48 overflow-y-auto text-xs text-gray-600 space-y-3 custom-scrollbar">
-                      <p><strong className="text-slate-900">Services:</strong> Credit Comeback Club ("CCC") will analyze your Equifax, Experian, and TransUnion reports, identify inaccurate or unverifiable items, and prepare/submit direct furnisher dispute letters on your behalf.</p>
-                      <p><strong className="text-slate-900">Fee Schedule:</strong></p>
-                      <ul className="pl-4 space-y-1 text-gray-500">
-                        <li>• {feeScheduleLine}</li>
-                        <li>• <strong className="text-slate-700">Credit Monitoring ({monitoringService}):</strong> approx. ${monitoringFeeAmount}/mo (Maintained directly by client).</li>
-                      </ul>
-                      <p><strong className="text-slate-900">Billing:</strong> First Work Fee is due at enrollment before dispute work commences. Monthly fees are billed in advance on the anniversary of enrollment.</p>
-                      <p><strong className="text-slate-900">No Guarantee:</strong> CCC makes no guarantee of specific outcomes. Results depend on individual credit profiles and creditor responses.</p>
-                      <p><strong className="text-slate-900">Prohibited Practices:</strong> CCC does not provide legal advice, dispute accurate/verifiable information, or create new credit identities.</p>
-                      <p><strong className="text-slate-900">CROA Compliance & Cancellation:</strong> This agreement complies with the Credit Repair Organizations Act. No advance fees are charged for work not yet performed. You have the right to cancel without penalty within 3 business days of signing.</p>
-                      <p><strong className="text-slate-900">Contact:</strong> info@creditcomebackclub.com | 480-913-9172 | Grand Junction, CO 81501</p>
-                    </div>
-                  </div>
-
-                  <label className="flex items-start gap-3 cursor-pointer p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-amber-50/50 hover:border-amber-200 transition-colors">
-                    <input type="checkbox" checked={agreedToTerms} onChange={(e) => setAgreedToTerms(e.target.checked)}
-                      className="mt-1 w-4 h-4 rounded border-gray-300 text-amber-500 focus:ring-amber-400" />
-                    <span className="text-xs text-gray-600 leading-relaxed">
-                      I have read and agree to the <strong className="text-slate-900">Client Service Agreement</strong> above. I have also received and reviewed the <a href="/croa-statement.html" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-semibold">Statement of Consumer Rights Under the Credit Repair Organizations Act</a>. I authorize Credit Comeback Club to dispute credit information on my behalf per the Limited Power of Attorney. I understand my electronic signature is legally binding under the ESIGN Act (15 U.S.C. §7001).
-                    </span>
-                  </label>
-
-                  <div className="flex gap-3 pt-4">
-                    <button onClick={() => setStep(3)} className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-slate-900 transition-colors">
-                      Back
-                    </button>
-                    <button onClick={handleComplete} disabled={loading || !agreedToTerms}
-                      className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-70 disabled:shadow-none"
-                      style={{ backgroundColor: (loading || !agreedToTerms) ? '#94a3b8' : '#0f172a', color: (loading || !agreedToTerms) ? '#f1f5f9' : '#fbbf24' }}>
-                      {loading ? 'Saving…' : 'Complete Enrollment'}
-                      {!loading && <Check size={16} strokeWidth={2.5} />}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Step 5 - Success */}
-              {step === 5 && (
+              {step === 6 && (
                 <div className="space-y-6 text-center">
-                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2 text-green-600">
-                    <Check size={32} strokeWidth={3} />
-                  </div>
+                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto text-green-600"><Check size={32} strokeWidth={3} /></div>
                   <h2 className="text-xl font-bold text-slate-900">Enrollment Complete!</h2>
-                  
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-left max-w-sm mx-auto shadow-sm">
-                    {hasAudit ? (
-                      <>
-                        <h3 className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center gap-2">
-                          <span className="bg-amber-200 text-amber-900 w-5 h-5 rounded-full flex items-center justify-center text-[10px]">1</span>
-                          Audit Complete
-                        </h3>
-                        <p className="text-sm text-amber-900/80 leading-relaxed">
-                          Your initial forensic audit has already been completed! Please log into the client portal now to view your full results, negative accounts identified, and dispute tracking.
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <h3 className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center gap-2">
-                          <span className="bg-amber-200 text-amber-900 w-5 h-5 rounded-full flex items-center justify-center text-[10px]">1</span>
-                          Next Step: Your Credit Report
-                        </h3>
-                        <p className="text-sm text-amber-900/80 leading-relaxed">
-                          To begin your forensic audit, we need your credit report. Please log into the client portal now to upload your initial 3-bureau report or provide your SmartCredit credentials so we can pull it for you.
-                        </p>
-                      </>
-                    )}
-                  </div>
-
-                  <button onClick={() => onComplete({ signatureUrl: signature })}
-                    className="w-full py-4 mt-4 text-sm font-bold uppercase tracking-[0.08em] rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 bg-slate-900 text-amber-400 hover:bg-slate-800">
-                    {hasAudit ? 'Enter Client Portal' : 'Go to Portal to Upload Report'}
-                    <ChevronRight size={18} strokeWidth={2.5} />
+                  <p className="text-sm text-gray-600 leading-relaxed max-w-md mx-auto">Your signed Client Service Agreement, separate Consumer Rights disclosure, two-copy Notice of Cancellation, government ID, and proof of address were secured with your client record.</p>
+                  {signedDocuments && (
+                    <div className="grid gap-2 sm:grid-cols-3 text-left">
+                      <DocumentDownload document={signedDocuments.agreement} label="Agreement" />
+                      <DocumentDownload document={signedDocuments.disclosure} label="Consumer Rights" />
+                      <DocumentDownload document={signedDocuments.cancellation} label="Cancellation (2 copies)" />
+                    </div>
+                  )}
+                  <button onClick={() => onComplete({ agreementSigned: true, documentsUploaded: true })} className="w-full py-4 text-sm font-bold uppercase tracking-[0.08em] rounded-xl shadow-lg flex items-center justify-center gap-2 bg-slate-900 text-amber-400 hover:bg-slate-800">
+                    Enter Client Portal <ChevronRight size={18} strokeWidth={2.5} />
                   </button>
                 </div>
               )}
@@ -721,5 +400,134 @@ function ClientOnboardingModal({ session, onComplete }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function BrandHeader({ title, subtitle }) {
+  return (
+    <div className="text-center mb-8">
+      <img src="https://files.manuscdn.com/user_upload_by_module/session_file/104892940/PtGXuDEKgTJkOdRf.jpg" alt="CCC" className="w-16 h-16 object-cover rounded-2xl mx-auto mb-4 shadow-[0_0_20px_rgba(251,191,36,0.3)] border-2 border-amber-400" />
+      <h1 className="ccc-display text-2xl text-slate-900 font-bold mb-2">{title}</h1>
+      <p className="text-sm text-gray-500 leading-relaxed">{subtitle}</p>
+    </div>
+  );
+}
+
+function PasswordField({ label, value, onChange, placeholder, onEnter }) {
+  return (
+    <div>
+      <label className="text-xs uppercase tracking-[0.08em] text-gray-500 font-bold mb-1.5 flex items-center gap-1.5"><Lock size={14} /> {label}</label>
+      <input type="password" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white transition-all" onKeyDown={(event) => event.key === 'Enter' && onEnter()} />
+    </div>
+  );
+}
+
+function EnrollmentStatus({ title, message, actionLabel, onAction }) {
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="w-full max-w-md bg-white border border-gray-200 rounded-2xl p-8 text-center shadow-xl">
+        <ShieldCheck size={34} className="mx-auto mb-4 text-slate-700" />
+        <h1 className="text-xl font-bold text-slate-900 mb-2">{title}</h1>
+        {message && <p className="text-sm text-gray-600 leading-relaxed mb-5">{message}</p>}
+        {onAction && <button onClick={onAction} className="px-5 py-3 rounded-xl bg-slate-900 text-amber-400 text-xs font-bold uppercase tracking-wider">{actionLabel}</button>}
+        <p className="text-xs text-gray-400 mt-5">Credit Comeback Club · {CCC_PHONE}</p>
+      </div>
+    </div>
+  );
+}
+
+function WizardSection({ title, description, children }) {
+  return (
+    <div className="space-y-6">
+      <div className="text-center">
+        <h2 className="text-lg font-bold text-slate-900 mb-2">{title}</h2>
+        <p className="text-sm text-gray-500 leading-relaxed max-w-xl mx-auto">{description}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function PlanSummary({ plan }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 grid gap-3 sm:grid-cols-3 text-sm">
+      <div><div className="text-[10px] uppercase tracking-wider font-bold text-gray-500">Selected plan</div><div className="font-bold text-slate-900">{plan?.label || '—'}</div></div>
+      <div><div className="text-[10px] uppercase tracking-wider font-bold text-gray-500">Service term</div><div className="font-medium text-slate-800">{plan?.serviceTerm || '—'}</div></div>
+      <div><div className="text-[10px] uppercase tracking-wider font-bold text-gray-500">Exact fee snapshot</div><div className="font-medium text-slate-800">{plan?.feeText || '—'}</div></div>
+    </div>
+  );
+}
+
+function AgreementDocument({ title, html, height = 400, disclosure = false }) {
+  const rawHtml = String(html || '');
+  const documentHtml = disclosure
+    ? `<div class="ccc-statutory-disclosure">${sanitizeDisclosurePresentationHtml(rawHtml)}</div>`
+    : rawHtml;
+  const disclosureStyle = disclosure
+    ? '.ccc-statutory-disclosure,.ccc-statutory-disclosure *{font-size:14px!important;font-weight:700!important}'
+    : '';
+  const source = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#1f2937;font-size:13px;line-height:1.6;margin:0;padding:20px}h1,h2,h3{color:#0f172a}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:7px;text-align:left}${disclosureStyle}</style></head><body>${documentHtml}</body></html>`;
+  return <iframe title={title} sandbox="" srcDoc={source} className="w-full rounded-xl border border-gray-200 bg-white" style={{ height }} />;
+}
+
+function Acknowledgement({ checked, onChange, disabled = false, children }) {
+  return (
+    <label className={`flex items-start gap-3 p-4 rounded-xl border transition-colors ${disabled ? 'cursor-not-allowed border-gray-200 bg-gray-100 opacity-60' : 'cursor-pointer border-gray-200 bg-gray-50 hover:border-amber-200 hover:bg-amber-50/50'}`}>
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} disabled={disabled} className="mt-1 w-4 h-4 rounded border-gray-300 text-amber-500 focus:ring-amber-400" />
+      <span className="text-xs text-gray-700 leading-relaxed">{children}</span>
+    </label>
+  );
+}
+
+function NextButton({ disabled, onClick, children }) {
+  return (
+    <button onClick={onClick} disabled={disabled} className="w-full py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl shadow-md disabled:opacity-50 disabled:shadow-none" style={{ backgroundColor: disabled ? '#cbd5e1' : '#0f172a', color: disabled ? '#64748b' : '#fbbf24' }}>
+      {children}
+    </button>
+  );
+}
+
+function WizardButtons({ back, next, nextDisabled }) {
+  return (
+    <div className="flex gap-3 pt-2">
+      <button onClick={back} className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50">Back</button>
+      <button onClick={next} disabled={nextDisabled} className="flex-1 py-3.5 text-xs font-bold uppercase tracking-[0.08em] rounded-xl shadow-md disabled:opacity-50" style={{ backgroundColor: nextDisabled ? '#cbd5e1' : '#0f172a', color: nextDisabled ? '#64748b' : '#fbbf24' }}>Continue</button>
+    </div>
+  );
+}
+
+function FilePicker({ file, onFile, icon }) {
+  return (
+    <label className="block border-2 border-dashed border-gray-300 bg-gray-50/50 rounded-xl p-10 text-center cursor-pointer hover:border-amber-400 hover:bg-amber-50/20 transition-all">
+      {file ? (
+        <div className="text-sm text-green-600 font-bold flex items-center justify-center gap-2"><div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center"><Check size={16} /></div>{file.name}</div>
+      ) : (
+        <><div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-sm border border-gray-100">{icon}</div><div className="text-sm font-semibold text-slate-900">Click to browse or drop file here</div><div className="text-xs text-gray-400 mt-2">Required · JPG, PNG, WebP, or PDF · max 4 MB</div></>
+      )}
+      <input type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" className="hidden" onChange={(event) => event.target.files[0] && onFile(event.target.files[0])} />
+    </label>
+  );
+}
+
+function DocumentRow({ title, detail, ok = true }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${ok ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>{ok ? <Check size={16} strokeWidth={2.5} /> : <span className="font-bold">!</span>}</div>
+      <div><div className="text-xs font-bold text-slate-900 uppercase tracking-wider">{title}</div><div className="text-xs text-gray-500">{detail}</div></div>
+    </div>
+  );
+}
+
+function DocumentDownload({ document, label }) {
+  if (!document?.dataBase64 || !document?.contentType || !document?.fileName) return null;
+  return (
+    <a
+      href={`data:${document.contentType};base64,${document.dataBase64}`}
+      download={document.fileName}
+      className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-bold text-slate-800 hover:border-amber-300 hover:bg-amber-50"
+    >
+      <FileText size={16} className="mb-2 text-amber-600" />
+      Download {label}
+    </a>
   );
 }

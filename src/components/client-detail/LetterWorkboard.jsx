@@ -91,7 +91,7 @@ export default function LetterWorkboard({
           <div className="flex items-end justify-between gap-3 mb-2">
             <div>
               <h2 className="text-[11px] uppercase tracking-[0.14em] font-semibold" style={{ color: T.navy }}>Active account rounds</h2>
-              <p className="text-[10.5px] mt-0.5" style={{ color: T.muted }}>Open, regenerate, review, and mail current drafts here.</p>
+              <p className="text-[10.5px] mt-0.5" style={{ color: T.muted }}>Review current CCC letters and their mailing history here.</p>
             </div>
             <span className="text-[10px] px-2 py-1 rounded-full" style={{ color: T.navy, background: '#F5F7FA', border: '1px solid ' + T.border }}>
               {openRoundCards.length} open
@@ -117,14 +117,20 @@ export default function LetterWorkboard({
                     Round {round.round_number} · {round.target_type === 'bureau' ? `Credit Bureau${round.target_bureaus?.length ? ` · ${round.target_bureaus.map((bureau) => BUREAU_LABEL[bureau] || bureau).join(', ')}` : ''}` : 'Direct Furnisher'}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onStartRound?.(representative)}
-                  className="shrink-0 text-[10px] uppercase tracking-wider font-semibold px-3 py-2 rounded-lg transition-colors hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-300"
-                  style={{ color: T.navy, background: '#FFFBEB', border: '1px solid ' + T.gold }}
-                >
-                  {actionLabel}
-                </button>
+                {onStartRound ? (
+                  <button
+                    type="button"
+                    onClick={() => onStartRound(representative)}
+                    className="shrink-0 text-[10px] uppercase tracking-wider font-semibold px-3 py-2 rounded-lg transition-colors hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                    style={{ color: T.navy, background: '#FFFBEB', border: '1px solid ' + T.gold }}
+                  >
+                    {actionLabel}
+                  </button>
+                ) : (
+                  <span className="shrink-0 text-[9px] uppercase tracking-wider font-semibold" style={{ color: T.faint }}>
+                    Read only
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -140,7 +146,7 @@ export default function LetterWorkboard({
 
       {letters.length === 0 ? (
         <p className="text-[12.5px] text-center py-10 rounded-2xl" style={{ color: T.muted, border: '1px solid ' + T.border, background: '#fff' }}>
-          No letters yet — run an audit to generate Phase 1 letters.
+          No current CCC letters yet — confirm the audit classification, then prepare the approved R1 template route.
         </p>
       ) : filtered.length === 0 ? (
         <p className="text-[12.5px] text-center py-10 rounded-2xl" style={{ color: T.muted, border: '1px solid ' + T.border, background: '#fff' }}>
@@ -202,7 +208,7 @@ export default function LetterWorkboard({
                     </span>
                   );
                 })}
-                {mayStart && <button type="button" onClick={() => onStartRound?.(startLetter)} className="text-[10px] uppercase tracking-wider font-medium ml-auto" style={{ color: T.navy }}>Start next round</button>}
+                {mayStart && onStartRound && <button type="button" onClick={() => onStartRound(startLetter)} className="text-[10px] uppercase tracking-wider font-medium ml-auto" style={{ color: T.navy }}>Start next round</button>}
               </div>
             )}
             <div className="px-4 py-1">

@@ -2,18 +2,25 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Archive, CopyPlus, FilePlus2, Loader2, Save, Sparkles } from 'lucide-react';
 import { FLOW_LABELS, FLOW_LETTER_ROUNDS, FLOW_SEQUENCES, flowRoundLabel } from '../utils/disputeFlow.js';
 import {
-  TEMPLATE_FIELD_GROUPS,
   extractTemplateTokens,
   normalizeCourseStyleTemplate,
+  templateFieldGroupsForFlow,
+  validateTemplateTokenContract,
 } from '../utils/disputeTemplateEngine.js';
 import {
   listDisputeTemplates,
   retireDisputeTemplate,
   saveDisputeTemplate,
 } from '../utils/disputeTemplates.js';
+import {
+  DISPUTE_SCREENSHOT_POLICIES,
+  disputeScreenshotPolicyDetails,
+} from '../utils/disputeScreenshots.js';
 import { dateAfterDays, nextTemplateVersionLabel } from '../utils/disputeTemplateSelection.js';
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
+const SCREENSHOT_POLICY_OPTIONS = Object.entries(DISPUTE_SCREENSHOT_POLICIES)
+  .filter(([code]) => code !== 'legacy_template_token');
 
 const blankTemplate = () => ({
   id: null,
@@ -24,10 +31,12 @@ const blankTemplate = () => ({
   version: 'v1',
   body: '',
   notes: '',
+  screenshotPolicyCode: 'none',
+  screenshotStaffInstructions: '',
   active: true,
   familyKey: '',
   publishedOn: todayIso(),
-  reviewDueOn: dateAfterDays(todayIso(), 90),
+  reviewDueOn: dateAfterDays(todayIso(), 49),
   supersedesTemplateId: null,
   timesMailed: 0,
   resultsRecorded: 0,
@@ -42,6 +51,7 @@ function fmtDate(value) {
 }
 
 function TemplateRow({ template, selected, onClick }) {
+  const screenshotPolicy = disputeScreenshotPolicyDetails(template.screenshotPolicyCode);
   return (
     <button
       onClick={onClick}
@@ -54,10 +64,15 @@ function TemplateRow({ template, selected, onClick }) {
       <div className="mt-1 text-[10px] text-gray-500">
         {flowRoundLabel(template.flow, template.round)} · {template.bureau} · {template.version}
       </div>
+      <div className="mt-1">
+        <span className={`rounded px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wider ${screenshotPolicy.required ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-500'}`}>
+          {screenshotPolicy.label}
+        </span>
+      </div>
       <div className="mt-1 flex items-center gap-1.5 text-[9px] text-gray-400">
         <span>{template.timesMailed} mailed</span>
         <span>·</span>
-        <span>{template.wins} win{template.wins === 1 ? '' : 's'}</span>
+        <span>{template.wins} letter win{template.wins === 1 ? '' : 's'}</span>
         {template.reviewDueOn && new Date(`${template.reviewDueOn}T23:59:59`) < new Date() && template.active && (
           <span className="rounded bg-amber-100 px-1 py-0.5 font-semibold text-amber-800">Review due</span>
         )}
@@ -103,8 +118,25 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
     ));
   }, [flowFilter, query, templates]);
   const roundMax = FLOW_LETTER_ROUNDS[draft.flow] || 12;
+  const fieldGroups = useMemo(() => templateFieldGroupsForFlow(draft.flow), [draft.flow]);
+  const templateTokenContractError = useMemo(() => validateTemplateTokenContract({
+    flow: draft.flow,
+    body: draft.body,
+    active: draft.active,
+  }), [draft.active, draft.body, draft.flow]);
+  const screenshotPolicy = useMemo(() => disputeScreenshotPolicyDetails(
+    draft.screenshotPolicyCode,
+    draft.screenshotStaffInstructions,
+  ), [draft.screenshotPolicyCode, draft.screenshotStaffInstructions]);
+  const screenshotPolicyError = screenshotPolicy.required && !String(draft.screenshotStaffInstructions || '').trim()
+    ? 'Required screenshot policies must include exact staff attachment instructions.'
+    : null;
 
   const save = async () => {
+    if (templateTokenContractError || screenshotPolicyError) {
+      setError(templateTokenContractError || screenshotPolicyError);
+      return;
+    }
     setSaving(true);
     setError(null);
     setNotice(null);
@@ -149,7 +181,7 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
       id: null,
       version: nextTemplateVersionLabel(draft.version),
       publishedOn,
-      reviewDueOn: dateAfterDays(publishedOn, 90),
+      reviewDueOn: dateAfterDays(publishedOn, 49),
       supersedesTemplateId: draft.id,
       active: true,
       retiredAt: null,
@@ -160,7 +192,7 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
       nonDeletionResults: 0,
       winRate: null,
     });
-    setNotice('New quarterly version started. Saving it retires the prior version while preserving every prior letter and result.');
+    setNotice('New 7-week version started. Saving it retires the prior version while preserving every prior letter and result.');
   };
 
   return (
@@ -247,13 +279,51 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
         {draft.id && (
           <div className="mt-3 grid grid-cols-4 gap-2 rounded-lg border border-border bg-gray-50 p-3">
             <div><div className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Mailed</div><div className="mt-1 text-sm font-semibold text-navy">{draft.timesMailed}</div></div>
-            <div><div className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Results</div><div className="mt-1 text-sm font-semibold text-navy">{draft.resultsRecorded}</div></div>
-            <div><div className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Deletion wins</div><div className="mt-1 text-sm font-semibold text-green-700">{draft.wins}</div></div>
+            <div><div className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Reviewed letters</div><div className="mt-1 text-sm font-semibold text-navy">{draft.resultsRecorded}</div></div>
+            <div><div className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Letter wins</div><div className="mt-1 text-sm font-semibold text-green-700">{draft.wins}</div></div>
             <div><div className="text-[8px] font-bold uppercase tracking-wider text-gray-400">Win rate</div><div className="mt-1 text-sm font-semibold text-navy">{draft.winRate == null ? '—' : `${Math.round(draft.winRate * 100)}%`}</div></div>
             <div className="col-span-2 text-[9px] text-gray-500">Published {fmtDate(draft.publishedOn)}</div>
-            <div className="col-span-2 text-right text-[9px] text-gray-500">Quarterly review {fmtDate(draft.reviewDueOn)}</div>
+            <div className="col-span-2 text-right text-[9px] text-gray-500">7-week wording review {fmtDate(draft.reviewDueOn)}</div>
           </div>
         )}
+
+        <div className="mt-4 rounded-lg border border-border bg-gray-50 p-3">
+          <div className="grid grid-cols-[220px_1fr] gap-3">
+            <div>
+              <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-gray-500">Credit-report evidence policy</label>
+              <select
+                disabled={!canEdit}
+                value={draft.screenshotPolicyCode || 'none'}
+                onChange={(event) => {
+                  const next = disputeScreenshotPolicyDetails(event.target.value);
+                  setDraft({
+                    ...draft,
+                    screenshotPolicyCode: next.code,
+                    screenshotStaffInstructions: next.defaultInstructions || next.staffInstructions,
+                  });
+                }}
+                className="w-full rounded-md border border-border bg-white px-2.5 py-2 text-[11px] disabled:bg-gray-100"
+              >
+                {SCREENSHOT_POLICY_OPTIONS.map(([code, policy]) => (
+                  <option key={code} value={code}>{policy.label}</option>
+                ))}
+              </select>
+              <div className="mt-1 text-[9px] leading-relaxed text-gray-500">This saved policy—not the {'{screenshots}'} curly—decides whether mailing is blocked.</div>
+            </div>
+            <div>
+              <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-gray-500">Staff attachment instructions</label>
+              <textarea
+                disabled={!canEdit || !screenshotPolicy.required}
+                value={draft.screenshotStaffInstructions || ''}
+                onChange={(event) => setDraft({ ...draft, screenshotStaffInstructions: event.target.value })}
+                rows={3}
+                className="w-full rounded-md border border-border bg-white px-2.5 py-2 text-[11px] leading-relaxed disabled:bg-gray-100"
+                placeholder={screenshotPolicy.required ? screenshotPolicy.staffInstructions : 'No credit-report screenshots are required for this template.'}
+              />
+            </div>
+          </div>
+          {screenshotPolicyError && <div className="mt-2 text-[10px] text-red-700">{screenshotPolicyError}</div>}
+        </div>
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <label className="text-[9px] font-bold uppercase tracking-wider text-gray-400">Template text</label>
@@ -264,9 +334,14 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
           )}
         </div>
         <textarea disabled={!canEdit} value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} rows={17} className="mt-1 w-full rounded-md border border-border px-3 py-2 font-mono text-[11px] leading-relaxed disabled:bg-gray-50" placeholder="Paste the CCC template text here. The fixed language stays exactly as entered." />
+        {templateTokenContractError && (
+          <div className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-[10px] text-red-700" role="alert">
+            {templateTokenContractError}
+          </div>
+        )}
 
         <div className="mt-3 grid grid-cols-2 gap-3">
-          {Object.entries(TEMPLATE_FIELD_GROUPS).map(([group, fields]) => (
+          {Object.entries(fieldGroups).map(([group, fields]) => (
             <div key={group} className="rounded-lg bg-gray-50 p-3">
               <div className="mb-2 text-[9px] font-bold uppercase tracking-wider text-gray-400">{group === 'automatic' ? 'Auto-populated curlys' : 'Team-written curlys'}</div>
               <div className="flex flex-wrap gap-1">
@@ -287,7 +362,7 @@ export default function DisputeTemplateLibrary({ canEdit = false }) {
         {notice && <div className="mt-3 rounded-md border border-green-200 bg-green-50 p-2 text-[11px] text-green-700">{notice}</div>}
         {canEdit && (
           <div className="mt-4 flex items-center gap-2">
-            <button onClick={save} disabled={saving || !draft.name.trim() || !draft.body.trim()} className="flex items-center gap-1.5 rounded-md bg-navy px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gold disabled:opacity-40">
+            <button onClick={save} disabled={saving || !draft.name.trim() || !draft.body.trim() || Boolean(templateTokenContractError) || Boolean(screenshotPolicyError)} className="flex items-center gap-1.5 rounded-md bg-navy px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-gold disabled:opacity-40">
               {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save template
             </button>
             {draft.id && draft.active && (

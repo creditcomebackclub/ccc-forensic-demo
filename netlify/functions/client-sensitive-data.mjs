@@ -87,8 +87,31 @@ export const handler = async (event) => {
     .maybeSingle();
   const isStaff = !!staffRow && (staffRow.role === 'admin' || staffRow.role === 'auditor');
   const canAccessStoryNotes = canStaffAccessClient(staffRow?.role, caller.id, clientRow.user_id);
-  const isOwnRecord = !!clientRow.email && !!caller.email
-    && clientRow.email.toLowerCase() === caller.email.toLowerCase();
+
+  // A client email is not an identity key: historical/lead rows can share an
+  // address. Resolve the caller through the same exact, active portal mapping
+  // used by every other client-data boundary and bind the payload UUID to it.
+  let isOwnRecord = false;
+  if (!isStaff) {
+    const { data: portalIdentity, error: portalIdentityError } = await db.rpc(
+      'ccc_resolve_canonical_portal_identity',
+      {
+        p_portal_user_id: caller.id,
+        p_access_mode: 'active',
+      },
+    );
+    const identity = Array.isArray(portalIdentity) && portalIdentity.length === 1
+      ? portalIdentity[0]
+      : portalIdentity;
+    if (portalIdentityError
+        || !identity
+        || typeof identity !== 'object'
+        || !UUID_PATTERN.test(String(identity.clientId || ''))
+        || String(identity.clientId) !== clientRow.id) {
+      return { statusCode: 403, body: JSON.stringify({ error: 'Not authorized' }) };
+    }
+    isOwnRecord = true;
+  }
 
   if (action === 'read') {
     // Reads are staff-only -- a client's portal never needs to see these
@@ -133,8 +156,8 @@ export const handler = async (event) => {
     };
   }
 
-  // action === 'write' -- staff, or the client themself (email-verified,
-  // never trusting a client-supplied id).
+  // action === 'write' -- staff, or the exact active portal client resolved
+  // above. The caller-supplied UUID is never authorized by email equality.
   if (!isStaff && !isOwnRecord) {
     return { statusCode: 403, body: JSON.stringify({ error: 'Not authorized' }) };
   }

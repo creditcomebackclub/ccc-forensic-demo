@@ -115,6 +115,176 @@ const RETURN_RECEIPT_EVENTS = new Set([
 const RENDERED_PDF_EVENTS = new Set(['letter.rendered_pdf']);
 const FAILED_EVENTS = new Set(['letter.failed', 'letter.certified.failed']);
 const DELETED_EVENTS = new Set(['letter.deleted']);
+const USPS_FIRST_CLASS = 'usps_first_class';
+const USPS_CERTIFIED_RETURN_RECEIPT = 'usps_first_class_certified_return_receipt';
+const TERMINAL_TRACKING_STATUSES = new Set(['Delivered', 'Returned to Sender', 'Failed', 'Cancelled']);
+const ACTIVE_SUBMISSION_STATUSES = new Set(['pending', 'submitted', 'accepted_unreconciled']);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function exactFilter(column, value) {
+  return value == null
+    ? `&${column}=is.null`
+    : `&${column}=eq.${encodeURIComponent(String(value))}`;
+}
+
+function expectedServiceForEvent(eventType) {
+  if (RETURN_RECEIPT_EVENTS.has(eventType) || String(eventType).startsWith('letter.certified.')) {
+    return USPS_CERTIFIED_RETURN_RECEIPT;
+  }
+  if (eventType === 'letter.deleted') return null;
+  return USPS_FIRST_CLASS;
+}
+
+function trackingRank(status) {
+  if (status == null || status === '') return 0;
+  if (status === 'Mailed') return 1;
+  if (status === 'In Transit' || status === 'Mailpiece Scan Received') return 2;
+  if (status === 'Out for Delivery' || status === 'Available for Pickup') return 3;
+  if (status === 'Delivered' || status === 'Returned to Sender') return 4;
+  return null;
+}
+
+function isMonotonicTrackingTransition(currentStatus, nextStatus) {
+  if (TERMINAL_TRACKING_STATUSES.has(currentStatus)) return false;
+  if (TERMINAL_TRACKING_STATUSES.has(nextStatus)) return true;
+  const currentRank = trackingRank(currentStatus);
+  const nextRank = trackingRank(nextStatus);
+  return currentRank != null && nextRank != null && nextRank > currentRank;
+}
+
+function resolutionError(message, code = 'MAIL_ATTEMPT_UNRESOLVED') {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+async function resolveCurrentMailAttempt({
+  lobId,
+  metaLetterId,
+  metaSubmissionId,
+  metaAttemptKey,
+  metaMailService,
+  eventType,
+  supabaseUrl,
+  serviceKey,
+}) {
+  const submissionResult = await supabaseRequest(
+    '/rest/v1/mail_submissions?lob_id=eq.' + encodeURIComponent(lobId)
+      + '&select=id,letter_id,user_id,client_id,idempotency_key,status,lob_id&limit=2',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  if (submissionResult.status < 200 || submissionResult.status >= 300) {
+    throw resolutionError('Could not resolve the Lob submission attempt.');
+  }
+  let submissions = Array.isArray(submissionResult.body) ? submissionResult.body : [];
+  if (submissions.length > 1) throw resolutionError('The Lob ID maps to multiple mail submissions.', 'AMBIGUOUS_MAIL_ATTEMPT');
+
+  let matchedViaMetadata = false;
+  if (submissions.length === 0) {
+    if (!metaLetterId || !UUID_RE.test(String(metaSubmissionId || '')) || !metaAttemptKey) {
+      throw resolutionError('No exact current mail submission matches this Lob event.');
+    }
+    const fallbackResult = await supabaseRequest(
+      '/rest/v1/mail_submissions?id=eq.' + encodeURIComponent(metaSubmissionId)
+        + '&letter_id=eq.' + encodeURIComponent(metaLetterId)
+        + '&idempotency_key=eq.' + encodeURIComponent(metaAttemptKey)
+        + '&lob_id=is.null&status=in.(pending,submitted,accepted_unreconciled)'
+        + '&select=id,letter_id,user_id,client_id,idempotency_key,status,lob_id&limit=2',
+      'GET', null, supabaseUrl, serviceKey
+    );
+    if (fallbackResult.status < 200 || fallbackResult.status >= 300) {
+      throw resolutionError('Could not resolve the metadata-bound Lob submission attempt.');
+    }
+    submissions = Array.isArray(fallbackResult.body) ? fallbackResult.body : [];
+    if (submissions.length !== 1) {
+      throw resolutionError(
+        submissions.length > 1
+          ? 'The Lob metadata maps to multiple mail submissions.'
+          : 'No exact current mail submission matches the Lob metadata.',
+        submissions.length > 1 ? 'AMBIGUOUS_MAIL_ATTEMPT' : 'MAIL_ATTEMPT_UNRESOLVED'
+      );
+    }
+    matchedViaMetadata = true;
+  }
+
+  const submission = submissions[0];
+  if (metaLetterId && String(metaLetterId) !== String(submission.letter_id)) {
+    throw resolutionError('The Lob letter metadata does not match the current submission attempt.', 'MAIL_ATTEMPT_MISMATCH');
+  }
+  if (metaSubmissionId && String(metaSubmissionId) !== String(submission.id)) {
+    throw resolutionError('The Lob submission metadata does not match the current attempt.', 'MAIL_ATTEMPT_MISMATCH');
+  }
+  if (metaAttemptKey && String(metaAttemptKey) !== String(submission.idempotency_key)) {
+    throw resolutionError('The Lob attempt metadata is stale.', 'MAIL_ATTEMPT_MISMATCH');
+  }
+  if (submission.lob_id && String(submission.lob_id) !== String(lobId)) {
+    throw resolutionError('The mail submission belongs to a different Lob attempt.', 'MAIL_ATTEMPT_MISMATCH');
+  }
+
+  const letterResult = await supabaseRequest(
+    '/rest/v1/letters?id=eq.' + encodeURIComponent(submission.letter_id) + '&limit=2',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  if (letterResult.status < 200 || letterResult.status >= 300) {
+    throw resolutionError('Could not resolve the letter for this Lob attempt.');
+  }
+  const letters = Array.isArray(letterResult.body) ? letterResult.body : [];
+  if (letters.length !== 1) {
+    throw resolutionError(
+      letters.length > 1 ? 'The submission maps to multiple letters.' : 'The submission letter no longer exists.',
+      letters.length > 1 ? 'AMBIGUOUS_MAIL_ATTEMPT' : 'MAIL_ATTEMPT_UNRESOLVED'
+    );
+  }
+  const letter = letters[0];
+  if (String(letter.user_id || '') !== String(submission.user_id || '')
+      || String(letter.client_id || '') !== String(submission.client_id || '')) {
+    throw resolutionError('The letter and submission ownership do not match.', 'MAIL_ATTEMPT_MISMATCH');
+  }
+  if (letter.lob_id && String(letter.lob_id) !== String(lobId)) {
+    throw resolutionError('The letter is bound to a different Lob attempt.', 'MAIL_ATTEMPT_MISMATCH');
+  }
+  const requiredService = expectedServiceForEvent(eventType);
+  const storedService = String(letter.mail_service || '');
+  if (![USPS_FIRST_CLASS, USPS_CERTIFIED_RETURN_RECEIPT].includes(storedService)) {
+    throw resolutionError('The letter does not have an exact supported mail-service identity.', 'MAIL_SERVICE_MISMATCH');
+  }
+  if (requiredService && storedService !== requiredService) {
+    throw resolutionError('The Lob event type does not match the letter mail service.', 'MAIL_SERVICE_MISMATCH');
+  }
+  if (metaMailService && String(metaMailService) !== storedService) {
+    throw resolutionError('The Lob mail-service metadata does not match the letter.', 'MAIL_SERVICE_MISMATCH');
+  }
+
+  return { letter, submission, matchedViaMetadata, mailService: storedService };
+}
+
+function letterAttemptCasPath(resolved) {
+  return '/rest/v1/letters?id=eq.' + encodeURIComponent(resolved.letter.id)
+    + exactFilter('lob_id', resolved.letter.lob_id)
+    + '&mail_service=eq.' + encodeURIComponent(resolved.mailService)
+    + exactFilter('tracking_status', resolved.letter.tracking_status);
+}
+
+function submissionAttemptCasPath(resolved) {
+  return '/rest/v1/mail_submissions?id=eq.' + encodeURIComponent(resolved.submission.id)
+    + '&letter_id=eq.' + encodeURIComponent(resolved.letter.id)
+    + '&idempotency_key=eq.' + encodeURIComponent(resolved.submission.idempotency_key)
+    + exactFilter('lob_id', resolved.submission.lob_id)
+    + '&status=eq.' + encodeURIComponent(resolved.submission.status);
+}
+
+async function bindResolvedSubmissionLobId(resolved, lobId, supabaseUrl, serviceKey) {
+  if (resolved.submission.lob_id === lobId) return true;
+  const result = await supabaseRequest(
+    submissionAttemptCasPath(resolved),
+    'PATCH', { lob_id: lobId, updated_at: new Date().toISOString() }, supabaseUrl, serviceKey
+  );
+  if (result.status < 200 || result.status >= 300) return false;
+  const rows = Array.isArray(result.body) ? result.body : [];
+  if (rows.length !== 1) return false;
+  resolved.submission = rows[0];
+  return true;
+}
 
 
 exports.handler = async (event) => {
@@ -205,6 +375,9 @@ exports.handler = async (event) => {
   const lobId = lobLetter && lobLetter.id;
   const trackingNumber = lobLetter && lobLetter.tracking_number;
   const metaLetterId = lobLetter && lobLetter.metadata && lobLetter.metadata.letter_id;
+  const metaSubmissionId = lobLetter && lobLetter.metadata && lobLetter.metadata.mail_submission_id;
+  const metaAttemptKey = lobLetter && lobLetter.metadata && lobLetter.metadata.mail_attempt_key;
+  const metaMailService = lobLetter && lobLetter.metadata && lobLetter.metadata.mail_service;
 
   console.log('Lob webhook received:', eventType, 'lob_id:', lobId, 'letter_id:', metaLetterId || '—');
 
@@ -247,9 +420,21 @@ exports.handler = async (event) => {
       return { statusCode: 500, body: JSON.stringify({ error: 'Lob API key not configured' }) };
     }
     try {
+      const resolved = await resolveCurrentMailAttempt({
+        lobId, metaLetterId, metaSubmissionId, metaAttemptKey, metaMailService,
+        eventType, supabaseUrl, serviceKey: supabaseKey,
+      });
+      if (!ACTIVE_SUBMISSION_STATUSES.has(resolved.submission.status)) {
+        return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'rendered artifact attempt is terminal' }) };
+      }
+      if (!(await bindResolvedSubmissionLobId(resolved, lobId, supabaseUrl, supabaseKey))) {
+        throw new Error('Rendered artifact submission changed during exact-attempt binding');
+      }
       const archived = await archiveLobArtifact({
         lobId,
-        letterId: metaLetterId || null,
+        letterId: resolved.letter.id,
+        submissionId: resolved.submission.id,
+        idempotencyKey: resolved.submission.idempotency_key,
         artifactType: 'mailpiece_pdf',
         apiKey: lobApiKey,
         supabaseUrl,
@@ -266,31 +451,68 @@ exports.handler = async (event) => {
 
   // ── Return-receipt: USPS signed green-card scan is now available ─────────
   if (RETURN_RECEIPT_EVENTS.has(eventType)) {
-    // The scan URL lives at body.return_receipt_url in Lob's payload
     const receiptUrl = lobLetter && (lobLetter.return_receipt_url || (lobLetter.thumbnails && lobLetter.thumbnails[0] && lobLetter.thumbnails[0].large));
     if (!receiptUrl) {
       console.warn('return_receipt event received but no URL found in payload for lob_id', lobId);
       return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'no receipt url in payload' }) };
     }
-
-    // Save to the letters row — match by lob_id, fall back to metadata letter_id
-    let rcptRes = await supabaseRequest(
-      '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId),
-      'PATCH', { return_receipt_url: receiptUrl }, supabaseUrl, supabaseKey
-    );
-    if (Array.isArray(rcptRes.body) && rcptRes.body.length === 0 && metaLetterId) {
-      rcptRes = await supabaseRequest(
-        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null',
-        'PATCH', { return_receipt_url: receiptUrl, lob_id: lobId }, supabaseUrl, supabaseKey
-      );
+    let parsedReceiptUrl;
+    try { parsedReceiptUrl = new URL(receiptUrl); }
+    catch { parsedReceiptUrl = null; }
+    if (!parsedReceiptUrl || parsedReceiptUrl.protocol !== 'https:') {
+      console.error('Rejected invalid Lob return-receipt URL for', lobId);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Invalid return-receipt evidence URL' }) };
     }
 
-    console.log('Saved return_receipt_url for lob_id:', lobId, '→', receiptUrl.slice(0, 60) + '…');
+    let resolved;
+    try {
+      resolved = await resolveCurrentMailAttempt({
+        lobId, metaLetterId, metaSubmissionId, metaAttemptKey, metaMailService,
+        eventType, supabaseUrl, serviceKey: supabaseKey,
+      });
+    } catch (error) {
+      console.error('Could not resolve exact return-receipt attempt:', lobId, error.code, error.message);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Could not resolve exact return-receipt attempt' }) };
+    }
+    if (!ACTIVE_SUBMISSION_STATUSES.has(resolved.submission.status)
+        || resolved.letter.tracking_status !== 'Delivered') {
+      console.warn('Ignored return receipt for a non-delivered or terminal attempt:', lobId);
+      return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'return receipt state mismatch' }) };
+    }
+    if (!(await bindResolvedSubmissionLobId(resolved, lobId, supabaseUrl, supabaseKey))) {
+      console.error('Return-receipt submission changed during CAS:', lobId);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Return-receipt attempt changed during processing' }) };
+    }
+    if (resolved.letter.return_receipt_url) {
+      const sameReceipt = resolved.letter.return_receipt_url === receiptUrl;
+      return {
+        statusCode: sameReceipt ? 200 : 500,
+        body: JSON.stringify(sameReceipt
+          ? { received: true, lobId, event: 'return_receipt', saved: true, duplicate: true }
+          : { error: 'Return-receipt evidence changed for an immutable mail attempt' }),
+      };
+    }
+    const rcptRes = await supabaseRequest(
+      letterAttemptCasPath(resolved) + '&return_receipt_url=is.null',
+      'PATCH', {
+        return_receipt_url: receiptUrl,
+        ...(resolved.letter.lob_id ? {} : { lob_id: lobId }),
+      }, supabaseUrl, supabaseKey
+    );
+    const receiptRows = Array.isArray(rcptRes.body) ? rcptRes.body : [];
+    if (rcptRes.status < 200 || rcptRes.status >= 300 || receiptRows.length !== 1) {
+      console.error('Return-receipt letter changed during CAS:', lobId, rcptRes.status, receiptRows.length);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Return-receipt letter changed during processing' }) };
+    }
+
+    console.log('Saved immutable return receipt for Lob attempt:', lobId);
     if (lobApiKey) {
       try {
         const archived = await archiveLobArtifact({
           lobId,
-          letterId: metaLetterId || null,
+          letterId: resolved.letter.id,
+          submissionId: resolved.submission.id,
+          idempotencyKey: resolved.submission.idempotency_key,
           artifactType: 'return_receipt',
           sourceUrl: receiptUrl,
           apiKey: lobApiKey,
@@ -314,35 +536,79 @@ exports.handler = async (event) => {
   // the webhook ledger, so a future retry cannot erase the audit trail.
   if (FAILED_EVENTS.has(eventType)) {
     const failureMessage = lobLetter?.failure_reason || lobLetter?.error || 'Lob failed to render this mailpiece before mailing.';
-    let failedLetter = await supabaseRequest(
-      '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId),
-      'PATCH',
-      { tracking_status: 'Failed', mailed_date: null, tracking_number: null, delivered_at: null },
-      supabaseUrl, supabaseKey
-    );
-    if (Array.isArray(failedLetter.body) && failedLetter.body.length === 0 && metaLetterId) {
-      failedLetter = await supabaseRequest(
-        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null',
-        'PATCH',
-        { tracking_status: 'Failed', mailed_date: null, tracking_number: null, delivered_at: null },
-        supabaseUrl, supabaseKey
+    let resolved;
+    try {
+      resolved = await resolveCurrentMailAttempt({
+        lobId, metaLetterId, metaSubmissionId, metaAttemptKey, metaMailService,
+        eventType, supabaseUrl, serviceKey: supabaseKey,
+      });
+    } catch (error) {
+      console.error('Could not resolve exact failed Lob attempt:', lobId, error.code, error.message);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Could not resolve exact failed Lob attempt' }) };
+    }
+    if (resolved.letter.tracking_status === 'Failed') {
+      if (resolved.submission.status === 'failed') {
+        return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Failed', duplicate: true }) };
+      }
+      if (!ACTIVE_SUBMISSION_STATUSES.has(resolved.submission.status)) {
+        return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'failure submission is already terminal' }) };
+      }
+      const reconciledSubmission = await supabaseRequest(
+        submissionAttemptCasPath(resolved),
+        'PATCH', {
+          status: 'failed', lob_id: lobId,
+          last_error: String(failureMessage).slice(0, 1000),
+          updated_at: new Date().toISOString(),
+        }, supabaseUrl, supabaseKey
       );
+      const reconciledRows = Array.isArray(reconciledSubmission.body) ? reconciledSubmission.body : [];
+      if (reconciledSubmission.status < 200 || reconciledSubmission.status >= 300 || reconciledRows.length !== 1) {
+        return { statusCode: 500, body: JSON.stringify({ error: 'Could not reconcile failed Lob submission' }) };
+      }
+      await updatePacketCoverage([resolved.letter.id], { mail_status: 'failed', tracking_status: 'Failed', delivered_at: null }, supabaseUrl, supabaseKey);
+      return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Failed', reconciled: true }) };
+    }
+    if (!ACTIVE_SUBMISSION_STATUSES.has(resolved.submission.status)
+        || TERMINAL_TRACKING_STATUSES.has(resolved.letter.tracking_status)
+        || ![null, undefined, '', 'Mailed'].includes(resolved.letter.tracking_status)) {
+      console.warn('Ignored late failure for progressed or terminal Lob attempt:', lobId);
+      return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'failure state is no longer eligible' }) };
+    }
+    const failedLetter = await supabaseRequest(
+      letterAttemptCasPath(resolved),
+      'PATCH', {
+        tracking_status: 'Failed',
+        mailed_date: null,
+        tracking_number: null,
+        delivered_at: null,
+        expected_delivery_date: null,
+        ...(resolved.letter.lob_id ? {} : { lob_id: lobId }),
+      }, supabaseUrl, supabaseKey
+    );
+    const failedLetterRows = Array.isArray(failedLetter.body) ? failedLetter.body : [];
+    if (failedLetter.status < 200 || failedLetter.status >= 300 || failedLetterRows.length !== 1) {
+      console.error('Failed Lob letter changed during CAS:', lobId, failedLetter.status, failedLetterRows.length);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Failed Lob letter changed during processing' }) };
+    }
+    const failedSubmission = await supabaseRequest(
+      submissionAttemptCasPath(resolved),
+      'PATCH', {
+        status: 'failed',
+        lob_id: lobId,
+        last_error: String(failureMessage).slice(0, 1000),
+        updated_at: new Date().toISOString(),
+      }, supabaseUrl, supabaseKey
+    );
+    const failedSubmissionRows = Array.isArray(failedSubmission.body) ? failedSubmission.body : [];
+    if (failedSubmission.status < 200 || failedSubmission.status >= 300 || failedSubmissionRows.length !== 1) {
+      console.error('Failed Lob submission changed during CAS:', lobId, failedSubmission.status, failedSubmissionRows.length);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Failed Lob submission changed during processing' }) };
     }
     await updatePacketCoverage(
-      (Array.isArray(failedLetter.body) ? failedLetter.body : []).map((letter) => letter.id).concat(metaLetterId || []),
+      failedLetterRows.map((letter) => letter.id),
       { mail_status: 'failed', tracking_status: 'Failed', delivered_at: null },
       supabaseUrl, supabaseKey
     );
-    const failedSubmission = await supabaseRequest(
-      '/rest/v1/mail_submissions?lob_id=eq.' + encodeURIComponent(lobId),
-      'PATCH',
-      { status: 'failed', last_error: String(failureMessage).slice(0, 1000) },
-      supabaseUrl, supabaseKey
-    );
-    if (failedLetter.status < 200 || failedLetter.status >= 300 || failedSubmission.status < 200 || failedSubmission.status >= 300) {
-      console.error('Could not record Lob mail failure:', lobId, failedLetter.status, failedSubmission.status);
-      return { statusCode: 500, body: JSON.stringify({ error: 'Could not record failed Lob mailpiece' }) };
-    }
     console.warn('Lob mailpiece failed before mailing:', lobId, failureMessage);
     return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Failed', retryable: true }) };
   }
@@ -352,37 +618,81 @@ exports.handler = async (event) => {
   // operational dates/tracking data while retaining lob_id and the signed
   // webhook ledger as the immutable record of the abandoned attempt.
   if (DELETED_EVENTS.has(eventType)) {
+    let resolved;
+    try {
+      resolved = await resolveCurrentMailAttempt({
+        lobId, metaLetterId, metaSubmissionId, metaAttemptKey, metaMailService,
+        eventType, supabaseUrl, serviceKey: supabaseKey,
+      });
+    } catch (error) {
+      console.error('Could not resolve exact cancelled Lob attempt:', lobId, error.code, error.message);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Could not resolve exact cancelled Lob attempt' }) };
+    }
+    if (resolved.letter.tracking_status === 'Cancelled') {
+      if (resolved.submission.status === 'cancelled') {
+        return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Cancelled', duplicate: true }) };
+      }
+      if (!ACTIVE_SUBMISSION_STATUSES.has(resolved.submission.status)) {
+        return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'cancellation submission is already terminal' }) };
+      }
+      const reconciledSubmission = await supabaseRequest(
+        submissionAttemptCasPath(resolved),
+        'PATCH', {
+          status: 'cancelled', lob_id: lobId,
+          last_error: 'Cancelled in Lob before production.',
+          updated_at: new Date().toISOString(),
+        }, supabaseUrl, supabaseKey
+      );
+      const reconciledRows = Array.isArray(reconciledSubmission.body) ? reconciledSubmission.body : [];
+      if (reconciledSubmission.status < 200 || reconciledSubmission.status >= 300 || reconciledRows.length !== 1) {
+        return { statusCode: 500, body: JSON.stringify({ error: 'Could not reconcile cancelled Lob submission' }) };
+      }
+      await updatePacketCoverage([resolved.letter.id], { mail_status: 'cancelled', tracking_status: 'Cancelled', delivered_at: null }, supabaseUrl, supabaseKey);
+      return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Cancelled', reconciled: true }) };
+    }
+    if (!ACTIVE_SUBMISSION_STATUSES.has(resolved.submission.status)
+        || TERMINAL_TRACKING_STATUSES.has(resolved.letter.tracking_status)
+        || ![null, undefined, '', 'Mailed'].includes(resolved.letter.tracking_status)) {
+      console.warn('Ignored late cancellation for progressed or terminal Lob attempt:', lobId);
+      return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'cancellation state is no longer eligible' }) };
+    }
     const cancelledPatch = {
       tracking_status: 'Cancelled',
       mailed_date: null,
       tracking_number: null,
       delivered_at: null,
+      expected_delivery_date: null,
+      ...(resolved.letter.lob_id ? {} : { lob_id: lobId }),
     };
-    let cancelledLetter = await supabaseRequest(
-      '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId),
+    const cancelledLetter = await supabaseRequest(
+      letterAttemptCasPath(resolved),
       'PATCH', cancelledPatch, supabaseUrl, supabaseKey
     );
-    if (Array.isArray(cancelledLetter.body) && cancelledLetter.body.length === 0 && metaLetterId) {
-      cancelledLetter = await supabaseRequest(
-        '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null',
-        'PATCH', { ...cancelledPatch, lob_id: lobId }, supabaseUrl, supabaseKey
-      );
+    const cancelledLetterRows = Array.isArray(cancelledLetter.body) ? cancelledLetter.body : [];
+    if (cancelledLetter.status < 200 || cancelledLetter.status >= 300 || cancelledLetterRows.length !== 1) {
+      console.error('Cancelled Lob letter changed during CAS:', lobId, cancelledLetter.status, cancelledLetterRows.length);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Cancelled Lob letter changed during processing' }) };
+    }
+    const cancelledSubmission = await supabaseRequest(
+      submissionAttemptCasPath(resolved),
+      'PATCH', {
+        status: 'cancelled',
+        lob_id: lobId,
+        last_error: 'Cancelled in Lob before production.',
+        updated_at: new Date().toISOString(),
+      },
+      supabaseUrl, supabaseKey
+    );
+    const cancelledSubmissionRows = Array.isArray(cancelledSubmission.body) ? cancelledSubmission.body : [];
+    if (cancelledSubmission.status < 200 || cancelledSubmission.status >= 300 || cancelledSubmissionRows.length !== 1) {
+      console.error('Cancelled Lob submission changed during CAS:', lobId, cancelledSubmission.status, cancelledSubmissionRows.length);
+      return { statusCode: 500, body: JSON.stringify({ error: 'Cancelled Lob submission changed during processing' }) };
     }
     await updatePacketCoverage(
-      (Array.isArray(cancelledLetter.body) ? cancelledLetter.body : []).map((letter) => letter.id).concat(metaLetterId || []),
+      cancelledLetterRows.map((letter) => letter.id),
       { mail_status: 'cancelled', tracking_status: 'Cancelled', delivered_at: null },
       supabaseUrl, supabaseKey
     );
-    const cancelledSubmission = await supabaseRequest(
-      '/rest/v1/mail_submissions?lob_id=eq.' + encodeURIComponent(lobId),
-      'PATCH', { status: 'cancelled', last_error: 'Cancelled in Lob before production.' },
-      supabaseUrl, supabaseKey
-    );
-    if (cancelledLetter.status < 200 || cancelledLetter.status >= 300
-      || cancelledSubmission.status < 200 || cancelledSubmission.status >= 300) {
-      console.error('Could not record Lob mail cancellation:', lobId, cancelledLetter.status, cancelledSubmission.status);
-      return { statusCode: 500, body: JSON.stringify({ error: 'Could not record canceled Lob mailpiece' }) };
-    }
     console.log('Lob mailpiece canceled before production:', lobId);
     return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Cancelled', retryable: true }) };
   }
@@ -393,12 +703,59 @@ exports.handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'unhandled event type' }) };
   }
 
-  const isDelivered = trackingStatus === 'Delivered';
+  const isDeliveryEvent = trackingStatus === 'Delivered';
 
-  // Build patch — delivered_at uses Lob's event time, not webhook arrival time
-  const patch = { tracking_status: trackingStatus };
-  if (trackingNumber) patch.tracking_number = trackingNumber;
-  if (isDelivered) patch.delivered_at = payload.date_created || new Date().toISOString();
+  // First-Class Lob scans are operational hints, not evidence of delivery.
+  // Every event must resolve through one exact durable submission attempt and
+  // its exact letter before any state is changed. Metadata fallback is valid
+  // only while it carries the current submission id + rotated idempotency key.
+  let resolved;
+  try {
+    resolved = await resolveCurrentMailAttempt({
+      lobId, metaLetterId, metaSubmissionId, metaAttemptKey, metaMailService,
+      eventType, supabaseUrl, serviceKey: supabaseKey,
+    });
+  } catch (error) {
+    console.error('Could not resolve exact Lob tracking attempt:', lobId, error.code, error.message);
+    return { statusCode: 500, body: JSON.stringify({ error: 'Could not resolve exact Lob tracking attempt' }) };
+  }
+  if (!ACTIVE_SUBMISSION_STATUSES.has(resolved.submission.status)) {
+    console.warn('Ignored tracking event for terminal submission attempt:', lobId, resolved.submission.status);
+    return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'terminal submission state' }) };
+  }
+
+  const candidate = resolved.letter;
+  // Only the historical certified service is delivery evidence. Plain
+  // First-Class and rows with an absent/unknown service stay on the
+  // expected-delivery review clock even when Lob reports a scan as delivered.
+  const isTrackedCertified = candidate.mail_service === 'usps_first_class_certified_return_receipt';
+  const isUntrackedMail = !isTrackedCertified;
+  const hasDeliveryProof = isDeliveryEvent && isTrackedCertified;
+  if (TERMINAL_TRACKING_STATUSES.has(candidate.tracking_status)) {
+    console.log('Mailpiece status is terminal; ignored late Lob event:', lobId, candidate.tracking_status);
+    return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'terminal mailpiece state' }) };
+  }
+  const effectiveTrackingStatus = isUntrackedMail
+    ? trackingStatus === 'Mailed'
+      ? 'Mailed'
+      : trackingStatus === 'Returned to Sender'
+        ? 'Returned to Sender'
+        : 'Mailpiece Scan Received'
+    : trackingStatus;
+  if (!isMonotonicTrackingTransition(candidate.tracking_status, effectiveTrackingStatus)) {
+    console.log('Ignored duplicate or regressive Lob tracking event:', lobId, candidate.tracking_status, '->', effectiveTrackingStatus);
+    return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'duplicate or regressive tracking event' }) };
+  }
+  if (!(await bindResolvedSubmissionLobId(resolved, lobId, supabaseUrl, supabaseKey))) {
+    console.error('Tracking submission changed during CAS:', lobId);
+    return { statusCode: 500, body: JSON.stringify({ error: 'Tracking submission changed during processing' }) };
+  }
+  const patch = {
+    tracking_status: effectiveTrackingStatus,
+    ...(trackingNumber ? { tracking_number: trackingNumber } : {}),
+    ...(hasDeliveryProof ? { delivered_at: payload.date_created || new Date().toISOString() } : {}),
+    ...(candidate.lob_id ? {} : { lob_id: lobId }),
+  };
 
   // Match by lob_id first; fall back to our own letter id from metadata
   // (covers letters where saving lob_id failed after sending) and heal lob_id
@@ -409,44 +766,41 @@ exports.handler = async (event) => {
   // A confirmed cancellation is terminal for that Lob ID. The id filter
   // below is also constrained to rows without a Lob ID so a late event from
   // an abandoned attempt can never overwrite a newer explicit re-mail.
-  const unresolvedFilter = '&delivered_at=is.null&or=(tracking_status.is.null,tracking_status.neq.Cancelled)';
-  let updateRes = await supabaseRequest(
-    '/rest/v1/letters?lob_id=eq.' + encodeURIComponent(lobId) + unresolvedFilter,
+  const updateRes = await supabaseRequest(
+    letterAttemptCasPath(resolved),
     'PATCH', patch, supabaseUrl, supabaseKey
   );
   let updatedRows = Array.isArray(updateRes.body) ? updateRes.body : [];
-
-  if (updatedRows.length === 0 && metaLetterId) {
-    updateRes = await supabaseRequest(
-      '/rest/v1/letters?id=eq.' + encodeURIComponent(metaLetterId) + '&lob_id=is.null' + unresolvedFilter,
-      'PATCH', { ...patch, lob_id: lobId }, supabaseUrl, supabaseKey
-    );
-    updatedRows = Array.isArray(updateRes.body) ? updateRes.body : [];
-    if (updatedRows.length > 0) console.log('Matched letter via metadata letter_id, healed lob_id:', lobId);
-  }
+  if (!candidate.lob_id && updatedRows.length > 0) console.log('Healed metadata-bound letter Lob id:', lobId);
 
   if (updateRes.status < 200 || updateRes.status >= 300) {
     console.error('Supabase update failed:', updateRes.status, updateRes.body);
     return { statusCode: 500, body: JSON.stringify({ error: 'Failed to update letter tracking' }) };
   }
   if (updatedRows.length === 0) {
-    console.warn('No letter row matched lob_id', lobId, 'or letter_id', metaLetterId);
-    return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'no matching letter row' }) };
+    console.log('Mailpiece state changed during tracking CAS:', lobId, effectiveTrackingStatus);
+    return { statusCode: 200, body: JSON.stringify({ received: true, skipped: 'tracking state changed concurrently' }) };
+  }
+  if (updatedRows.length !== 1) {
+    console.error('Mailpiece update did not affect exactly one letter:', lobId, updatedRows.length);
+    return { statusCode: 500, body: JSON.stringify({ error: 'Ambiguous mailpiece update' }) };
   }
 
-  const coverageMailStatus = isDelivered ? 'delivered'
-    : trackingStatus === 'Returned to Sender' ? 'returned'
-      : trackingStatus === 'Mailed' ? 'queued' : 'in_transit';
+  const coverageMailStatus = isUntrackedMail
+    ? effectiveTrackingStatus === 'Returned to Sender' ? 'returned' : 'mailed'
+    : hasDeliveryProof ? 'delivered'
+    : effectiveTrackingStatus === 'Returned to Sender' ? 'returned'
+      : effectiveTrackingStatus === 'Mailed' ? 'queued' : 'in_transit';
   await updatePacketCoverage(updatedRows.map((letter) => letter.id), {
     mail_status: coverageMailStatus,
-    tracking_status: trackingStatus,
-    ...(isDelivered ? { delivered_at: patch.delivered_at } : {}),
+    tracking_status: effectiveTrackingStatus,
+    ...(hasDeliveryProof ? { delivered_at: updatedRows[0].delivered_at } : {}),
   }, supabaseUrl, supabaseKey);
 
   // Delivery starts the canonical 30-day clock for new adaptive rounds. The
   // stored due date is authoritative and may later receive one documented +15.
-  if (isDelivered && updatedRows[0]?.target_type && !updatedRows[0]?.response_due_at) {
-    const dueAt = new Date(new Date(patch.delivered_at).getTime() + 30 * 86400000).toISOString();
+  if (hasDeliveryProof && updatedRows[0]?.target_type && !updatedRows[0]?.response_due_at) {
+    const dueAt = new Date(new Date(updatedRows[0].delivered_at).getTime() + 30 * 86400000).toISOString();
     const dueResult = await supabaseRequest(
       '/rest/v1/letters?id=eq.' + encodeURIComponent(updatedRows[0].id) + '&response_due_at=is.null',
       'PATCH', { response_due_at: dueAt }, supabaseUrl, supabaseKey
@@ -454,10 +808,10 @@ exports.handler = async (event) => {
     if (dueResult.status >= 200 && dueResult.status < 300) updatedRows[0].response_due_at = dueAt;
   }
 
-  console.log('Updated tracking for lob_id:', lobId, '->', trackingStatus);
+  console.log('Updated tracking for lob_id:', lobId, '->', effectiveTrackingStatus);
 
   // Fire delivery email only on actual delivery
-  if (isDelivered && mailReady) {
+  if (hasDeliveryProof && mailReady) {
     try {
       const letter = updatedRows[0];
       if (letter && letter.client_name) {
@@ -508,5 +862,10 @@ exports.handler = async (event) => {
     }
   }
 
-  return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus }) };
+  return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: effectiveTrackingStatus }) };
 };
+
+// Pure transition helpers are exported only for focused regression tests.
+exports.expectedServiceForEvent = expectedServiceForEvent;
+exports.isMonotonicTrackingTransition = isMonotonicTrackingTransition;
+exports.trackingRank = trackingRank;

@@ -3,6 +3,7 @@
  * Browser storage RLS on recovery-blueprints is not reliable for clients.
  */
 const { createClient } = require('@supabase/supabase-js');
+const { resolvePortalIdentityWithAdmin } = require('./_portalIdentity.cjs');
 
 function json(statusCode, body) {
   return {
@@ -11,6 +12,8 @@ function json(statusCode, body) {
     body: JSON.stringify(body),
   };
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
@@ -37,14 +40,20 @@ exports.handler = async (event) => {
   const userId = userData.user.id;
   const admin = createClient(url, service, { auth: { persistSession: false, autoRefreshToken: false } });
 
-  const { data: profile } = await admin
-    .from('client_profiles')
-    .select('client_id, full_name')
-    .eq('user_id', userId)
-    .limit(1)
-    .maybeSingle();
+  if (body.blueprintId != null && !UUID_RE.test(String(body.blueprintId))) {
+    return json(400, { error: 'Invalid blueprint request.' });
+  }
 
-  if (!profile) return json(404, { error: 'Client profile not found.' });
+  let identity;
+  try {
+    identity = await resolvePortalIdentityWithAdmin(admin, userId, 'active');
+  } catch (error) {
+    return json(error?.status === 403 ? 403 : 503, {
+      error: error?.status === 403
+        ? 'An active, exact client portal identity is required.'
+        : 'Blueprint access is temporarily unavailable.',
+    });
+  }
 
   let query = admin
     .from('recovery_blueprints')
@@ -62,21 +71,20 @@ exports.handler = async (event) => {
       .limit(1);
   }
 
-  if (profile.client_id) {
-    query = query.eq('client_id', profile.client_id);
-  } else {
-    query = query.eq('client_name', profile.full_name);
-  }
+  query = query
+    .eq('client_id', identity.clientId)
+    .eq('user_id', identity.firmUserId);
 
   const { data: rows, error: bpErr } = await query;
-  if (bpErr) return json(500, { error: bpErr.message });
+  if (bpErr) return json(503, { error: 'Blueprint access is temporarily unavailable.' });
+  if (!Array.isArray(rows) || rows.length > 1) return json(409, { error: 'The blueprint record is ambiguous.' });
   const row = Array.isArray(rows) ? rows[0] : rows;
   if (!row?.storage_path) return json(404, { error: 'No signed blueprint file is available yet.' });
 
   const { data: signed, error: signErr } = await admin.storage
     .from('recovery-blueprints')
     .createSignedUrl(row.storage_path, 60 * 15);
-  if (signErr) return json(500, { error: signErr.message });
+  if (signErr) return json(503, { error: 'Blueprint access is temporarily unavailable.' });
 
   return json(200, {
     signedUrl: signed.signedUrl,

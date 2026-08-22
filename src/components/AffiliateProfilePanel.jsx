@@ -44,7 +44,14 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
   const saveGlobalRate = async () => {
     let newRate = parseFloat(rateVal) / 100;
     if (isNaN(newRate)) return;
-    await supabase.from('affiliates').update({ commission_rate: newRate }).eq('id', affiliate.id);
+    const { error } = await supabase.rpc('ccc_update_legacy_affiliate_commission_rate', {
+      p_affiliate_id: affiliate.id,
+      p_commission_rate: newRate,
+    });
+    if (error) {
+      alert(error.message || 'Could not update the commission rate. Agreement-based partners require a new signed terms packet.');
+      return;
+    }
     onUpdate && onUpdate();
     setEditingRate(false);
   };
@@ -60,7 +67,7 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
       const { owed, unpaidTxIds } = computeClientCommission(client, affiliate, payoutsFor(client.id));
       if (amount > owed + 0.01) { alert(`This payout exceeds the $${owed.toFixed(2)} currently owed.`); return; }
       const { data: { user } } = await supabase.auth.getUser();
-      const { error } = await supabase.from('commission_payouts').insert({
+      const { data: payout, error } = await supabase.from('commission_payouts').insert({
         affiliate_id: affiliate.id,
         client_id: client.id,
         client_name: client.name,
@@ -70,15 +77,11 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
         amount,
         paid_at: new Date(payDate + 'T12:00:00').toISOString(),
         paid_by: user?.id || null,
-      });
+      }).select('id').single();
       if (error) throw error;
       setPayingClientId(null);
       notifyAffiliate('commission_paid', {
-        clientId: client.id,
-        affiliateId: affiliate.id,
-        amount,
-        paidAt: new Date(payDate + 'T12:00:00').toISOString(),
-        clientName: client.name,
+        payoutId: payout.id,
       });
       onUpdate && onUpdate();
     } catch (e) {
@@ -102,14 +105,19 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
     const brand_logo_url = editForm.brand_logo_url.trim() || null;
     const brand_name = editForm.brand_name.trim() || null;
     const brand_color = /^#[0-9a-f]{6}$/i.test(editForm.brand_color.trim()) ? editForm.brand_color.trim() : '#22C55E';
-    await supabase.from('affiliates').update({
-      name: editForm.name,
-      company: editForm.company,
-      email: editForm.email,
-      brand_name,
-      brand_logo_url,
-      brand_color
-    }).eq('id', affiliate.id);
+    const { error } = await supabase.rpc('ccc_update_affiliate_profile', {
+      p_affiliate_id: affiliate.id,
+      p_name: editForm.name,
+      p_company: editForm.company,
+      p_email: editForm.email,
+      p_brand_name: brand_name,
+      p_brand_logo_url: brand_logo_url,
+      p_brand_color: brand_color,
+    });
+    if (error) {
+      alert(error.message || 'Could not update the affiliate profile.');
+      return;
+    }
 
     // Also update all clients that reference this affiliate if we wanted to denormalize,
     // but the clients table uses `referred_by` UUID, so we only need to update the affiliates table!
@@ -330,7 +338,7 @@ export default function AffiliateProfilePanel({ affiliate, clients = [], commiss
                         </td>
                         <td className="py-3 px-4 text-right">
                           <div className="text-[12px] font-medium" style={{ color: owed > 0.01 ? '#D97706' : T.ink }}>${owed.toFixed(2)}</div>
-                          <div className="text-[10px]" style={{ color: T.faint }}>of ${totalPaid.toFixed(2)} paid in</div>
+                          <div className="text-[10px]" style={{ color: T.faint }}>of ${totalPaid.toFixed(2)} eligible collected</div>
                         </td>
                         <td className="py-3 px-4 text-right">
                           {totalPaid <= 0.01 ? (

@@ -3,6 +3,7 @@ export const MAX_REPLACEMENT_CHARS = 8000;
 export const MAX_STORY_NOTES_CHARS = 12000;
 export const MAX_REWRITE_OUTPUT_TOKENS = 1200;
 export const MAX_REWRITE_REQUEST_CHARS = 16000;
+export const MAX_REWRITE_TRACKS = 50;
 
 const FLOW_MAX_ROUNDS = Object.freeze({
   accuracy: 12,
@@ -10,6 +11,7 @@ const FLOW_MAX_ROUNDS = Object.freeze({
   combo: 12,
   consent: 3,
   late_pay: 2,
+  repo: 3,
   accuracy_solo: 1,
 });
 
@@ -69,11 +71,50 @@ const PROHIBITED_SENSITIVE_PATTERNS = [
 ];
 
 export class DisputeRewriteValidationError extends Error {
-  constructor(message) {
+  constructor(message, statusCode = 400) {
     super(message);
     this.name = 'DisputeRewriteValidationError';
-    this.statusCode = 400;
+    this.statusCode = statusCode;
   }
+}
+
+function normalizedTrackBindings(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_REWRITE_TRACKS) {
+    throw new DisputeRewriteValidationError(`Bind between 1 and ${MAX_REWRITE_TRACKS} exact active account tracks to the rewrite.`);
+  }
+  const seen = new Set();
+  const bindings = value.map((binding) => {
+    if (!binding || typeof binding !== 'object' || Array.isArray(binding)
+        || Object.keys(binding).some((key) => !['trackId', 'revision'].includes(key))) {
+      throw new DisputeRewriteValidationError('Every rewrite track binding must contain only trackId and revision.');
+    }
+    const trackId = typeof binding.trackId === 'string' ? binding.trackId.trim().toLowerCase() : '';
+    const revision = typeof binding.revision === 'number'
+      ? binding.revision
+      : (typeof binding.revision === 'string' && /^\d+$/.test(binding.revision.trim())
+        ? Number(binding.revision)
+        : Number.NaN);
+    if (!UUID_PATTERN.test(trackId)) {
+      throw new DisputeRewriteValidationError('Every rewrite trackId must be a valid UUID.');
+    }
+    if (!Number.isInteger(revision) || revision < 0) {
+      throw new DisputeRewriteValidationError('Every rewrite track revision must be a non-negative integer.');
+    }
+    if (seen.has(trackId)) {
+      throw new DisputeRewriteValidationError('A rewrite request cannot repeat an account track.');
+    }
+    seen.add(trackId);
+    return { trackId, revision };
+  });
+  return bindings.sort((left, right) => left.trackId.localeCompare(right.trackId));
+}
+
+function rowField(row, snakeCase, camelCase) {
+  return row?.[snakeCase] ?? row?.[camelCase] ?? null;
+}
+
+function rewriteContextError(message) {
+  return new DisputeRewriteValidationError(message, 409);
 }
 
 export function hasProtectedLegalLanguage(text) {

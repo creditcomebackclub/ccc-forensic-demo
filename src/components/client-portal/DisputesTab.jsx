@@ -1,4 +1,3 @@
-import { buildAccountResults } from '../../utils/portalPlan.js';
 import React, { useState } from 'react';
 import { Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -8,14 +7,24 @@ import {
   clientCampaignLabel,
   isCccDisputeCampaign,
 } from '../../utils/clientCampaignCopy';
-import { buildPortalCampaignJourneys, isPortalBureauDispute, isPortalFileUpdate } from '../../utils/portalCampaigns';
+import {
+  buildPortalCampaignJourneys,
+  clientTrackStatusLabel,
+  hasClientVisibleDelivery,
+  isPortalMailTerminal,
+  isPortalBureauDispute,
+  isPortalFileUpdate,
+  portalMailPresentation,
+  portalReviewStartDate,
+  visiblePortalTracks,
+} from '../../utils/portalCampaigns';
 
 const RESPONSE_WINDOW_DAYS = 30;
 const BUREAU_RESPONSE_WINDOW_DAYS = 45;
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function daysBetween(aIso, bIso) {
-  const a = new Date(aIso + 'T00:00:00');
-  const b = new Date(bIso + 'T00:00:00');
+  const a = new Date(aIso + 'T00:00:00Z');
+  const b = new Date(bIso + 'T00:00:00Z');
   return Math.round((b - a) / 86400000);
 }
 function responseCountdown(l) {
@@ -24,29 +33,34 @@ function responseCountdown(l) {
   const isPhase3 = isPortalBureauDispute(l);
   const isCccDispute = isCccDisputeCampaign(l.phase);
   const windowDays = isPhase3 && !isCccDispute ? BUREAU_RESPONSE_WINDOW_DAYS : RESPONSE_WINDOW_DAYS;
-  const usesEstimatedFirstClassClock = isCccDispute
-    && l.mail_service === 'usps_first_class'
-    && !l.delivered_at
-    && l.expected_delivery_date;
-  if (l.mailed_date && !l.delivered_at && !usesEstimatedFirstClassClock) {
-    return { label: `In Transit — ${windowDays}-day window begins upon delivery`, tone: 'text-gray-600 bg-gray-50 border-gray-200' };
+  const mail = portalMailPresentation(l);
+  if (!l.mailed_date) return null;
+  if (isPortalMailTerminal(l)) {
+    return { label: 'Mailing issue recorded — the review clock has not started', tone: 'text-red-700 bg-red-50 border-red-200' };
   }
-  const clockStart = l.delivered_at
-    ? l.delivered_at.slice(0, 10)
-    : usesEstimatedFirstClassClock ? l.expected_delivery_date : l.mailed_date;
-  if (!clockStart) return null;
+  const clockStart = portalReviewStartDate(l);
+  if (!clockStart) {
+    return {
+      label: mail.legacyCertified
+        ? 'Mailed certified — delivery confirmation pending'
+        : mail.currentFirstClass
+          ? 'Mailed First Class — review schedule pending'
+          : 'Mailed — review schedule pending',
+      tone: 'text-gray-600 bg-gray-50 border-gray-200',
+    };
+  }
   const elapsed = daysBetween(clockStart, todayISO());
-  const remaining = l.response_due_at
+  const remaining = mail.legacyCertified && l.response_due_at
     ? daysBetween(todayISO(), String(l.response_due_at).slice(0, 10))
     : windowDays - elapsed;
 
-  if (usesEstimatedFirstClassClock && elapsed < 0) {
-    return { label: 'USPS First Class — estimated delivery ' + new Date(clockStart + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), tone: 'text-gray-600 bg-gray-50 border-gray-200' };
+  if (mail.currentFirstClass && elapsed < 0) {
+    return { label: 'USPS First Class — review scheduled for ' + new Date(clockStart + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), tone: 'text-gray-600 bg-gray-50 border-gray-200' };
   }
   
   if (remaining > 0) {
     if (isCccDispute) {
-      return { label: `CCC round review: day ${elapsed} of ${windowDays}${usesEstimatedFirstClassClock ? ' (estimated-delivery basis)' : ''}`, tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
+      return { label: `Case review: day ${elapsed} of ${windowDays}${mail.currentFirstClass ? ' (expected-delivery basis)' : ''}`, tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
     }
     if (isPhase3) {
       return { label: 'Day ' + elapsed + ' of ' + windowDays + ' — Bureau investigation in progress', tone: remaining <= 7 ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-gray-600 bg-gray-50 border-gray-200' };
@@ -58,7 +72,7 @@ function responseCountdown(l) {
   }
   
   if (isCccDispute) {
-    return { label: 'CCC round review due — staff is checking the documented result', tone: 'text-red-700 bg-red-50 border-red-200' };
+    return { label: 'Case review due — staff is checking the documented result', tone: 'text-red-700 bg-red-50 border-red-200' };
   }
   if (isPhase3) {
     return { label: 'Bureau investigation window closed — final review pending', tone: 'text-red-700 bg-red-50 border-red-200' };
@@ -73,13 +87,14 @@ function responseBadge(l) {
   const isFileUpdate = isPortalFileUpdate(l);
   const isBureau = isPortalBureauDispute(l);
   const isCccDispute = isCccDisputeCampaign(l.phase);
+  const mail = portalMailPresentation(l);
   if (l.response_outcome === 'deleted') return { label: '🏆 Deleted', tone: 'bg-green-50 text-green-700 border-green-200' };
   if (l.round_review_status === 'resolved') return { label: 'Review Complete', tone: 'bg-green-50 text-green-700 border-green-200' };
   if (l.round_review_status === 'follow_up') return { label: 'Next Round Approved', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
   if (l.round_review_status === 'needs_documents') return { label: 'Documents Requested', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   if (l.round_review_status === 'escalated') return { label: 'Escalation Review Approved', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   if (l.response_outcome === 'no_response') {
-    const closedLabel = isCccDispute ? 'CCC Round Ready for Review' : isBureau ? 'Bureau review pending' : isFileUpdate ? 'File update review pending' : 'Staff review pending';
+    const closedLabel = isCccDispute ? 'Case ready for review' : isBureau ? 'Bureau review pending' : isFileUpdate ? 'File update review pending' : 'Staff review pending';
     return { label: closedLabel, tone: 'bg-red-50 text-red-700 border-red-200' };
   }
   if (l.response_outcome === 'received' && isBureau) {
@@ -89,11 +104,12 @@ function responseBadge(l) {
     return { label: 'Bureau Response Received', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
   }
   if (l.response_outcome === 'received') return { label: 'Response Received', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
-  if (l.tracking_status === 'Delivered') return { label: 'Delivered', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
-  if (isCccDispute && l.tracking_status === 'Out for Delivery') return { label: 'Out for Delivery', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
-  if (isCccDispute && l.tracking_status === 'In Transit') return { label: 'In Transit', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
-  if (isCccDispute && l.mailed_date) return { label: 'Mailed First Class', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
-  if (l.mailed_date) return { label: 'In Transit', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (isPortalMailTerminal(l)) return { label: 'Mailing Issue', tone: 'bg-red-50 text-red-700 border-red-200' };
+  if (isCccDispute && l.mailed_date && mail.currentFirstClass) return { label: 'Mailed First Class', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (hasClientVisibleDelivery(l)) return { label: 'Delivered', tone: 'bg-blue-50 text-blue-700 border-blue-200' };
+  if (mail.legacyCertified && l.tracking_status === 'Out for Delivery') return { label: 'Out for Delivery', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (mail.legacyCertified && l.tracking_status === 'In Transit') return { label: 'In Transit', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
+  if (l.mailed_date) return { label: 'Mailed', tone: 'bg-amber-50 text-amber-700 border-amber-200' };
   return { label: 'Pending', tone: 'bg-gray-50 text-gray-500 border-gray-200' };
 }
 
@@ -104,11 +120,11 @@ function CampaignJourneyCards({ campaigns, letters, rounds }) {
     <div className="space-y-3">
       {journeys.map((journey) => (
         <div key={journey.campaign_id} className="rounded-xl border border-slate-200 bg-white/80 p-4 shadow-sm">
-          <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-500">Adaptive campaign · Round {journey.round_number}</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-500">Campaign history · Round {journey.round_number}</div>
           <div className="mt-3 space-y-3">
             {[
-              { number: 1, label: 'Credit-file cleanup', detail: journey.cleanup.status, counts: journey.cleanup },
-              { number: 2, label: `Round ${journey.round_number} account disputes`, detail: journey.account.status, counts: journey.account },
+              { number: 1, label: 'Report preparation', detail: journey.cleanup.status, counts: journey.cleanup },
+              { number: 2, label: `Round ${journey.round_number} account casework`, detail: journey.account.status, counts: journey.account },
             ].map((step, index) => (
               <div key={step.number} className="flex gap-3">
                 <div className="flex flex-col items-center">
@@ -119,7 +135,7 @@ function CampaignJourneyCards({ campaigns, letters, rounds }) {
                   <div className="text-xs font-bold text-slate-900">{step.label}</div>
                   <div className="mt-0.5 text-[11px] font-medium text-slate-600">{step.detail}</div>
                   {step.counts.letterCount > 0 && (
-                    <div className="mt-0.5 text-[10px] text-slate-400">{step.counts.mailedCount}/{step.counts.letterCount} mailed · {step.counts.deliveredCount}/{step.counts.letterCount} delivered</div>
+                    <div className="mt-0.5 text-[10px] text-slate-400">{step.counts.mailedCount}/{step.counts.letterCount} mailed · {step.counts.reviewStartedCount}/{step.counts.letterCount} review clocks active</div>
                   )}
                 </div>
               </div>
@@ -128,6 +144,44 @@ function CampaignJourneyCards({ campaigns, letters, rounds }) {
         </div>
       ))}
     </div>
+  );
+}
+
+const BUREAU_LABELS = { EQ: 'Equifax', EXP: 'Experian', TU: 'TransUnion' };
+
+function CccCaseworkSummary({ projection }) {
+  const tracks = visiblePortalTracks(projection?.tracks || []);
+  if (!tracks.length) return null;
+  const resultByTrack = new Map();
+  for (const result of projection?.results || []) {
+    if (!resultByTrack.has(result.track_id)) resultByTrack.set(result.track_id, result);
+  }
+  return (
+    <section className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-5 shadow-sm">
+      <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-blue-700">Your active case map</div>
+      <h3 className="mt-1 text-base font-bold text-slate-900">Every account is tracked independently.</h3>
+      <p className="mt-1 text-xs leading-relaxed text-slate-600">You see the account, bureau, and current case status here. Internal legal strategy and staff notes stay private.</p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {tracks.map((track) => {
+          const result = resultByTrack.get(track.track_id);
+          const channel = track.channel === 'direct_account'
+            ? 'Direct account review'
+            : BUREAU_LABELS[track.bureau_code] || 'Credit bureau review';
+          return (
+            <div key={track.track_id} className="rounded-xl border border-slate-200 bg-white px-3.5 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-bold text-slate-900">{track.account_label || 'Account'}{track.masked_account ? ` · ${track.masked_account}` : ''}</div>
+                  <div className="mt-0.5 text-[10px] font-medium text-slate-500">{channel}{track.case_step ? ` · Step ${track.case_step}` : ''}</div>
+                </div>
+                <span className="shrink-0 rounded-full border border-blue-100 bg-blue-50 px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-blue-700">{clientTrackStatusLabel(track.status)}</span>
+              </div>
+              {result?.outcome_label && <div className="mt-2 border-t border-slate-100 pt-2 text-[10px] font-semibold text-slate-600">Latest result: {result.outcome_label}</div>}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -190,18 +244,27 @@ export default function DisputesTab({
   submitError,
   handleStageFiles,
   handleSubmitResponse,
-  RESPONSE_ACCEPT
+  RESPONSE_ACCEPT,
+  cccProjection = null,
 }) {
   const coverageByLetter = new Map();
   for (const row of packetCoverage) coverageByLetter.set(row.letter_id, [...(coverageByLetter.get(row.letter_id) || []), row]);
+  const authoritativeDirect = visiblePortalTracks(cccProjection?.tracks || [])
+    .some((track) => track.channel === 'direct_account');
+  const standaloneRounds = rounds.filter((round) => (
+    !round.campaign_id
+    && round.status !== 'cancelled'
+    && (round.target_type === 'bureau' || authoritativeDirect)
+  ));
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
-      <h2 className="text-xl font-bold text-slate-900 mb-2">Your Campaign Letters</h2>
+      <h2 className="text-xl font-bold text-slate-900 mb-2">Your Casework</h2>
+      <CccCaseworkSummary projection={cccProjection} />
       <CampaignJourneyCards campaigns={campaigns} letters={letters} rounds={rounds} />
-      {rounds.filter((round) => !round.campaign_id && round.status !== 'cancelled').length > 0 && (
+      {standaloneRounds.length > 0 && (
         <div className="grid gap-2 sm:grid-cols-2">
-          {rounds.filter((round) => !round.campaign_id && round.status !== 'cancelled').map((round) => {
-            const target = round.target_type === 'bureau' ? 'Credit Bureau' : 'Direct Furnisher';
+          {standaloneRounds.map((round) => {
+            const target = round.target_type === 'bureau' ? 'Credit bureau case' : 'Direct account review';
             const status = round.status === 'open'
               ? (round.reviewed_count > 0 ? 'Staff review in progress' : round.mailed_count === round.letter_count ? 'Response window in progress' : 'Preparation and mailing in progress')
               : round.final_disposition === 'resolved'
@@ -221,7 +284,7 @@ export default function DisputesTab({
       )}
       {letters.length === 0 ? (
         <div className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-10 text-center shadow-sm">
-          <p className="text-sm text-gray-400">No campaign letters yet. Your campaign will begin shortly.</p>
+          <p className="text-sm text-gray-400">No casework letters yet. Your first case step will appear after staff preparation.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -235,19 +298,15 @@ export default function DisputesTab({
                   : null;
                 const displayRound = Number(l.packet_version || 1) === 2 ? (campaignRound || l.round_number) : l.round_number;
                 const structuredLabel = isFileUpdate
-                  ? 'Step 1 · Credit-file cleanup'
+                  ? 'Report preparation'
                   : displayRound
-                  ? `Round ${displayRound} · ${l.target_type === 'bureau' ? 'Credit Bureau Dispute' : 'Direct Furnisher Dispute'}`
+                  ? `Round ${displayRound} · ${l.target_type === 'bureau' ? 'Credit bureau case' : 'Direct account correspondence'}`
                   : null;
-                const accountResults = useMemo(
-    () => buildAccountResults({ packetCoverage, letters }),
-    [packetCoverage, letters],
-  );
-
-  const title = isFileUpdate
-                  ? `Credit-file cleanup — ${l.furnisher}`
+                const mail = portalMailPresentation(l);
+                const title = isFileUpdate
+                  ? `Report preparation — ${l.furnisher}`
                   : isPortalBureauDispute(l)
-                    ? `Credit Bureau Dispute (re: ${l.furnisher})`
+                    ? `Credit bureau case (re: ${l.furnisher})`
                     : l.furnisher;
                 return <>
               <div className="flex items-start justify-between gap-4">
@@ -256,7 +315,9 @@ export default function DisputesTab({
                     {title}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5">
-                    {structuredLabel || `${clientCampaignLabel(l.phase)} · ${clientCampaignDetail(l.phase)}`}{l.target_bureau ? ` · ${l.target_bureau.charAt(0).toUpperCase() + l.target_bureau.slice(1)}` : ''}{l.type ? ' · Letter type ' + l.type : ''}
+                    {structuredLabel || (isCccDisputeCampaign(l.phase)
+                      ? 'Credit bureau case · Evidence-backed account review'
+                      : `${clientCampaignLabel(l.phase)} · ${clientCampaignDetail(l.phase)}`)}{l.target_bureau ? ` · ${l.target_bureau.charAt(0).toUpperCase() + l.target_bureau.slice(1)}` : ''}{l.type ? ' · Letter type ' + l.type : ''}
                   </div>
                 </div>
                 <span className={`text-[10px] px-2.5 py-1 rounded-md whitespace-nowrap uppercase tracking-[0.05em] font-semibold border ${badge.tone}`}>
@@ -284,21 +345,21 @@ export default function DisputesTab({
               
               {l.mailed_date && (
                 <div className="text-[11px] text-gray-400 mt-3 font-medium">
-                  Mailed {isCccDisputeCampaign(l.phase) && l.mail_service === 'usps_first_class' ? 'USPS First Class · ' : ''}{new Date(l.mailed_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                  {l.tracking_number && l.mail_service !== 'usps_first_class' && (
+                  Mailed {mail.label} · {new Date(l.mailed_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  {l.tracking_number && mail.legacyCertified && (
                     <a href={'https://tools.usps.com/go/TrackConfirmAction?tLabels=' + l.tracking_number} target="_blank" rel="noopener noreferrer"
                       className="ml-2 text-slate-900 font-semibold hover:text-blue-600 transition-colors">Track →</a>
                   )}
-                  {l.tracking_status === 'Delivered' && l.lob_id && l.mail_service !== 'usps_first_class' && (
+                  {l.tracking_status === 'Delivered' && l.lob_id && mail.legacyCertified && (
                     <ReturnReceiptButton lobId={l.lob_id} returnReceiptUrl={l.return_receipt_url} />
                   )}
-                  {!l.tracking_number && isCccDisputeCampaign(l.phase) && l.expected_delivery_date && (
-                    <span className="ml-2">Estimated delivery {new Date(l.expected_delivery_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                  {mail.currentFirstClass && portalReviewStartDate(l) && (
+                    <span className="ml-2">Review start {new Date(`${portalReviewStartDate(l)}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
                   )}
                 </div>
               )}
               
-              {l.mailed_date && l.tracking_status !== 'Delivered' && !l.response_outcome && !manualUploadUnlocked[l.id] && (
+              {l.mailed_date && !hasClientVisibleDelivery(l) && !l.response_outcome && !manualUploadUnlocked[l.id] && (
                 <div className="mt-4 pt-3 border-t border-gray-50">
                   <button onClick={() => setManualUploadUnlocked(prev => ({ ...prev, [l.id]: true }))}
                     className="text-[11px] text-gray-400 hover:text-gray-600 underline underline-offset-2 transition-colors font-medium">
@@ -307,7 +368,7 @@ export default function DisputesTab({
                 </div>
               )}
               
-              {(l.tracking_status === 'Delivered' || manualUploadUnlocked[l.id]) && !l.response_outcome && (
+              {(hasClientVisibleDelivery(l) || manualUploadUnlocked[l.id]) && !l.response_outcome && (
                 <div className="mt-4 pt-4 border-t border-gray-50">
                   {uploadSuccess === l.id ? (
                     <div className="text-xs text-green-700 font-bold flex items-center gap-1.5 bg-green-50 p-3 rounded-lg border border-green-200">

@@ -68,7 +68,7 @@ async function loadNotificationSettings(supabaseUrl, serviceKey) {
 async function resolveClient(userId, supabaseUrl, serviceKey) {
   const profileRes = await supabaseRequest(
     '/rest/v1/client_profiles?user_id=eq.' + encodeURIComponent(userId)
-      + '&select=full_name,email,client_id,onboarding_complete,billing_tier',
+      + '&select=full_name,email,client_id,onboarding_complete,agreement_signed_at,billing_tier',
     'GET', null, supabaseUrl, serviceKey
   );
   const profile = Array.isArray(profileRes.body) && profileRes.body[0];
@@ -78,7 +78,7 @@ async function resolveClient(userId, supabaseUrl, serviceKey) {
   if (profile.client_id) {
     const clientRes = await supabaseRequest(
       '/rest/v1/clients?id=eq.' + encodeURIComponent(profile.client_id)
-        + '&select=id,name,email,phone,lead_drips_sent,lpoa_signed,billing_tier,is_vip,referred_by',
+        + '&select=id,name,email,phone,lead_drips_sent,billing_tier,is_vip,referred_by',
       'GET', null, supabaseUrl, serviceKey
     );
     client = Array.isArray(clientRes.body) && clientRes.body[0];
@@ -136,8 +136,9 @@ exports.handler = async (event) => {
 
   try {
     if (eventType === 'onboarding_complete') {
-      // Require enrollment actually complete (or LPOA signed) — don't trust the client flag alone.
-      const onboarded = profile.onboarding_complete === true || (client && client.lpoa_signed === true);
+      // The canonical wizard marks both fields only after the immutable service
+      // agreement, disclosure acknowledgement, ID, and address proof are saved.
+      const onboarded = profile.onboarding_complete === true && !!profile.agreement_signed_at;
       if (!onboarded) {
         return { statusCode: 409, body: JSON.stringify({ error: 'Enrollment is not complete yet' }) };
       }
@@ -182,9 +183,9 @@ exports.handler = async (event) => {
           ['Phone', client?.phone],
           ['Tier', client?.billing_tier || profile.billing_tier || '—'],
           ['VIP', client?.is_vip ? 'Yes' : 'No'],
-          ['LPOA', client?.lpoa_signed ? 'Signed' : 'Pending'],
+          ['Service Agreement', profile.agreement_signed_at ? 'Signed' : 'Pending'],
         ],
-        footer: '<p style="font-size:13px;color:#4B5563;">ID, address proof, signature, and LPOA should now be on file. Open the client to review documents and start the campaign.</p>',
+        footer: '<p style="font-size:13px;color:#4B5563;">The signed agreement, disclosure receipt, ID, and address proof are on file. Open the client to review the completed onboarding packet.</p>',
       });
 
       await sendEmail({

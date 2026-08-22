@@ -11,9 +11,12 @@ async function blueprintRequest(action, audit, extra = {}) {
     },
     body: JSON.stringify({
       action,
+      auditId: audit.id || audit.auditId || null,
+      expectedAuditRevision: audit.auditRevision ?? audit.savedAt ?? null,
+      expectedAuditSha256: audit.auditSha256 || null,
       clientId: audit.client?.id || null,
       clientName: audit.client?.name || null,
-      reportDate: audit.client?.reportDate || null,
+      reportDate: audit.client?.reportDate || audit.reportDate || null,
       ...extra,
     }),
   });
@@ -30,22 +33,12 @@ export function persistReviewedAccounts(audit, accounts) {
   return blueprintRequest('save_corrections', audit, {
     accounts: accounts.map((account) => ({
       id: account.id,
-      balance: account.balance,
-      status: account.status,
-      accountNumberMasked: account.accountNumberMasked,
-      originalCreditor: account.originalCreditor,
+      clientAccountId: account.clientAccountId || account.client_account_id || null,
+      classificationAttested: account.classificationAttested === true,
       accountKind: account.accountKind,
       latePaymentCount: account.latePaymentCount,
       latePaymentBand: account.latePaymentBand,
-      // Adjudication + derived fields so Blueprint / campaign routing stay in sync
-      findings: account.findings || null,
-      violations: account.violations || null,
-      authorizedFindingIds: account.authorizedFindingIds || null,
-      primaryViolation: account.primaryViolation || null,
-      primaryChallengeStatement: account.primaryChallengeStatement || null,
-      strategy: account.strategy || null,
-      priorityScore: account.priorityScore || null,
-      batch: account.batch || null,
+      latePaymentByBureau: account.latePaymentByBureau || account.routingFacts?.bureauFacts || null,
     })),
   });
 }

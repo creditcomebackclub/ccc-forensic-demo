@@ -74,6 +74,17 @@ async function applyRateLimit(event, supabaseUrl, serviceKey) {
   return Array.isArray(recent.body) && recent.body.length > 5;
 }
 
+async function resolveProgramOwner(supabaseUrl, serviceKey) {
+  const configured = String(process.env.AFFILIATE_PROGRAM_OWNER_USER_ID || '').trim();
+  const path = configured
+    ? `profiles?id=eq.${encodeURIComponent(configured)}&role=eq.admin&select=id&limit=1`
+    : 'profiles?role=eq.admin&select=id&limit=2';
+  const result = await rest(supabaseUrl, serviceKey, path);
+  const rows = Array.isArray(result.body) ? result.body : [];
+  if (!result.ok || rows.length !== 1) return null;
+  return rows[0];
+}
+
 async function sendApplicationEmails(application) {
   const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL || 'creditcomebackclub@gmail.com';
   const staffHtml = wrapStaffEmail({
@@ -87,15 +98,15 @@ async function sendApplicationEmails(application) {
       ['Website', application.website_url || '—'],
       ['Referral plan', application.referral_notes || '—'],
     ],
-    footer: '<p style="font-size:13px;color:#444;margin:0;">Review this application in the Affiliates dashboard. Portal access has not been created or sent.</p>',
+    footer: '<p style="font-size:13px;color:#444;margin:0;">Review this application in the Affiliates dashboard. No agreement or portal access has been created or sent.</p>',
     ctaLabel: 'Review Application →',
   });
   const applicantHtml = wrapClientEmail({
     eyebrow: 'Partner Application Received',
     bodyHtml: `<p style="margin:0 0 14px;">Hi ${escapeHtml(application.name)},</p>`
       + '<p style="margin:0 0 14px;">Thanks for applying to partner with Credit Comeback Club. We received your application and will review it before activating any affiliate account.</p>'
-      + '<p style="margin:0 0 14px;">If approved, you will receive a separate secure invitation to the partner portal with your confirmed commission rate and referral tools.</p>'
-      + '<p style="margin:0;font-size:12px;color:#6B7280;">Submitting an application does not create portal access or guarantee acceptance into the program.</p>',
+      + '<p style="margin:0 0 14px;">If the owner approves your application and proposed terms, you will receive a separate secure invitation to review and sign the versioned partner agreement.</p>'
+      + '<p style="margin:0;font-size:12px;color:#6B7280;">Submitting an application does not create portal access or guarantee acceptance. Portal access begins only after the agreement is signed and owner-activated.</p>',
     cta: null,
   });
   await Promise.all([
@@ -134,8 +145,7 @@ exports.handler = async (event) => {
       console.warn('Affiliate application rate-limit check failed:', error.message);
     }
 
-    const adminResult = await rest(supabaseUrl, serviceKey, 'profiles?role=eq.admin&select=id&limit=1');
-    const admin = Array.isArray(adminResult.body) ? adminResult.body[0] : null;
+    const admin = await resolveProgramOwner(supabaseUrl, serviceKey);
     if (!admin?.id) return response(500, { error: 'Partner applications are temporarily unavailable.' });
 
     // Public responses never reveal whether the email already belongs to an
@@ -177,4 +187,4 @@ exports.handler = async (event) => {
   }
 };
 
-exports._test = { cleanText, normalizeWebsite, normalizeApplication };
+exports._test = { cleanText, normalizeWebsite, normalizeApplication, resolveProgramOwner };

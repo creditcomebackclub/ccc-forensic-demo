@@ -1,5 +1,6 @@
 // Canonical Supabase Storage path contract (server). Keep in sync with
-// src/utils/storagePaths.js.
+// src/utils/storagePaths.js. New portal identity uploads include a SHA-256
+// suffix; callers that omit contentHash retain historical path compatibility.
 
 const DOCUMENTS_BUCKET = 'documents';
 const RESPONSES_BUCKET = 'responses';
@@ -7,8 +8,12 @@ const BLUEPRINTS_BUCKET = 'recovery-blueprints';
 const FIRM_ASSETS_BUCKET = 'client-docs';
 const FIRM_ATTORNEY_SIG_PATH = 'firm/attorney-signature.png';
 
-function identityDocPath(firmUserId, clientId, docType, ext) {
-  return `${firmUserId}/${clientId}/identity/${docType}.${ext}`;
+function identityDocPath(firmUserId, clientId, docType, ext, contentHash) {
+  if (contentHash !== undefined && !/^[0-9a-f]{64}$/.test(String(contentHash))) {
+    throw new Error('identityDocPath contentHash must be a lowercase SHA-256.');
+  }
+  const immutableSuffix = contentHash ? `-${String(contentHash).slice(0, 16)}` : '';
+  return `${firmUserId}/${clientId}/identity/${docType}${immutableSuffix}.${ext}`;
 }
 
 function lpoaSignaturePath(firmUserId, clientId) {

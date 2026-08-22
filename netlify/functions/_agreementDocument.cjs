@@ -1,85 +1,118 @@
-const { DOCUMENTS_BUCKET, lpoaDocumentPath } = require('./_storagePaths.cjs');
+const { DOCUMENTS_BUCKET } = require('./_storagePaths.cjs');
+const { resolvePortalIdentityWithAdmin } = require('./_portalIdentity.cjs');
+const {
+  AGREEMENT_TEMPLATE_VERSION,
+  PRIOR_SERVICE_ONLY_AGREEMENT_TEMPLATE_VERSION,
+} = require('./_serviceAgreement.cjs');
 
-/**
- * Resolve where a given portal user's signed LPOA / service agreement actually
- * lives in storage.
- *
- * Three onboarding paths write the signed document to three different places
- * (see the ClientBillingPanel.jsx comment near startOnboarding and
- * portal-enroll-upload.cjs's "legacy portal enrollment" branch), so all three
- * are checked before giving up:
- *   1. client_profiles.lpoa_storage_path — set by sign-lpoa.cjs (staff-sent
- *      signing link).
- *   2. The deterministic lpoaDocumentPath() location — written by the in-portal
- *      wizard (ClientOnboardingModal), which never backfills client_profiles.
- *   3. client_service_agreements.signed_document_path — the separate
- *      counsel-approved-template flow (agreement-onboarding.cjs).
- *
- * Shared by portal-agreement-url.cjs (mints a view token) and
- * portal-agreement-view.cjs (re-resolves to authorize the token it was handed).
- * Keeping one implementation means the two can never drift out of agreement
- * about which document belongs to which user.
- */
-async function objectExists(admin, bucket, path) {
-  if (!bucket || !path) return false;
-  const dir = path.split('/').slice(0, -1).join('/');
-  const name = path.split('/').pop();
-  const { data, error } = await admin.storage.from(bucket).list(dir, { search: name, limit: 100 });
-  if (error) return false;
-  return (data || []).some((f) => f.name === name);
+const PORTAL_SERVICE_AGREEMENT_VERSIONS = new Set([
+  AGREEMENT_TEMPLATE_VERSION,
+  PRIOR_SERVICE_ONLY_AGREEMENT_TEMPLATE_VERSION,
+]);
+
+const AGREEMENT_ARTIFACT_KINDS = Object.freeze(['agreement', 'disclosure', 'cancellation']);
+const KIND_CONFIG = Object.freeze({
+  agreement: {
+    pathColumn: 'signed_document_path',
+    hashColumn: 'signed_document_hash',
+    contentType: 'text/html; charset=utf-8',
+    fileName: 'CCC-Client-Service-Agreement.html',
+  },
+  disclosure: {
+    pathColumn: 'signed_disclosure_path',
+    hashColumn: 'signed_disclosure_hash',
+    contentType: 'text/html; charset=utf-8',
+    fileName: 'CCC-Consumer-Rights-Disclosure.html',
+  },
+  cancellation: {
+    pathColumn: 'signed_cancellation_path',
+    hashColumn: 'signed_cancellation_hash',
+    contentType: 'application/pdf',
+    fileName: 'CCC-Notice-of-Cancellation-Two-Copies.pdf',
+  },
+});
+
+function isAgreementArtifactKind(kind) {
+  return AGREEMENT_ARTIFACT_KINDS.includes(String(kind || ''));
 }
 
-async function resolveAgreementDocument(admin, userId) {
-  const { data: profile } = await admin
-    .from('client_profiles')
-    .select('client_id, full_name, user_id, lpoa_storage_bucket, lpoa_storage_path')
-    .eq('user_id', userId)
-    .limit(1)
-    .maybeSingle();
+async function objectExists(admin, bucket, path) {
+  if (!bucket || !path || path.startsWith('/') || path.includes('..')) return false;
+  const parts = path.split('/');
+  const name = parts.pop();
+  const dir = parts.join('/');
+  const { data, error } = await admin.storage.from(bucket).list(dir, { search: name, limit: 100 });
+  if (error) return false;
+  return (data || []).some((file) => file.name === name);
+}
 
-  if (!profile) return { profileMissing: true, document: null };
+async function latestSignedAgreement(admin, client) {
+  const { data, error } = await admin
+    .from('client_service_agreements')
+    .select('id, client_id, user_id, template_version, signed_at, signed_document_path, signed_document_hash, signed_disclosure_path, signed_disclosure_hash, signed_cancellation_path, signed_cancellation_hash')
+    .eq('client_id', client.id)
+    .eq('user_id', client.user_id)
+    .eq('status', 'signed')
+    .order('signed_at', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return Array.isArray(data) && data.length === 1 ? data[0] : null;
+}
 
-  // 1. Cached path from the staff-sent signing link (sign-lpoa.cjs).
-  if (profile.lpoa_storage_path) {
-    const bucket = profile.lpoa_storage_bucket || DOCUMENTS_BUCKET;
-    if (await objectExists(admin, bucket, profile.lpoa_storage_path)) {
-      return { profileMissing: false, document: { bucket, path: profile.lpoa_storage_path } };
-    }
+/**
+ * Resolve one allowlisted signed artifact for exactly one authenticated portal
+ * owner. Only a signed, versioned service-agreement row can resolve here.
+ * Historical authorization artifacts remain stored as evidence, but they are
+ * intentionally not exposed through the active portal agreement routes.
+ */
+async function resolveAgreementDocument(admin, userId, kind = 'agreement') {
+  if (!isAgreementArtifactKind(kind)) return { invalidKind: true, profileMissing: false, document: null };
+
+  let identity;
+  try {
+    identity = await resolvePortalIdentityWithAdmin(admin, userId, 'active');
+  } catch (error) {
+    if (error?.status === 403) return { profileMissing: true, document: null };
+    throw error;
   }
+  const client = { id: identity.clientId, user_id: identity.firmUserId };
 
-  // 2. In-portal wizard writes to the deterministic path but never backfills
-  //    client_profiles — reconstruct it and check whether it's actually there.
-  if (profile.client_id) {
-    const { data: clientRow } = await admin
-      .from('clients')
-      .select('user_id, lpoa_signed')
-      .eq('id', profile.client_id)
-      .limit(1)
-      .maybeSingle();
-    if (clientRow?.lpoa_signed && clientRow.user_id) {
-      const path = lpoaDocumentPath(clientRow.user_id, profile.client_id);
-      if (await objectExists(admin, DOCUMENTS_BUCKET, path)) {
-        return { profileMissing: false, document: { bucket: DOCUMENTS_BUCKET, path } };
-      }
+  const agreement = await latestSignedAgreement(admin, client);
+  if (agreement) {
+    if (!PORTAL_SERVICE_AGREEMENT_VERSIONS.has(agreement.template_version)) {
+      return { profileMissing: false, document: null, agreementId: agreement.id, artifactRetired: true };
     }
-  }
-
-  // 3. Separate counsel-approved-template agreement flow.
-  if (profile.client_id) {
-    const { data: agreementRows } = await admin
-      .from('client_service_agreements')
-      .select('signed_document_path')
-      .eq('client_id', profile.client_id)
-      .eq('status', 'signed')
-      .order('signed_at', { ascending: false })
-      .limit(1);
-    const path = agreementRows?.[0]?.signed_document_path;
-    if (path && (await objectExists(admin, DOCUMENTS_BUCKET, path))) {
-      return { profileMissing: false, document: { bucket: DOCUMENTS_BUCKET, path } };
+    const config = KIND_CONFIG[kind];
+    const path = agreement[config.pathColumn];
+    const hash = agreement[config.hashColumn];
+    const expectedPrefix = `${client.user_id}/${client.id}/agreements/${agreement.id}/`;
+    if (!path || !path.startsWith(expectedPrefix) || !/^[0-9a-f]{64}$/.test(hash || '')
+      || !(await objectExists(admin, DOCUMENTS_BUCKET, path))) {
+      return { profileMissing: false, document: null, agreementId: agreement.id, artifactMissing: true };
     }
+    return {
+      profileMissing: false,
+      document: {
+        bucket: DOCUMENTS_BUCKET,
+        path,
+        hash: hash || null,
+        kind,
+        agreementId: agreement.id,
+        templateVersion: agreement.template_version,
+        contentType: config.contentType,
+        fileName: config.fileName,
+        legacy: false,
+      },
+    };
   }
 
   return { profileMissing: false, document: null };
 }
 
-module.exports = { resolveAgreementDocument, objectExists };
+module.exports = {
+  AGREEMENT_ARTIFACT_KINDS,
+  KIND_CONFIG,
+  isAgreementArtifactKind,
+  resolveAgreementDocument,
+  objectExists,
+};

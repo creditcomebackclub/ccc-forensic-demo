@@ -6,17 +6,38 @@
 // AffiliatePortal.jsx, App.jsx, ClientBillingPanel.jsx,
 // BillingDashboardPage.jsx, and affiliate-portal-data.cjs).
 //
-// Commission is genuinely recurring — 20% (or a per-client override) of the
-// First Work Fee AND every month of ongoing revenue, for as long as the
-// client keeps paying. "Paid" is therefore the sum of durable payout events,
-// never a single permanent boolean. The old implementation treated an entire
-// transaction as paid merely because its id appeared in covered_tx_ids. That
-// made a $1 partial payout appear to settle every transaction it referenced.
-// Dollar amounts are now the source of truth; covered_tx_ids remains only a
-// legacy/audit hint while manual billing is still backed by the JSON ledger.
+// Commission is calculated only from actual eligible client revenue recorded
+// as collected in the ledger. Plan labels and forecasted/substitute amounts do
+// not create commission. "Paid" is the sum of durable payout events, never a
+// single permanent boolean. covered_tx_ids remains only a legacy/audit hint
+// while manual billing is still backed by the JSON ledger.
+
+const NON_COLLECTED_STATUSES = new Set([
+  'cancelled', 'canceled', 'declined', 'due', 'failed', 'outstanding',
+  'pending', 'refunded', 'reversed', 'void', 'voided',
+]);
+
+export function collectedRevenueAmount(tx) {
+  if (!tx || typeof tx !== 'object') return 0;
+  const amount = Number(tx.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  const type = String(tx.type || '').trim().toLowerCase();
+  const status = String(tx.status || '').trim().toLowerCase();
+  if (NON_COLLECTED_STATUSES.has(status)) return 0;
+  if (type === 'invoice') return status === 'paid' ? amount : 0;
+  // Older Payment rows sometimes have no status; preserve those historical
+  // receipts. New ledger commands save Payment rows as Paid.
+  if (type === 'payment') return !status || ['paid', 'complete', 'completed', 'succeeded'].includes(status) ? amount : 0;
+  return 0;
+}
+
+export function eligibleCollectedAmount(tx) {
+  if (tx?.commission_eligible === false || tx?.commissionEligible === false) return 0;
+  return collectedRevenueAmount(tx);
+}
 
 function isRecognized(tx) {
-  return tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid');
+  return eligibleCollectedAmount(tx) > 0;
 }
 
 export function recognizedTransactions(client) {
@@ -25,7 +46,12 @@ export function recognizedTransactions(client) {
 }
 
 export function recognizedTotal(client) {
-  return recognizedTransactions(client).reduce((sum, tx) => sum + (parseFloat(tx.amount) || 0), 0);
+  return recognizedTransactions(client).reduce((sum, tx) => sum + eligibleCollectedAmount(tx), 0);
+}
+
+export function collectedTotal(client) {
+  const ledger = Array.isArray(client?.ledger) ? client.ledger : [];
+  return ledger.reduce((sum, tx) => sum + collectedRevenueAmount(tx), 0);
 }
 
 // client.referral_fee is a percentage-point override (e.g. 25 for 25%);
@@ -42,7 +68,7 @@ export function commissionRate(client, affiliate) {
 export function computeClientCommission(client, affiliate, payoutsForClient) {
   const rate = commissionRate(client, affiliate);
   const rows = recognizedTransactions(client)
-    .map((tx) => ({ tx, commission: (parseFloat(tx.amount) || 0) * rate }))
+    .map((tx) => ({ tx, commission: eligibleCollectedAmount(tx) * rate }))
     .sort((a, b) => String(a.tx.date || '').localeCompare(String(b.tx.date || '')) || String(a.tx.id || '').localeCompare(String(b.tx.id || '')));
   const earned = rows.reduce((sum, row) => sum + row.commission, 0);
 

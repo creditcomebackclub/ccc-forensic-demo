@@ -1,26 +1,10 @@
 import React, { useState } from 'react';
-import { ExternalLink, FileText, Shield, Upload, Eye, Trash2 } from 'lucide-react';
+import { ExternalLink, FileText, Shield, Upload, Eye } from 'lucide-react';
 import { supabase } from '../../utils/supabase';
 import { writeClientSensitiveData } from '../../utils/clientSensitiveData';
-import { getDocumentUrl, deleteDocument } from '../../utils/documents';
+import { getDocumentUrl } from '../../utils/documents';
 
-const OTHER_DOC_CATEGORIES = [
-  'Bank Statement', 'Pay Stub', 'Tax Document', 'Court Document',
-  'Insurance Document', 'Correspondence', 'Other',
-];
-
-function OtherDocsCard({ docs, uploadingOther, handleUploadOther, clientId, ownerUserId, onChanged }) {
-  const [category, setCategory] = useState(OTHER_DOC_CATEGORIES[0]);
-  const [customLabel, setCustomLabel] = useState('');
-  const [error, setError] = useState(null);
-
-  const handleFile = (file) => {
-    const label = category === 'Other' ? customLabel.trim() : category;
-    if (!label) { setError('Enter a name for this document.'); return; }
-    setError(null);
-    setCustomLabel('');
-    handleUploadOther(label, file);
-  };
+function OtherDocsCard({ docs }) {
 
   const handleView = async (doc) => {
     try {
@@ -29,34 +13,9 @@ function OtherDocsCard({ docs, uploadingOther, handleUploadOther, clientId, owne
     } catch (e) { alert('Could not open document: ' + e.message); }
   };
 
-  const handleDelete = async (doc) => {
-    if (!window.confirm('Remove "' + (doc.label || doc.file_name) + '"?')) return;
-    try {
-      if (!ownerUserId) throw new Error('Could not identify document owner.');
-      await deleteDocument(clientId, doc.doc_type, ownerUserId);
-      onChanged();
-    } catch (e) { alert('Could not delete: ' + e.message); }
-  };
-
   return (
     <div className="bg-white/70 backdrop-blur-md border border-gray-100 rounded-xl p-5 shadow-sm">
-      <div className="flex items-center gap-2 flex-wrap mb-3">
-        <select value={category} onChange={(e) => setCategory(e.target.value)}
-          className="text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white">
-          {OTHER_DOC_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-        {category === 'Other' && (
-          <input value={customLabel} onChange={(e) => setCustomLabel(e.target.value)} placeholder="Document name"
-            className="text-xs border border-gray-200 rounded-lg px-3 py-2 flex-1 min-w-[140px]" />
-        )}
-        <label className={`flex items-center gap-1.5 text-[11px] px-4 py-2 rounded-lg font-semibold cursor-pointer whitespace-nowrap shrink-0 bg-slate-900 text-amber-400 hover:bg-slate-800 transition-all ${uploadingOther ? 'opacity-50 pointer-events-none' : ''}`}>
-          <Upload size={12} strokeWidth={2.5} />
-          {uploadingOther ? 'Uploading…' : 'Upload'}
-          <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-            onChange={(e) => { if (e.target.files[0]) handleFile(e.target.files[0]); e.target.value = ''; }} />
-        </label>
-      </div>
-      {error && <div className="text-[11px] text-red-600 mb-2">{error}</div>}
+      <p className="text-[11px] text-gray-400 mb-3">Additional documents placed on file by Credit Comeback Club appear here.</p>
       {docs && docs.length > 0 && (
         <div className="space-y-2">
           {docs.map((doc) => (
@@ -65,14 +24,9 @@ function OtherDocsCard({ docs, uploadingOther, handleUploadOther, clientId, owne
                 <FileText size={14} className="text-slate-400 shrink-0" strokeWidth={1.75} />
                 <span className="text-xs font-medium text-slate-900 truncate">{doc.label || doc.file_name}</span>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button onClick={() => handleView(doc)} className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-900 flex items-center gap-1">
-                  <Eye size={11} /> View
-                </button>
-                <button onClick={() => handleDelete(doc)} className="text-slate-300 hover:text-red-600">
-                  <Trash2 size={12} />
-                </button>
-              </div>
+              <button onClick={() => handleView(doc)} className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-900 flex items-center gap-1 shrink-0">
+                <Eye size={11} /> View
+              </button>
             </div>
           ))}
         </div>
@@ -120,7 +74,6 @@ export default function DocumentsTab({
   clientDocs,
   uploadingDoc,
   handleUploadDoc,
-  handleUploadOther,
   loadData,
   monitoringStep,
   setMonitoringStep,
@@ -130,32 +83,61 @@ export default function DocumentsTab({
   setMonitoringSaving,
   monitoringError,
   setMonitoringError,
+  signedArtifacts,
+  onViewSignedArtifact,
 }) {
-  const allDocsDone = !!clientDocs.id && !!clientDocs.address && clientMeta?.lpoa_signed;
+  const agreementSigned = !!clientMeta?.agreement_signed;
+  const artifactButtons = [
+    ['agreement', 'Service Agreement'],
+    ['disclosure', 'Consumer Rights Disclosure'],
+    ['cancellation', 'Cancellation Notice (2 copies)'],
+  ];
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
       <div>
         <h2 className="text-xl font-bold text-slate-900">Documents & Setup</h2>
-        <p className="text-sm text-gray-500 mt-1">Your identity documents, authorization, and credit monitoring setup.</p>
+        <p className="text-sm text-gray-500 mt-1">Your identity documents, service agreement, and credit monitoring setup.</p>
       </div>
 
-      {/* Authorization status */}
-      <div className={`rounded-xl p-4 flex items-center gap-3 border shadow-sm
-        ${clientMeta?.lpoa_signed ? 'bg-green-50/60 border-green-200' : 'bg-amber-50/60 border-amber-200'}`}>
-        <Shield size={18} className={clientMeta?.lpoa_signed ? 'text-green-600' : 'text-amber-600'} strokeWidth={1.75} />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-slate-900">Limited Power of Attorney</div>
-          <div className="text-[11px] text-gray-500 mt-0.5">
-            {clientMeta?.lpoa_signed
-              ? `Signed and active${clientMeta.lpoa_signed_at ? ' · ' + new Date(clientMeta.lpoa_signed_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''}`
-              : 'Authorization not yet on file — contact Credit Comeback Club'}
+      {/* Service agreement status */}
+      <div className={`rounded-xl p-4 border shadow-sm
+        ${agreementSigned ? 'bg-green-50/60 border-green-200' : 'bg-amber-50/60 border-amber-200'}`}>
+        <div className="flex items-center gap-3">
+          <Shield size={18} className={agreementSigned ? 'text-green-600' : 'text-amber-600'} strokeWidth={1.75} />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-slate-900">Signed Enrollment Documents</div>
+            <div className="text-[11px] text-gray-500 mt-0.5">
+              {agreementSigned
+                ? `Signed${clientMeta.agreement_signed_at ? ' · ' + new Date(clientMeta.agreement_signed_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''}`
+                : 'Agreement not yet completed — contact Credit Comeback Club'}
+            </div>
           </div>
+          <span className={`text-[10px] px-2.5 py-1 rounded-full font-semibold border
+            ${agreementSigned ? 'bg-green-100 text-green-700 border-green-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+            {agreementSigned ? '✓ Signed' : 'Pending'}
+          </span>
         </div>
-        <span className={`text-[10px] px-2.5 py-1 rounded-full font-semibold border
-          ${clientMeta?.lpoa_signed ? 'bg-green-100 text-green-700 border-green-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
-          {clientMeta?.lpoa_signed ? '✓ Active' : 'Pending'}
-        </span>
+        {agreementSigned && (
+          <div className="mt-4 pt-3 border-t border-green-200/70 flex flex-wrap gap-2">
+            {artifactButtons.map(([kind, label]) => (
+              signedArtifacts?.[kind] ? (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => onViewSignedArtifact(kind)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-green-200 bg-white px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-700 hover:border-green-300 hover:text-slate-950"
+                >
+                  <ExternalLink size={11} /> {label}
+                </button>
+              ) : (
+                <span key={kind} className="inline-flex items-center rounded-lg border border-gray-200/80 bg-white/60 px-3 py-2 text-[10px] text-gray-400">
+                  {label} unavailable
+                </span>
+              )
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Identity documents */}
@@ -190,11 +172,6 @@ export default function DocumentsTab({
         <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-gray-500 mb-3">Other Documents</div>
         <OtherDocsCard
           docs={clientDocs.other || []}
-          uploadingOther={uploadingDoc === 'other'}
-          handleUploadOther={handleUploadOther}
-          clientId={clientMeta?.id}
-          ownerUserId={clientMeta?.user_id}
-          onChanged={loadData}
         />
       </div>
 

@@ -4,8 +4,8 @@ import {
   hasMailedContentWarning,
   hasMailedDeliveryEvidence,
   letterGenerationState,
-  letterSignatureState,
 } from '../../utils/letterGeneration.js';
+import { isCccDisputePhase } from '../../utils/cccMailRules.js';
 
 const T = {
   navy: '#1B2A4A',
@@ -18,38 +18,34 @@ const T = {
 export default function MailStageRail({ letter }) {
   const generation = letterGenerationState(letter);
   const mailedContentWarning = hasMailedContentWarning(letter);
-  const signatureState = generation === 'ready' ? letterSignatureState(letter) : null;
-  const signatureRequired = signatureState && signatureState !== 'embedded' && !hasMailedDeliveryEvidence(letter);
+  const isHistoricalDraft = !isCccDisputePhase(letter?.phase) && !hasMailedDeliveryEvidence(letter);
+  if (isHistoricalDraft) {
+    return (
+      <div
+        className="text-[9px] uppercase tracking-wider font-semibold px-2 py-1 rounded-md"
+        style={{ color: '#6B7280', background: '#F3F4F6', border: '1px solid #E5E7EB' }}
+        title="Historical correspondence remains available for review only"
+      >
+        Historical · read only
+      </div>
+    );
+  }
   if (generation !== 'ready' && !mailedContentWarning) {
     const failed = generation === 'failed';
     return (
       <div
         className="text-[9px] uppercase tracking-wider font-semibold px-2 py-1 rounded-md"
         style={{ color: failed ? '#B91C1C' : '#6B7280', background: failed ? '#FEF2F2' : '#F3F4F6', border: `1px solid ${failed ? '#FECACA' : '#E5E7EB'}` }}
-        title={failed ? 'Generation failed — mailing blocked' : 'Claude generation is still running'}
+        title={failed ? 'Letter preparation failed — mailing blocked' : 'Letter preparation is still running'}
       >
         {failed ? 'Generation failed' : 'Generating'}
       </div>
     );
   }
-  if (signatureRequired) {
-    return (
-      <div
-        className="text-[9px] uppercase tracking-wider font-semibold px-2 py-1 rounded-md"
-        style={{ color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA' }}
-        title="A valid embedded client signature is required before mailing"
-      >
-        Signature required
-      </div>
-    );
-  }
   const idx = letterStageIndex(letter);
   const current = LETTER_STAGES[idx];
-  const historicalSignatureWarning = signatureState && signatureState !== 'embedded' && hasMailedDeliveryEvidence(letter);
   const title = mailedContentWarning
     ? `Mail stage: ${current}. The historical letter has a content warning and cannot be retried or overwritten.`
-    : historicalSignatureWarning
-      ? `Mail stage: ${current}. The stored HTML preview uses an unavailable historical signature image; the mailed PDF is authoritative.`
     : 'Mail stage: ' + current;
 
   return (

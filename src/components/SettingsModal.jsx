@@ -196,7 +196,7 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
             {activeTab === 'pricing' && (
               <div className="space-y-5">
                 <p className="text-[12px] text-gray-500">
-                  These fees are dynamically injected into a client's Limited Power of Attorney based on their assigned Service Tier — set per-client in the Billing panel, not here. Each tier's real fee schedule is below.
+                  These prices are snapshotted into the client's service agreement from the Billing panel. Standard and VIP opening invoices contain the first monthly payment only; Paid In Full contains the saved flat price.
                 </p>
                 {Object.entries(settings.pricing.tiers).map(([tierName, tier]) => (
                   <div key={tierName} className="border border-border rounded-sm p-3.5 space-y-3">
@@ -233,15 +233,6 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
                         />
                       </div>
                     )}
-                    <div>
-                      <label className="text-[10px] uppercase tracking-wider text-ink-faint font-bold block mb-1.5">First Work Fee ($)</label>
-                      <input
-                        type="number"
-                        value={tier.firstWorkFee}
-                        onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, tiers: { ...settings.pricing.tiers, [tierName]: { ...tier, firstWorkFee: parseInt(e.target.value) || 0 } } } })}
-                        className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
-                      />
-                    </div>
                   </div>
                 ))}
                 <div>
@@ -252,7 +243,7 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
                     onChange={(e) => setSettings({ ...settings, pricing: { ...settings.pricing, monitoringFee: parseInt(e.target.value) || 0 } })}
                     className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
                   />
-                  <p className="text-[10px] text-gray-400 mt-1">Estimated cost regardless of which monitoring service (PrivacyGuard, IdentityIQ, etc.) a client actually uses — the LPOA names their specific service, only this estimate is shared.</p>
+                  <p className="text-[10px] text-gray-400 mt-1">Estimated cost regardless of which monitoring service (PrivacyGuard, IdentityIQ, etc.) a client actually uses.</p>
                 </div>
               </div>
             )}
@@ -264,7 +255,7 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
                 </p>
                 {[
                   { key: 'emailNewLeads', label: 'New Affiliate Leads', desc: 'When an affiliate refers a new client via their portal.' },
-                  { key: 'emailOnboardingComplete', label: 'Portal Onboarding Complete', desc: 'When a client finishes enrollment (ID, address, LPOA).' },
+                  { key: 'emailOnboardingComplete', label: 'Portal Onboarding Complete', desc: 'When a client finishes enrollment (agreement, ID, and address proof).' },
                   { key: 'emailClientUploads', label: 'Client Document Uploads', desc: 'When a client uploads a new document, ID, or dispute response.' },
                   { key: 'emailEscalations', label: 'Action Required Escalations', desc: 'When the system flags a response that needs manual review.' }
                 ].map(opt => (
@@ -292,7 +283,7 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
                 </p>
                 {[
                   { key: 'emailAffiliateReferralConfirm', label: 'Referral Received', desc: 'Confirm to the partner when their referral lands in your CRM.' },
-                  { key: 'emailAffiliateEnrolled', label: 'Client Enrolled', desc: 'When a referred client finishes enrollment / signs LPOA.' },
+                  { key: 'emailAffiliateEnrolled', label: 'Client Enrolled', desc: 'When a referred client completes the onboarding wizard.' },
                   { key: 'emailAffiliateExited', label: 'Status Exit / Pause', desc: 'When a referred client becomes Paused, Graduated, or Inactive.' },
                   { key: 'emailAffiliateCommission', label: 'Commission Earned & Paid', desc: 'When revenue clears or you record a commission payout.' },
                   { key: 'emailAffiliateMonthlySummary', label: 'Monthly Partner Summary', desc: 'Snapshot of referrals and commissions on the 1st of each month.' },
@@ -328,7 +319,7 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
                     onChange={(e) => setSettings({ ...settings, affiliates: { ...settings.affiliates, defaultCommissionRate: parseInt(e.target.value) || 0 } })}
                     className="w-full border border-border rounded-sm px-3 py-2 text-[13px] focus:outline-none focus:border-navy"
                   />
-                  <p className="text-[10px] text-gray-400 mt-1">This percentage will be displayed in the Affiliate Portal as their cut of the First Work Fee.</p>
+                  <p className="text-[10px] text-gray-400 mt-1">This percentage applies to actual eligible client revenue recorded as collected under the saved partner terms.</p>
                 </div>
               </div>
             )}

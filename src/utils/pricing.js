@@ -1,16 +1,18 @@
-// Single source of truth for tiered service pricing — shared by the LPOA/
-// client agreement (ClientSetupFlow.jsx), the admin Settings pricing tab
+// Single source of truth for tiered service pricing — shared by the client
+// agreement, the admin Settings pricing tab
 // (SettingsModal.jsx), and revenue reporting (BillingDashboardPage.jsx).
 // Previously each of these read from (or hardcoded) a DIFFERENT number, so
-// a client's signed LPOA could cite a flat fee that didn't match their
+// a client's signed agreement could cite a flat fee that didn't match their
 // actual assigned billing tier at all — see the Settings audit that led to
 // this file. Real pricing is inherently tiered; there is no single "the"
 // monthly fee.
 
+export const ACTIVE_PRICING_VERSION = 'ccc-pricing-v2-no-first-work-2026-08-20';
+
 export const DEFAULT_TIER_PRICING = {
-  Standard: { monthlyFee: 79, firstWorkFee: 75 },
-  VIP: { monthlyFee: 149, firstWorkFee: 99 },
-  'Paid In Full': { flatFee: 499, flatMonths: 6, firstWorkFee: 0 },
+  Standard: { monthlyFee: 149 },
+  VIP: { monthlyFee: 299 },
+  'Paid In Full': { flatFee: 997, flatMonths: 6 },
 };
 
 const RECURRING_CHARGE_PATTERN = /monthly|membership/i;
@@ -63,30 +65,43 @@ export function calculateActiveRecurringMrr(clients, pricing = DEFAULT_TIER_PRIC
 // defaults above — same shape, so a partial override (e.g. just Standard's
 // monthly fee) doesn't lose the rest.
 export function getTierPricing(settings) {
-  const overrides = (settings && settings.pricing && settings.pricing.tiers) || {};
+  // Unversioned settings contain the retired $79/$149/$499 + First Work
+  // schedule. Never merge those stale values into a new agreement. An owner
+  // may edit the active schedule after Settings has saved this exact version.
+  const pricing = settings?.pricing || {};
+  const overrides = pricing.version === ACTIVE_PRICING_VERSION
+    ? (pricing.tiers || {})
+    : {};
   const out = {};
   for (const tier of Object.keys(DEFAULT_TIER_PRICING)) {
-    out[tier] = { ...DEFAULT_TIER_PRICING[tier], ...(overrides[tier] || {}) };
+    const candidate = overrides[tier] || {};
+    const allowed = tier === 'Paid In Full'
+      ? { flatFee: candidate.flatFee, flatMonths: candidate.flatMonths }
+      : { monthlyFee: candidate.monthlyFee };
+    out[tier] = {
+      ...DEFAULT_TIER_PRICING[tier],
+      ...Object.fromEntries(Object.entries(allowed).filter(([, value]) => value != null)),
+    };
   }
   return out;
 }
 
 // Human-readable fee-schedule line(s) for a specific tier — used verbatim
-// in both the signed LPOA and the setup-flow agreement preview so they can
+// in both the signed agreement and its staff-side preview so they can
 // never drift from each other.
 export function describeTierFee(tier, pricing) {
   const p = pricing[tier];
   if (!p) return null;
   if (tier === 'Paid In Full') {
-    return `$${p.flatFee} flat for ${p.flatMonths} months of service (no monthly billing)${p.firstWorkFee ? `, plus a $${p.firstWorkFee} First Work Fee` : ' — First Work Fee waived'}.`;
+    return `$${p.flatFee} flat for ${p.flatMonths} months of service (no monthly billing).`;
   }
-  return `$${p.monthlyFee}/month, plus a $${p.firstWorkFee} First Work Fee due after audit delivery.`;
+  return `$${p.monthlyFee}/month.`;
 }
 
 export const INQUIRY_ONLY_FEE_TEXT =
   'Personal Information / Inquiry Removal Fee: $50 per bureau, one-time. No monthly service fee. No deletion = no charge.';
 
-/** True when this client has a custom LPOA fee override saved. */
+/** True when this client has a custom service-agreement fee override saved. */
 export function hasCustomServiceAgreement(client) {
   if (!client) return false;
   const mode = client.serviceAgreementMode || client.service_agreement_mode;
@@ -95,7 +110,7 @@ export function hasCustomServiceAgreement(client) {
 }
 
 /**
- * Resolve LPOA Section 4 fee prose for a client.
+ * Resolve client-facing service-agreement fee prose for a client.
  * Custom agreement wins; otherwise tier text (or inquiry default when requested).
  * `client` may use camelCase (app) or snake_case (DB/API) keys.
  */

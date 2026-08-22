@@ -1,16 +1,17 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog, Home, Settings, Handshake, CheckCircle, DollarSign, UserPlus, Clock, Copy, Inbox, Activity } from 'lucide-react';
-import ProspectChatWidget from './components/ProspectChatWidget';
 import { Toaster } from 'react-hot-toast';
 import { supabase } from './utils/supabase';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit, runMergeBureauAudits } from './utils/api';
 import { getUnanalyzedResponseStats } from './utils/actionItems';
 import { computeClientCommission } from './utils/affiliateCommission';
 import { getSettings } from './utils/settings';
+import { ADMIN_THEME_VARS } from './utils/adminBrand';
 import AffiliateProfilePanel from './components/AffiliateProfilePanel';
 import AffiliateApplicationsPanel from './components/AffiliateApplicationsPanel';
 
 const UploadZone = lazy(() => import('./components/UploadZone'));
+const ProspectChatWidget = lazy(() => import('./components/ProspectChatWidget'));
 const AuditProgress = lazy(() => import('./components/AuditProgress'));
 const AuditResults = lazy(() => import('./components/AuditResults'));
 const BureauParseStatus = lazy(() => import('./components/BureauParseStatus'));
@@ -22,6 +23,7 @@ const DashboardPage = lazy(() => import('./components/DashboardPage'));
 const ClientSetupFlow = lazy(() => import('./components/ClientSetupFlow'));
 const ClientPortal = lazy(() => import('./components/ClientPortal'));
 const AffiliatePortal = lazy(() => import('./components/AffiliatePortal'));
+const AffiliateOnboardingFlow = lazy(() => import('./components/AffiliateOnboardingFlow'));
 const SettingsModal = lazy(() => import('./components/SettingsModal'));
 const BillingDashboardPage = lazy(() => import('./components/BillingDashboardPage'));
 const LetterTrackerPage = lazy(() => import('./components/LetterTrackerPage'));
@@ -30,6 +32,21 @@ const OperationsPage = lazy(() => import('./components/OperationsPage'));
 
 const STATE = { IDLE: 'idle', PROCESSING: 'processing', RESULTS: 'results', ERROR: 'error' };
 const VIEW = { DASHBOARD: 'dashboard', OPERATIONS: 'operations', AUDIT: 'audit', CLIENTS: 'clients', LEADS: 'leads', BILLING: 'billing', LETTER_TRACKER: 'letter-tracker', INBOX: 'inbox', METHODOLOGY: 'methodology', TEAM: 'team', AFFILIATES: 'affiliates' };
+
+function LazyRouteFallback() {
+  return (
+    <div className="min-h-screen bg-bg flex items-center justify-center" role="status" aria-live="polite">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-8 h-8 border-4 border-navy border-t-gold rounded-full animate-spin" aria-hidden="true" />
+        <div className="text-[11px] font-bold uppercase tracking-widest text-ink-muted">Loading…</div>
+      </div>
+    </div>
+  );
+}
+
+function LazyRoute({ children }) {
+  return <Suspense fallback={<LazyRouteFallback />}>{children}</Suspense>;
+}
 
 // Same link format shown inside the affiliate's own portal
 // (AffiliatePortal.jsx) — lets Chris grab it for an affiliate without
@@ -100,38 +117,28 @@ function AffiliatesPage() {
     try {
       const normEmail = form.email.trim().toLowerCase();
 
-      // Insert affiliate record
-      const { error: insertErr } = await supabase.from('affiliates').insert({
+      const { data: { session: adminSession } } = await supabase.auth.getSession();
+      if (!adminSession?.user?.id) throw new Error('Your admin session has expired. Sign in again.');
+      // Staff-entered partners use the same owner review and agreement gate as
+      // public applicants. No affiliate identity or portal invite is created here.
+      const { error: insertErr } = await supabase.from('affiliate_applications').insert({
+        user_id: adminSession.user.id,
         name: form.name.trim(),
         email: normEmail,
         company: form.company.trim() || null,
-        brand_name: form.brand_name.trim() || form.company.trim() || form.name.trim(),
-        brand_color: form.brand_color || '#22C55E',
-        brand_logo_url: form.brand_logo_url.trim() || null,
-        commission_rate: parseFloat(form.commission_rate) || 0.20,
+        source: 'staff_entered',
+        referral_notes: [
+          'Staff-entered application.',
+          form.brand_name.trim() ? `Requested portal brand: ${form.brand_name.trim()}.` : '',
+          form.brand_logo_url.trim() ? `Requested logo: ${form.brand_logo_url.trim()}.` : '',
+        ].filter(Boolean).join(' '),
       });
       if (insertErr) throw insertErr;
-
-      // Provision the auth user server-side and link affiliates.user_id
-      // before any magic link goes out
-      const { data: { session: _adminSess } } = await supabase.auth.getSession();
-      const _adminTok = _adminSess?.access_token;
-      const _adminHeaders = { 'Content-Type': 'application/json', ...(_adminTok ? { Authorization: `Bearer ${_adminTok}` } : {}) };
-
-      const provRes = await fetch('/.netlify/functions/provision-user', {
-        method: 'POST',
-        headers: _adminHeaders,
-        body: JSON.stringify({ email: normEmail, fullName: form.name.trim(), kind: 'affiliate' }),
-      });
-      if (!provRes.ok) {
-        const out = await provRes.json().catch(() => ({}));
-        throw new Error(out.error || 'Could not provision affiliate account');
-      }
 
       setShowCreate(false);
       setForm({ name: '', email: '', company: '', brand_name: '', brand_color: '#22C55E', brand_logo_url: '', commission_rate: defaultCommissionRate });
       loadData();
-      alert('Affiliate created and magic link sent to ' + form.email);
+      alert('Partner application added to the owner review queue. No portal access was sent.');
     } catch(e) {
       setError(e.message || 'Could not create affiliate');
     } finally {
@@ -147,14 +154,17 @@ function AffiliatesPage() {
       const { data: { session: adminSession } } = await supabase.auth.getSession();
       const adminToken = adminSession?.access_token;
       if (!adminToken) throw new Error('Your admin session has expired. Please sign in again.');
-      const response = await fetch('/.netlify/functions/provision-user', {
+      const onboardingInvite = affiliate.program_status === 'agreement_sent' && affiliate.current_agreement_id;
+      const response = await fetch(onboardingInvite ? '/.netlify/functions/affiliate-agreement-onboarding' : '/.netlify/functions/provision-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` },
-        body: JSON.stringify({ email: affiliate.email.trim().toLowerCase(), fullName: affiliate.name, kind: 'affiliate' }),
+        body: JSON.stringify(onboardingInvite
+          ? { action: 'resend', agreementId: affiliate.current_agreement_id }
+          : { email: affiliate.email.trim().toLowerCase(), fullName: affiliate.name, kind: 'affiliate' }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'Could not resend affiliate invitation');
-      alert('A new secure partner portal invite was sent to ' + affiliate.email);
+      alert(`A new secure ${onboardingInvite ? 'agreement' : 'partner portal'} invite was sent to ${affiliate.email}`);
     } catch (error) {
       alert(error.message || 'Could not resend affiliate invitation');
     } finally {
@@ -174,7 +184,7 @@ function AffiliatesPage() {
         <button onClick={() => setShowCreate(true)}
           className="flex items-center gap-2 px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm"
           style={{ background: '#1B2A4A', color: '#C9A84C' }}>
-          + New Affiliate
+          + New Applicant
         </button>
       </div>
 
@@ -209,10 +219,10 @@ function AffiliatesPage() {
               >
                 <div className="p-4 border-b border-border flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    {aff.brand_logo_url && <img src={aff.brand_logo_url} alt={aff.brand_name} style={{ height: 28, objectFit: 'contain' }} />}
+                    {aff.brand_logo_url && <img src={aff.brand_logo_url} alt={aff.brand_name} loading="lazy" decoding="async" style={{ height: 28, objectFit: 'contain' }} />}
                     <div>
                       <div className="text-[14px] font-medium text-ink">{aff.name}</div>
-                      <div className="text-[11px] text-ink-muted">{aff.company} · {aff.email} · {Math.round(aff.commission_rate * 100)}% commission</div>
+                      <div className="text-[11px] text-ink-muted">{aff.company} · {aff.email} · {Math.round(aff.commission_rate * 100)}% commission · {(aff.program_status || 'pending').replaceAll('_', ' ')}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-6 text-right">
@@ -230,7 +240,7 @@ function AffiliatesPage() {
                     </div>
                     <button
                       onClick={(event) => handleResendInvite(aff, event)}
-                      disabled={sendingInviteId === aff.id || !aff.email}
+                      disabled={sendingInviteId === aff.id || !aff.email || !['legacy_active', 'active', 'agreement_sent'].includes(aff.program_status)}
                       className="flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider rounded-sm border transition-colors disabled:opacity-50"
                       style={{ borderColor: '#E7EAF0', color: '#6B7280' }}
                     >
@@ -261,7 +271,8 @@ function AffiliatesPage() {
       {showCreate && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-6" onClick={() => setShowCreate(false)}>
           <div className="bg-white border border-border rounded w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
-            <h2 className="text-[15px] font-medium text-ink mb-5">New Affiliate Partner</h2>
+            <h2 className="text-[15px] font-medium text-ink mb-1">New Partner Application</h2>
+            <p className="text-[11px] text-ink-muted mb-5">This creates an owner-review application. It does not create portal access or send an invite.</p>
             {[
               { key: 'name', label: 'Contact Name', required: true },
               { key: 'email', label: 'Email Address', required: true },
@@ -269,7 +280,6 @@ function AffiliatesPage() {
               { key: 'brand_name', label: 'Portal Brand Name' },
               { key: 'brand_logo_url', label: 'Logo URL' },
               { key: 'brand_color', label: 'Brand Color (hex)' },
-              { key: 'commission_rate', label: 'Commission Rate (e.g. 0.20 = 20%)' },
             ].map(({ key, label, required }) => (
               <div key={key} className="mb-3">
                 <label className="block text-[11px] uppercase tracking-wider text-ink-muted mb-1">{label}{required && <span className="text-red-500 ml-1">*</span>}</label>
@@ -286,7 +296,7 @@ function AffiliatesPage() {
               <button onClick={handleCreate} disabled={creating}
                 className="flex-1 py-2.5 text-[12px] uppercase tracking-wider rounded-sm transition-colors"
                 style={{ background: creating ? '#B5BBC9' : '#1B2A4A', color: '#C9A84C' }}>
-                {creating ? 'Creating…' : 'Create & Send Magic Link'}
+                {creating ? 'Adding…' : 'Add to Review Queue'}
               </button>
               <button onClick={() => setShowCreate(false)} className="px-4 py-2.5 text-[12px] uppercase tracking-wider border border-border rounded-sm text-ink-muted hover:text-ink">
                 Cancel
@@ -301,7 +311,7 @@ function AffiliatesPage() {
 
 export default function App() {
   if (window.location.pathname === '/widget') {
-    return <ProspectChatWidget />;
+    return <Suspense fallback={<div className="h-screen w-full bg-transparent" />}><ProspectChatWidget /></Suspense>;
   }
 
   const [session, setSession] = useState(undefined);
@@ -321,6 +331,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [isClient, setIsClient] = useState(false);
   const [isAffiliate, setIsAffiliate] = useState(false);
+  const [affiliateAccess, setAffiliateAccess] = useState(null);
   const [clientOnboarded, setClientOnboarded] = useState(false);
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
   const [actionItemCount, setActionItemCount] = useState(0);
@@ -378,6 +389,8 @@ export default function App() {
       if (!session) {
         setProfile(null);
         setIsClient(false);
+        setIsAffiliate(false);
+        setAffiliateAccess(null);
         setProfileLoading(false);
         return;
       }
@@ -433,20 +446,27 @@ export default function App() {
       const _prd = await _pr.json();
       const prof = Array.isArray(_prd) && _prd.length > 0 ? _prd[0] : null;
 
-      // Check affiliates table FIRST — before profiles, so affiliates aren't misrouted
-      const _ar = await fetch(_url + '/rest/v1/affiliates?email=eq.' + encodeURIComponent(email) + '&limit=1', { headers: _hdrs });
-      const _ard = await _ar.json();
-      const aff = Array.isArray(_ard) && _ard.length > 0 ? _ard[0] : null;
-      if (aff) {
-        // Wire user_id on first login if provisioning didn't already set it
-        if (!aff.user_id) {
-          const wireRes = await fetch(_url + '/rest/v1/affiliates?id=eq.' + aff.id, {
-            method: 'PATCH',
-            headers: { ..._hdrs, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-            body: JSON.stringify({ user_id: session.user.id })
-          });
-          if (!wireRes.ok) console.warn('Could not link affiliate user_id (status ' + wireRes.status + ')');
-        }
+      // Partner identity and activation are resolved by narrow database RPCs.
+      // The browser never patches affiliate rows or unlocks itself by email.
+      const readAffiliateAccess = async () => {
+        const response = await fetch(_url + '/rest/v1/rpc/ccc_current_affiliate_access_state', {
+          method: 'POST', headers: { ..._hdrs, 'Content-Type': 'application/json' }, body: '{}',
+        });
+        if (!response.ok) return null;
+        return response.json();
+      };
+      let aff = await readAffiliateAccess();
+      if (!aff && !prof) {
+        // Compatibility-only one-time claim for partners who were live before
+        // server-side identity linking existed. It is restricted to records
+        // snapshotted as legacy_active and the authenticated email.
+        await fetch(_url + '/rest/v1/rpc/ccc_claim_legacy_affiliate_portal_identity', {
+          method: 'POST', headers: { ..._hdrs, 'Content-Type': 'application/json' }, body: '{}',
+        });
+        aff = await readAffiliateAccess();
+      }
+      if (aff?.affiliateId) {
+        setAffiliateAccess(aff);
         setIsAffiliate(true);
         setIsClient(false);
         setProfile(prof || { id: session.user.id, email, role: 'affiliate' });
@@ -459,55 +479,32 @@ export default function App() {
         return;
       }
 
-      const _cr = await fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email) + '&limit=1', { headers: _hdrs });
-      const _crd = await _cr.json();
-      let cp = Array.isArray(_crd) && _crd.length > 0 ? _crd[0] : null;
-      if (!cp) {
-        // Second look via the supabase client before concluding they're not a client
-        const { data: cpCheck } = await supabase.from('client_profiles').select('*').eq('email', email).limit(1);
-        cp = cpCheck && cpCheck.length > 0 ? cpCheck[0] : null;
+      // Client identity is resolved only by the authenticated Auth UUID inside
+      // a SECURITY DEFINER projection. The browser cannot read raw profile
+      // rows, fall back to an email/name match, or wire itself to a client.
+      const _clientBootstrapRes = await fetch(_url + '/rest/v1/rpc/get_my_client_portal_bootstrap', {
+        method: 'POST',
+        headers: { ..._hdrs, 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!_clientBootstrapRes.ok) {
+        throw new Error('Could not verify the client portal identity (' + _clientBootstrapRes.status + ').');
       }
+      const _clientBootstrap = await _clientBootstrapRes.json();
 
-      if (cp) {
+      if (_clientBootstrap?.profile) {
         setIsClient(true);
-
-        // Also check clients table — lpoa_signed=true means they went through the
-        // admin/manual LPOA flow and are fully onboarded even if onboarding_complete
-        // was never flipped on client_profiles (e.g. Chris signed on their behalf).
-        let lpoaSigned = false;
-        try {
-          const _clr = await fetch(_url + '/rest/v1/clients?email=eq.' + encodeURIComponent(email) + '&select=lpoa_signed&limit=1', { headers: _hdrs });
-          const _cld = await _clr.json();
-          lpoaSigned = Array.isArray(_cld) && _cld.length > 0 && _cld[0].lpoa_signed === true;
-        } catch (_e) { /* non-fatal */ }
-
-        const effectivelyOnboarded = cp.onboarding_complete === true || lpoaSigned;
-
-        // Auto-heal: if LPOA is signed but onboarding_complete is not yet set, fix it now
-        if (lpoaSigned && !cp.onboarding_complete) {
-          fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email), {
-            method: 'PATCH',
-            headers: { ..._hdrs, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-            body: JSON.stringify({ onboarding_complete: true }),
-          }).catch(e => console.warn('Auto-heal onboarding_complete failed:', e));
-        }
-
-        setClientOnboarded(effectivelyOnboarded);
-        // Always require a password on first portal login (or recovery), even if
-        // LPOA was signed out-of-band. Skipping this left clients who never set
-        // a password stuck on "forgot password" later.
+        setClientOnboarded(_clientBootstrap.has_portal_access === true);
+        // Always require a password on first portal login or recovery.
         const passwordSet = session.user.user_metadata?.password_set;
         const fromRecovery = _event === 'PASSWORD_RECOVERY';
         setNeedsPasswordSetup(fromRecovery || !passwordSet);
-        if (!cp.user_id) {
-          const wireRes = await fetch(_url + '/rest/v1/client_profiles?email=eq.' + encodeURIComponent(email), {
-            method: 'PATCH',
-            headers: { ..._hdrs, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
-            body: JSON.stringify({ user_id: session.user.id })
-          });
-          if (!wireRes.ok) console.warn('Could not link client user_id (status ' + wireRes.status + ')');
-        }
-        setProfile(prof || { id: session.user.id, email, role: 'client' });
+        setProfile(prof || {
+          id: session.user.id,
+          email,
+          full_name: _clientBootstrap.profile.full_name,
+          role: 'client',
+        });
         return;
       }
 
@@ -540,7 +537,7 @@ export default function App() {
     );
   }
 
-  if (!session) return <AuthPage />;
+  if (!session) return <LazyRoute><AuthPage /></LazyRoute>;
 
   if (profileLoadFailed) {
     return (
@@ -570,29 +567,35 @@ export default function App() {
 
   // Affiliate portal routing
   if (isAffiliate) {
-    return <AffiliatePortal session={session} onSignOut={async () => { try { await supabase.auth.signOut(); } catch(e) {} setIsAffiliate(false); window.location.href = '/'; }} />;
+    const signOutAffiliate = async () => { try { await supabase.auth.signOut(); } catch(e) {} setIsAffiliate(false); setAffiliateAccess(null); window.location.href = '/'; };
+    if (!affiliateAccess?.hasPortalAccess) {
+      return <LazyRoute><AffiliateOnboardingFlow session={session} onSignOut={signOutAffiliate} onActivated={() => window.location.reload()} /></LazyRoute>;
+    }
+    return <LazyRoute><AffiliatePortal session={session} onSignOut={signOutAffiliate} /></LazyRoute>;
   }
 
   // Client portal routing
   if (isClient) {
     if (needsPasswordSetup) {
       return (
-        <ClientSetupFlow
-          session={session}
-          requireOnboarding={!clientOnboarded}
-          onComplete={async () => {
-            setNeedsPasswordSetup(false);
-            setClientOnboarded(true);
-            try { await supabase.auth.updateUser({ data: { password_set: true } }); }
-            catch (e) { console.warn('Could not persist password_set flag:', e); }
-          }}
-        />
+        <LazyRoute>
+          <ClientSetupFlow
+            session={session}
+            requireOnboarding={!clientOnboarded}
+            onComplete={async () => {
+              setNeedsPasswordSetup(false);
+              setClientOnboarded(true);
+              try { await supabase.auth.updateUser({ data: { password_set: true } }); }
+              catch (e) { console.warn('Could not persist password_set flag:', e); }
+            }}
+          />
+        </LazyRoute>
       );
     }
     if (!clientOnboarded) {
-      return <ClientSetupFlow session={session} initialStep="onboarding" onComplete={() => setClientOnboarded(true)} />;
+      return <LazyRoute><ClientSetupFlow session={session} initialStep="onboarding" onComplete={() => setClientOnboarded(true)} /></LazyRoute>;
     }
-    return <ClientPortal session={session} onSignOut={async () => { try { await supabase.auth.signOut(); } catch(e) {} window.location.href = '/'; }} />;
+    return <LazyRoute><ClientPortal session={session} onSignOut={async () => { try { await supabase.auth.signOut(); } catch(e) {} window.location.href = '/'; }} /></LazyRoute>;
   }
 
   const user = session.user;
@@ -699,12 +702,12 @@ export default function App() {
   const handleSignOut = async () => { try { await supabase.auth.signOut(); } catch(e) {} window.location.href = '/'; };
 
   return (
-    <div className="min-h-screen bg-bg flex">
+    <div className="ccc-ops-shell min-h-screen flex" style={ADMIN_THEME_VARS}>
       <Toaster position="bottom-right" />
       <Sidebar view={view} onNavigate={handleNavigate} displayName={displayName} initials={initials} isAdmin={isAdmin} onSignOut={handleSignOut} onSettings={() => setShowSettings(true)} actionItemCount={Math.max(0, actionItemCount - ackedActionItems)} newLeadsCount={newLeadsCount} />
-      <main className="flex-1 flex flex-col">
+      <main className="ccc-ops-main flex-1 flex flex-col">
         <TopBar view={view} state={state} isAdmin={isAdmin} />
-        <div className="flex-1 overflow-auto p-8">
+        <div className="ccc-ops-content flex-1 overflow-auto p-4 sm:p-6 xl:p-8">
           <Suspense fallback={
             <div className="w-full h-full flex items-center justify-center">
               <div className="w-8 h-8 border-4 border-navy border-t-gold rounded-full animate-spin"></div>
@@ -757,18 +760,19 @@ export default function App() {
 
 function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, onSettings, actionItemCount, newLeadsCount }) {
   return (
-    <aside className="w-60 flex flex-col border-r border-navy-light bg-navy-dark">
-      <div className="px-5 py-5 border-b border-navy-light">
+    <aside className="ccc-ops-sidebar w-60 flex flex-col border-r">
+      <div className="ccc-ops-brand px-5 py-5 border-b">
         <div className="flex items-center gap-2.5">
-          <img src="/logo.jpg" alt="CCC" className="w-8 h-8 object-contain rounded" />
+          <img src="/logo.jpg" alt="CCC" className="ccc-ops-logo w-9 h-9 object-contain rounded-lg" />
           <div>
-            <div className="text-white text-[13px] font-medium leading-tight ccc-display">Credit Comeback Club</div>
-            <div className="text-[10px] uppercase tracking-[0.18em] text-gold">Forensic Suite</div>
+            <div className="ccc-ops-brand-title text-[13px] font-semibold leading-tight">Credit Comeback Club</div>
+            <div className="ccc-ops-brand-kicker text-[9px] font-semibold uppercase tracking-[0.2em]">Operations Suite</div>
           </div>
         </div>
       </div>
 
-      <nav className="flex-1 py-3">
+      <nav className="ccc-ops-nav flex-1 py-3" aria-label="Operations workspace">
+        <div className="ccc-ops-nav-section px-5 pb-2 pt-1 text-[9px] font-semibold uppercase tracking-[0.18em]">Workspace</div>
         <NavItem icon={Home} label="Dashboard" active={view === 'dashboard'} onClick={() => onNavigate('dashboard')} />
         {isAdmin && (
           <NavItem icon={Inbox} label="Inbox" active={view === 'inbox'} onClick={() => onNavigate('inbox')} />
@@ -794,23 +798,23 @@ function Sidebar({ view, onNavigate, displayName, initials, isAdmin, onSignOut, 
         )}
       </nav>
 
-      <div className="border-t border-navy-light px-5 py-4">
+      <div className="ccc-ops-user border-t px-5 py-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-medium bg-navy-light text-gold shrink-0">
+          <div className="ccc-ops-avatar w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-semibold shrink-0">
             {initials}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-white text-[12px] truncate">{displayName}</div>
-            <div className="text-[10px] uppercase tracking-wider text-gray-400 flex items-center gap-1">
+            <div className="text-[12px] font-medium truncate text-slate-950">{displayName}</div>
+            <div className="text-[9px] uppercase tracking-wider text-slate-500 flex items-center gap-1">
               {isAdmin ? (
-                <><Shield size={10} strokeWidth={2} className="text-gold" /><span className="text-gold">Admin</span></>
+                <><Shield size={10} strokeWidth={2} className="text-sky-600" /><span className="text-sky-700">Admin</span></>
               ) : 'Auditor'}
             </div>
           </div>
-          <button onClick={onSettings} title="Settings" className="text-gray-400 hover:text-gold transition-colors mr-1">
+          <button onClick={onSettings} title="Settings" className="ccc-ops-icon-button transition-colors mr-1">
             <Settings size={14} strokeWidth={1.5} />
           </button>
-          <button onClick={onSignOut} title="Sign out" className="text-gray-400 hover:text-gold transition-colors">
+          <button onClick={onSignOut} title="Sign out" className="ccc-ops-icon-button transition-colors">
             <LogOut size={14} strokeWidth={1.5} />
           </button>
         </div>
@@ -823,19 +827,15 @@ function NavItem({ icon: Icon, label, active, onClick, badge, badgeTitle }) {
   return (
     <button
       onClick={onClick}
-      className="w-full flex items-center px-5 py-2 text-[13px] gap-2.5 transition-colors"
-      style={{
-        color: active ? '#FFFFFF' : '#B5BBC9',
-        backgroundColor: active ? '#2A3C5F' : 'transparent',
-        borderLeft: active ? '2px solid #C9A84C' : '2px solid transparent',
-      }}
+      className="ccc-ops-nav-item w-full flex items-center px-5 py-2 text-[12px] gap-2.5 transition-colors"
+      data-active={active ? 'true' : 'false'}
+      aria-current={active ? 'page' : undefined}
     >
       <Icon size={15} strokeWidth={1.75} />
-      {label}
+      <span>{label}</span>
       {badge > 0 && (
         <span title={badge + ' ' + badgeTitle}
-          className="ml-auto flex items-center justify-center text-[10px] font-semibold rounded-full"
-          style={{ minWidth: 17, height: 17, padding: '0 5px', background: '#DC2626', color: '#fff' }}>
+          className="ccc-ops-nav-badge ml-auto flex items-center justify-center text-[10px] font-semibold rounded-full">
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -847,37 +847,37 @@ function TopBar({ view, state, isAdmin }) {
   // These views carry their own branded page headers
   if (['dashboard', 'clients', 'leads', 'methodology', 'team', 'audit', 'letter-tracker', 'inbox', 'operations'].includes(view)) return null;
   if (view === 'clients') return (
-    <header className="px-8 py-5 border-b border-border bg-white">
+    <header className="ccc-ops-topbar px-8 py-5 border-b">
       <h1 className="ccc-display text-2xl text-ink font-medium">Clients</h1>
       <p className="text-[12px] mt-0.5 text-ink-muted">{isAdmin ? 'All clients across all auditors' : 'Your saved audits and letters'}</p>
     </header>
   );
   if (view === 'leads') return (
-    <header className="px-8 py-5 border-b border-border bg-white">
+    <header className="ccc-ops-topbar px-8 py-5 border-b">
       <h1 className="ccc-display text-2xl text-ink font-medium">Leads</h1>
       <p className="text-[12px] mt-0.5 text-ink-muted">Prospects in the pipeline — not yet signed or paid</p>
     </header>
   );
   if (view === 'methodology') return (
-    <header className="px-8 py-5 border-b border-border bg-white">
+    <header className="ccc-ops-topbar px-8 py-5 border-b">
       <h1 className="ccc-display text-2xl text-ink font-medium">Methodology</h1>
-      <p className="text-[12px] mt-0.5 text-ink-muted">The Setup &amp; Spike operating doctrine</p>
+      <p className="text-[12px] mt-0.5 text-ink-muted">The Consent, Accuracy, Collection, Combo, and Late Pay operating playbook</p>
     </header>
   );
   if (view === 'team') return (
-    <header className="px-8 py-5 border-b border-border bg-white">
+    <header className="ccc-ops-topbar px-8 py-5 border-b">
       <h1 className="ccc-display text-2xl text-ink font-medium">Team</h1>
       <p className="text-[12px] mt-0.5 text-ink-muted">Manage users and roles</p>
     </header>
   );
   if (view === 'affiliates') return (
-    <header className="px-8 py-5 border-b border-border bg-white">
+    <header className="ccc-ops-topbar px-8 py-5 border-b">
       <h1 className="ccc-display text-2xl text-ink font-medium">Affiliate Partners</h1>
       <p className="text-[12px] mt-0.5 text-ink-muted">Manage referral partners, commissions, and branded portals</p>
     </header>
   );
   if (view === 'billing') return (
-    <header className="px-8 py-5 border-b border-border bg-white">
+    <header className="ccc-ops-topbar px-8 py-5 border-b">
       <h1 className="ccc-display text-2xl text-ink font-medium">Billing &amp; Revenue</h1>
       <p className="text-[12px] mt-0.5 text-ink-muted">Company-wide ledger and financial metrics</p>
     </header>
@@ -890,7 +890,7 @@ function TopBar({ view, state, isAdmin }) {
   };
   const cfg = titles[state] || titles.idle;
   return (
-    <header className="px-8 py-5 border-b border-border bg-white">
+    <header className="ccc-ops-topbar px-8 py-5 border-b">
       <h1 className="ccc-display text-2xl text-ink font-medium">{cfg.title}</h1>
       <p className="text-[12px] mt-0.5 text-ink-muted">{cfg.subtitle}</p>
     </header>

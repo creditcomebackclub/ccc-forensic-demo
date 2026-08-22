@@ -13,7 +13,9 @@ function shouldSuppressGenericNurture(lead) {
 function leadNurtureContext(lead) {
   const tags = Array.isArray(lead?.tags) ? lead.tags.map(String) : [];
   return {
-    guideDownloaded: tags.includes('guide:downloaded'),
+    // Keep the historic tag readable so existing leads retain their context,
+    // while all new tracked links record the truthful on-page guide view.
+    guideDownloaded: tags.includes('guide:viewed') || tags.includes('guide:downloaded'),
     consultationRequested: String(lead?.consultation_status || '').trim() === 'requested',
   };
 }
@@ -23,20 +25,21 @@ function sourceAwareNurtureBody(day, context = {}) {
   const consultationRequested = context.consultationRequested === true;
   if (Number(day) === 1) {
     if (guideDownloaded) {
-      return `<p>Thanks for downloading our free dispute guide and reaching out. Here's exactly what happens next: we'll review your credit report for furnisher-level reporting errors — the kind that can be legally challenged directly with the company that reported them, not just the credit bureau.</p>
-             <p>The fastest way to find out what's on your file is a free 15-minute call. No pressure, no cost.</p>`;
+      return `<p>Thanks for reviewing our free credit report accuracy guide and reaching out. The next step is a free review of your current three-bureau report. Our team uses that review to prepare a Recovery Blueprint before you decide whether to become a client.</p>
+             <p>Choose a consultation time when you are ready. There is no pressure and no cost for the review or Blueprint.</p>`;
     }
     if (consultationRequested) {
       return `<p>Thanks for requesting a free consultation. It looks like you haven't selected a time yet, so we wanted to make it easy to pick up where you left off.</p>
-             <p>Choose any available time below and we'll review your goals and the information on your credit report. No pressure, no cost.</p>`;
+             <p>Choose any available time below. We will review your goals and current three-bureau report, then explain your Recovery Blueprint before you decide whether to engage us.</p>`;
     }
-    return `<p>Thanks for reaching out to Credit Comeback Club. We help identify furnisher-level reporting errors and explain the options available for addressing them.</p>
-            <p>The fastest way to discuss your file is a free 15-minute call. No pressure, no cost.</p>`;
+    return `<p>Thanks for reaching out to Credit Comeback Club. We review current three-bureau reports account by account and prepare a Recovery Blueprint showing the dispute path supported by the documented report facts.</p>
+            <p>Choose a free consultation time when you are ready. The review and Blueprint come before any decision to become a client.</p>`;
   }
   if (Number(day) === 3) {
-    return `<p>Most people think disputing a credit report means arguing with Equifax, Experian, or TransUnion. That's rarely where the real leverage is.</p>
-            <p>Every account on your report is reported by a furnisher — a bank, collector, or lender — who is legally required to report it accurately under the Fair Credit Reporting Act. When they don't (wrong balance, wrong status, mismatched dates between bureaus), that's a direct violation we can challenge at the source.</p>
-            <p>${guideDownloaded ? "That's the strategy explained in the guide you downloaded, and" : "That's the strategy"} we use when reviewing a credit report.</p>`;
+    return `<p>There is no single dispute route that fits every account. We build the Recovery Blueprint around three things: <strong>Your Story. The Facts. The Pressure.</strong></p>
+            <p>Your Story captures the personal impact. The Facts identify the exact information that appears inaccurate, incomplete, or inconsistent across Equifax, Experian, and TransUnion. The Pressure is documented consumer-law and deadline follow-through with the correct recipient&mdash;not a threat or a promised result.</p>
+            <p>A trained team member reviews the account path before it appears in the Blueprint. If you later become a client, that saved path determines whether personalized correspondence goes to a credit bureau, a furnisher, or both when applicable.</p>
+            <p>${guideDownloaded ? 'The guide is educational; your' : 'Your'} own report still requires an individual review. No deletion, score change, outcome, or timeline is guaranteed.</p>`;
   }
   return null;
 }

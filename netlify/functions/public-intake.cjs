@@ -1,239 +1,273 @@
+const crypto = require('node:crypto');
 const { createGuideDownloadToken } = require('./_guideDownloadToken.cjs');
 
+const MAX_BODY_BYTES = 4_096;
+const RATE_LIMIT_WINDOW_SECONDS = 15 * 60;
+const RATE_LIMIT_MAX = 5;
+const RATE_LIMIT_RETENTION_SECONDS = 24 * 60 * 60;
+const ALLOWED_KEYS = new Set(['name', 'email', 'phone', 'tier', 'ref', 'intent', 'website']);
+const ALLOWED_TIERS = new Set(['Standard', 'VIP', 'Paid In Full']);
+const ALLOWED_INTENTS = new Set(['consultation', 'guide_download']);
+const REF_PATTERN = /^[0-9a-f]{6,36}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CONTROL_PATTERN = /[\u0000-\u001F\u007F]/;
+const SENSITIVE_PATTERNS = [
+  /\b\d{3}[- ]\d{2}[- ]\d{4}\b/,
+  /\b(?:\d[ -]*?){13,19}\b/,
+  /\b(?:ssn|social security|account number|routing number|password|passcode|date of birth|dob)\b/i,
+];
+
+const JSON_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Content-Type': 'application/json; charset=utf-8',
+  'Cache-Control': 'no-store',
+  'X-Content-Type-Options': 'nosniff',
+};
+
+const CORS_HEADERS = {
+  ...JSON_HEADERS,
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+function reply(statusCode, body, headers = JSON_HEADERS) {
+  return { statusCode, headers, body: JSON.stringify(body) };
+}
+
+function eventHeader(event, name) {
+  const target = name.toLowerCase();
+  return String(Object.entries(event.headers || {}).find(([key]) => key.toLowerCase() === target)?.[1] || '');
+}
+
 function normalizeIntent(value) {
-  const intent = String(value || 'consultation').trim().toLowerCase();
-  return ['consultation', 'guide_download'].includes(intent) ? intent : null;
+  if (value === undefined) return 'consultation';
+  if (typeof value !== 'string') return null;
+  const intent = value.trim().toLowerCase();
+  return ALLOWED_INTENTS.has(intent) ? intent : null;
 }
 
 function intakeLeadFields(intent, affiliateLabel, tier) {
   const isGuide = intent === 'guide_download';
   return {
     lead_source: affiliateLabel ? `Affiliate: ${affiliateLabel}` : (isGuide ? 'Free Guide' : 'Website Intake'),
-    lead_notes: isGuide ? 'Requested the free Metro 2 dispute guide' : (tier ? `Selected Tier: ${tier}` : null),
+    lead_notes: isGuide ? 'Requested the free credit report accuracy guide' : (tier ? `Selected Tier: ${tier}` : null),
     consultation_status: isGuide ? null : 'requested',
     ...(isGuide ? { tags: ['source:freeguide'] } : {}),
   };
 }
 
+function rawBody(event) {
+  const encoded = String(event.body || '');
+  const body = event.isBase64Encoded ? Buffer.from(encoded, 'base64') : Buffer.from(encoded, 'utf8');
+  if (!body.length || body.length > MAX_BODY_BYTES) throw new TypeError('invalid request');
+  return body.toString('utf8');
+}
+
+function scalar(payload, key, { required = false, max, allowEmpty = true } = {}) {
+  const value = payload[key];
+  if (value === undefined) {
+    if (required) throw new TypeError('invalid request');
+    return '';
+  }
+  if (typeof value !== 'string') throw new TypeError('invalid request');
+  const normalized = value.trim();
+  if ((!allowEmpty && !normalized) || normalized.length > max || CONTROL_PATTERN.test(normalized)) {
+    throw new TypeError('invalid request');
+  }
+  return normalized;
+}
+
+function isValidEmail(email) {
+  if (!EMAIL_PATTERN.test(email)) return false;
+  const at = email.lastIndexOf('@');
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (!local || local.length > 64 || local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+  if (!domain || domain.length > 253 || domain.includes('..')) return false;
+  const labels = domain.split('.');
+  return labels.length >= 2 && labels.every((label) => (
+    label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label)
+  ));
+}
+
+function parsePayload(event) {
+  const contentType = eventHeader(event, 'content-type').toLowerCase();
+  if (contentType.split(';', 1)[0].trim() !== 'application/json') throw new TypeError('invalid request');
+
+  let payload;
+  try { payload = JSON.parse(rawBody(event)); }
+  catch (_error) { throw new TypeError('invalid request'); }
+  if (!payload || Array.isArray(payload) || typeof payload !== 'object') throw new TypeError('invalid request');
+  if (Object.keys(payload).some((key) => !ALLOWED_KEYS.has(key))) throw new TypeError('invalid request');
+
+  const name = scalar(payload, 'name', { required: true, max: 120, allowEmpty: false }).replace(/\s+/g, ' ');
+  const email = scalar(payload, 'email', { required: true, max: 254, allowEmpty: false }).toLowerCase();
+  const phone = scalar(payload, 'phone', { max: 40 });
+  const tier = scalar(payload, 'tier', { max: 20 });
+  const ref = scalar(payload, 'ref', { max: 36 });
+  const website = scalar(payload, 'website', { max: 200 });
+  const intent = normalizeIntent(payload.intent);
+
+  if (!isValidEmail(email) || !intent) throw new TypeError('invalid request');
+  if (tier && !ALLOWED_TIERS.has(tier)) throw new TypeError('invalid request');
+  if (ref && !REF_PATTERN.test(ref)) throw new TypeError('invalid request');
+  if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(name) || pattern.test(phone))) {
+    throw new TypeError('invalid request');
+  }
+
+  return { name, email, phone, tier, ref: ref.toLowerCase(), intent, website };
+}
+
+function clientRateKey(event, secret) {
+  const ip = eventHeader(event, 'x-nf-client-connection-ip')
+    || eventHeader(event, 'x-forwarded-for').split(',')[0].trim()
+    || 'unknown';
+  return 'intake:' + crypto.createHmac('sha256', secret).update(ip).digest('hex');
+}
+
+async function parseJsonResponse(response) {
+  const raw = await response.text();
+  try { return raw ? JSON.parse(raw) : null; }
+  catch (_error) { return null; }
+}
+
+function serviceHeaders(serviceKey, hasBody = false) {
+  return {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+  };
+}
+
+async function enforcePersistentRateLimit(event, supabaseUrl, serviceKey) {
+  const response = await fetch(`${supabaseUrl}/rest/v1/rpc/consume_public_intake_rate_limit`, {
+    method: 'POST',
+    headers: serviceHeaders(serviceKey, true),
+    body: JSON.stringify({
+      p_rate_key: clientRateKey(event, serviceKey),
+      p_window_seconds: RATE_LIMIT_WINDOW_SECONDS,
+      p_max_attempts: RATE_LIMIT_MAX,
+      p_retention_seconds: RATE_LIMIT_RETENTION_SECONDS,
+    }),
+  });
+  const result = await parseJsonResponse(response);
+  if (!response.ok || !result || typeof result.allowed !== 'boolean') throw new Error('rate limiter unavailable');
+  return result.allowed;
+}
+
+async function resolveOwnerUserId(supabaseUrl, serviceKey) {
+  const configured = String(process.env.PUBLIC_INTAKE_OWNER_USER_ID || '').trim();
+  if (configured && !UUID_PATTERN.test(configured)) throw new Error('public intake owner is invalid');
+  const query = configured
+    ? `profiles?id=eq.${encodeURIComponent(configured)}&role=eq.admin&select=id&limit=2`
+    : 'profiles?role=eq.admin&select=id&limit=2';
+  const response = await fetch(`${supabaseUrl}/rest/v1/${query}`, { headers: serviceHeaders(serviceKey) });
+  const rows = await parseJsonResponse(response);
+  if (!response.ok || !Array.isArray(rows) || rows.length !== 1 || !UUID_PATTERN.test(String(rows[0]?.id || ''))) {
+    throw new Error('public intake owner is not uniquely configured');
+  }
+  return rows[0].id;
+}
+
+async function upsertLead({ payload, ownerUserId, supabaseUrl, serviceKey }) {
+  const response = await fetch(`${supabaseUrl}/rest/v1/rpc/create_or_reuse_public_intake_lead`, {
+    method: 'POST',
+    headers: serviceHeaders(serviceKey, true),
+    body: JSON.stringify({
+      p_owner_user_id: ownerUserId,
+      p_name: payload.name,
+      p_email: payload.email,
+      p_phone: payload.phone || null,
+      p_tier: payload.tier || null,
+      p_ref: payload.ref || null,
+      p_intent: payload.intent,
+    }),
+  });
+  const result = await parseJsonResponse(response);
+  if (!response.ok || !result?.lead?.id || !result.lead.email) throw new Error('lead persistence failed');
+  return result;
+}
+
 exports.handler = async (event) => {
-  // Handle CORS preflight
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 204,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS'
-      }
-    };
-  }
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: CORS_HEADERS, body: '' };
+  if (event.httpMethod !== 'POST') return reply(405, { error: 'Method not allowed.' });
 
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method Not Allowed' };
-  }
+  let payload;
+  try { payload = parsePayload(event); }
+  catch (_error) { return reply(400, { error: 'Invalid request.' }); }
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Keep the trap opaque: a filled honeypot gets the same public success
+  // shape without touching the limiter, CRM, referral records, or email.
+  if (payload.website) return reply(200, { success: true });
 
-  if (!supabaseUrl || !serviceKey) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'Server not configured' }) };
+  const supabaseUrl = String(process.env.VITE_SUPABASE_URL || '').replace(/\/$/, '');
+  const serviceKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '');
+  if (!supabaseUrl || !serviceKey) return reply(503, { error: 'Service temporarily unavailable.' });
+
+  try {
+    const allowed = await enforcePersistentRateLimit(event, supabaseUrl, serviceKey);
+    if (!allowed) return reply(429, { error: 'Too many requests. Please try again later.' });
+  } catch (_error) {
+    console.error('Public intake rate limiter unavailable.');
+    return reply(503, { error: 'Service temporarily unavailable.' });
   }
 
   try {
-    const payload = JSON.parse(event.body);
-    const { name, email, phone, tier, ref, website } = payload;
-    const intent = normalizeIntent(payload.intent);
-
-    if (!name || !email) {
-      return { statusCode: 400, body: JSON.stringify({ error: 'Name and email are required' }) };
-    }
-    if (!intent) {
-      return { statusCode: 400, body: JSON.stringify({ error: 'Unsupported intake intent' }) };
-    }
-
-    // Honeypot: every intake form (home.html, freeguide.html, join.html,
-    // join-embed.js) carries a hidden `website` field a real visitor never
-    // sees or fills. A bot that fills every field it finds trips this.
-    // Pretend success rather than reject — a bot that gets an error tries a
-    // different payload shape; one that gets 200 has no reason to adapt.
-    if (website) {
-      console.warn('Intake honeypot triggered — dropping silently. IP:', (event.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim());
-      return { statusCode: 200, headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ success: true }) };
-    }
-
-    // Per-IP rate limiting. Netlify functions share no memory between
-    // invocations, so this has to be backed by something persistent —
-    // public_intake_attempts (migration 20260725) is that store. Record
-    // this attempt FIRST, then count the window inclusive of it: recording
-    // only attempts that make it past the limit would let a sustained flood
-    // fall out of the window and start passing again once older rows age
-    // out, since nothing would be left to count.
-    const clientIp = (event.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
-    const RATE_LIMIT_WINDOW_MIN = 15;
-    const RATE_LIMIT_MAX = 5;
-    try {
-      await fetch(`${supabaseUrl}/rest/v1/public_intake_attempts`, {
-        method: 'POST',
-        headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ip: clientIp }),
-      });
-
-      const sinceIso = new Date(Date.now() - RATE_LIMIT_WINDOW_MIN * 60 * 1000).toISOString();
-      const countRes = await fetch(
-        `${supabaseUrl}/rest/v1/public_intake_attempts?ip=eq.${encodeURIComponent(clientIp)}&created_at=gte.${encodeURIComponent(sinceIso)}&select=id`,
-        { headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` } }
-      );
-      const recentAttempts = await countRes.json();
-      if (Array.isArray(recentAttempts) && recentAttempts.length > RATE_LIMIT_MAX) {
-        console.warn('Rate limit exceeded for IP:', clientIp, '-', recentAttempts.length, 'attempts in', RATE_LIMIT_WINDOW_MIN, 'min');
-        return { statusCode: 429, headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ error: 'Too many submissions — please try again later.' }) };
-      }
-    } catch (e) {
-      // Rate-limit bookkeeping failing must never block a genuine lead —
-      // fail open here, the same as every other best-effort step below.
-      console.warn('Rate-limit check failed (non-fatal):', e.message);
-    }
-
-    // 1. Assign every public lead to the actual administrator, never an
-    // arbitrary existing client row (which could be owned by an auditor).
-    const userRes = await fetch(`${supabaseUrl}/rest/v1/profiles?role=eq.admin&select=id&limit=1`, {
-      headers: {
-        'apikey': serviceKey,
-        'Authorization': `Bearer ${serviceKey}`
-      }
-    });
-    const users = await userRes.json();
-    const adminUserId = users.length > 0 ? users[0].id : null;
-
-    if (!adminUserId) {
-      console.error('No admin user found to assign lead to');
-      return { statusCode: 500, body: JSON.stringify({ error: 'No admin user configured' }) };
-    }
-
-    // 1b. Affiliate attribution. The affiliate portal hands out
-    // /join?ref=<first 8 chars of the affiliate UUID>, so resolve that
-    // prefix to the full affiliate and stamp referred_by on the lead —
-    // this is what makes the referral actually pay the affiliate. A bad or
-    // unmatched ref is ignored (lead still created), never fatal.
-    //
-    // Matched in JS, not via a `like` filter on the `id` column: PostgREST/
-    // Postgres has no `~~` (LIKE) operator for `uuid`, and this instance's
-    // PostgREST does not honor the `column::text` cast-in-filter-name
-    // syntax either (confirmed live — both return "operator does not exist:
-    // uuid ~~ unknown"). The affiliates table is tiny, so fetching all rows
-    // and prefix-matching client-side is simple and correct rather than
-    // fighting a query-string cast that doesn't work here.
-    let affiliate = null;
-    if (ref && /^[0-9a-f]{6,36}$/i.test(String(ref).trim())) {
-      try {
-        const refPrefix = String(ref).trim().toLowerCase();
-        const affRes = await fetch(`${supabaseUrl}/rest/v1/affiliates?select=id,name,company`, {
-          headers: { 'apikey': serviceKey, 'Authorization': `Bearer ${serviceKey}` }
-        });
-        const allAffs = await affRes.json();
-        const matches = Array.isArray(allAffs) ? allAffs.filter((a) => a.id.toLowerCase().startsWith(refPrefix)) : [];
-        // Only attribute on an unambiguous single match — never guess.
-        if (matches.length === 1) affiliate = matches[0];
-        else if (matches.length > 1) console.warn('Ambiguous affiliate ref (multiple matches), not attributing:', ref);
-      } catch (e) { console.warn('Affiliate ref lookup failed (non-fatal):', e.message); }
-    }
-    const affiliateLabel = affiliate ? (affiliate.company || affiliate.name) : null;
-
-    // 2. Create the lead in Supabase via REST API
-    const insertRes = await fetch(`${supabaseUrl}/rest/v1/clients`, {
-      method: 'POST',
-      headers: {
-        'apikey': serviceKey,
-        'Authorization': `Bearer ${serviceKey}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=representation'
-      },
-      body: JSON.stringify({
-        user_id: adminUserId,
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
-        lead_phone: phone ? phone.trim() : null,
-        status: 'lead',
-        ...intakeLeadFields(intent, affiliateLabel, tier),
-        lead_created_at: new Date().toISOString(),
-        ...(affiliate ? { referred_by: affiliate.id, referral_fee: null } : {})
-      })
-    });
-
-    if (!insertRes.ok) {
-      const errText = await insertRes.text();
-      console.error('Insert error:', errText);
-      return { statusCode: 500, body: JSON.stringify({ error: 'Failed to create lead: ' + errText }) };
-    }
-
-    const insertedData = await insertRes.json();
-    const lead = insertedData[0]; // Prefer return=representation returns an array
-
-
-    // The lead form is followed by an embedded Calendly scheduler. Do not
-    // claim they booked—or send a scheduling email—until the embed reports
-    // calendly.event_scheduled. intake-booked.cjs owns that confirmation.
+    const ownerUserId = await resolveOwnerUserId(supabaseUrl, serviceKey);
+    const result = await upsertLead({ payload, ownerUserId, supabaseUrl, serviceKey });
+    const lead = result.lead;
+    const affiliate = result.affiliate || null;
     const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
 
-    // 3. Trigger the Admin Notification email
-    const adminRes = await fetch(base + '/.netlify/functions/send-lpoa', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${serviceKey}`
-      },
-      body: JSON.stringify({ 
-        action: 'admin_new_lead', 
-        leadName: lead.name, 
-        leadEmail: lead.email,
-        leadPhone: lead.lead_phone,
-        tier: tier
-      }),
-    });
-
-    if (!adminRes.ok) {
-      console.error('Admin notification trigger failed:', await adminRes.text());
+    try {
+      const adminRes = await fetch(base + '/.netlify/functions/send-lpoa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({
+          action: 'admin_new_lead',
+          leadName: lead.name,
+          leadEmail: lead.email,
+          leadPhone: lead.lead_phone,
+          tier: payload.tier || null,
+        }),
+      });
+      if (!adminRes.ok) console.error('Admin lead notification failed.');
+    } catch (_error) {
+      console.error('Admin lead notification unavailable.');
     }
 
-    // Partner confirmation when the public /join?ref= link attributed this lead.
-    if (affiliate?.id && lead?.id) {
+    if (affiliate?.id && result.attribution_added) {
       try {
         const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${serviceKey}`,
-          },
-          body: JSON.stringify({
-            event: 'referral_received',
-            clientId: lead.id,
-            affiliateId: affiliate.id,
-          }),
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
+          body: JSON.stringify({ event: 'referral_received', clientId: lead.id, affiliateId: affiliate.id }),
         });
-        if (!partnerRes.ok) console.error('Affiliate referral confirm failed:', await partnerRes.text());
-      } catch (e) {
-        console.error('Affiliate referral confirm error:', e.message);
+        if (!partnerRes.ok) console.error('Affiliate referral notification failed.');
+      } catch (_error) {
+        console.error('Affiliate referral notification unavailable.');
       }
     }
 
-    return {
-      statusCode: 200,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-      },
-      body: JSON.stringify({
-        success: true,
-        leadId: lead.id,
-        ...(intent === 'guide_download'
-          ? { downloadUrl: '/api/guide-download?token=' + encodeURIComponent(createGuideDownloadToken(lead.id, serviceKey)) }
-          : {}),
-      })
-    };
-
-  } catch (err) {
-    console.error('Intake error:', err);
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    return reply(200, {
+      success: true,
+      ...(payload.intent === 'guide_download'
+        ? { downloadUrl: '/api/guide-download?token=' + encodeURIComponent(createGuideDownloadToken(lead.id, serviceKey)) }
+        : {}),
+    });
+  } catch (_error) {
+    console.error('Public intake persistence unavailable.');
+    return reply(503, { error: 'Service temporarily unavailable.' });
   }
 };
 
-exports._test = { intakeLeadFields, normalizeIntent };
+exports._test = {
+  ALLOWED_TIERS,
+  MAX_BODY_BYTES,
+  clientRateKey,
+  intakeLeadFields,
+  isValidEmail,
+  normalizeIntent,
+  parsePayload,
+};

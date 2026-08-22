@@ -29,6 +29,9 @@ async function preflightSize(file) {
 export async function runAuditJob({ mode, files = [], clientSelection }, onProgress) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not signed in.');
+  if (clientSelection?.type !== 'existing' || !clientSelection.id) {
+    throw new Error('Select or create the exact CRM lead before running an audit.');
+  }
 
   if (mode === 'merge') {
     if (clientSelection?.type !== 'existing' || !clientSelection.id) {
@@ -57,8 +60,8 @@ export async function runAuditJob({ mode, files = [], clientSelection }, onProgr
 
   const { error: insErr } = await supabase.from('audit_jobs').insert({
     id: jobId, user_id: user.id, mode, files: fileMeta,
-    selected_client_id: clientSelection?.type === 'existing' ? clientSelection.id : null,
-    selected_client_is_new: clientSelection?.type === 'new',
+    selected_client_id: clientSelection.id,
+    selected_client_is_new: false,
   });
   if (insErr) throw new Error('Could not create audit job: ' + insErr.message);
 

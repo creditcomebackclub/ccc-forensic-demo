@@ -1,9 +1,10 @@
 // Partner-facing transactional emails. Staff/system callers only — affiliate
-// identity and client details are always loaded from the DB, never trusted
-// from free-form browser fields beyond ids / amounts we already wrote.
+// identity and client/financial details are always loaded from the DB. The
+// caller may identify an exact durable row, but never supplies email facts.
 const https = require('https');
 const { requireStaffOrSystem } = require('./_requireAuth.cjs');
 const { sendEmail, isConfigured, wrapClientEmail, escapeHtml, BRAND } = require('./_email.cjs');
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const EVENTS = [
   'referral_received',
@@ -20,7 +21,7 @@ const MARKERS = {
 };
 
 const EXIT_REASON_LABELS = {
-  graduated: 'Graduated — arc complete',
+  graduated: 'Service completed',
   non_payment: 'Non-payment',
   dissatisfied: 'Dissatisfied',
   went_dark: 'Went dark',
@@ -106,33 +107,63 @@ async function loadAffiliate(id, supabaseUrl, serviceKey) {
   if (!id) return null;
   const res = await supabaseRequest(
     '/rest/v1/affiliates?id=eq.' + encodeURIComponent(id)
-      + '&select=id,name,email,company,commission_rate&limit=1',
+      + '&select=id,name,email,company,commission_rate,owner_user_id&limit=2',
     'GET', null, supabaseUrl, serviceKey
   );
-  return Array.isArray(res.body) ? res.body[0] : null;
+  return Array.isArray(res.body) && res.body.length === 1 ? res.body[0] : null;
 }
 
 async function loadClient(id, supabaseUrl, serviceKey) {
   if (!id) return null;
   const res = await supabaseRequest(
     '/rest/v1/clients?id=eq.' + encodeURIComponent(id)
-      + '&select=id,name,email,phone,status,billing_status,exit_reason,referred_by,referral_fee,ledger,lead_drips_sent,lpoa_signed&limit=1',
+      + '&select=id,name,email,phone,status,billing_status,exit_reason,referred_by,referral_fee,ledger,lead_drips_sent,lpoa_signed,user_id&limit=2',
     'GET', null, supabaseUrl, serviceKey
   );
-  return Array.isArray(res.body) ? res.body[0] : null;
+  return Array.isArray(res.body) && res.body.length === 1 ? res.body[0] : null;
+}
+
+async function loadPayout(id, supabaseUrl, serviceKey) {
+  if (!id) return null;
+  const res = await supabaseRequest(
+    '/rest/v1/commission_payouts?id=eq.' + encodeURIComponent(id)
+      + '&select=id,affiliate_id,client_id,amount,paid_at,paid_by&limit=2',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  return Array.isArray(res.body) && res.body.length === 1 ? res.body[0] : null;
+}
+
+async function hasCompletedEnrollment(client, supabaseUrl, serviceKey) {
+  if (!client?.id) return false;
+  const res = await supabaseRequest(
+    '/rest/v1/client_profiles?client_id=eq.' + encodeURIComponent(client.id)
+      + '&select=onboarding_complete,agreement_signed_at&limit=1',
+    'GET', null, supabaseUrl, serviceKey
+  );
+  if (res.status < 200 || res.status >= 300) return false;
+  if (Array.isArray(res.body) && res.body.length) {
+    const profile = res.body[0];
+    return profile.onboarding_complete === true && !!profile.agreement_signed_at;
+  }
+  // Grandfathered clients may predate the service-agreement wizard. Preserve
+  // that historical enrollment signal only when no current profile exists.
+  return client.lpoa_signed === true;
 }
 
 async function appendMarker(clientId, markers, marker, supabaseUrl, serviceKey) {
   if (!clientId || !marker) return;
   if (markers.includes(marker)) return;
-  await supabaseRequest(
+  const result = await supabaseRequest(
     '/rest/v1/clients?id=eq.' + encodeURIComponent(clientId),
     'PATCH',
     { lead_drips_sent: [...markers, marker] },
     supabaseUrl,
     serviceKey,
     { Prefer: 'return=minimal' }
-  ).catch((e) => console.warn('notify-affiliate: marker write failed', e.message));
+  );
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error('Could not persist affiliate notification receipt');
+  }
 }
 
 function partnerShell({ affiliateName, eyebrow, bodyHtml, preheader }) {
@@ -158,7 +189,7 @@ async function sendReferralReceived({ affiliate, client }) {
       + `<tr><td style="padding:8px 0;color:${BRAND.muted};">Email</td><td style="padding:8px 0;">${escapeHtml(client.email || '—')}</td></tr>`
       + `<tr><td style="padding:8px 0;color:${BRAND.muted};">Phone</td><td style="padding:8px 0;">${escapeHtml(client.phone || '—')}</td></tr>`
       + `</table>`
-      + `<p style="margin:0;font-size:13px;color:${BRAND.muted};">We&rsquo;ll handle consultation, enrollment, and the full credit repair process. You&rsquo;ll get another note when they enroll, and commission updates as revenue clears.</p>`,
+      + `<p style="margin:0;font-size:13px;color:${BRAND.muted};">CCC will offer a free current three-bureau review and staff-reviewed Recovery Blueprint before engagement. You&rsquo;ll receive another note only if the prospect later completes secure service-agreement onboarding, plus commission updates when eligible revenue clears.</p>`,
   });
   await sendEmail({ to: affiliate.email, subject, html, tags: { kind: 'affiliate_referral_received' } });
 }
@@ -168,10 +199,10 @@ async function sendEnrolled({ affiliate, client }) {
   const html = partnerShell({
     affiliateName: affiliate.name,
     eyebrow: 'Client Enrolled',
-    preheader: `${client.name} signed authorization and completed enrollment.`,
+    preheader: `${client.name} completed secure service-agreement onboarding.`,
     bodyHtml:
-      `<p style="margin:0 0 14px;"><strong>${escapeHtml(client.name)}</strong> finished enrollment (authorization on file). They&rsquo;re now an active Credit Comeback Club client.</p>`
-      + `<p style="margin:0;font-size:13px;color:${BRAND.muted};">Your commission accrues on the First Work Fee and every ongoing monthly payment that clears. Track status anytime in your partner portal.</p>`,
+      `<p style="margin:0 0 14px;"><strong>${escapeHtml(client.name)}</strong> finished the secure disclosure, service-agreement, document-upload, and signature steps. They&rsquo;re now enrolled as a Credit Comeback Club client.</p>`
+      + `<p style="margin:0;font-size:13px;color:${BRAND.muted};">Commission applies only to eligible cleared revenue under your saved partner terms. Track the authoritative status and transaction history in your partner portal.</p>`,
   });
   await sendEmail({ to: affiliate.email, subject, html, tags: { kind: 'affiliate_enrolled' } });
 }
@@ -234,21 +265,10 @@ async function sendCommissionPaid({ affiliate, client, amount, paidAt }) {
   await sendEmail({ to: affiliate.email, subject, html, tags: { kind: 'affiliate_commission_paid' } });
 }
 
-function isRecognized(tx) {
-  return tx && (tx.type === 'Payment' || (tx.type === 'Invoice' && tx.status === 'Paid'));
-}
-
-function commissionRate(client, affiliate) {
-  const override = client.referral_fee;
-  const pct = (override !== null && override !== undefined)
-    ? override
-    : ((affiliate && affiliate.commission_rate) || 0.20) * 100;
-  return pct / 100;
-}
-
 async function sendMonthlySummaries(supabaseUrl, serviceKey, monthKey) {
+  const { computeClientCommission } = await import('../../src/utils/affiliateCommission.js');
   const affRes = await supabaseRequest(
-    '/rest/v1/affiliates?select=id,name,email,company,commission_rate&email=not.is.null',
+    '/rest/v1/affiliates?select=id,name,email,company,commission_rate,owner_user_id&email=not.is.null&owner_user_id=not.is.null',
     'GET', null, supabaseUrl, serviceKey
   );
   const affiliates = Array.isArray(affRes.body) ? affRes.body : [];
@@ -259,6 +279,7 @@ async function sendMonthlySummaries(supabaseUrl, serviceKey, monthKey) {
 
     const clientsRes = await supabaseRequest(
       '/rest/v1/clients?referred_by=eq.' + encodeURIComponent(affiliate.id)
+        + '&user_id=eq.' + encodeURIComponent(affiliate.owner_user_id)
         + '&select=id,name,status,billing_status,referral_fee,ledger,created_at',
       'GET', null, supabaseUrl, serviceKey
     );
@@ -279,14 +300,13 @@ async function sendMonthlySummaries(supabaseUrl, serviceKey, monthKey) {
     for (const c of clients) {
       if (c.status === 'lead') leads += 1;
       else if (!c.billing_status || c.billing_status === 'Active') active += 1;
-      const rate = commissionRate(c, affiliate);
-      const ledger = Array.isArray(c.ledger) ? c.ledger : [];
-      const clientEarned = ledger.filter(isRecognized).reduce((s, tx) => s + (parseFloat(tx.amount) || 0) * rate, 0);
-      earned += clientEarned;
-      const clientPaid = payouts
-        .filter((p) => p.client_id === c.id)
-        .reduce((s, p) => s + Math.max(0, parseFloat(p.amount) || 0), 0);
-      paid += Math.min(clientEarned, clientPaid);
+      const commission = computeClientCommission(
+        c,
+        affiliate,
+        payouts.filter((p) => p.client_id === c.id),
+      );
+      earned += commission.earned;
+      paid += commission.paid;
     }
     const owed = Math.max(0, earned - paid);
 
@@ -317,6 +337,19 @@ async function sendMonthlySummaries(supabaseUrl, serviceKey, monthKey) {
   return sent;
 }
 
+function previousMonthKey(now = new Date()) {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1))
+    .toISOString()
+    .slice(0, 7);
+}
+
+function exactLedgerTransaction(client, id) {
+  if (!id) return null;
+  const matches = (Array.isArray(client?.ledger) ? client.ledger : [])
+    .filter((transaction) => String(transaction?.id || '') === String(id));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return {
@@ -341,11 +374,15 @@ exports.handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ error: 'RESEND_API_KEY not configured' }) };
   }
 
+  let caller;
   try {
-    await requireStaffOrSystem(event);
+    caller = await requireStaffOrSystem(event);
   } catch (e) {
     if (e.statusCode) return e;
     throw e;
+  }
+  if (!caller.isSystem && caller.role !== 'admin') {
+    return { statusCode: 403, body: JSON.stringify({ error: 'Owner access required' }) };
   }
 
   let payload;
@@ -365,27 +402,51 @@ exports.handler = async (event) => {
 
   try {
     if (eventType === 'monthly_summary') {
-      const monthKey = String(payload.monthKey || new Date().toISOString().slice(0, 7));
+      if (!caller.isSystem) {
+        return { statusCode: 403, body: JSON.stringify({ error: 'System job required' }) };
+      }
+      const monthKey = previousMonthKey();
       const sent = await sendMonthlySummaries(supabaseUrl, serviceKey, monthKey);
       return { statusCode: 200, body: JSON.stringify({ sent: true, count: sent }) };
     }
 
-    let client = null;
-    if (payload.clientId) {
-      client = await loadClient(payload.clientId, supabaseUrl, serviceKey);
-      if (!client) return { statusCode: 404, body: JSON.stringify({ error: 'Client not found' }) };
+    let payout = null;
+    let clientId = payload.clientId;
+    if (eventType === 'commission_paid') {
+      if (!UUID_RE.test(String(payload.payoutId || ''))) {
+        return { statusCode: 400, body: JSON.stringify({ error: 'A valid payoutId is required' }) };
+      }
+      payout = await loadPayout(payload.payoutId, supabaseUrl, serviceKey);
+      if (!payout) return { statusCode: 404, body: JSON.stringify({ error: 'Payout not found' }) };
+      clientId = payout.client_id;
     }
+    if (!UUID_RE.test(String(clientId || ''))) {
+      return { statusCode: 400, body: JSON.stringify({ error: 'A valid clientId is required' }) };
+    }
+    const client = await loadClient(clientId, supabaseUrl, serviceKey);
+    if (!client) return { statusCode: 404, body: JSON.stringify({ error: 'Client not found' }) };
 
-    const affiliateId = payload.affiliateId || client?.referred_by;
+    const affiliateId = client.referred_by;
     if (!affiliateId) {
       return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: 'no_affiliate' }) };
+    }
+    if (payload.affiliateId && String(payload.affiliateId) !== String(affiliateId)) {
+      return { statusCode: 403, body: JSON.stringify({ error: 'Affiliate does not own this client' }) };
     }
     const affiliate = await loadAffiliate(affiliateId, supabaseUrl, serviceKey);
     if (!affiliate?.email) {
       return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: 'no_affiliate_email' }) };
     }
-    if (client && client.referred_by && client.referred_by !== affiliate.id) {
+    if (String(client.referred_by) !== String(affiliate.id)
+        || String(client.user_id || '') !== String(affiliate.owner_user_id || '')) {
       return { statusCode: 403, body: JSON.stringify({ error: 'Affiliate does not own this client' }) };
+    }
+    if (!caller.isSystem && String(affiliate.owner_user_id || '') !== String(caller.userId || '')) {
+      return { statusCode: 403, body: JSON.stringify({ error: 'Owner access required' }) };
+    }
+    if (payout && (String(payout.affiliate_id) !== String(affiliate.id)
+        || String(payout.client_id) !== String(client.id))) {
+      return { statusCode: 403, body: JSON.stringify({ error: 'Payout does not match this referral' }) };
     }
 
     const markers = Array.isArray(client?.lead_drips_sent) ? client.lead_drips_sent : [];
@@ -395,19 +456,16 @@ exports.handler = async (event) => {
     }
 
     if (eventType === 'referral_received') {
-      if (!client) return { statusCode: 400, body: JSON.stringify({ error: 'clientId required' }) };
       await sendReferralReceived({ affiliate, client });
       await appendMarker(client.id, markers, onceMarker, supabaseUrl, serviceKey);
     } else if (eventType === 'enrolled') {
-      if (!client) return { statusCode: 400, body: JSON.stringify({ error: 'clientId required' }) };
-      if (!client.lpoa_signed) {
+      if (!(await hasCompletedEnrollment(client, supabaseUrl, serviceKey))) {
         return { statusCode: 409, body: JSON.stringify({ error: 'Client has not enrolled yet' }) };
       }
       await sendEnrolled({ affiliate, client });
       await appendMarker(client.id, markers, onceMarker, supabaseUrl, serviceKey);
     } else if (eventType === 'exited') {
-      if (!client) return { statusCode: 400, body: JSON.stringify({ error: 'clientId required' }) };
-      const status = payload.billingStatus || client.billing_status;
+      const status = client.billing_status;
       if (!['Inactive', 'Graduated', 'Paused'].includes(status)) {
         return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: 'not_exit_status' }) };
       }
@@ -415,31 +473,46 @@ exports.handler = async (event) => {
         affiliate,
         client,
         billingStatus: status,
-        exitReason: payload.exitReason || client.exit_reason,
+        exitReason: client.exit_reason,
       });
     } else if (eventType === 'commission_earned') {
-      if (!client) return { statusCode: 400, body: JSON.stringify({ error: 'clientId required' }) };
-      const amount = parseFloat(payload.amount);
-      if (!(amount > 0.004)) {
-        return { statusCode: 400, body: JSON.stringify({ error: 'amount required' }) };
+      if (!UUID_RE.test(String(payload.ledgerTransactionId || ''))) {
+        return { statusCode: 400, body: JSON.stringify({ error: 'A valid ledgerTransactionId is required' }) };
+      }
+      const { eligibleCollectedAmount, commissionRate } = await import('../../src/utils/affiliateCommission.js');
+      const transaction = exactLedgerTransaction(client, payload.ledgerTransactionId);
+      const revenueAmount = eligibleCollectedAmount(transaction);
+      const amount = revenueAmount * commissionRate(client, affiliate);
+      if (!(revenueAmount > 0.004) || !(amount > 0.004)) {
+        return { statusCode: 409, body: JSON.stringify({ error: 'The referenced ledger transaction is not eligible cleared revenue' }) };
+      }
+      const transactionMarker = `affiliate_commission_earned:${transaction.id}`;
+      if (markers.includes(transactionMarker)) {
+        return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: 'already_notified' }) };
       }
       await sendCommissionEarned({
         affiliate,
         client,
         amount,
-        revenueAmount: payload.revenueAmount != null ? parseFloat(payload.revenueAmount) : null,
+        revenueAmount,
       });
+      await appendMarker(client.id, markers, transactionMarker, supabaseUrl, serviceKey);
     } else if (eventType === 'commission_paid') {
-      const amount = parseFloat(payload.amount);
-      if (!(amount > 0.004)) {
-        return { statusCode: 400, body: JSON.stringify({ error: 'amount required' }) };
+      const amount = Number(payout.amount);
+      if (!(amount > 0.004) || !payout.paid_at) {
+        return { statusCode: 409, body: JSON.stringify({ error: 'The referenced payout is incomplete' }) };
+      }
+      const payoutMarker = `affiliate_commission_paid:${payout.id}`;
+      if (markers.includes(payoutMarker)) {
+        return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: 'already_notified' }) };
       }
       await sendCommissionPaid({
         affiliate,
-        client: client || { name: payload.clientName || null },
+        client,
         amount,
-        paidAt: payload.paidAt || null,
+        paidAt: payout.paid_at,
       });
+      await appendMarker(client.id, markers, payoutMarker, supabaseUrl, serviceKey);
     }
 
     return { statusCode: 200, body: JSON.stringify({ sent: true }) };

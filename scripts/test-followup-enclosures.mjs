@@ -1,199 +1,40 @@
 #!/usr/bin/env node
+import assert from 'node:assert/strict';
 import {
   assertFollowUpEnclosureContract,
   buildFollowUpEnclosurePlan,
   extractHtmlBody,
   extractHtmlStyles,
+  getFollowUpSourceIds,
   isPhase3FollowUpLetter,
   validateFollowUpSourceRelationships,
 } from '../src/utils/followUpEnclosures.js';
-import {
-  embedCanonicalSignatureInHistoricalHtml,
-  embeddedSignatureSource,
-  hasInjectedSignature,
-  injectSignatureImage,
-} from '../src/utils/signatureInjection.js';
 
-let failed = 0;
-function assert(condition, message) {
-  if (!condition) {
-    failed += 1;
-    console.error('FAIL:', message);
-  } else {
-    console.log('ok:', message);
-  }
-}
-
-function throwsMessage(fn, substring, message) {
-  try {
-    fn();
-    assert(false, message);
-  } catch (error) {
-    assert(String(error.message).includes(substring), message);
-  }
-}
-
-const followUp = {
+const historical = {
   id: 'follow-up-1',
-  userId: 'firm-1',
-  clientId: 'client-1',
   phase: 'Phase 3 — TransUnion (Follow-up)',
-  coveredFurnishers: ['Acme Bank'],
   sourcePhase3LetterId: 'phase3-1',
-  sourceBureauResponseEvidenceId: '11111111-1111-4111-8111-111111111111',
-};
-const priorLetter = {
-  id: 'phase3-1',
-  user_id: 'firm-1',
-  client_id: 'client-1',
-  phase: 'Phase 3 — TransUnion',
-  covered_furnishers: ['Acme Bank'],
-  html: '<!doctype html><html><head><style>.section{color:navy}</style></head><body><p>Prior letter</p></body></html>',
-};
-const evidence = {
-  id: '11111111-1111-4111-8111-111111111111',
-  firm_user_id: 'firm-1',
-  client_id: 'client-1',
-  letter_id: 'phase3-1',
-  response_kind: 'bureau',
-  storage_bucket: 'responses',
-  storage_paths: [
-    'firm-1/client-1/response-evidence/11111111-1111-4111-8111-111111111111/response_01_results.pdf',
-  ],
-  file_names: ['results.pdf'],
-  upload_status: 'received',
+  sourceBureauResponseEvidenceId: 'response-1',
 };
 
-assert(!isPhase3FollowUpLetter({ phase: 'Phase 3 — TransUnion' }), 'initial Phase 3 is not a follow-up');
-assert(isPhase3FollowUpLetter(followUp), 'follow-up phase is detected');
-assert(isPhase3FollowUpLetter({ phase: 'Phase 3 — TransUnion', source_phase3_letter_id: 'p3' }), 'source metadata also detects follow-up');
+assert.equal(isPhase3FollowUpLetter({ phase: 'Phase 3 — TransUnion' }), false);
+assert.equal(isPhase3FollowUpLetter(historical), true);
+assert.deepEqual(getFollowUpSourceIds(historical), {
+  sourcePhase3LetterId: 'phase3-1',
+  sourceBureauResponseEvidenceId: 'response-1',
+}, 'historical source identity remains readable');
 
-throwsMessage(
-  () => assertFollowUpEnclosureContract({ ...followUp, sourcePhase3LetterId: null }),
-  'SOURCE MISSING',
-  'missing source IDs fail closed'
-);
-throwsMessage(
-  () => assertFollowUpEnclosureContract({ ...followUp, sourcePhase3LetterId: followUp.id }),
-  'cannot enclose itself',
-  'self-referential source fails closed'
-);
-
-const valid = validateFollowUpSourceRelationships({ followUp, priorLetter, evidence });
-assert(valid.paths.length === 1 && valid.names[0] === 'results.pdf', 'canonical client-scoped response path passes');
-const legacyValid = validateFollowUpSourceRelationships({
-  followUp,
-  priorLetter,
-  evidence: {
-    ...evidence,
-    storage_paths: ['firm-1/response-evidence/11111111-1111-4111-8111-111111111111/response_01_results.pdf'],
-  },
-});
-assert(legacyValid.paths.length === 1, 'legacy response path remains readable');
-
-throwsMessage(
-  () => validateFollowUpSourceRelationships({
-    followUp,
-    priorLetter,
-    evidence: { ...evidence, letter_id: 'another-letter' },
-  }),
-  'EXHIBIT B INVALID',
-  'response linked to another letter fails closed'
-);
-throwsMessage(
-  () => validateFollowUpSourceRelationships({
-    followUp,
-    priorLetter: { ...priorLetter, client_id: 'another-client' },
-    evidence,
-  }),
-  'CLIENT MISMATCH',
-  'cross-client prior letter fails closed'
-);
-throwsMessage(
-  () => validateFollowUpSourceRelationships({
-    followUp,
-    priorLetter: { ...priorLetter, covered_furnishers: ['Another Furnisher'] },
-    evidence,
-  }),
-  'COVERAGE MISMATCH',
-  'different furnisher coverage fails closed'
-);
-throwsMessage(
-  () => validateFollowUpSourceRelationships({
-    followUp,
-    priorLetter,
-    evidence: { ...evidence, storage_paths: ['firm-1/unrelated/results.pdf'] },
-  }),
-  'FILES INVALID',
-  'response path outside exact evidence archive fails closed'
-);
-
-const plan = buildFollowUpEnclosurePlan(followUp);
-assert(
-  plan.map((item) => item.kind).join(',') === 'prior_phase3,bureau_response,lpoa',
-  'plan contains only prior Phase 3, bureau response, and LPOA in order'
-);
-assert(
-  !plan.some((item) => /phase1|furnisher|identity|address/i.test(item.kind)),
-  'plan excludes Phase 1, furnisher responses, and identity documents'
-);
-assert(extractHtmlBody(priorLetter.html) === '<p>Prior letter</p>', 'prior letter body is extracted without old packet enclosures');
-assert(extractHtmlStyles(priorLetter.html).includes('.section{color:navy}'), 'prior letter print styles are preserved');
-
-const signatureUrl = 'https://example.com/signature.png?token=a&b=2';
-const placeholderLetter = '<p>___________________________</p><p>Thomas Andrew Kilpatrick</p>';
-const injectedPlaceholder = injectSignatureImage(placeholderLetter, signatureUrl, 'Thomas Andrew Kilpatrick');
-assert(hasInjectedSignature(injectedPlaceholder, signatureUrl), 'signature replaces underscore placeholder');
-assert(injectedPlaceholder.includes('Thomas Andrew Kilpatrick'), 'placeholder injection preserves printed name');
-assert(
-  injectSignatureImage(injectedPlaceholder, signatureUrl, 'Thomas Andrew Kilpatrick') === injectedPlaceholder,
-  'signature injection is idempotent'
-);
-
-const structuredLetter = '<div class="signature-block"><p>ROBERT KERSTNER</p></div>';
-const injectedStructured = injectSignatureImage(structuredLetter, signatureUrl, 'Robert Kerstner');
-assert(
-  injectedStructured.indexOf('data-ccc-signature') < injectedStructured.indexOf('ROBERT KERSTNER'),
-  'structured signature block injection does not depend on printed-name capitalization'
-);
-
-const legacyLetter = '<p>Thomas Andrew Kilpatrick</p><p>Address</p><p>Sincerely,</p><p>Thomas Andrew Kilpatrick</p>';
-const injectedLegacy = injectSignatureImage(legacyLetter, signatureUrl, 'Thomas Andrew Kilpatrick');
-assert(
-  injectedLegacy.indexOf('data-ccc-signature') > injectedLegacy.indexOf('Sincerely'),
-  'legacy letter inserts signature at final printed name, not address block'
-);
-assert(
-  injectedLegacy.indexOf('Thomas Andrew Kilpatrick') < injectedLegacy.indexOf('data-ccc-signature'),
-  'legacy address name remains before injected signature'
-);
-
-const durableSignature = 'data:image/png;base64,Y2Fub25pY2FsLXNpZ25hdHVyZQ==';
-const embeddedSignature = embeddedSignatureSource(injectSignatureImage(structuredLetter, durableSignature, 'Robert Kerstner'));
-assert(embeddedSignature === durableSignature, 'embedded signature source is available to packet assembly');
-// A real retired link: the public client-docs URL shape that stopped
-// resolving when that bucket was made private.
-const retiredSignatureUrl = 'https://mlsbdmewxocgweotcdud.supabase.co/storage/v1/object/public/client-docs/307b398b-ffc5-4e11-b9b6-64a7f281b136/signature.png';
-const historicalRemoteSignature = `<p>Prior letter</p><img src="${retiredSignatureUrl}" style="max-height:60px" />`;
-const repairedHistoricalSignature = embedCanonicalSignatureInHistoricalHtml(historicalRemoteSignature, durableSignature);
-assert(repairedHistoricalSignature.includes(durableSignature), 'historical enclosure uses the canonical embedded signature');
-assert(!repairedHistoricalSignature.includes(retiredSignatureUrl), 'retired historical signature URL is removed from the packet');
-throwsMessage(
-  () => embedCanonicalSignatureInHistoricalHtml(
-    '<p>Prior letter</p><img src="https://archive.example/Client/signature.png" />',
-    durableSignature
-  ),
-  'will not reliably render in physical mail',
-  'a historical image hosted outside our storage fails closed instead of being overwritten with the client signature'
-);
-throwsMessage(
-  () => embedCanonicalSignatureInHistoricalHtml(historicalRemoteSignature, null),
-  'no canonical embedded signature',
-  'historical enclosure fails closed when its retired signature cannot be replaced'
-);
-
-if (failed) {
-  console.error(`\n${failed} failure(s)`);
-  process.exit(1);
+for (const operation of [
+  () => assertFollowUpEnclosureContract(historical),
+  () => validateFollowUpSourceRelationships({ followUp: historical }),
+  () => buildFollowUpEnclosurePlan(historical),
+]) {
+  assert.throws(operation, /read-only.*CCC Consent \/ Accuracy \/ Collection/i,
+    'every former packet-construction entry point fails closed');
 }
-console.log('\nAll bureau follow-up enclosure tests passed.');
+
+const historicHtml = '<!doctype html><html><head><style>.section{color:navy}</style></head><body><p>Prior letter</p></body></html>';
+assert.equal(extractHtmlBody(historicHtml), '<p>Prior letter</p>');
+assert.match(extractHtmlStyles(historicHtml), /.section\{color:navy\}/);
+
+console.log('Historical follow-up records remain readable and all legacy packet builders are retired.');

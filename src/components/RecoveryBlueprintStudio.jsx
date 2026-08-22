@@ -15,7 +15,7 @@ function defaultMessage(audit) {
   const firstName = String(audit.client?.name || 'there').split(' ')[0];
   return `Hi ${firstName},
 
-Your Recovery Blueprint is ready. We completed a forensic review of your credit reports and organized the highest-priority findings into a clear opening strategy.
+Your Recovery Blueprint is ready. We reviewed your three-bureau report and mapped the confirmed accounts to a clear opening plan.
 
 The attached Blueprint shows your current file snapshot, the accounts selected for the opening campaign, and the documented recovery path we recommend reviewing together.
 
@@ -77,18 +77,26 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
   };
 
   const saveIfNeeded = async () => {
-    if (!correctionsDirty) return true;
+    if (!correctionsDirty) return audit;
     const data = await persistReviewedAccounts(audit, accounts);
     if (data?.saved) {
-      onCorrectionsSaved?.();
+      await onCorrectionsSaved?.();
       setArtifact((current) => current ? { ...current, isCurrent: false } : current);
+      return {
+        ...(data.audit || audit),
+        id: data.auditId,
+        auditRevision: data.auditRevision ?? null,
+        auditSha256: data.auditSha256 || null,
+        classificationReview: data.classificationReview || data.audit?.classificationReview || null,
+      };
     }
-    return !!data?.saved;
+    return null;
   };
 
   const handlePreview = () => run('preview', async () => {
-    if (!(await saveIfNeeded())) return;
-    const data = await previewBlueprint(audit);
+    const exactAudit = await saveIfNeeded();
+    if (!exactAudit) return;
+    const data = await previewBlueprint(exactAudit);
     if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     const bytes = base64ToPdfBytes(data.pdfBase64);
     setPreviewBytes(bytes);
@@ -96,8 +104,9 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
   });
 
   const handleApprove = () => run('approve', async () => {
-    if (!(await saveIfNeeded())) return;
-    const data = await approveBlueprint(audit);
+    const exactAudit = await saveIfNeeded();
+    if (!exactAudit) return;
+    const data = await approveBlueprint(exactAudit);
     setArtifact(data.artifact);
     if (previewUrl?.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     // Keep in-memory bytes from Preview when available so canvas never has to
@@ -138,21 +147,21 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
   });
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm p-3 sm:p-6 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-[#F7F4ED] w-full max-w-6xl h-[92vh] rounded-2xl overflow-hidden shadow-2xl flex flex-col" onClick={(event) => event.stopPropagation()}>
-        <div className="bg-[#121F38] px-5 sm:px-7 py-4 flex items-center justify-between gap-4">
+    <div className="fixed inset-0 z-50 bg-slate-950/55 backdrop-blur-sm p-3 sm:p-6 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-white w-full max-w-6xl h-[92vh] rounded-2xl overflow-hidden shadow-2xl flex flex-col border border-sky-100" onClick={(event) => event.stopPropagation()}>
+        <div className="bg-white border-b border-sky-100 px-5 sm:px-7 py-4 flex items-center justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-[#C9A84C] text-[10px] uppercase tracking-[.2em] font-bold">Prospect Deliverable</div>
-            <div className="text-white text-lg font-semibold truncate">Recovery Blueprint · {audit.client?.name}</div>
+            <div className="text-sky-600 text-[10px] uppercase tracking-[.2em] font-bold">Private Client Deliverable</div>
+            <div className="text-slate-950 text-lg font-semibold truncate">Recovery Blueprint · {audit.client?.name}</div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <StatusPill artifact={artifact} />
-            <button onClick={onClose} className="text-white/60 hover:text-white p-1"><X size={19} /></button>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-950 p-1"><X size={19} /></button>
           </div>
         </div>
 
         <div className="grid lg:grid-cols-[1fr_360px] flex-1 min-h-0">
-          <div className="bg-slate-200/70 min-h-[360px] flex flex-col p-3 sm:p-5">
+          <div className="bg-sky-50/80 min-h-[360px] flex flex-col p-3 sm:p-5">
             {previewUrl ? (
               <>
                 <div className="flex justify-end mb-2 shrink-0">
@@ -167,8 +176,8 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
                 <div className="text-center max-w-sm">
                   <FileCheck2 size={42} className="mx-auto text-slate-400 mb-4" strokeWidth={1.4} />
                   <div className="font-semibold text-slate-900">Preview the reviewed Blueprint</div>
-                  <p className="text-sm text-slate-500 mt-2">Preview uses the saved forensic audit and your persisted account corrections. Claude does not run again.</p>
-                  <button onClick={handlePreview} disabled={!!busy} className="mt-5 inline-flex items-center gap-2 bg-[#121F38] text-[#C9A84C] px-5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider disabled:opacity-50">
+                  <p className="text-sm text-slate-500 mt-2">Preview uses the exact saved audit and confirmed deterministic classification review. No AI chooses the flow or R1.</p>
+                  <button onClick={handlePreview} disabled={!!busy} className="mt-5 inline-flex items-center gap-2 bg-slate-950 text-white px-5 py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider disabled:opacity-50">
                     <Eye size={14} /> Generate Preview
                   </button>
                 </div>
@@ -194,11 +203,11 @@ export default function RecoveryBlueprintStudio({ audit, accounts, correctionsDi
                   <button onClick={handleSave} disabled={!!busy || !correctionsDirty} className="flex items-center justify-center gap-1.5 border border-slate-200 rounded-lg py-2 text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40"><Save size={12} /> Save review</button>
                   <button onClick={handlePreview} disabled={!!busy} className="flex items-center justify-center gap-1.5 border border-slate-200 rounded-lg py-2 text-[10px] uppercase tracking-wider font-semibold disabled:opacity-40"><Eye size={12} /> Preview</button>
                 </div>
-                <button onClick={handleApprove} disabled={!!busy} className="mt-2 w-full flex items-center justify-center gap-2 bg-[#121F38] text-[#C9A84C] rounded-lg py-2.5 text-[10px] uppercase tracking-wider font-bold disabled:opacity-50">
+                <button onClick={handleApprove} disabled={!!busy} className="mt-2 w-full flex items-center justify-center gap-2 bg-slate-950 text-white rounded-lg py-2.5 text-[10px] uppercase tracking-wider font-bold disabled:opacity-50">
                   <FileCheck2 size={13} /> {artifact ? 'Approve New Version' : 'Approve & Archive'}
                 </button>
                 {artifact?.signedUrl && (
-                  <a href={artifact.signedUrl} target="_blank" rel="noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 border border-[#121F38] text-[#121F38] rounded-lg py-2.5 text-[10px] uppercase tracking-wider font-bold">
+                  <a href={artifact.signedUrl} target="_blank" rel="noreferrer" className="mt-2 w-full flex items-center justify-center gap-2 border border-slate-950 text-slate-950 rounded-lg py-2.5 text-[10px] uppercase tracking-wider font-bold">
                     <Download size={13} /> Download Approved PDF
                   </a>
                 )}

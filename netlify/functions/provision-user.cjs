@@ -2,6 +2,13 @@
 // then sends exactly one branded, short-lived sign-in invitation.
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
+const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
+
+function profileConflict(message) {
+  const error = new Error(message);
+  error.statusCode = 409;
+  return error;
+}
 
 // Netlify's Node 20 runtime has no global WebSocket, and supabase-js always
 // constructs a RealtimeClient in createClient() even though this function
@@ -26,8 +33,8 @@ async function sendInvitation({ email, name, actionLink, kind, companyName, comm
       + `<h3 style="color:#1B2A4A;font-size:14px;margin:20px 0 8px;">How it works</h3>`
       + `<ol style="padding-left:18px;line-height:1.8;font-size:13px;color:#444;margin:0 0 14px;">`
       + `<li>Log in to submit client referrals</li>`
-      + `<li>We handle the full process &mdash; forensic audit, certified letters, follow-up, and monitoring</li>`
-      + `<li>You earn <strong>${commPct}%</strong> of the First Work Fee <em>and</em> every ongoing monthly payment while the client stays active</li>`
+      + `<li>We handle the full process &mdash; report review, personalized dispute correspondence, follow-up, and progress tracking</li>`
+      + `<li>You earn <strong>${commPct}%</strong> of actual eligible client revenue recorded as collected under your saved partner terms</li>`
       + `<li>Track referrals and commissions in real time from your portal</li>`
       + `</ol>`
       + `<p style="margin:0 0 14px;font-size:13px;color:#444;">We&rsquo;ll email you when a referral is received, when they enroll, when commission accrues or is paid, and a monthly summary.</p>`
@@ -85,16 +92,51 @@ exports.handler = async (event) => {
       client = Array.isArray(clientRows) ? clientRows[0] : null;
       if (!client) return { statusCode: 404, body: JSON.stringify({ error: 'Client not found' }) };
       if (caller.userId !== 'system' && client.user_id !== caller.userId) return { statusCode: 403, body: JSON.stringify({ error: 'Client does not belong to this administrator' }) };
-      if (client.email && String(client.email).trim().toLowerCase() !== normEmail) return { statusCode: 409, body: JSON.stringify({ error: 'Invitation email does not match the client record' }) };
-      const existingProfileRes = await fetch(`${url}/rest/v1/client_profiles?email=eq.${encodeURIComponent(normEmail)}&select=id,user_id,client_id&limit=1`, { headers });
-      const existingProfileRows = await existingProfileRes.json();
-      const existingProfile = Array.isArray(existingProfileRows) ? existingProfileRows[0] : null;
-      if (existingProfile?.client_id && existingProfile.client_id !== client.id) return { statusCode: 409, body: JSON.stringify({ error: 'This email is already linked to another client portal' }) };
-      existingPortalUserId = existingProfile?.user_id || null;
+      if (!client.email || String(client.email).trim().toLowerCase() !== normEmail) return { statusCode: 409, body: JSON.stringify({ error: 'Invitation email does not match the client record' }) };
+      // Resolve both durable identity dimensions before touching Auth. A
+      // client may have at most one profile, and an email candidate may only
+      // be that same row. The transactional RPC below repeats these checks
+      // under advisory locks after the Auth user ID is known.
+      const [clientProfilesRes, emailProfilesRes] = await Promise.all([
+        fetch(`${url}/rest/v1/client_profiles?client_id=eq.${encodeURIComponent(client.id)}&select=id,user_id,client_id,email&limit=2`, { headers }),
+        fetch(`${url}/rest/v1/client_profiles?email=eq.${encodeURIComponent(normEmail)}&select=id,user_id,client_id,email&limit=2`, { headers }),
+      ]);
+      if (!clientProfilesRes.ok || !emailProfilesRes.ok) throw new Error('Could not validate the existing client portal link');
+      const clientProfiles = await clientProfilesRes.json();
+      const emailProfiles = await emailProfilesRes.json();
+      if (!Array.isArray(clientProfiles) || !Array.isArray(emailProfiles)) throw new Error('Could not validate the existing client portal link');
+      if (clientProfiles.length > 1 || emailProfiles.length > 1) {
+        throw profileConflict('Conflicting client portal profiles require staff resolution');
+      }
+      const profileForClient = clientProfiles[0] || null;
+      const profileForEmail = emailProfiles[0] || null;
+      if (profileForClient && String(profileForClient.email || '').trim().toLowerCase() !== normEmail) {
+        throw profileConflict('This client already has a different portal email');
+      }
+      if (profileForEmail?.client_id && profileForEmail.client_id !== client.id) {
+        throw profileConflict('This email is already linked to another client portal');
+      }
+      if (profileForClient && profileForEmail && profileForClient.id !== profileForEmail.id) {
+        throw profileConflict('Conflicting client portal profiles require staff resolution');
+      }
+      const existingProfile = profileForClient || profileForEmail;
+      existingPortalUserId = existingProfile?.user_id && existingProfile.user_id !== ZERO_UUID
+        ? existingProfile.user_id
+        : null;
     } else {
-      const affiliateRes = await fetch(`${url}/rest/v1/affiliates?email=eq.${encodeURIComponent(normEmail)}&select=id,user_id,company,commission_rate&limit=2`, { headers });
+      const affiliateRes = await fetch(`${url}/rest/v1/affiliates?email=eq.${encodeURIComponent(normEmail)}&select=id,user_id,owner_user_id,company,commission_rate,program_status&limit=2`, { headers });
       const affiliateRows = await affiliateRes.json();
+      if (!affiliateRes.ok) throw new Error('Could not validate the affiliate portal record');
       if (!Array.isArray(affiliateRows) || affiliateRows.length !== 1) return { statusCode: 409, body: JSON.stringify({ error: 'A single matching affiliate record is required' }) };
+      if (!['legacy_active', 'active'].includes(affiliateRows[0].program_status)) {
+        return { statusCode: 409, body: JSON.stringify({
+          error: 'Portal access is locked until the affiliate agreement is signed and owner-activated. Use the agreement onboarding action instead.',
+          code: 'AFFILIATE_ACTIVATION_REQUIRED',
+        }) };
+      }
+      if (caller.userId !== 'system' && (!affiliateRows[0].owner_user_id || affiliateRows[0].owner_user_id !== caller.userId)) {
+        return { statusCode: 403, body: JSON.stringify({ error: 'Only this affiliate program owner may send portal access.' }) };
+      }
       existingPortalUserId = affiliateRows[0].user_id || null;
       affiliateMeta = affiliateRows[0];
     }
@@ -104,8 +146,14 @@ exports.handler = async (event) => {
       realtime: { transport: ws },
     });
     // An explicit resend from the admin screen doubles as a deliberate
-    // reactivation of a previously revoked portal identity.
+    // reactivation of a previously revoked portal identity, but only after
+    // its Auth email is proven to match this exact invitation.
     if (existingPortalUserId) {
+      const { data: existingAuth, error: existingAuthError } = await supabase.auth.admin.getUserById(existingPortalUserId);
+      if (existingAuthError) throw new Error(existingAuthError.message || 'Could not validate the existing portal user');
+      if (String(existingAuth?.user?.email || '').trim().toLowerCase() !== normEmail) {
+        throw profileConflict('The existing portal link belongs to another Auth identity');
+      }
       const { error: unbanError } = await supabase.auth.admin.updateUserById(existingPortalUserId, { ban_duration: 'none' });
       if (unbanError) throw new Error(unbanError.message || 'Could not reactivate portal user');
     }
@@ -124,30 +172,55 @@ exports.handler = async (event) => {
       throw new Error(createError.message || 'Could not create portal user');
     }
 
-    const configuredOrigin = process.env.APP_URL || event.headers.origin || 'https://ccc-forensic-demo.netlify.app';
+    // Authentication links must use a server-configured operations origin;
+    // a request Origin is attacker-controlled and can never choose redirectTo.
+    const configuredOrigin = process.env.APP_URL || process.env.URL || 'https://ccc-forensic-demo.netlify.app';
     const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
       type: 'magiclink', email: normEmail, options: { redirectTo: `${configuredOrigin.replace(/\/$/, '')}/login` },
     });
     if (linkError || !linkData?.user?.id || !linkData?.properties?.action_link) throw new Error(linkError?.message || 'Could not generate portal invitation');
     const userId = linkData.user.id;
+    if (existingPortalUserId && existingPortalUserId !== userId) {
+      throw profileConflict('The existing portal link belongs to another Auth identity');
+    }
 
     if (portalKind === 'affiliate') {
-      const patchRes = await fetch(`${url}/rest/v1/affiliates?email=eq.${encodeURIComponent(normEmail)}`, {
-        method: 'PATCH', headers: { ...headers, Prefer: 'return=representation' }, body: JSON.stringify({ user_id: userId }),
+      const patchRes = await fetch(`${url}/rest/v1/rpc/ccc_link_affiliate_portal_identity`, {
+        method: 'POST', headers: { ...headers, Prefer: 'return=representation' }, body: JSON.stringify({
+          p_affiliate_id: affiliateMeta.id,
+          p_portal_user_id: userId,
+        }),
       });
-      const patched = await patchRes.json();
-      if (!patchRes.ok || !Array.isArray(patched) || patched.length !== 1) throw new Error('Could not link affiliate record');
+      if (!patchRes.ok) throw new Error('Could not securely link affiliate record');
     } else {
-      const profileRes = await fetch(`${url}/rest/v1/client_profiles?email=eq.${encodeURIComponent(normEmail)}&select=id,client_id&limit=1`, { headers });
-      const profileRows = await profileRes.json();
-      const profile = Array.isArray(profileRows) ? profileRows[0] : null;
-      if (profile?.client_id && profile.client_id !== client.id) throw new Error('This email is already linked to another client portal');
-      const profilePatch = { user_id: userId, client_id: client.id, full_name: fullName || client.name || normEmail };
-      const profileRequest = profile
-        ? fetch(`${url}/rest/v1/client_profiles?id=eq.${encodeURIComponent(profile.id)}`, { method: 'PATCH', headers: { ...headers, Prefer: 'return=minimal' }, body: JSON.stringify(profilePatch) })
-        : fetch(`${url}/rest/v1/client_profiles`, { method: 'POST', headers: { ...headers, Prefer: 'return=minimal' }, body: JSON.stringify({ ...profilePatch, email: normEmail, onboarding_complete: false }) });
-      const profileWrite = await profileRequest;
-      if (!profileWrite.ok) throw new Error('Could not link client portal profile');
+      const profileLinkRes = await fetch(`${url}/rest/v1/rpc/ccc_link_portal_profile_for_onboarding`, {
+        method: 'POST',
+        headers: { ...headers, Prefer: 'return=representation' },
+        body: JSON.stringify({
+          p_portal_user_id: userId,
+          p_client_id: client.id,
+          p_email: normEmail,
+          p_full_name: fullName || client.name || normEmail,
+        }),
+      });
+      const profileLinkRaw = await profileLinkRes.text();
+      let linkedProfileId = null;
+      try { linkedProfileId = profileLinkRaw ? JSON.parse(profileLinkRaw) : null; }
+      catch { linkedProfileId = null; }
+      if (!profileLinkRes.ok) {
+        const safeDefault = 'Could not securely link the client portal profile';
+        let detail = safeDefault;
+        try {
+          const parsed = profileLinkRaw ? JSON.parse(profileLinkRaw) : null;
+          const candidate = String(parsed?.message || '');
+          if (/portal identity|auth identity|staff or affiliate identity|conflicting client portal|already linked|different portal email/i.test(candidate)) {
+            detail = candidate;
+          }
+        } catch { /* keep the non-sensitive default */ }
+        if (detail !== safeDefault) throw profileConflict(detail);
+        throw new Error(safeDefault);
+      }
+      if (!linkedProfileId) throw new Error('Could not securely link the client portal profile');
     }
 
     const { isConfigured } = require('./_email.cjs');
@@ -162,6 +235,7 @@ exports.handler = async (event) => {
     return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, invitationSent: isConfigured() }) };
   } catch (error) {
     console.error('Portal provisioning failed:', error.message);
-    return { statusCode: 500, body: JSON.stringify({ error: error.message || 'Provisioning failed' }) };
+    const statusCode = error?.statusCode === 409 ? 409 : 500;
+    return { statusCode, body: JSON.stringify({ error: error.message || 'Provisioning failed' }) };
   }
 };
