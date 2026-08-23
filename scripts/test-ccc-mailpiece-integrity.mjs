@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import {
   assembleBoundCccMailpiece,
   canonicalizeCccLetterHtml,
+  canonicalizeCccMailpieceClaim,
   cccExhibitImageUrl,
   cccLetterBindingInput,
   inspectBoundCccMailpiece,
@@ -15,9 +16,84 @@ import {
 const require = createRequire(import.meta.url);
 const {
   CCC_RETURN_ADDRESS,
+  isExplicitLobPreacceptRejection,
+  mailSubmissionReconciliationIssue,
   requiredCccAutomaticIdentityIssues,
+  scanMailpieceExternalDependencies,
   signedStorageObjectIdentity,
 } = require('../netlify/functions/lob.cjs');
+
+for (const status of [400, 422]) {
+  assert.equal(isExplicitLobPreacceptRejection({
+    status,
+    body: { error: { code: 'INVALID_TEMPLATE_HTML' } },
+  }), true, `${status} plus an exact allowlisted Lob validation code may enter the guarded release path`);
+}
+for (const status of [0, 200, 301, 401, 402, 403, 404, 408, 409, 425, 429, 500, 503]) {
+  assert.equal(isExplicitLobPreacceptRejection({ status }), false,
+    `${status} is accepted, ambiguous, transient, or server-side and must retain the frozen claim`);
+}
+for (const status of [400, 422]) {
+  assert.equal(isExplicitLobPreacceptRejection({ status }), false,
+    `${status} without an exact Lob code is not proof of pre-accept rejection`);
+  assert.equal(isExplicitLobPreacceptRejection({
+    status,
+    body: { error: { code: 'CONFLICT' } },
+  }), false, `${status} CONFLICT is ambiguous and must retain the frozen claim`);
+  assert.equal(isExplicitLobPreacceptRejection({
+    status,
+    body: { error: { code: 'SOME_NEW_VALIDATION_CODE' } },
+  }), false, `${status} with an unknown code fails closed until deliberately reviewed`);
+}
+
+const freshGeneration = new Date('2026-08-23T12:00:00.000Z');
+const nowMs = new Date('2026-08-23T13:00:00.000Z').getTime();
+assert.equal(mailSubmissionReconciliationIssue({
+  status: 'pending',
+  lob_id: null,
+  idempotency_created_at: freshGeneration.toISOString(),
+}, nowMs), null, 'a fresh never-accepted pending generation may proceed');
+assert.match(mailSubmissionReconciliationIssue({
+  status: 'pending',
+  lob_id: null,
+  idempotency_created_at: '2026-08-22T12:59:59.000Z',
+}, nowMs), /older than 24 hours/i, 'a stale pending generation requires manual reconciliation');
+assert.match(mailSubmissionReconciliationIssue({
+  status: 'accepted_unreconciled',
+  lob_id: 'ltr_uncertain',
+  idempotency_created_at: freshGeneration.toISOString(),
+}, nowMs), /not reconciled/i, 'accepted-unreconciled is never retried as a new purchase');
+assert.match(mailSubmissionReconciliationIssue({
+  status: 'submitted',
+  lob_id: null,
+  idempotency_created_at: freshGeneration.toISOString(),
+}, nowMs), /Lob ID is missing/i, 'a submitted row without provider identity requires manual reconciliation');
+
+const dependencySafe = scanMailpieceExternalDependencies(
+  '<a href="#details">Details</a><img src="https://project.supabase.co/storage/v1/object/sign/documents/a.png?token=one">',
+);
+assert.deepEqual(dependencySafe.issues, []);
+assert.deepEqual(dependencySafe.urls, [
+  'https://project.supabase.co/storage/v1/object/sign/documents/a.png?token=one',
+]);
+for (const html of [
+  '<link rel="stylesheet" href="https://cdn.example/theme.css">',
+  '<a href="https://attacker.example/redirect">Review</a>',
+  '<style>@import "https://cdn.example/theme.css";</style>',
+  '<style>.x{background:url(https://cdn.example/bg.png)}</style>',
+  '<img srcset="https://cdn.example/one.png 1x, https://cdn.example/two.png 2x">',
+  '<iframe src="https://cdn.example/frame"></iframe>',
+  '<meta http-equiv="refresh" content="0;url=https://cdn.example/next">',
+  '<img src="/relative/unbound.png">',
+]) {
+  assert.ok(scanMailpieceExternalDependencies(html).issues.length > 0,
+    `unbound renderer dependency must fail closed: ${html}`);
+}
+assert.deepEqual(
+  scanMailpieceExternalDependencies('<p>Plain evidence URL: https://example.com/report</p>'),
+  { urls: [], issues: [] },
+  'plain text is not an executable renderer dependency',
+);
 
 const LETTER_A = '11111111-1111-4111-8111-111111111111';
 const LETTER_B = '22222222-2222-4222-8222-222222222222';
@@ -43,6 +119,45 @@ const packetA = assembleBoundCccMailpiece({
   letterSha256: shaA,
   enclosureHtml: screenshot,
 });
+
+const sourceUrlRetry = sourceUrl.replace('token=signed', 'token=different-retry-token');
+const stableAsset = {
+  sourceUrl,
+  kind: 'screenshot',
+  id: SCREENSHOT_ID,
+  bucket: 'documents',
+  storagePath: 'staff/client/dispute-screenshots/batch/screen.png',
+  sha256: 'a'.repeat(64),
+  byteSize: 4096,
+};
+const firstClaimMaterial = canonicalizeCccMailpieceClaim(packetA, [stableAsset]);
+const retryClaimMaterial = canonicalizeCccMailpieceClaim(
+  packetA.replace(sourceUrl, sourceUrlRetry),
+  [{ ...stableAsset, sourceUrl: sourceUrlRetry }],
+);
+assert.equal(
+  createHash('sha256').update(firstClaimMaterial.canonicalHtml).digest('hex'),
+  createHash('sha256').update(retryClaimMaterial.canonicalHtml).digest('hex'),
+  'fresh signed-URL tokens preserve one exact semantic packet identity for a safe retry',
+);
+assert.deepEqual(firstClaimMaterial.manifest, retryClaimMaterial.manifest,
+  'the frozen all-exhibit manifest never stores an ephemeral signed token');
+assert.notEqual(
+  createHash('sha256').update(firstClaimMaterial.canonicalHtml).digest('hex'),
+  createHash('sha256').update(canonicalizeCccMailpieceClaim(
+    packetA,
+    [{ ...stableAsset, sha256: 'b'.repeat(64) }],
+  ).canonicalHtml).digest('hex'),
+  'changing one exhibit digest changes the claimed packet identity',
+);
+assert.notEqual(
+  createHash('sha256').update(firstClaimMaterial.canonicalHtml).digest('hex'),
+  createHash('sha256').update(canonicalizeCccMailpieceClaim(
+    packetA.replace('</body>', '<p>changed layout</p></body>'),
+    [stableAsset],
+  ).canonicalHtml).digest('hex'),
+  'changing packet layout changes the claimed packet identity',
+);
 
 const exact = inspectBoundCccMailpiece({
   letterId: LETTER_A,
@@ -175,10 +290,22 @@ assert.deepEqual(CCC_RETURN_ADDRESS, {
 
 const lobSource = readFileSync(new URL('../netlify/functions/lob.cjs', import.meta.url), 'utf8');
 const mailerSource = readFileSync(new URL('../src/components/LobMailer.jsx', import.meta.url), 'utf8');
-const renderedGate = lobSource.indexOf('const renderedPacketIssues = await validateCccRenderedMailpiece');
+const renderedGate = lobSource.indexOf('const renderedPacket = await validateCccRenderedMailpiece');
 const lobSend = lobSource.indexOf("lobRequest('/v1/letters'");
 assert.ok(renderedGate > 0 && lobSend > renderedGate, 'exact packet and source bytes fail closed before /v1/letters');
 assert.match(lobSource, /file: scannedMailpiece\.html/, 'Lob receives the exact CCC HTML already re-read by the server');
+assert.match(lobSource, /mailpieceSha256: issues\.length === 0/,
+  'the claim binds a token-independent digest of the exact verified packet layout and exhibit identities');
+assert.match(lobSource, /attachmentManifest: issues\.length === 0 \? claimMaterial\.manifest : \[\]/,
+  'the claim includes every screenshot, identity document, and optional exhibit in print order');
+assert.match(lobSource, /const postClaimPacket = await validateCccRenderedMailpiece/,
+  'all source and signed exhibit bytes are re-read after the durable storage lock is active');
+assert.ok(
+  lobSource.indexOf('const postClaimPacket = await validateCccRenderedMailpiece')
+    > lobSource.indexOf('await claimCccTrackRevisionsForMail({')
+    && lobSource.indexOf('const postClaimPacket = await validateCccRenderedMailpiece') < lobSend,
+  'post-claim byte verification must run after the claim and before Lob',
+);
 assert.match(lobSource, /sourceSha256 !== spec\.sha256/);
 assert.match(lobSource, /signedSha256 !== sourceSha256/);
 assert.match(lobSource, /signedObject\.path !== spec\.path/);

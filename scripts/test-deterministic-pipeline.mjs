@@ -25,27 +25,71 @@ import {
 } from '../src/utils/deterministicResponse.js';
 import {
   COMBINED_CREDIT_EXTRACTION_SCHEMA,
+  CREDIT_ACCOUNT_FIELD_NAMES,
   CREDIT_BUREAU_EXTRACTION_SCHEMA,
   RESPONSE_EXTRACTION_SCHEMA,
 } from '../src/utils/creditExtractionSchemas.js';
 
-const account = (overrides = {}) => ({
-  furnisher: 'Example Bank', originalCreditor: null, accountNumber: 'XXXX1234',
+const account = (overrides = {}) => {
+  const merged = {
+  furnisher: 'Example Bank', furnisherAddress: null, originalCreditor: null, accountNumber: 'XXXX1234',
+  accountIdentityEvidencePage: 1,
   reportedType: 'Installment', portfolioType: 'I', accountType: '00',
+  reportedTypeEvidencePage: 1,
   accountStatus: '97', statusText: 'Charge-off', balance: 500, pastDue: 500,
+  statusTextEvidencePage: 1,
   scheduledMonthlyPayment: 0, originalLoanAmount: 1000, dateOpened: '2020-01-01',
   dofd: '2021-02-01', dateClosed: '2021-08-01', lastPaymentDate: '2020-12-01',
   billingDate: '2026-07-01', paymentHistory: 'CO', specialComment: null,
-  complianceConditionCode: null, consumerDisputeIndicator: 'UNKNOWN', remarks: null,
-  furnisherAddress: null, explicitlyBlankFields: [], unreadableFields: [], evidence: [],
+  complianceConditionCode: null, consumerDisputeIndicator: 'UNKNOWN',
+  consumerDisputeIndicatorEvidencePage: null,
+  remarks: null, remarksEvidencePage: null,
+  explicitlyBlankFields: [], unreadableFields: [],
   ...overrides,
-});
+  };
+  merged.consumerDisputeIndicatorEvidencePage = ['PRESENT', 'ABSENT'].includes(merged.consumerDisputeIndicator) ? 1 : null;
+  merged.remarksEvidencePage = merged.remarks ? 1 : null;
+  merged.fields = CREDIT_ACCOUNT_FIELD_NAMES.map((name) => {
+    const blank = merged.explicitlyBlankFields.includes(name);
+    const value = merged[name];
+    const numericValue = typeof value === 'number' ? value : null;
+    return {
+      name,
+      rawValue: blank || value == null ? null : String(value),
+      numericValue,
+      state: blank ? 'EXPLICITLY_BLANK' : (value == null ? 'NOT_SHOWN' : 'PRESENT'),
+      page: blank || value != null ? 1 : null,
+      label: name,
+    };
+  });
+  merged.evidence = merged.fields
+    .filter((field) => ['PRESENT', 'EXPLICITLY_BLANK'].includes(field.state))
+    .map((field) => ({ field: field.name, page: field.page, label: field.label, rawValue: field.rawValue }));
+  return merged;
+};
 
 const report = (bureau, acct) => ({
   bureau,
-  client: { name: 'Alex Example', address: '100 Main St', score: 650 },
+  bureauEvidencePage: 1,
+  reportSectionStart: true,
+  reportSectionStartEvidencePage: 1,
+  reportDate: '2026-08-20',
+  reportDateRaw: 'August 20, 2026',
+  reportDateEvidencePage: 1,
+  client: {
+    name: 'Alex Example', nameEvidencePage: 1,
+    address: '100 Main St', addressEvidencePage: 1,
+    score: 650, scoreEvidencePage: 1,
+  },
   accounts: [acct], inquiries: [],
-  personalInfo: { formerAddresses: [], nameVariants: [], formerEmployers: [], dateOfBirth: null, phone: null, currentAddress: '100 Main St' },
+  personalInfo: {
+    formerAddresses: [], formerAddressEvidence: [],
+    nameVariants: [], nameVariantEvidence: [],
+    formerEmployers: [], formerEmployerEvidence: [],
+    dateOfBirth: null, dateOfBirthEvidencePage: null,
+    phone: null, phoneEvidencePage: null,
+    currentAddress: '100 Main St', currentAddressEvidencePage: 1,
+  },
 });
 
 const audit = buildDeterministicAudit([
@@ -84,31 +128,21 @@ const blankField20 = buildDeterministicAudit([report('equifax', account({
 assert.ok(!blankField20.accounts[0].violations.some((v) => v.ruleId === 'DISPUTE_INDICATOR_WITH_EXPLICITLY_BLANK_FIELD_20'));
 assert.ok(blankField20.accounts[0].findings.some((v) => v.ruleId === 'DISPUTE_INDICATOR_WITH_EXPLICITLY_BLANK_FIELD_20' && v.outcome === 'REVIEW_REQUIRED'));
 
-const legacy = coerceBureauExtraction({
+assert.throws(() => coerceBureauExtraction({
   bureau: 'Equifax', client: { name: 'Alex', address: null, score: null },
   accounts: [{ furnisher: 'Legacy Bank', accountNumber: 'XX99', status: '97', balance: 100, violations: [{ issue: 'model guess' }] }],
   inquiries: [], personalInfo: {},
-});
-assert.equal(Object.hasOwn(legacy.accounts[0], 'violations'), false, 'legacy model findings do not enter deterministic extraction');
+}), /bureau has no source page reference/i, 'provenance-less legacy extraction cannot enter the deterministic pipeline');
 
-const compact = coerceBureauExtraction({
-  bureau: 'equifax', client: { name: 'Alex', address: null, score: null },
-  accounts: [{
-    furnisher: 'Compact Bank', furnisherAddress: null, originalCreditor: null,
-    accountNumber: 'XX77', reportedType: 'Installment', statusText: 'Paid',
-    consumerDisputeIndicator: 'PRESENT', remarks: null,
-    fields: [
-      { name: 'accountStatus', rawValue: '64', numericValue: null, state: 'PRESENT', page: 3, label: 'Account Status' },
-      { name: 'balance', rawValue: '$100', numericValue: 100, state: 'PRESENT', page: 3, label: 'Balance' },
-      { name: 'complianceConditionCode', rawValue: null, numericValue: null, state: 'EXPLICITLY_BLANK', page: 3, label: 'Compliance Condition Code' },
-    ],
-  }],
-  inquiries: [], personalInfo: {},
-});
+const compact = coerceBureauExtraction(report('equifax', account({
+  furnisher: 'Compact Bank', accountNumber: 'XX77', reportedType: 'Installment', statusText: 'Paid',
+  accountStatus: '64', balance: 100, consumerDisputeIndicator: 'PRESENT',
+  explicitlyBlankFields: ['complianceConditionCode'],
+})));
 assert.equal(compact.accounts[0].accountStatus, '64');
 assert.equal(compact.accounts[0].balance, 100);
 assert.ok(compact.accounts[0].explicitlyBlankFields.includes('complianceConditionCode'));
-assert.equal(compact.accounts[0].evidence.find((item) => item.field === 'balance').page, 3);
+assert.equal(compact.accounts[0].evidence.find((item) => item.field === 'balance').page, 1);
 
 const letterText = 'Correct Field 25 Date of First Delinquency to the substantiated value. Provide the records used to investigate Field 25.';
 const demands = extractDeterministicDemands(letterText);

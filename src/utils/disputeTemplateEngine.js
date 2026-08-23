@@ -214,15 +214,20 @@ export function renderDisputeTemplate(templateText, values = {}, safeHtmlTokens 
 export function disputeItemsText(accounts = []) {
   return accounts.map((account) => {
     const header = `${account.furnisher || 'Account'} — Account ${maskAccountNumber(account.accountNumberMasked || account.accountNumber) || 'number not shown'}`;
-    const issues = (account.violations || []).map((violation) => {
+    const selectedReasons = Array.isArray(account.selectedReasons) ? account.selectedReasons : null;
+    const issues = (selectedReasons || account.violations || []).map((violation) => {
       const facts = [
         violation.issue,
         violation.currentlyReports ? `Currently reports: ${violation.currentlyReports}` : null,
-        violation.shouldReport ? `Should report: ${violation.shouldReport}` : null,
+        violation.shouldReport
+          ? `Should report: ${violation.shouldReport}`
+          : violation.challengeStatement
+            ? `Requested action: ${violation.challengeStatement}`
+            : null,
       ].filter(Boolean).join(' — ');
       return `• ${violation.field || 'Reporting issue'}: ${facts || 'Review required'}`;
     });
-    if (!issues.length && String(account.primaryViolation || '').trim()) issues.push(`• ${String(account.primaryViolation).trim()}`);
+    if (!selectedReasons && !issues.length && String(account.primaryViolation || '').trim()) issues.push(`• ${String(account.primaryViolation).trim()}`);
     if (!issues.length) return '';
     return [header, ...issues].join('\n');
   }).filter(Boolean).join('\n\n');
@@ -230,10 +235,11 @@ export function disputeItemsText(accounts = []) {
 
 export function accountsMissingConfirmedDisputeFacts(accounts = []) {
   return accounts.filter((account) => {
-    const hasFinding = (account.violations || []).some((violation) => String(
+    const reasons = Array.isArray(account.selectedReasons) ? account.selectedReasons : (account.violations || []);
+    const hasFinding = reasons.some((violation) => String(
       violation?.issue || violation?.reason || violation?.primaryViolation || '',
     ).trim());
-    return !hasFinding && !String(account.primaryViolation || '').trim();
+    return !hasFinding && (Array.isArray(account.selectedReasons) || !String(account.primaryViolation || '').trim());
   });
 }
 

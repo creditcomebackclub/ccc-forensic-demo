@@ -23,10 +23,12 @@ export default function ClientPicker({ value, onChange }) {
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
+  const [newLeadAddress, setNewLeadAddress] = useState('');
+  const [newLeadDob, setNewLeadDob] = useState('');
 
   useEffect(() => {
     let cancelled = false;
-    supabase.from('clients').select('id,name,status').order('name').then(({ data, error }) => {
+    supabase.from('clients').select('id,name,status,address,date_of_birth').order('name').then(({ data, error }) => {
       if (cancelled) return;
       if (!error && data) setClients(data);
       setLoading(false);
@@ -40,10 +42,18 @@ export default function ClientPicker({ value, onChange }) {
 
   const selectedLabel = value?.type === 'existing' ? value.name : null;
 
-  const pick = (next) => { onChange(next); setOpen(false); setQuery(''); };
+  const pick = (next) => {
+    onChange(next);
+    setOpen(false);
+    setQuery('');
+    setNewLeadAddress('');
+    setNewLeadDob('');
+  };
   const newLeadName = query.trim().replace(/\s+/g, ' ');
+  const newLeadIdentityReady = newLeadAddress.trim().length >= 8 && /^\d{4}-\d{2}-\d{2}$/.test(newLeadDob);
+  const clientIdentityReady = (client) => !!client?.address && !!client?.date_of_birth;
   const createNewLead = async () => {
-    if (creating || newLeadName.length < 2 || newLeadName.length > 120) return;
+    if (creating || newLeadName.length < 2 || newLeadName.length > 120 || !newLeadIdentityReady) return;
     setCreating(true);
     setCreateError(null);
     try {
@@ -52,6 +62,8 @@ export default function ClientPicker({ value, onChange }) {
       const { data, error } = await supabase.from('clients').insert({
         user_id: user.id,
         name: newLeadName,
+        address: newLeadAddress.trim(),
+        date_of_birth: newLeadDob,
         status: 'lead',
         lead_source: 'Audit upload',
         lead_created_at: new Date().toISOString(),
@@ -98,30 +110,59 @@ export default function ClientPicker({ value, onChange }) {
                 style={{ color: T.ink }}
               />
             </div>
-            <div style={{ maxHeight: 240, overflowY: 'auto' }}>
-              <button type="button" onClick={createNewLead}
-                disabled={creating || newLeadName.length < 2 || newLeadName.length > 120}
-                className="w-full px-4 py-2.5 text-[12px] text-left hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-                style={{ color: T.navy, fontWeight: 600, borderBottom: '1px solid ' + T.border }}>
-                {newLeadName.length >= 2
-                  ? `${creating ? 'Creating' : 'Create separate new lead'} “${newLeadName}”`
-                  : 'Type the new lead’s full name above'}
-              </button>
+            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+              <div className="px-4 py-2.5" style={{ borderBottom: '1px solid ' + T.border }}>
+                <div className="text-[11px] mb-2" style={{ color: T.muted }}>
+                  New audit leads need verified identity details before a report can attach to their CRM record.
+                </div>
+                <input
+                  type="text"
+                  value={newLeadAddress}
+                  onChange={(event) => setNewLeadAddress(event.target.value)}
+                  placeholder="Current mailing address"
+                  className="w-full px-2.5 py-2 mb-2 text-[11px] rounded-md outline-none"
+                  style={{ border: '1px solid ' + T.border, color: T.ink }}
+                  aria-label="New lead current mailing address"
+                />
+                <label className="block text-[10px] mb-2" style={{ color: T.muted }}>
+                  Date of birth
+                  <input
+                    type="date"
+                    value={newLeadDob}
+                    onChange={(event) => setNewLeadDob(event.target.value)}
+                    className="block w-full mt-1 px-2.5 py-2 text-[11px] rounded-md outline-none"
+                    style={{ border: '1px solid ' + T.border, color: T.ink }}
+                    aria-label="New lead date of birth"
+                  />
+                </label>
+                <button type="button" onClick={createNewLead}
+                  disabled={creating || newLeadName.length < 2 || newLeadName.length > 120 || !newLeadIdentityReady}
+                  className="w-full py-2 text-[12px] text-left disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{ color: T.navy, fontWeight: 600 }}>
+                  {newLeadName.length >= 2
+                    ? `${creating ? 'Creating' : 'Create verified lead'} “${newLeadName}”`
+                    : 'Type the new lead’s full name above'}
+                </button>
+              </div>
               {createError && <div className="px-4 py-2 text-[11px] text-red-600">{createError}</div>}
               {loading && <div className="px-4 py-3 text-[11px]" style={{ color: T.faint }}>Loading clients…</div>}
               {!loading && filtered.length === 0 && (
                 <div className="px-4 py-3 text-[11px]" style={{ color: T.faint }}>No matching clients</div>
               )}
               {!loading && filtered.map((c) => (
-                <div key={c.id} onClick={() => pick({ type: 'existing', id: c.id, name: c.name })}
-                  className="px-4 py-2 text-[12px] cursor-pointer hover:bg-gray-50 flex items-center justify-between gap-2"
+                <button type="button" key={c.id}
+                  onClick={() => clientIdentityReady(c) && pick({ type: 'existing', id: c.id, name: c.name })}
+                  disabled={!clientIdentityReady(c)}
+                  className="w-full px-4 py-2 text-[12px] text-left hover:bg-gray-50 flex items-center justify-between gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                   style={{ color: T.ink }}>
                   <span className="truncate">{c.name}</span>
-                  {c.status === 'lead' && (
+                  {!clientIdentityReady(c) ? (
+                    <span className="text-[9px] shrink-0" style={{ color: '#B45309' }}>Add DOB + address first</span>
+                  ) : c.status === 'lead' && (
                     <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-full shrink-0"
                       style={{ background: '#FAF3DF', color: '#8F7524', fontWeight: 600 }}>Lead</span>
                   )}
-                </div>
+                </button>
               ))}
             </div>
           </div>

@@ -204,5 +204,65 @@ export function cccExhibitImageUrl(sectionHtml) {
   return matches[0][1];
 }
 
+/**
+ * Produce the stable, byte-sensitive identity used by the server's irreversible
+ * mail claim. Supabase signed-URL tokens are intentionally excluded: the same
+ * reviewed object gets a new token on a later retry, while its private path,
+ * SHA-256, byte count, packet position, and surrounding HTML must stay exact.
+ *
+ * This function does not authorize an asset. The server first re-reads every
+ * source and signed URL and proves its bytes; this only turns those proven
+ * bindings into a deterministic claim input.
+ */
+export function canonicalizeCccMailpieceClaim(mailpieceHtml, assets = []) {
+  let canonicalHtml = text(mailpieceHtml);
+  const manifest = [];
+  const seenUrls = new Set();
+  const seenPaths = new Set();
+
+  for (let index = 0; index < assets.length; index += 1) {
+    const asset = assets[index] || {};
+    const sourceUrl = text(asset.sourceUrl);
+    const bucket = text(asset.bucket).trim();
+    const storagePath = text(asset.storagePath).trim();
+    const sha256 = text(asset.sha256).trim().toLowerCase();
+    const byteSize = Number(asset.byteSize);
+    const kind = safeExhibitKind(asset.kind);
+    const id = safeExhibitId(asset.id);
+    if (!/^https:\/\/[^"'<>\s]+$/.test(sourceUrl)
+      || !/^[a-z0-9][a-z0-9._-]{0,62}$/i.test(bucket)
+      || !storagePath
+      || /(?:^|\/)\.\.(?:\/|$)|\\|[\u0000-\u001f]/.test(storagePath)
+      || !SHA256_RE.test(sha256)
+      || !Number.isSafeInteger(byteSize)
+      || byteSize < 1) {
+      throw new Error('A verified CCC packet asset has an invalid claim identity.');
+    }
+    if (seenUrls.has(sourceUrl) || seenPaths.has(`${bucket}\u0000${storagePath}`)) {
+      throw new Error('A verified CCC packet asset is duplicated in the claim identity.');
+    }
+    seenUrls.add(sourceUrl);
+    seenPaths.add(`${bucket}\u0000${storagePath}`);
+    if (canonicalHtml.split(sourceUrl).length - 1 !== 1) {
+      throw new Error('A verified CCC packet asset is not present exactly once in the final mailpiece.');
+    }
+
+    const stableAssetMarker = `ccc-verified-asset:${index}:${encodeURIComponent(bucket)}:${encodeURIComponent(storagePath)}:${sha256}:${byteSize}`;
+    canonicalHtml = canonicalHtml.replace(sourceUrl, stableAssetMarker);
+    manifest.push({
+      version: 1,
+      order: index + 1,
+      kind,
+      id,
+      bucket,
+      storagePath,
+      sha256,
+      byteSize,
+    });
+  }
+
+  return { canonicalHtml, manifest };
+}
+
 export const CCC_MAILPIECE_BOUNDARY_PREFIX = BOUNDARY_PREFIX;
 export const CCC_MAILPIECE_EXHIBIT_PREFIX = EXHIBIT_PREFIX;

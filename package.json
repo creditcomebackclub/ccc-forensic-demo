@@ -37,6 +37,7 @@
     "test:consolidated-packets": "node scripts/test-consolidated-packets.mjs",
     "test:client-campaigns": "node scripts/test-client-campaigns.mjs",
     "test:calendly": "node scripts/test-calendly-integration.mjs",
+    "test:gated-field-guide": "node scripts/test-gated-field-guide.mjs",
     "test:claude-hardening": "node scripts/test-claude-hardening.mjs",
     "test:deterministic-pipeline": "node scripts/test-deterministic-pipeline.mjs",
     "test:dispute-flow": "node scripts/test-dispute-flow.mjs",
@@ -52,6 +53,7 @@
     "test:classification-review-gate": "node scripts/test-classification-review-gate.mjs",
     "test:deterministic-r1-classification": "node scripts/test-deterministic-r1-classification.mjs",
     "test:state-driven-campaign-studio": "node scripts/test-state-driven-campaign-studio.mjs",
+    "test:round-reason-selection": "node scripts/test-round-reason-selection.mjs",
     "test:ccc-letter-identity": "node scripts/test-ccc-letter-identity.mjs",
     "test:owner-controlled-billing": "node scripts/test-owner-controlled-billing.mjs"
   },

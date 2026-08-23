@@ -3,6 +3,7 @@ import ws from 'ws';
 import authHelpers from './_requireAuth.cjs';
 import emailHelpers from './_email.cjs';
 import { buildProgressUpdatePdf, progressUpdateFilename, monthLabel as pdfMonthLabel } from '../../src/utils/progressUpdatePdf.js';
+import { operationalAudits } from '../../src/utils/auditOperational.js';
 
 const { requireStaff } = authHelpers;
 const { sendEmail } = emailHelpers;
@@ -164,8 +165,9 @@ async function loadLatestPair(db, { userId, clientId, clientName, caller }) {
     throw Object.assign(new Error('A client id or name is required.'), { statusCode: 400 });
   }
   if (caller.role !== 'admin' && clientId) query = query.eq('user_id', userId);
-  const { data, error } = await query.order('report_date', { ascending: false }).limit(2);
+  const { data: auditRows, error } = await query.order('report_date', { ascending: false }).limit(25);
   if (error) throw error;
+  const data = operationalAudits(auditRows).slice(0, 2);
   if (!data || data.length < 2) {
     throw Object.assign(new Error('Need at least two audits for this client to open a Progress Update.'), { statusCode: 409 });
   }

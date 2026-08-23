@@ -1,5 +1,6 @@
 import { lastFour, nameSimilarity, normalizeFurnisher } from './diffEngine.js';
 import { deriveAccountRoutingFacts, reportCoverageFacts } from './disputeRoutingFacts.js';
+import { CREDIT_ACCOUNT_FIELD_NAMES } from './creditExtractionSchemas.js';
 
 // Bureaus routinely truncate or reformat the same furnisher's name
 // differently (e.g. Equifax "JEFFERSON CAPITAL LL" vs Experian "JEFFERSON
@@ -74,6 +75,372 @@ function bureauKey(value) {
   return null;
 }
 
+export function normalizeReportDate(value) {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const time = Date.UTC(year, month - 1, day);
+  const date = new Date(time);
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return raw;
+}
+
+function normalizedIdentityName(value) {
+  const suffixes = new Set(['jr', 'sr', 'ii', 'iii', 'iv', 'v']);
+  const tokens = String(value || '').normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  while (tokens.length > 2 && suffixes.has(tokens[tokens.length - 1])) tokens.pop();
+  if (tokens.length < 2) return null;
+  return { first: tokens[0], last: tokens[tokens.length - 1], canonical: `${tokens[0]}:${tokens[tokens.length - 1]}` };
+}
+
+function normalizedDob(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return normalizeReportDate(raw);
+  const mdy = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (!mdy) return null;
+  return normalizeReportDate(`${mdy[3]}-${String(Number(mdy[1])).padStart(2, '0')}-${String(Number(mdy[2])).padStart(2, '0')}`);
+}
+
+function normalizedIdentityAddress(value) {
+  const replacements = new Map([
+    ['street', 'st'], ['road', 'rd'], ['avenue', 'ave'], ['boulevard', 'blvd'],
+    ['drive', 'dr'], ['lane', 'ln'], ['court', 'ct'], ['place', 'pl'],
+    ['parkway', 'pkwy'], ['highway', 'hwy'], ['apartment', 'apt'], ['suite', 'ste'],
+    ['north', 'n'], ['south', 's'], ['east', 'e'], ['west', 'w'],
+  ]);
+  const tokens = String(value || '').normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => replacements.get(token) || token);
+  return tokens.length >= 3 ? tokens.join(' ') : null;
+}
+
+function isPageReference(value) {
+  return value !== null && value !== undefined && value !== ''
+    && Number.isInteger(Number(value)) && Number(value) >= 1;
+}
+
+function hasExtractedValue(value) {
+  return value !== null && value !== undefined && value !== '';
+}
+
+function assertValuePagePair(label, value, page) {
+  const hasValue = hasExtractedValue(value);
+  const hasPage = isPageReference(page);
+  if (hasValue && !hasPage) throw new Error(`The extracted ${label} has no source page reference.`);
+  if (!hasValue && page !== null && page !== undefined && page !== '') {
+    throw new Error(`The extracted ${label} has a source page but no displayed value.`);
+  }
+}
+
+function consistentValuePagePair(rows, {
+  label,
+  value,
+  page,
+  normalize = (candidate) => String(candidate).trim().toLowerCase().replace(/\s+/g, ' '),
+} = {}) {
+  const observed = [];
+  for (const row of rows || []) {
+    const rawValue = value(row);
+    const rawPage = page(row);
+    assertValuePagePair(label, rawValue, rawPage);
+    if (!hasExtractedValue(rawValue)) continue;
+    observed.push({ value: rawValue, page: Number(rawPage), normalized: normalize(rawValue) });
+  }
+  const distinct = new Set(observed.map((entry) => entry.normalized));
+  if (distinct.size > 1) throw new Error(`Split report parts display conflicting ${label} values.`);
+  return observed[0] || { value: null, page: null, normalized: null };
+}
+
+/**
+ * Fail-closed identity comparison used before a report can be attached to a
+ * selected CRM client. Middle names/initials and suffixes may differ, but the
+ * normalized first and last names must match. When both sides expose a DOB it
+ * must match as well.
+ */
+export function assertConsistentReportIdentity(reports, selectedClient = null) {
+  const rows = (reports || []).map((report) => ({
+    bureau: bureauKey(report?.bureau),
+    name: report?.client?.name,
+    signature: normalizedIdentityName(report?.client?.name),
+    rawDob: clean(report?.personalInfo?.dateOfBirth),
+    dob: normalizedDob(report?.personalInfo?.dateOfBirth),
+    nameEvidencePage: report?.client?.nameEvidencePage,
+    dobEvidencePage: report?.personalInfo?.dateOfBirthEvidencePage,
+    address: normalizedIdentityAddress(report?.client?.address),
+    addressEvidencePage: report?.client?.addressEvidencePage,
+  }));
+  if (!rows.length || rows.some((row) => !row.signature)) {
+    throw new Error('Every report must visibly identify the consumer by first and last name.');
+  }
+  if (rows.some((row) => !Number.isInteger(Number(row.nameEvidencePage)) || Number(row.nameEvidencePage) < 1)) {
+    throw new Error('Every report consumer name must be bound to a valid source page.');
+  }
+  if (rows.some((row) => row.dob && (!Number.isInteger(Number(row.dobEvidencePage)) || Number(row.dobEvidencePage) < 1))) {
+    throw new Error('Every extracted date of birth must be bound to a valid source page.');
+  }
+  if (rows.some((row) => row.rawDob && !row.dob)) {
+    throw new Error('An extracted consumer date of birth is not a valid calendar date.');
+  }
+  const names = new Set(rows.map((row) => row.signature.canonical));
+  if (names.size !== 1) throw new Error('The uploaded reports identify different consumers and cannot be combined.');
+  const dobs = new Set(rows.map((row) => row.dob).filter(Boolean));
+  if (dobs.size > 1) throw new Error('The uploaded reports display conflicting dates of birth and cannot be combined.');
+
+  if (selectedClient) {
+    const selected = normalizedIdentityName(selectedClient.name);
+    if (!selected || selected.canonical !== rows[0].signature.canonical) {
+      throw new Error('The report consumer does not match the exact CRM client selected for this audit.');
+    }
+    const selectedDobRaw = clean(selectedClient.dateOfBirth || selectedClient.date_of_birth);
+    const selectedDob = normalizedDob(selectedDobRaw);
+    if (selectedDobRaw && !selectedDob) throw new Error('The selected CRM client has an invalid date of birth.');
+    const selectedAddress = normalizedIdentityAddress(selectedClient.address);
+    for (const row of rows) {
+      if (row.dob) {
+        if (!selectedDob || row.dob !== selectedDob) {
+          throw new Error('A report date of birth does not match the selected CRM client.');
+        }
+        continue;
+      }
+      const addressMatches = !!selectedAddress
+        && row.address === selectedAddress
+        && isPageReference(row.addressEvidencePage);
+      if (!addressMatches) {
+        throw new Error('Each report must independently match the selected CRM client by a visible date of birth or current address.');
+      }
+    }
+  }
+  return {
+    canonicalName: rows[0].signature.canonical,
+    dateOfBirth: [...dobs][0] || null,
+  };
+}
+
+/** Validate source-derived bureau coverage and report cohort before rules run. */
+export function assertReportCohort(reports, {
+  requireThree = true,
+  selectedClient = null,
+  now = null,
+  maxAgeDays = REPORT_MAX_AGE_DAYS,
+} = {}) {
+  const usable = reports || [];
+  if (!usable.length) throw new Error('No extracted bureau reports were supplied.');
+  const bureaus = usable.map((report) => bureauKey(report?.bureau));
+  if (bureaus.some((bureau) => !bureau)) throw new Error('A report does not visibly identify its bureau.');
+  if (new Set(bureaus).size !== bureaus.length) throw new Error('Duplicate bureau reports were supplied; exactly one report per bureau is required.');
+  if (requireThree && (usable.length !== 3 || !BUREAU_KEYS.every((bureau) => bureaus.includes(bureau)))) {
+    throw new Error('A unified 3B audit requires exactly one Equifax, one Experian, and one TransUnion report.');
+  }
+
+  const dates = usable.map((report) => normalizeReportDate(report?.reportDate));
+  if (dates.some((date) => !date)) throw new Error('Every report must display an exact report-level date before it can be audited.');
+  const uniqueDates = new Set(dates);
+  if (uniqueDates.size !== 1) throw new Error('The reports are from different report dates and cannot be merged into one 3B cohort.');
+  const reportDate = dates[0];
+  const reportTime = new Date(`${reportDate}T00:00:00.000Z`).getTime();
+  if (now === null || now === undefined || now === '') {
+    throw new Error('Audit cohort validation requires an immutable evaluation timestamp.');
+  }
+  const nowTime = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  if (!Number.isFinite(nowTime)) throw new Error('Audit cohort validation received an invalid current date.');
+  const ageDays = Math.floor((nowTime - reportTime) / 86400000);
+  if (ageDays < -1) throw new Error('The report date is in the future and cannot be accepted.');
+  if (requireThree && ageDays > maxAgeDays) {
+    throw new Error(`The report cohort is ${ageDays} days old. A fresh 3B report (within ${maxAgeDays} days) is required.`);
+  }
+  return {
+    reportDate,
+    ageDays: Math.max(0, ageDays),
+    bureaus,
+    complete: requireThree,
+    identity: assertConsistentReportIdentity(usable, selectedClient),
+  };
+}
+
+/** Map model page references from a split attachment back to the source PDF. */
+export function rebaseExtractionPageRefs(extraction, pageOffset = 0) {
+  const offset = Number(pageOffset);
+  if (!Number.isInteger(offset) || offset < 0) throw new Error('Page-reference offset must be a non-negative integer.');
+  const copy = JSON.parse(JSON.stringify(extraction || {}));
+  const shiftReport = (report) => {
+    if (!report || typeof report !== 'object') return;
+    if (isPageReference(report.bureauEvidencePage)) report.bureauEvidencePage = Number(report.bureauEvidencePage) + offset;
+    if (isPageReference(report.reportSectionStartEvidencePage)) {
+      report.reportSectionStartEvidencePage = Number(report.reportSectionStartEvidencePage) + offset;
+    }
+    if (isPageReference(report.reportDateEvidencePage)) report.reportDateEvidencePage = Number(report.reportDateEvidencePage) + offset;
+    if (isPageReference(report.client?.nameEvidencePage)) report.client.nameEvidencePage = Number(report.client.nameEvidencePage) + offset;
+    if (isPageReference(report.client?.addressEvidencePage)) report.client.addressEvidencePage = Number(report.client.addressEvidencePage) + offset;
+    if (isPageReference(report.client?.scoreEvidencePage)) report.client.scoreEvidencePage = Number(report.client.scoreEvidencePage) + offset;
+    if (isPageReference(report.personalInfo?.dateOfBirthEvidencePage)) {
+      report.personalInfo.dateOfBirthEvidencePage = Number(report.personalInfo.dateOfBirthEvidencePage) + offset;
+    }
+    if (isPageReference(report.personalInfo?.phoneEvidencePage)) {
+      report.personalInfo.phoneEvidencePage = Number(report.personalInfo.phoneEvidencePage) + offset;
+    }
+    if (isPageReference(report.personalInfo?.currentAddressEvidencePage)) {
+      report.personalInfo.currentAddressEvidencePage = Number(report.personalInfo.currentAddressEvidencePage) + offset;
+    }
+    for (const listName of ['formerAddressEvidence', 'nameVariantEvidence', 'formerEmployerEvidence']) {
+      for (const entry of report.personalInfo?.[listName] || []) {
+        if (isPageReference(entry?.page)) entry.page = Number(entry.page) + offset;
+      }
+    }
+    for (const inquiry of report.inquiries || []) {
+      if (isPageReference(inquiry?.evidencePage)) inquiry.evidencePage = Number(inquiry.evidencePage) + offset;
+    }
+    for (const account of report.accounts || []) {
+      for (const property of [
+        'accountIdentityEvidencePage',
+        'reportedTypeEvidencePage',
+        'statusTextEvidencePage',
+        'consumerDisputeIndicatorEvidencePage',
+        'remarksEvidencePage',
+      ]) {
+        if (isPageReference(account?.[property])) account[property] = Number(account[property]) + offset;
+      }
+      for (const field of account.fields || []) {
+        if (isPageReference(field.page)) field.page = Number(field.page) + offset;
+      }
+      for (const evidence of account.evidence || []) {
+        if (isPageReference(evidence.page)) evidence.page = Number(evidence.page) + offset;
+      }
+    }
+  };
+  if (Array.isArray(copy.reports)) copy.reports.forEach(shiftReport);
+  else shiftReport(copy);
+  return copy;
+}
+
+/** Validate every model-supplied page reference against the exact source. */
+export function assertExtractionPageBounds(report, pageCount) {
+  const maxPage = Number(pageCount);
+  if (!Number.isInteger(maxPage) || maxPage < 1) throw new Error('Source page count must be a positive integer.');
+  const required = [
+    ['bureau', report?.bureau, report?.bureauEvidencePage],
+    ['report date', report?.reportDate, report?.reportDateEvidencePage],
+    ['consumer name', report?.client?.name, report?.client?.nameEvidencePage],
+    ['consumer address', report?.client?.address, report?.client?.addressEvidencePage],
+    ['consumer score', report?.client?.score, report?.client?.scoreEvidencePage],
+    ['consumer date of birth', report?.personalInfo?.dateOfBirth, report?.personalInfo?.dateOfBirthEvidencePage],
+    ['consumer phone', report?.personalInfo?.phone, report?.personalInfo?.phoneEvidencePage],
+    ['consumer current address', report?.personalInfo?.currentAddress, report?.personalInfo?.currentAddressEvidencePage],
+  ];
+  if (typeof report?.reportSectionStart !== 'boolean') {
+    throw new Error('Every extraction must explicitly identify whether it contains the bureau report section start.');
+  }
+  if (report.reportSectionStart === true && !isPageReference(report.reportSectionStartEvidencePage)) {
+    throw new Error('The visible bureau report section start has no source page reference.');
+  }
+  if (report.reportSectionStart === false && report.reportSectionStartEvidencePage != null) {
+    throw new Error('A continuation chunk cannot claim a bureau report section-start page.');
+  }
+  for (const [label, value, page] of required) {
+    assertValuePagePair(label, value, page);
+  }
+  for (const account of report?.accounts || []) {
+    const fieldNames = (account?.fields || []).map((field) => field?.name);
+    if (fieldNames.length !== CREDIT_ACCOUNT_FIELD_NAMES.length
+        || new Set(fieldNames).size !== CREDIT_ACCOUNT_FIELD_NAMES.length
+        || CREDIT_ACCOUNT_FIELD_NAMES.some((name) => !fieldNames.includes(name))) {
+      throw new Error('Each extracted account must contain exactly one entry for every allowed credit-report field.');
+    }
+    if (!isPageReference(account?.accountIdentityEvidencePage)) {
+      throw new Error('The extracted account identity has no source page reference.');
+    }
+    for (const [label, value, page] of [
+      ['reported type', account?.reportedType, account?.reportedTypeEvidencePage],
+      ['status text', account?.statusText, account?.statusTextEvidencePage],
+      ['account remarks', account?.remarks, account?.remarksEvidencePage],
+    ]) {
+      assertValuePagePair(label, value, page);
+    }
+    if (['PRESENT', 'ABSENT'].includes(account?.consumerDisputeIndicator)
+        && !isPageReference(account?.consumerDisputeIndicatorEvidencePage)) {
+      throw new Error('The extracted consumer dispute indicator has no source page reference.');
+    }
+    if (!['PRESENT', 'ABSENT'].includes(account?.consumerDisputeIndicator)
+        && account?.consumerDisputeIndicatorEvidencePage != null) {
+      throw new Error('The extracted consumer dispute indicator has a source page but no displayed value.');
+    }
+    for (const field of account?.fields || []) {
+      if (['PRESENT', 'EXPLICITLY_BLANK'].includes(field?.state) && !isPageReference(field?.page)) {
+        throw new Error(`The extracted ${field?.name || 'account field'} observation has no source page reference.`);
+      }
+    }
+    for (const entry of account?.evidence || []) {
+      if ((entry?.field || entry?.name || entry?.label || entry?.rawValue != null)
+        && !isPageReference(entry?.page)) {
+        throw new Error(`The extracted ${entry?.field || entry?.name || 'account evidence'} observation has no source page reference.`);
+      }
+    }
+  }
+  for (const inquiry of report?.inquiries || []) {
+    if (!isPageReference(inquiry?.evidencePage)) {
+      throw new Error('An extracted hard inquiry has no source page reference.');
+    }
+  }
+  const personalGroups = [
+    ['former address', report?.personalInfo?.formerAddresses, report?.personalInfo?.formerAddressEvidence],
+    ['name variant', report?.personalInfo?.nameVariants, report?.personalInfo?.nameVariantEvidence],
+    ['former employer', report?.personalInfo?.formerEmployers, report?.personalInfo?.formerEmployerEvidence],
+  ];
+  for (const [label, values, evidence] of personalGroups) {
+    for (const value of values || []) {
+      const match = (evidence || []).find((entry) => clean(entry?.value)?.toLowerCase() === clean(value)?.toLowerCase());
+      if (!match || !isPageReference(match.page)) {
+        throw new Error(`The extracted ${label} has no matching source page reference.`);
+      }
+    }
+  }
+  const refs = [
+    report?.bureauEvidencePage,
+    report?.reportSectionStartEvidencePage,
+    report?.reportDateEvidencePage,
+    report?.client?.nameEvidencePage,
+    report?.client?.addressEvidencePage,
+    report?.client?.scoreEvidencePage,
+    report?.personalInfo?.dateOfBirthEvidencePage,
+    report?.personalInfo?.phoneEvidencePage,
+    report?.personalInfo?.currentAddressEvidencePage,
+    ...(report?.personalInfo?.formerAddressEvidence || []).map((entry) => entry?.page),
+    ...(report?.personalInfo?.nameVariantEvidence || []).map((entry) => entry?.page),
+    ...(report?.personalInfo?.formerEmployerEvidence || []).map((entry) => entry?.page),
+    ...(report?.inquiries || []).map((inquiry) => inquiry?.evidencePage),
+    ...(report?.accounts || []).flatMap((account) => [
+      account?.accountIdentityEvidencePage,
+      account?.reportedTypeEvidencePage,
+      account?.statusTextEvidencePage,
+      account?.consumerDisputeIndicatorEvidencePage,
+      account?.remarksEvidencePage,
+      ...(account?.fields || []).map((field) => field?.page),
+      ...(account?.evidence || []).map((entry) => entry?.page),
+    ]),
+  ].filter((page) => page !== null && page !== undefined);
+  for (const page of refs) {
+    if (!Number.isInteger(Number(page)) || Number(page) < 1 || Number(page) > maxPage) {
+      throw new Error(`Extraction cites source page ${page}, outside the valid 1-${maxPage} range.`);
+    }
+  }
+  return report;
+}
+
 function clean(value) {
   return value == null ? null : String(value).trim() || null;
 }
@@ -124,13 +491,90 @@ function mergeStrings(values) {
   });
 }
 
+const ACCOUNT_MERGE_NON_VALUE_KEYS = new Set([
+  'evidence', 'fields', 'explicitlyBlankFields', 'unreadableFields',
+  'accountIdentityEvidencePage', 'reportedTypeEvidencePage', 'statusTextEvidencePage',
+  'consumerDisputeIndicatorEvidencePage', 'remarksEvidencePage',
+]);
+
+const EXTRACTED_FIELD_STATE_RANK = Object.freeze({
+  NOT_SHOWN: 0,
+  UNREADABLE: 1,
+  EXPLICITLY_BLANK: 2,
+  PRESENT: 3,
+});
+
+function comparableExtractedFieldValue(field) {
+  if (field?.state === 'EXPLICITLY_BLANK') return '__BLANK__';
+  if (field?.state !== 'PRESENT') return null;
+  if (Number.isFinite(field?.numericValue)) return `number:${Number(field.numericValue)}`;
+  return `text:${String(field?.rawValue ?? '').trim().toLowerCase().replace(/\s+/g, ' ')}`;
+}
+
+function mergeExtractedFields(leftFields, rightFields) {
+  const left = new Map((leftFields || []).map((field) => [field?.name, field]));
+  const right = new Map((rightFields || []).map((field) => [field?.name, field]));
+  return CREDIT_ACCOUNT_FIELD_NAMES.map((name) => {
+    const a = left.get(name);
+    const b = right.get(name);
+    if (!a) return b;
+    if (!b) return a;
+    const aValue = comparableExtractedFieldValue(a);
+    const bValue = comparableExtractedFieldValue(b);
+    if (aValue !== null && bValue !== null && aValue !== bValue) {
+      throw new Error(`Overlapping report chunks contain conflicting ${name} values for the same account.`);
+    }
+    const aRank = EXTRACTED_FIELD_STATE_RANK[a.state] ?? -1;
+    const bRank = EXTRACTED_FIELD_STATE_RANK[b.state] ?? -1;
+    return bRank > aRank ? b : a;
+  }).filter(Boolean);
+}
+
+function comparableAccountMergeValue(key, value) {
+  if (value === null || value === undefined || value === '' || value === 'UNKNOWN') return null;
+  if (typeof value === 'number') return String(value);
+  if (key === 'furnisher' || key === 'originalCreditor') return normalizeFurnisher(value);
+  if (key === 'accountNumber') return String(value).replace(/[^a-z0-9]/gi, '').toUpperCase();
+  if (/date/i.test(key)) return normalizedDate(value);
+  return String(value).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function assertNoChunkAccountConflict(a, b) {
+  for (const key of new Set([...Object.keys(a || {}), ...Object.keys(b || {})])) {
+    if (ACCOUNT_MERGE_NON_VALUE_KEYS.has(key)) continue;
+    const left = comparableAccountMergeValue(key, a?.[key]);
+    const right = comparableAccountMergeValue(key, b?.[key]);
+    if (left !== null && right !== null && left !== right) {
+      throw new Error(`Overlapping report chunks contain conflicting ${key} values for the same account.`);
+    }
+  }
+  for (const blankField of a?.explicitlyBlankFields || []) {
+    if (comparableAccountMergeValue(blankField, b?.[blankField]) !== null) {
+      throw new Error(`Overlapping report chunks conflict on blank versus displayed ${blankField} for the same account.`);
+    }
+  }
+  for (const blankField of b?.explicitlyBlankFields || []) {
+    if (comparableAccountMergeValue(blankField, a?.[blankField]) !== null) {
+      throw new Error(`Overlapping report chunks conflict on blank versus displayed ${blankField} for the same account.`);
+    }
+  }
+}
+
 function preferAccount(a, b) {
   if (!a) return { ...b };
+  assertNoChunkAccountConflict(a, b);
   const score = (item) => Object.values(item || {}).filter((v) => v !== null && v !== '' && v !== undefined).length;
   const primary = score(b) > score(a) ? b : a;
   const secondary = primary === a ? b : a;
-  const out = { ...secondary, ...primary };
+  // Chunk overlap is sparse: a later continuation often has more populated
+  // columns overall while leaving fields from the earlier page null. Merge
+  // property-by-property so a null never erases a visible source value.
+  const out = { ...secondary };
+  for (const [key, value] of Object.entries(primary || {})) {
+    if (value !== null && value !== undefined && value !== '') out[key] = value;
+  }
   out.evidence = [...(a.evidence || []), ...(b.evidence || [])];
+  out.fields = mergeExtractedFields(a.fields, b.fields);
   out.explicitlyBlankFields = mergeStrings([...(a.explicitlyBlankFields || []), ...(b.explicitlyBlankFields || [])]);
   out.unreadableFields = mergeStrings([...(a.unreadableFields || []), ...(b.unreadableFields || [])]);
   return out;
@@ -190,15 +634,14 @@ function scoreCrossBureauSignals(candidate, group) {
 
 /**
  * Classify evidence quality for a finding's evidenceRefs.
- * page_backed: at least one observation has a finite page number
- * value_only: observations exist but none are page-anchored
+ * page_backed: every load-bearing observation has a valid page number
+ * value_only: observations exist but at least one is not page-anchored
  * insufficient: no usable refs
  */
 export function evidenceQuality(evidenceRefs) {
   const refs = Array.isArray(evidenceRefs) ? evidenceRefs : [];
   if (!refs.length) return 'insufficient';
-  const pageBacked = refs.filter((ref) => Number.isFinite(Number(ref?.page))).length;
-  if (pageBacked > 0) return 'page_backed';
+  if (refs.every((ref) => isPageReference(ref?.page))) return 'page_backed';
   const hasValue = refs.some((ref) => ref?.rawValue != null && ref.rawValue !== '');
   return hasValue ? 'value_only' : 'insufficient';
 }
@@ -208,7 +651,10 @@ const SEVERITY_WEIGHT_LOOKUP = SEVERITY_WEIGHT;
 /** Weighted priority for Batch-1 selection. Higher = more urgent. */
 export function computePriorityScore(account) {
   const violations = Array.isArray(account?.violations) ? account.violations : [];
-  const authorized = violations.filter((v) => !v.adjudication || v.adjudication.status === 'authorized');
+  // Missing adjudication is not authority. This mirrors the finding gate so
+  // legacy/unreviewed rows cannot regain priority merely because a caller
+  // passed them through the older `violations` shape.
+  const authorized = violations.filter(isAuthorizedFinding);
   const severityScore = authorized.reduce((sum, v) => sum + (SEVERITY_WEIGHT_LOOKUP[v.severity] || 1), 0);
   const balance = Math.max(0, Number(account?.balance) || 0);
   const balanceBand = balance <= 0 ? 0 : Math.min(3, Math.log10(balance + 1));
@@ -224,7 +670,12 @@ export function computePriorityScore(account) {
  */
 function withAdjudication(findingObj) {
   if (findingObj.adjudication) return findingObj;
-  const status = findingObj.outcome === 'FLAG' ? 'authorized' : 'needs_client_fact';
+  const pendingSource = String(findingObj.verificationStatus || '').includes('PENDING');
+  const status = findingObj.outcome === 'FLAG'
+    && evidenceQuality(findingObj.evidenceRefs) === 'page_backed'
+    && !pendingSource
+    ? 'authorized'
+    : 'needs_client_fact';
   return {
     ...findingObj,
     adjudication: {
@@ -258,8 +709,11 @@ export function isAuthorizedFinding(findingObj) {
   if (!findingObj) return false;
   if (findingObj.outcome && findingObj.outcome !== 'FLAG') return false;
   const status = findingObj.adjudication?.status;
-  // Backward compatible: missing adjudication on a FLAG is treated as authorized.
-  return !status || status === 'authorized';
+  // Missing adjudication is never authority. Historical stored violations
+  // remain visible, but any recomputation or new routing must have an explicit
+  // authorized status produced by a page-backed, currently-sourced rule or a
+  // later staff adjudication.
+  return status === 'authorized';
 }
 
 /**
@@ -376,18 +830,74 @@ function collectCitationDebt(accounts) {
   };
 }
 
-export function coerceBureauExtraction(report, forcedBureau = null) {
-  const bureau = bureauKey(forcedBureau || report?.bureau);
-  if (!bureau) throw new Error('Credit extraction has no recognized bureau.');
+export function coerceBureauExtraction(report, expectedBureau = null, options = {}) {
+  for (const [label, value, page] of [
+    ['bureau', report?.bureau, report?.bureauEvidencePage],
+    ['report date', report?.reportDate, report?.reportDateEvidencePage],
+    ['consumer name', report?.client?.name, report?.client?.nameEvidencePage],
+    ['consumer address', report?.client?.address, report?.client?.addressEvidencePage],
+    ['consumer score', report?.client?.score, report?.client?.scoreEvidencePage],
+    ['consumer date of birth', report?.personalInfo?.dateOfBirth, report?.personalInfo?.dateOfBirthEvidencePage],
+    ['consumer phone', report?.personalInfo?.phone, report?.personalInfo?.phoneEvidencePage],
+    ['consumer current address', report?.personalInfo?.currentAddress, report?.personalInfo?.currentAddressEvidencePage],
+  ]) assertValuePagePair(label, value, page);
+  for (const account of report?.accounts || []) {
+    for (const [label, value, page] of [
+      ['reported type', account?.reportedType, account?.reportedTypeEvidencePage],
+      ['status text', account?.statusText, account?.statusTextEvidencePage],
+      ['account remarks', account?.remarks, account?.remarksEvidencePage],
+    ]) assertValuePagePair(label, value, page);
+    if (['PRESENT', 'ABSENT'].includes(account?.consumerDisputeIndicator)) {
+      assertValuePagePair('consumer dispute indicator', account.consumerDisputeIndicator, account.consumerDisputeIndicatorEvidencePage);
+    } else if (account?.consumerDisputeIndicatorEvidencePage != null) {
+      throw new Error('The extracted consumer dispute indicator has a source page but no displayed value.');
+    }
+    for (const field of account?.fields || []) {
+      if (['PRESENT', 'EXPLICITLY_BLANK'].includes(field?.state) && !isPageReference(field?.page)) {
+        throw new Error(`The extracted ${field?.name || 'account field'} observation has no source page reference.`);
+      }
+      if (field?.state === 'NOT_SHOWN' && field?.page != null) {
+        throw new Error(`The unshown ${field?.name || 'account field'} cannot claim a source page.`);
+      }
+    }
+  }
+  const detectedBureau = bureauKey(report?.bureau);
+  const expected = bureauKey(expectedBureau);
+  if (expected && detectedBureau && expected !== detectedBureau) {
+    throw new Error(`The ${expected} upload slot contains a source-identified ${detectedBureau} report.`);
+  }
+  const inherited = bureauKey(options.inheritedBureau);
+  const bureau = detectedBureau || (options.allowInheritedMetadata ? inherited : null);
+  if (!bureau) throw new Error('Credit extraction has no source-derived recognized bureau.');
+  const reportDate = normalizeReportDate(report?.reportDate)
+    || (options.allowInheritedMetadata ? normalizeReportDate(options.inheritedReportDate) : null);
   return {
     bureau,
+    bureauEvidencePage: isPageReference(report?.bureauEvidencePage) ? Number(report.bureauEvidencePage) : null,
+    reportSectionStart: report?.reportSectionStart === false ? false : true,
+    reportSectionStartEvidencePage: isPageReference(report?.reportSectionStartEvidencePage)
+      ? Number(report.reportSectionStartEvidencePage) : null,
+    reportDate,
+    reportDateRaw: clean(report?.reportDateRaw),
+    reportDateEvidencePage: isPageReference(report?.reportDateEvidencePage) ? Number(report.reportDateEvidencePage) : null,
     client: {
-      name: clean(report?.client?.name) || 'Unknown Client',
+      name: clean(report?.client?.name),
+      nameEvidencePage: isPageReference(report?.client?.nameEvidencePage) ? Number(report.client.nameEvidencePage) : null,
       address: clean(report?.client?.address),
+      addressEvidencePage: isPageReference(report?.client?.addressEvidencePage) ? Number(report.client.addressEvidencePage) : null,
       score: Number.isFinite(report?.client?.score) ? report.client.score : null,
+      scoreEvidencePage: isPageReference(report?.client?.scoreEvidencePage) ? Number(report.client.scoreEvidencePage) : null,
     },
     accounts: (report?.accounts || []).map((a) => {
-      const extractedFields = new Map((a.fields || []).map((field) => [field?.name, field]));
+      const normalizedFields = (a.fields || []).map((field) => ({
+        name: field?.name,
+        rawValue: field?.rawValue == null ? null : String(field.rawValue),
+        numericValue: Number.isFinite(field?.numericValue) ? Number(field.numericValue) : null,
+        state: field?.state,
+        page: isPageReference(field?.page) ? Number(field.page) : null,
+        label: field?.label == null ? null : String(field.label),
+      }));
+      const extractedFields = new Map(normalizedFields.map((field) => [field?.name, field]));
       const value = (name, legacy) => {
         const field = extractedFields.get(name);
         if (!field) return legacy;
@@ -405,11 +915,28 @@ export function coerceBureauExtraction(report, forcedBureau = null) {
           field: field.name, rawValue: field.rawValue, page: field.page, label: field.label,
         }))
         : [];
+      const rootEvidence = [
+        {
+          field: 'accountIdentity',
+          rawValue: [a.furnisher, a.originalCreditor, a.accountNumber || a.accountNumberMasked].filter(Boolean).join(' | '),
+          page: a.accountIdentityEvidencePage,
+          label: 'Account identity',
+        },
+        { field: 'reportedType', rawValue: a.reportedType || a.type, page: a.reportedTypeEvidencePage, label: 'Reported type' },
+        { field: 'statusText', rawValue: a.statusText || a.status, page: a.statusTextEvidencePage, label: 'Status text' },
+        {
+          field: 'consumerDisputeIndicator',
+          rawValue: a.consumerDisputeIndicator,
+          page: a.consumerDisputeIndicatorEvidencePage,
+          label: 'Consumer dispute indicator',
+        },
+        { field: 'remarks', rawValue: a.remarks, page: a.remarksEvidencePage, label: 'Remarks' },
+      ].filter((entry) => entry.rawValue !== null && entry.rawValue !== undefined && entry.rawValue !== 'UNKNOWN' && entry.rawValue !== '');
       // Preserve page-anchored non-Field observations supplied by older or
       // future extractors (for example a source-reported type label). Routing
       // still requires the individual observation to carry a finite page.
       const legacyEvidence = Array.isArray(a.evidence) ? a.evidence : [];
-      const evidence = [...structuredEvidence];
+      const evidence = [...rootEvidence, ...structuredEvidence];
       for (const item of legacyEvidence) {
         if (!evidence.some((entry) => entry.field === (item?.field || item?.name)
           && Number(entry.page) === Number(item?.page)
@@ -422,11 +949,14 @@ export function coerceBureauExtraction(report, forcedBureau = null) {
       furnisherAddress: clean(a.furnisherAddress),
       originalCreditor: clean(a.originalCreditor),
       accountNumber: clean(a.accountNumber || a.accountNumberMasked) || '',
+      accountIdentityEvidencePage: isPageReference(a.accountIdentityEvidencePage) ? Number(a.accountIdentityEvidencePage) : null,
       reportedType: clean(a.reportedType || a.type),
+      reportedTypeEvidencePage: isPageReference(a.reportedTypeEvidencePage) ? Number(a.reportedTypeEvidencePage) : null,
       portfolioType: clean(value('portfolioType', a.portfolioType)),
       accountType: clean(value('accountType', a.accountType)),
       accountStatus: clean(value('accountStatus', a.accountStatus || a.status)),
       statusText: clean(a.statusText || a.status),
+      statusTextEvidencePage: isPageReference(a.statusTextEvidencePage) ? Number(a.statusTextEvidencePage) : null,
       balance: Number.isFinite(value('balance', a.balance)) ? Number(value('balance', a.balance)) : null,
       pastDue: Number.isFinite(value('pastDue', a.pastDue)) ? Number(value('pastDue', a.pastDue)) : null,
       scheduledMonthlyPayment: Number.isFinite(value('scheduledMonthlyPayment', a.scheduledMonthlyPayment)) ? Number(value('scheduledMonthlyPayment', a.scheduledMonthlyPayment)) : null,
@@ -443,23 +973,159 @@ export function coerceBureauExtraction(report, forcedBureau = null) {
       originalChargeOffAmount: Number.isFinite(value('originalChargeOffAmount', a.originalChargeOffAmount)) ? Number(value('originalChargeOffAmount', a.originalChargeOffAmount)) : null,
       consumerDisputeIndicator: ['PRESENT', 'ABSENT'].includes(a.consumerDisputeIndicator)
         ? a.consumerDisputeIndicator : (a.disputeFlag === true ? 'PRESENT' : 'UNKNOWN'),
+      consumerDisputeIndicatorEvidencePage: isPageReference(a.consumerDisputeIndicatorEvidencePage)
+        ? Number(a.consumerDisputeIndicatorEvidencePage) : null,
       remarks: clean(a.remarks),
+      remarksEvidencePage: isPageReference(a.remarksEvidencePage) ? Number(a.remarksEvidencePage) : null,
+      fields: normalizedFields,
       explicitlyBlankFields,
       unreadableFields,
       evidence,
     };
     }),
-    inquiries: Array.isArray(report?.inquiries) ? report.inquiries : [],
-    personalInfo: report?.personalInfo || {
-      formerAddresses: [], nameVariants: [], formerEmployers: [],
-      dateOfBirth: null, phone: null, currentAddress: null,
+    inquiries: Array.isArray(report?.inquiries) ? report.inquiries.map((inquiry) => ({
+      ...inquiry,
+      evidencePage: isPageReference(inquiry?.evidencePage) ? Number(inquiry.evidencePage) : null,
+    })) : [],
+    personalInfo: {
+      formerAddresses: Array.isArray(report?.personalInfo?.formerAddresses) ? report.personalInfo.formerAddresses : [],
+      formerAddressEvidence: Array.isArray(report?.personalInfo?.formerAddressEvidence) ? report.personalInfo.formerAddressEvidence : [],
+      nameVariants: Array.isArray(report?.personalInfo?.nameVariants) ? report.personalInfo.nameVariants : [],
+      nameVariantEvidence: Array.isArray(report?.personalInfo?.nameVariantEvidence) ? report.personalInfo.nameVariantEvidence : [],
+      formerEmployers: Array.isArray(report?.personalInfo?.formerEmployers) ? report.personalInfo.formerEmployers : [],
+      formerEmployerEvidence: Array.isArray(report?.personalInfo?.formerEmployerEvidence) ? report.personalInfo.formerEmployerEvidence : [],
+      dateOfBirth: clean(report?.personalInfo?.dateOfBirth),
+      dateOfBirthEvidencePage: isPageReference(report?.personalInfo?.dateOfBirthEvidencePage)
+        ? Number(report.personalInfo.dateOfBirthEvidencePage) : null,
+      phone: clean(report?.personalInfo?.phone),
+      phoneEvidencePage: isPageReference(report?.personalInfo?.phoneEvidencePage)
+        ? Number(report.personalInfo.phoneEvidencePage) : null,
+      currentAddress: clean(report?.personalInfo?.currentAddress),
+      currentAddressEvidencePage: isPageReference(report?.personalInfo?.currentAddressEvidencePage)
+        ? Number(report.personalInfo.currentAddressEvidencePage) : null,
     },
   };
 }
 
-export function mergeBureauExtractions(parts, forcedBureau = null) {
-  const usable = (parts || []).map((part) => coerceBureauExtraction(part, forcedBureau || part?.bureau));
-  if (!usable.length) throw new Error('No bureau extraction parts to merge.');
+function inquiryMergeKey(inquiry) {
+  return [
+    normalizeFurnisher(inquiry?.furnisher || ''),
+    normalizedDate(inquiry?.date) || clean(inquiry?.date) || '',
+    upper(inquiry?.type) || '',
+  ].join('::');
+}
+
+function mergeInquiries(parts) {
+  const seen = new Map();
+  for (const inquiry of (parts || []).flatMap((part) => part?.inquiries || [])) {
+    const key = inquiryMergeKey(inquiry);
+    if (!seen.has(key)) seen.set(key, inquiry);
+  }
+  return [...seen.values()];
+}
+
+function mergePersonalEvidence(parts, property) {
+  const seen = new Map();
+  for (const entry of (parts || []).flatMap((part) => part?.personalInfo?.[property] || [])) {
+    const value = clean(entry?.value);
+    if (!value || !isPageReference(entry?.page)) continue;
+    const key = `${value.toLowerCase()}::${Number(entry.page)}`;
+    if (!seen.has(key)) seen.set(key, { value, page: Number(entry.page) });
+  }
+  return [...seen.values()];
+}
+
+export function mergeBureauExtractions(parts, expectedBureau = null) {
+  const rawParts = parts || [];
+  if (!rawParts.length) throw new Error('No bureau extraction parts to merge.');
+  const sectionStarts = rawParts.filter((part) => part?.reportSectionStart === true);
+  for (const sectionStart of sectionStarts) {
+    if (!isPageReference(sectionStart?.reportSectionStartEvidencePage)) {
+      throw new Error('The visible bureau report section start has no source page reference.');
+    }
+  }
+  // Adjacent PDF checkpoints overlap by two pages. The same visible bureau
+  // header can therefore be extracted twice from the exact same source page;
+  // that is one section, not two. Distinct source pages remain a hard stop.
+  const distinctSectionStarts = [...new Map(sectionStarts.map((part) => [
+    Number(part.reportSectionStartEvidencePage), part,
+  ])).values()];
+  if (distinctSectionStarts.length !== 1) {
+    throw new Error(distinctSectionStarts.length
+      ? 'The source contains more than one bureau report section for the same bureau.'
+      : 'No visible bureau report section start was extracted from this source.');
+  }
+  const detected = [...new Set(rawParts.map((part) => bureauKey(part?.bureau)).filter(Boolean))];
+  if (detected.length !== 1) {
+    throw new Error(detected.length
+      ? 'Split report parts identify conflicting bureaus.'
+      : 'No split report part visibly identifies its bureau.');
+  }
+  const expected = bureauKey(expectedBureau);
+  if (expected && detected[0] !== expected) {
+    throw new Error(`The ${expected} upload slot contains a source-identified ${detected[0]} report.`);
+  }
+  const detectedDates = [...new Set(rawParts.map((part) => normalizeReportDate(part?.reportDate)).filter(Boolean))];
+  if (detectedDates.length !== 1) {
+    throw new Error(detectedDates.length
+      ? 'Split report parts display conflicting report-level dates.'
+      : 'No split report part displays an exact report-level date.');
+  }
+  const bureauPair = consistentValuePagePair(rawParts, {
+    label: 'bureau', value: (part) => part?.bureau, page: (part) => part?.bureauEvidencePage,
+    normalize: (candidate) => bureauKey(candidate) || String(candidate).trim().toLowerCase(),
+  });
+  const reportDatePair = consistentValuePagePair(rawParts, {
+    label: 'report date', value: (part) => part?.reportDate, page: (part) => part?.reportDateEvidencePage,
+    normalize: (candidate) => normalizeReportDate(candidate) || String(candidate).trim(),
+  });
+  if (rawParts.some((part) => part?.reportSectionStart === false && part?.reportSectionStartEvidencePage != null)) {
+    throw new Error('A continuation chunk cannot claim a bureau report section-start page.');
+  }
+  const identityParts = rawParts.filter((part) => clean(part?.client?.name));
+  if (identityParts.length > 1) assertConsistentReportIdentity(identityParts);
+  const visibleDobs = rawParts.map((part) => ({
+    raw: clean(part?.personalInfo?.dateOfBirth),
+    normalized: normalizedDob(part?.personalInfo?.dateOfBirth),
+  })).filter((entry) => entry.raw);
+  if (visibleDobs.some((entry) => !entry.normalized)) {
+    throw new Error('A split report part contains an invalid consumer date of birth.');
+  }
+  if (new Set(visibleDobs.map((entry) => entry.normalized)).size > 1) {
+    throw new Error('Split report parts display conflicting dates of birth.');
+  }
+  const usable = rawParts.map((part) => coerceBureauExtraction(part, expected || detected[0], {
+    allowInheritedMetadata: true,
+    inheritedBureau: detected[0],
+    inheritedReportDate: detectedDates[0],
+  }));
+  const clientNamePair = consistentValuePagePair(rawParts, {
+    label: 'consumer name', value: (part) => part?.client?.name, page: (part) => part?.client?.nameEvidencePage,
+    normalize: (candidate) => normalizedIdentityName(candidate)?.canonical || String(candidate).trim().toLowerCase(),
+  });
+  const clientAddressPair = consistentValuePagePair(rawParts, {
+    label: 'consumer address', value: (part) => part?.client?.address, page: (part) => part?.client?.addressEvidencePage,
+    normalize: (candidate) => normalizedIdentityAddress(candidate) || String(candidate).trim().toLowerCase(),
+  });
+  const clientScorePair = consistentValuePagePair(rawParts, {
+    label: 'consumer score', value: (part) => part?.client?.score, page: (part) => part?.client?.scoreEvidencePage,
+    normalize: (candidate) => String(Number(candidate)),
+  });
+  const dobPair = consistentValuePagePair(rawParts, {
+    label: 'consumer date of birth', value: (part) => part?.personalInfo?.dateOfBirth,
+    page: (part) => part?.personalInfo?.dateOfBirthEvidencePage,
+    normalize: (candidate) => normalizedDob(candidate) || String(candidate).trim(),
+  });
+  const phonePair = consistentValuePagePair(rawParts, {
+    label: 'consumer phone', value: (part) => part?.personalInfo?.phone,
+    page: (part) => part?.personalInfo?.phoneEvidencePage,
+    normalize: (candidate) => String(candidate).replace(/\D/g, ''),
+  });
+  const currentAddressPair = consistentValuePagePair(rawParts, {
+    label: 'consumer current address', value: (part) => part?.personalInfo?.currentAddress,
+    page: (part) => part?.personalInfo?.currentAddressEvidencePage,
+    normalize: (candidate) => normalizedIdentityAddress(candidate) || String(candidate).trim().toLowerCase(),
+  });
   const accounts = new Map();
   usable.forEach((part, partIndex) => {
     const baseKeys = part.accounts.map((account, index) => accountKey(account, index, `${part.bureau}-part${partIndex}`));
@@ -473,21 +1139,36 @@ export function mergeBureauExtractions(parts, forcedBureau = null) {
   const first = usable[0];
   const personalInfo = {
     formerAddresses: mergeStrings(usable.flatMap((p) => p.personalInfo?.formerAddresses || [])),
+    formerAddressEvidence: mergePersonalEvidence(usable, 'formerAddressEvidence'),
     nameVariants: mergeStrings(usable.flatMap((p) => p.personalInfo?.nameVariants || [])),
+    nameVariantEvidence: mergePersonalEvidence(usable, 'nameVariantEvidence'),
     formerEmployers: mergeStrings(usable.flatMap((p) => p.personalInfo?.formerEmployers || [])),
-    dateOfBirth: usable.map((p) => p.personalInfo?.dateOfBirth).find(Boolean) || null,
-    phone: usable.map((p) => p.personalInfo?.phone).find(Boolean) || null,
-    currentAddress: usable.map((p) => p.personalInfo?.currentAddress).find(Boolean) || null,
+    formerEmployerEvidence: mergePersonalEvidence(usable, 'formerEmployerEvidence'),
+    dateOfBirth: dobPair.value,
+    dateOfBirthEvidencePage: dobPair.page,
+    phone: phonePair.value,
+    phoneEvidencePage: phonePair.page,
+    currentAddress: currentAddressPair.value,
+    currentAddressEvidencePage: currentAddressPair.page,
   };
   return {
     bureau: first.bureau,
+    bureauEvidencePage: bureauPair.page,
+    reportSectionStart: true,
+    reportSectionStartEvidencePage: usable.map((p) => p.reportSectionStartEvidencePage).find(Number.isFinite) ?? null,
+    reportDate: detectedDates[0],
+    reportDateRaw: usable.map((p) => p.reportDateRaw).find(Boolean) || detectedDates[0],
+    reportDateEvidencePage: reportDatePair.page,
     client: {
-      name: usable.map((p) => p.client?.name).find((v) => v && v !== 'Unknown Client') || first.client.name,
-      address: usable.map((p) => p.client?.address).find(Boolean) || null,
-      score: usable.map((p) => p.client?.score).find(Number.isFinite) ?? null,
+      name: clientNamePair.value || first.client.name,
+      nameEvidencePage: clientNamePair.page,
+      address: clientAddressPair.value,
+      addressEvidencePage: clientAddressPair.page,
+      score: clientScorePair.value,
+      scoreEvidencePage: clientScorePair.page,
     },
     accounts: [...accounts.values()],
-    inquiries: usable.flatMap((p) => p.inquiries || []),
+    inquiries: mergeInquiries(usable),
     personalInfo,
   };
 }
@@ -497,7 +1178,12 @@ export function mergeCombinedExtractions(parts) {
   for (const part of parts || []) {
     for (const report of part?.reports || []) {
       const key = bureauKey(report.bureau);
-      if (!key) continue;
+      if (!key) {
+        if ((report?.accounts || []).length || (report?.inquiries || []).length) {
+          throw new Error('A combined-report chunk contains data without a visible bureau identity.');
+        }
+        continue;
+      }
       if (!grouped.has(key)) grouped.set(key, []);
       grouped.get(key).push(report);
     }
@@ -528,15 +1214,14 @@ function finding(ruleId, data) {
   const base = { ruleId, outcome: 'FLAG', ...data };
   const quality = base.evidenceQuality || evidenceQuality(base.evidenceRefs);
   const withQuality = { ...base, evidenceQuality: quality };
-  // Soft evidence gate: high-severity cross-bureau mismatches with no
-  // page-backed observations demote to REVIEW_REQUIRED so staff confirm
-  // before the finding becomes an authorized target. Value-level mismatch
-  // is still recorded — only the outcome changes.
+  // Every automated finding, regardless of severity, needs rule-relevant
+  // page-backed evidence. Pending-edition rules also remain visible but may
+  // not authorize a dispute until a current citation or staff fact resolves
+  // them. Value-level findings are retained for review — only authorization
+  // is withheld.
   if (
     withQuality.outcome === 'FLAG'
-    && withQuality.severity === 'high'
-    && String(ruleId).startsWith('CROSS_BUREAU_')
-    && quality === 'insufficient'
+    && (quality !== 'page_backed' || String(withQuality.verificationStatus || '').includes('PENDING'))
   ) {
     withQuality.outcome = 'REVIEW_REQUIRED';
   }
@@ -649,7 +1334,7 @@ function buildForensicComparison(variants) {
     });
     const displayed = observations.filter((entry) => entry.normalizedValue !== null);
     const uniqueValues = new Set(displayed.map((entry) => String(entry.normalizedValue)));
-    const pageBacked = displayed.filter((entry) => Number.isFinite(Number(entry.evidence?.page))).length;
+    const pageBacked = displayed.filter((entry) => isPageReference(entry.evidence?.page)).length;
     let mismatchStrength = 'INSUFFICIENT_DATA';
     if (displayed.length >= 2 && uniqueValues.size === 1) mismatchStrength = 'CONSISTENT';
     if (uniqueValues.size > 1) mismatchStrength = pageBacked === displayed.length
@@ -668,6 +1353,27 @@ function isCollector(account) {
   const accountType = upper(account.accountType);
   const text = `${account.reportedType || ''} ${account.statusText || ''} ${account.remarks || ''}`.toLowerCase();
   return COLLECTOR_ACCOUNT_TYPES.has(accountType) || /collection agency|debt purchaser|debt buyer|third[- ]party collector/.test(text);
+}
+
+function collectorEvidenceFields(account) {
+  if (COLLECTOR_ACCOUNT_TYPES.has(upper(account?.accountType))) return ['accountType'];
+  const matcher = /collection agency|debt purchaser|debt buyer|third[- ]party collector/;
+  if (matcher.test(String(account?.reportedType || '').toLowerCase())) return ['reportedType'];
+  if (matcher.test(String(account?.statusText || '').toLowerCase())) return ['statusText'];
+  if (matcher.test(String(account?.remarks || '').toLowerCase())) return ['remarks'];
+  return [];
+}
+
+function ruleEvidenceFields(ruleType) {
+  const type = String(ruleType || '');
+  if (type.includes('STATUS_NONCONFORMING')) return ['accountStatus', 'accountType'];
+  if (type.includes('PORTFOLIO_TYPE_NONCONFORMING')) return ['portfolioType', 'accountType'];
+  if (type.includes('ACCOUNT_TYPE_NONCONFORMING')) return ['accountType'];
+  if (type.includes('DATE_OPENED')) return ['dateOpened', 'accountType'];
+  if (type.includes('DOFD')) return ['dofd', 'accountType'];
+  if (type.includes('SCHEDULED_PAYMENT')) return ['scheduledMonthlyPayment', 'portfolioType', 'accountStatus'];
+  if (type.includes('DATE_OF_LAST_PAYMENT') || type.includes('DOLP')) return ['lastPaymentDate', 'dateOpened', 'accountType'];
+  return [];
 }
 
 function perVariantFindings(variants) {
@@ -707,6 +1413,7 @@ function perVariantFindings(variants) {
     }
 
     const collector = isCollector(account);
+    const collectorEvidence = collectorEvidenceFields(account).flatMap(refs);
     if (collector && account.explicitlyBlankFields?.includes('dofd')) {
       out.push(finding('COLLECTION_DOFD_EXPLICITLY_BLANK', {
         field: `Field 25 (${METRO2_FIELDS.DATE_FIRST_DELINQUENCY.name})`,
@@ -714,7 +1421,7 @@ function perVariantFindings(variants) {
         currentlyReports: `${BUREAU_CODES[bureau]}: explicitly blank`,
         shouldReport: 'Investigate and report the substantiated original-creditor DOFD when required',
         source: '15 U.S.C. §1681s-2(a)(5); CRRG Field 25', severity: 'high',
-        evidenceRefs: refs('dofd'),
+        evidenceRefs: [...refs('dofd'), ...collectorEvidence],
       }));
     }
     if (account.consumerDisputeIndicator === 'PRESENT'
@@ -726,7 +1433,7 @@ function perVariantFindings(variants) {
         currentlyReports: `${BUREAU_CODES[bureau]}: dispute indicator present; Field 20 explicitly blank`,
         shouldReport: 'Investigate whether the applicable dispute code is required for this reporting cycle',
         source: 'CRRG Dec. 2024 Exhibit 8; requires dispute-context review', severity: 'high',
-        evidenceRefs: refs('complianceConditionCode'),
+        evidenceRefs: [...refs('consumerDisputeIndicator'), ...refs('complianceConditionCode')],
       }));
     }
 
@@ -754,13 +1461,14 @@ function perVariantFindings(variants) {
       }),
     ].filter((v) => v && v.isViolation !== false);
     for (const v of deterministic) {
+      const exactFields = ruleEvidenceFields(v.type);
+      if (collector) exactFields.push(...collectorEvidenceFields(account));
+      const exactEvidence = [...new Set(exactFields)].map((field) => evidenceFor(account, field, bureau));
       out.push(finding(v.type, {
-        // Business decision (2026-08-15): debt-purchaser conformity findings
-        // resolve to FLAG regardless of verification_status. The citation's
-        // provenance metadata is preserved as-is below (verificationStatus)
-        // so it's never misrepresented as independently re-verified — this
-        // only changes whether that metadata gates the outcome, not what it
-        // says about the source.
+        // A prior owner decision kept these findings visible as FLAGs. The
+        // evidence/current-edition gate in finding() now prevents a FLAG from
+        // becoming an automated authorization when its source is pending or
+        // its exact input fields are not page-backed.
         outcome: 'FLAG',
         field: v.field,
         issue: v.issue,
@@ -768,7 +1476,7 @@ function perVariantFindings(variants) {
         shouldReport: v.expected || 'Correct to the substantiated conforming value',
         source: v.statute || 'CRRG deterministic rule', severity: 'high',
         verificationStatus: v.verification_status || null,
-        evidenceRefs: account.evidence || [],
+        evidenceRefs: exactEvidence,
       }));
     }
   }
@@ -776,19 +1484,65 @@ function perVariantFindings(variants) {
 }
 
 function mergePersonalInfo(reports) {
+  const observationSpecs = [
+    ['former_address', 'formerAddressEvidence'],
+    ['name_variant', 'nameVariantEvidence'],
+    ['former_employer', 'formerEmployerEvidence'],
+  ];
+  const observations = [];
+  const seen = new Set();
+  for (const report of reports || []) {
+    for (const [category, property] of observationSpecs) {
+      for (const entry of report?.personalInfo?.[property] || []) {
+        const value = clean(entry?.value);
+        if (!value || !isPageReference(entry?.page)) continue;
+        const key = `${category}::${value.toLowerCase()}::${report.bureau}::${Number(entry.page)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        observations.push({
+          category,
+          value,
+          bureau: BUREAU_CODES[report.bureau],
+          page: Number(entry.page),
+        });
+      }
+    }
+  }
+  const phoneReport = reports.find((report) => clean(report?.personalInfo?.phone)
+    && isPageReference(report?.personalInfo?.phoneEvidencePage));
+  const addressReport = reports.find((report) => clean(report?.personalInfo?.currentAddress)
+    && isPageReference(report?.personalInfo?.currentAddressEvidencePage));
   return {
     formerAddresses: mergeStrings(reports.flatMap((r) => r.personalInfo?.formerAddresses || [])),
     nameVariants: mergeStrings(reports.flatMap((r) => r.personalInfo?.nameVariants || [])),
     formerEmployers: mergeStrings(reports.flatMap((r) => r.personalInfo?.formerEmployers || [])),
     dateOfBirth: reports.map((r) => r.personalInfo?.dateOfBirth).find(Boolean) || null,
-    phone: reports.map((r) => r.personalInfo?.phone).find(Boolean) || null,
-    currentAddress: reports.map((r) => r.personalInfo?.currentAddress).find(Boolean) || null,
+    dateOfBirthEvidencePage: reports.map((r) => r.personalInfo?.dateOfBirthEvidencePage).find(Number.isFinite) ?? null,
+    phone: phoneReport?.personalInfo?.phone || null,
+    phoneEvidence: phoneReport ? {
+      bureau: BUREAU_CODES[phoneReport.bureau], page: Number(phoneReport.personalInfo.phoneEvidencePage),
+    } : null,
+    currentAddress: addressReport?.personalInfo?.currentAddress || null,
+    currentAddressEvidence: addressReport ? {
+      bureau: BUREAU_CODES[addressReport.bureau], page: Number(addressReport.personalInfo.currentAddressEvidencePage),
+    } : null,
+    observations,
   };
 }
 
-export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) {
+export function buildDeterministicAudit(rawReports, { reportDate = null, evaluatedAt = null, provenance = null } = {}) {
   const reports = (rawReports || []).map((report) => coerceBureauExtraction(report));
   if (!reports.length) throw new Error('No extracted bureau data was available for deterministic evaluation.');
+  const sourceDates = [...new Set(reports.map((report) => normalizeReportDate(report.reportDate)).filter(Boolean))];
+  if (sourceDates.length > 1) throw new Error('Deterministic audit input contains mixed report-level dates.');
+  const requestedDate = normalizeReportDate(reportDate);
+  if (reportDate && !requestedDate) throw new Error('Deterministic audit received an invalid report date.');
+  if (requestedDate && sourceDates.length === 1 && requestedDate !== sourceDates[0]) {
+    throw new Error('The requested audit date does not match the source-derived report date.');
+  }
+  const effectiveReportDate = sourceDates[0] || requestedDate || null;
+  const evaluationClock = evaluatedAt ? new Date(evaluatedAt) : (effectiveReportDate ? new Date(`${effectiveReportDate}T00:00:00.000Z`) : null);
+  if (evaluatedAt && !Number.isFinite(evaluationClock.getTime())) throw new Error('Deterministic audit received an invalid evaluation timestamp.');
   const reportCoverage = reportCoverageFacts(reports);
   const grouped = new Map();
   reports.forEach((report) => {
@@ -872,9 +1626,9 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
     }
     const collector = Object.values(variants).some(isCollector);
     const paid = Object.values(variants).some((a) => PAID_STATUSES.has(upper(a.accountStatus)));
-    const reportTime = reportDate ? new Date(reportDate).getTime() : NaN;
-    const ageDays = Number.isFinite(reportTime)
-      ? Math.max(0, Math.floor((Date.now() - reportTime) / 86400000)) : null;
+    const reportTime = effectiveReportDate ? new Date(effectiveReportDate).getTime() : NaN;
+    const ageDays = Number.isFinite(reportTime) && evaluationClock
+      ? Math.max(0, Math.floor((evaluationClock.getTime() - reportTime) / 86400000)) : null;
     const flaggedFindings = findings.filter((f) => f.outcome === 'FLAG');
     const authorizedFindingsList = flaggedFindings.filter(isAuthorizedFinding);
     const primary = authorizedFindingsList[0] || flaggedFindings[0] || findings[0] || null;
@@ -911,7 +1665,7 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
       extractedByBureau: variants,
       forensicComparison: buildForensicComparison(variants),
       timingChecks: {
-        reportDate,
+        reportDate: effectiveReportDate,
         ageDays,
         maxAgeDays: REPORT_MAX_AGE_DAYS,
         currentForGeneration: ageDays !== null && ageDays <= REPORT_MAX_AGE_DAYS,
@@ -933,23 +1687,26 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
   accounts.filter((a) => a.violations.length).forEach((account, index) => { account.batch = index < 5 ? 1 : 2; });
   const totalViolations = accounts.reduce((sum, account) => sum + account.violations.length, 0);
   const citationDebt = collectCitationDebt(accounts);
-  const reportClock = reportDate ? new Date(reportDate) : new Date();
+  const reportClock = effectiveReportDate ? new Date(`${effectiveReportDate}T00:00:00.000Z`) : null;
   const inquiries = reports.flatMap((report) => (report.inquiries || []).map((inquiry) => {
     const linked = accounts.find((account) => normalizeFurnisher(account.furnisher) === normalizeFurnisher(inquiry.furnisher));
     const inquiryDate = new Date(inquiry.date);
-    const ageInMonths = Number.isNaN(inquiryDate.getTime())
-      ? 0
+    const ageInMonths = Number.isNaN(inquiryDate.getTime()) || !reportClock
+      ? null
       : Math.max(0, Math.floor((reportClock.getTime() - inquiryDate.getTime()) / (30.4375 * 86400000)));
     return {
       furnisher: inquiry.furnisher,
       date: inquiry.date,
       bureaus: [BUREAU_CODES[report.bureau]],
+      sourcePage: isPageReference(inquiry.evidencePage) ? Number(inquiry.evidencePage) : null,
       linkedAccountId: linked?.id || null,
       ageInMonths,
       category: linked ? 'linked_to_open_account' : 'no_linked_account',
     };
   }));
   const clientName = reports.map((r) => r.client?.name).find((name) => name && name !== 'Unknown Client') || 'Unknown Client';
+  const clientAddressReport = reports.find((report) => clean(report?.client?.address)
+    && isPageReference(report?.client?.addressEvidencePage));
   const scores = { equifax: null, experian: null, transunion: null };
   reports.forEach((report) => { scores[report.bureau] = report.client?.score ?? null; });
   return {
@@ -957,8 +1714,12 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
     evaluationMode: 'deterministic',
     client: {
       name: clientName,
-      address: reports.map((r) => r.client?.address).find(Boolean) || null,
-      reportDate,
+      address: clientAddressReport?.client?.address || null,
+      addressEvidence: clientAddressReport ? {
+        bureau: BUREAU_CODES[clientAddressReport.bureau],
+        page: Number(clientAddressReport.client.addressEvidencePage),
+      } : null,
+      reportDate: effectiveReportDate,
       scores,
     },
     scores,
@@ -972,6 +1733,10 @@ export function buildDeterministicAudit(rawReports, { reportDate = null } = {}) 
     accounts,
     inquiries,
     personalInfo: mergePersonalInfo(reports),
-    extraction: { schemaVersion: 'credit-extraction-v1', bureaus: reports.map((r) => r.bureau) },
+    extraction: {
+      schemaVersion: 'credit-extraction-v2',
+      bureaus: reports.map((r) => r.bureau),
+      ...(provenance && typeof provenance === 'object' ? { provenance } : {}),
+    },
   };
 }

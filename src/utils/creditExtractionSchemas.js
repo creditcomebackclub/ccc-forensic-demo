@@ -4,37 +4,73 @@
 
 const NULLABLE_STRING = { anyOf: [{ type: 'string' }, { type: 'null' }] };
 const NULLABLE_NUMBER = { anyOf: [{ type: 'number' }, { type: 'null' }] };
+const NULLABLE_PAGE = { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] };
+const NULLABLE_BUREAU = {
+  anyOf: [
+    { type: 'string', enum: ['equifax', 'experian', 'transunion'] },
+    { type: 'null' },
+  ],
+};
+export const CREDIT_ACCOUNT_FIELD_NAMES = Object.freeze([
+  'portfolioType', 'accountType', 'accountStatus', 'balance', 'pastDue',
+  'scheduledMonthlyPayment', 'originalLoanAmount', 'dateOpened', 'dofd',
+  'dateClosed', 'lastPaymentDate', 'billingDate', 'paymentHistory',
+  'specialComment', 'complianceConditionCode', 'creditLimit', 'termsDuration',
+  'termsFrequency', 'actualPaymentAmount', 'paymentRating', 'originalChargeOffAmount',
+]);
+
 const FIELD_NAME = {
   type: 'string',
-  enum: [
-    'portfolioType', 'accountType', 'accountStatus', 'balance', 'pastDue',
-    'scheduledMonthlyPayment', 'originalLoanAmount', 'dateOpened', 'dofd',
-    'dateClosed', 'lastPaymentDate', 'billingDate', 'paymentHistory',
-    'specialComment', 'complianceConditionCode',
-    // Fields 11, 13, 14, 16, 17B, 23 — previously defined in METRO2_FIELDS
-    // but never asked for, so nothing downstream could ever check them.
-    'creditLimit', 'termsDuration', 'termsFrequency', 'actualPaymentAmount',
-    'paymentRating', 'originalChargeOffAmount',
-  ],
+  enum: [...CREDIT_ACCOUNT_FIELD_NAMES],
 };
 
 const CLIENT = {
   type: 'object', additionalProperties: false,
-  properties: { name: { type: 'string' }, address: NULLABLE_STRING, score: NULLABLE_NUMBER },
-  required: ['name', 'address', 'score'],
+  properties: {
+    name: NULLABLE_STRING,
+    nameEvidencePage: NULLABLE_PAGE,
+    address: NULLABLE_STRING,
+    addressEvidencePage: NULLABLE_PAGE,
+    score: NULLABLE_NUMBER,
+    scoreEvidencePage: NULLABLE_PAGE,
+  },
+  required: ['name', 'nameEvidencePage', 'address', 'addressEvidencePage', 'score', 'scoreEvidencePage'],
 };
 
 const PERSONAL_INFO = {
   type: 'object', additionalProperties: false,
   properties: {
     formerAddresses: { type: 'array', items: { type: 'string' } },
+    formerAddressEvidence: { type: 'array', items: {
+      type: 'object', additionalProperties: false,
+      properties: { value: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
+      required: ['value', 'page'],
+    } },
     nameVariants: { type: 'array', items: { type: 'string' } },
+    nameVariantEvidence: { type: 'array', items: {
+      type: 'object', additionalProperties: false,
+      properties: { value: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
+      required: ['value', 'page'],
+    } },
     formerEmployers: { type: 'array', items: { type: 'string' } },
+    formerEmployerEvidence: { type: 'array', items: {
+      type: 'object', additionalProperties: false,
+      properties: { value: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
+      required: ['value', 'page'],
+    } },
     dateOfBirth: NULLABLE_STRING,
+    dateOfBirthEvidencePage: NULLABLE_PAGE,
     phone: NULLABLE_STRING,
+    phoneEvidencePage: NULLABLE_PAGE,
     currentAddress: NULLABLE_STRING,
+    currentAddressEvidencePage: NULLABLE_PAGE,
   },
-  required: ['formerAddresses', 'nameVariants', 'formerEmployers', 'dateOfBirth', 'phone', 'currentAddress'],
+  required: [
+    'formerAddresses', 'formerAddressEvidence', 'nameVariants', 'nameVariantEvidence',
+    'formerEmployers', 'formerEmployerEvidence', 'dateOfBirth',
+    'dateOfBirthEvidencePage', 'phone', 'phoneEvidencePage',
+    'currentAddress', 'currentAddressEvidencePage',
+  ],
 };
 
 const EXTRACTED_FIELD = {
@@ -44,7 +80,7 @@ const EXTRACTED_FIELD = {
     rawValue: NULLABLE_STRING,
     numericValue: NULLABLE_NUMBER,
     state: { type: 'string', enum: ['PRESENT', 'EXPLICITLY_BLANK', 'NOT_SHOWN', 'UNREADABLE'] },
-    page: NULLABLE_NUMBER,
+    page: NULLABLE_PAGE,
     label: NULLABLE_STRING,
   },
   required: ['name', 'rawValue', 'numericValue', 'state', 'page', 'label'],
@@ -57,34 +93,66 @@ const EXTRACTED_ACCOUNT = {
     furnisherAddress: NULLABLE_STRING,
     originalCreditor: NULLABLE_STRING,
     accountNumber: { type: 'string' },
+    // One page must visibly support the account identity used for matching
+    // (furnisher/original creditor plus the displayed account number/suffix).
+    accountIdentityEvidencePage: NULLABLE_PAGE,
     reportedType: NULLABLE_STRING,
+    reportedTypeEvidencePage: NULLABLE_PAGE,
     statusText: NULLABLE_STRING,
+    statusTextEvidencePage: NULLABLE_PAGE,
     consumerDisputeIndicator: { type: 'string', enum: ['PRESENT', 'ABSENT', 'UNKNOWN'] },
+    consumerDisputeIndicatorEvidencePage: NULLABLE_PAGE,
     remarks: NULLABLE_STRING,
-    fields: { type: 'array', items: EXTRACTED_FIELD },
+    remarksEvidencePage: NULLABLE_PAGE,
+    fields: {
+      type: 'array',
+      minItems: CREDIT_ACCOUNT_FIELD_NAMES.length,
+      maxItems: CREDIT_ACCOUNT_FIELD_NAMES.length,
+      items: EXTRACTED_FIELD,
+    },
   },
   required: [
-    'furnisher', 'furnisherAddress', 'originalCreditor', 'accountNumber', 'reportedType',
-    'statusText', 'consumerDisputeIndicator', 'remarks', 'fields',
+    'furnisher', 'furnisherAddress', 'originalCreditor', 'accountNumber',
+    'accountIdentityEvidencePage', 'reportedType', 'reportedTypeEvidencePage',
+    'statusText', 'statusTextEvidencePage', 'consumerDisputeIndicator',
+    'consumerDisputeIndicatorEvidencePage', 'remarks', 'remarksEvidencePage', 'fields',
   ],
 };
 
 const INQUIRY = {
   type: 'object', additionalProperties: false,
-  properties: { furnisher: { type: 'string' }, date: { type: 'string' }, type: NULLABLE_STRING },
-  required: ['furnisher', 'date', 'type'],
+  properties: {
+    furnisher: { type: 'string' }, date: { type: 'string' }, type: NULLABLE_STRING,
+    evidencePage: { type: 'integer', minimum: 1 },
+  },
+  required: ['furnisher', 'date', 'type', 'evidencePage'],
 };
 
 export const CREDIT_BUREAU_EXTRACTION_SCHEMA = {
   type: 'object', additionalProperties: false,
   properties: {
-    bureau: { type: 'string', enum: ['equifax', 'experian', 'transunion'] },
+    // Metadata is source-derived. A split bureau-specific PDF chunk may omit
+    // the header/date, so null is allowed at extraction time and inherited
+    // only from another chunk of that same exact file. Combined-report chunks
+    // carrying unlabeled bureau data fail closed because they cannot be
+    // assigned safely.
+    bureau: NULLABLE_BUREAU,
+    bureauEvidencePage: NULLABLE_PAGE,
+    reportSectionStart: { type: 'boolean' },
+    reportSectionStartEvidencePage: NULLABLE_PAGE,
+    reportDate: NULLABLE_STRING,
+    reportDateRaw: NULLABLE_STRING,
+    reportDateEvidencePage: NULLABLE_PAGE,
     client: CLIENT,
     accounts: { type: 'array', items: EXTRACTED_ACCOUNT },
     inquiries: { type: 'array', items: INQUIRY },
     personalInfo: PERSONAL_INFO,
   },
-  required: ['bureau', 'client', 'accounts', 'inquiries', 'personalInfo'],
+  required: [
+    'bureau', 'bureauEvidencePage', 'reportSectionStart', 'reportSectionStartEvidencePage',
+    'reportDate', 'reportDateRaw',
+    'reportDateEvidencePage', 'client', 'accounts', 'inquiries', 'personalInfo',
+  ],
 };
 
 export const COMBINED_CREDIT_EXTRACTION_SCHEMA = {

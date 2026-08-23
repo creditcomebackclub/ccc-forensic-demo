@@ -47,7 +47,25 @@ try {
     bureaus,
     accountNumber: `RAW-ACCOUNT-${9000 + index}`,
     primaryViolation: `${furnisher} reports an exact confirmed discrepancy.`,
-    violations: [{ field: 'Status', issue: 'The status conflicts.', currentlyReports: 'Open', shouldReport: 'Closed' }],
+    violations: [{
+      ruleId: `STATUS_CONFLICT_${index + 1}`,
+      field: 'Status',
+      issue: 'The status conflicts.',
+      currentlyReports: 'Open',
+      shouldReport: 'Closed',
+      statute: '15 U.S.C. § 1681e(b)',
+      severity: 'high',
+      challengeStatement: 'Investigate and correct the unsupported status.',
+      outcome: 'FLAG',
+      adjudication: { status: 'authorized' },
+      evidenceRefs: [{
+        bureau: bureaus[0],
+        page: index + 1,
+        field: 'accountStatus',
+        label: 'Account status',
+        rawValue: 'Open',
+      }],
+    }],
   });
   const audit = {
     id: 'saved-audit-1',
@@ -77,6 +95,7 @@ try {
     status: 'active',
     cycle: 1,
     revision: index,
+    source_audit_snapshot: audit.accounts[index],
   });
   const tracks = [
     track(0, 'EQ', 'repossession', 'repo', 'repo', 3, 'repo_primary'),
@@ -104,6 +123,21 @@ try {
     'saved track coverage is canonical and deterministic',
   );
 
+  const packetAudit = {
+    id: 'saved-audit-packet',
+    client: audit.client,
+    accounts: accountIds.map((_, index) => account(index, `Packet Account ${index + 1}`, ['EQ'])),
+  };
+  const packetTracks = accountIds.map((_, index) => ({
+    ...track(index, 'EQ', 'collection', 'collection', 'collection', 1),
+    source_audit_id: packetAudit.id,
+    source_audit_snapshot: packetAudit.accounts[index],
+  }));
+  const packetItems = buildStateDrivenCraWorkItems(packetAudit, packetTracks);
+  assert.deepEqual(packetItems.map((item) => item.accounts.length), [5, 1], 'six accounts split deterministically into physical packets of five and one');
+  assert.deepEqual(packetItems.map((item) => item.packetIndex), [1, 2]);
+  assert.ok(packetItems.every((item) => item.packetCount === 2));
+
   assert.throws(() => buildStateDrivenCraWorkItems(audit, []), /requires active server-owned CRA account tracks/);
   assert.throws(
     () => buildStateDrivenCraWorkItems(audit, [{ ...tracks[0], client_account_id: '20000000-0000-4000-8000-000000000099' }]),
@@ -120,14 +154,20 @@ try {
   assert.match(source, /disputeBureauCode:\s*workItem\.bureau\.code/);
   assert.match(source, /disputeFlowCode:\s*workItem\.concreteFlow/);
   assert.match(source, /disputeRoundNumber:\s*workItem\.concreteRound/);
-  assert.match(source, /cccAccountTrackSnapshots:\s*currentTrackSnapshots/);
+  assert.match(source, /cccAccountTrackSnapshots:\s*currentState\.snapshots/);
   assert.match(source, /disputeAutomaticValuesSnapshot:\s*automaticValuesSnapshot/);
-  assert.match(source, /accountNumberMasked:\s*maskAccountNumber/, 'provenance stores only a newly normalized masked account number');
+  assert.match(source, /disputeAccountSnapshot:\s*accountSnapshots/, 'the exact selected reason snapshot is persisted on the letter');
+  assert.match(source, /roundSelectionDraftSuffix\(\{/, 'exact retries use a deterministic account\/track\/content identity instead of parallel mail-capable drafts');
   assert.match(source, /token !== 'optional_strengthener'/, 'optional strengthener never blocks save');
   assert.match(source, /validateTemplateTokenContract/);
-  assert.match(source, /accountsMissingConfirmedDisputeFacts/);
+  assert.match(source, /buildRoundReasonSnapshots/);
+  assert.match(source, /validateRoundReasonSnapshots/);
   assert.match(source, /from\('ccc_account_tracks'\)\.select\('\*'\)\.in\('id', trackIds\)/, 'track revisions are reloaded immediately before save');
   assert.match(source, /from\('dispute_templates'\)\.select\('\*'\)\.eq\('id', selectedTemplate\.id\)/, 'the exact selected template is reloaded immediately before save');
+
+  const reasonSource = fs.readFileSync(path.join(projectRoot, 'src/utils/disputeReasonSelection.js'), 'utf8');
+  assert.match(reasonSource, /accountNumberMasked:\s*maskedAccountNumber/, 'provenance stores only a newly normalized masked account number');
+  assert.match(reasonSource, /A physical letter can include no more than/, 'the selection snapshot independently enforces the five-account physical limit');
 
   console.log('State-driven Campaign Studio tests passed.');
 } finally {

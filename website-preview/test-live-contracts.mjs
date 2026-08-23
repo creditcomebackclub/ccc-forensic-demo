@@ -109,6 +109,23 @@ check(
   'successful intake initializes the exact owner-provided Calendly inline widget with local name/email prefill',
 );
 check(
+  liveJs.includes("error?.name === 'AbortError'")
+    && liveJs.includes('showDirectCalendlyFallback(')
+    && liveJs.includes("fallbackUrl.searchParams.set('name', payload.name)")
+    && liveJs.includes("fallbackUrl.searchParams.set('email', payload.email)")
+    && liveJs.includes("fallback.target = '_blank'")
+    && liveJs.includes("fallback.rel = 'noopener noreferrer'"),
+  'a timed-out intake reveals a direct, prefilled Calendly fallback instead of trapping the lead',
+);
+check(
+  liveJs.includes('const CALENDLY_LOAD_TIMEOUT_MS = 8000')
+    && liveJs.includes('window.setTimeout(')
+    && liveJs.includes("new Error('Calendly took too long to load.')")
+    && liveJs.includes('window.clearTimeout(timer)')
+    && liveJs.includes("showDirectCalendlyFallback(payload, 'The embedded calendar is unavailable."),
+  'a stalled Calendly script is bounded and falls back to the same direct scheduling link',
+);
+check(
   liveHtml.includes('<script src="/embed.js" defer></script>'),
   'live artifact mounts the existing root chat embed without copying or modifying it',
 );

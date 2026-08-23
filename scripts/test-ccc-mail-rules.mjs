@@ -63,6 +63,28 @@ assert.match(
   /validateDisputeScreenshotManifest\(\{[\s\S]*policy: screenshotPolicy,[\s\S]*userId: letter\.user_id,[\s\S]*clientId: letter\.client_id/,
   'Lob must enforce the saved policy and client-scoped exhibit paths server-side',
 );
+assert.match(lobFunction, /source_audit_snapshot/, 'Lob must reload the immutable source audit evidence for selected reasons');
+assert.match(
+  lobFunction,
+  /validateRoundReasonSnapshots\(\{[\s\S]*accountSnapshots: letter\.dispute_account_snapshot,[\s\S]*tracks,[\s\S]*bureauCode: letter\.dispute_bureau_code/,
+  'Lob must re-prove the exact selected reason snapshot before irreversible mailing',
+);
+assert.match(
+  lobFunction,
+  /privateInstructionLeakIssues\(letter\.dispute_account_snapshot, letter\.html\)/,
+  'Lob must reject any private staff instruction leaked into the mailed HTML',
+);
+assert.match(lobFunction, /body_text/,
+  'Lob must reload the active fixed template body before mailing');
+assert.match(lobFunction, /roundReasonRenderIssues\(\{[\s\S]*automaticValues: letter\.dispute_automatic_values_snapshot,[\s\S]*templateText: letter\.dispute_template_snapshot/,
+  'Lob must prove the saved HTML still contains the exact selected issue block');
+assert.match(lobFunction, /rpc\/claim_ccc_track_revisions_for_mail/,
+  'Lob must atomically claim every exact account-track revision for one durable submission');
+assert.ok(
+  lobFunction.indexOf('await claimCccTrackRevisionsForMail({')
+    < lobFunction.indexOf("await lobRequest('/v1/letters'"),
+  'track-revision claims must complete before Lob can buy postage',
+);
 
 const TRACK_1 = '11111111-1111-4111-8111-111111111111';
 const TRACK_2 = '22222222-2222-4222-8222-222222222222';
@@ -162,7 +184,7 @@ const tracks = [
     revision: 1,
   },
 ];
-const template = { id: TEMPLATE_ID, flow_code: 'combo', round_number: 1, bureau_code: 'ALL' };
+const template = { id: TEMPLATE_ID, flow_code: 'combo', round_number: 1, bureau_code: 'ALL', is_active: true };
 const validate = (overrides = {}) => validateCccLetterTrackBinding({
   letter: overrides.letter || letter,
   tracks: overrides.tracks || tracks,
@@ -196,6 +218,8 @@ assert.match(validate({ letter: { ...letter, dispute_account_snapshot: [{ client
 assert.match(validate({ letter: { ...letter, dispute_account_snapshot: [{ clientAccountId: ACCOUNT_1 }, { clientAccountId: ACCOUNT_1 }] } }).join(' '), /duplicate account/i);
 assert.match(validate({ letter: { ...letter, dispute_round_number: 2 } }).join(' '), /metadata does not match/i);
 assert.match(validate({ template: { ...template, flow_code: 'accuracy' } }).join(' '), /template no longer proves/i);
+assert.match(validate({ template: { ...template, is_active: false } }).join(' '), /template no longer proves/i,
+  'a retired letter template cannot pass mail preflight even when its frozen body is unchanged');
 assert.match(validate({ toAddress: { ...CCC_BUREAU_RECIPIENTS.EQ, zip: '00000' } }).join(' '), /recipient does not match/i);
 assert.deepEqual(
   unresolvedCccMissingTokens('<p>Ready</p><mark class="warn" data-missing-token="damages">{damages}</mark><mark data-missing-token=penalty>{penalty}</mark>'),

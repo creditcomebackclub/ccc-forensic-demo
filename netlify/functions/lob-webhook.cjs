@@ -80,6 +80,21 @@ async function updatePacketCoverage(letterIds, patch, supabaseUrl, serviceKey) {
   if (result.status < 200 || result.status >= 300) console.error('Could not propagate Lob status to packet coverage:', ids, result.status);
 }
 
+async function releaseCccTrackRevisionMailClaims(resolved, releaseReason, supabaseUrl, serviceKey) {
+  if (!String(resolved?.letter?.phase || '').startsWith('CCC Dispute —')) return;
+  const result = await supabaseRequest(
+    '/rest/v1/rpc/release_ccc_track_revision_mail_claims',
+    'POST', {
+      p_letter_id: resolved.letter.id,
+      p_mail_submission_id: resolved.submission.id,
+      p_release_reason: releaseReason,
+    }, supabaseUrl, serviceKey
+  );
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error('Could not release the exact CCC account-round claim after the signed Lob terminal event.');
+  }
+}
+
 // Certified letters fire `letter.certified.*` event ids; plain letters fire
 // `letter.*`. Handle both so tracking never silently stalls.
 const statusMap = {
@@ -630,6 +645,7 @@ exports.handler = async (event) => {
     }
     if (resolved.letter.tracking_status === 'Cancelled') {
       if (resolved.submission.status === 'cancelled') {
+        await releaseCccTrackRevisionMailClaims(resolved, 'signed_cancelled', supabaseUrl, supabaseKey);
         return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Cancelled', duplicate: true }) };
       }
       if (!ACTIVE_SUBMISSION_STATUSES.has(resolved.submission.status)) {
@@ -648,6 +664,7 @@ exports.handler = async (event) => {
         return { statusCode: 500, body: JSON.stringify({ error: 'Could not reconcile cancelled Lob submission' }) };
       }
       await updatePacketCoverage([resolved.letter.id], { mail_status: 'cancelled', tracking_status: 'Cancelled', delivered_at: null }, supabaseUrl, supabaseKey);
+      await releaseCccTrackRevisionMailClaims(resolved, 'signed_cancelled', supabaseUrl, supabaseKey);
       return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Cancelled', reconciled: true }) };
     }
     if (!ACTIVE_SUBMISSION_STATUSES.has(resolved.submission.status)
@@ -693,6 +710,7 @@ exports.handler = async (event) => {
       { mail_status: 'cancelled', tracking_status: 'Cancelled', delivered_at: null },
       supabaseUrl, supabaseKey
     );
+    await releaseCccTrackRevisionMailClaims(resolved, 'signed_cancelled', supabaseUrl, supabaseKey);
     console.log('Lob mailpiece canceled before production:', lobId);
     return { statusCode: 200, body: JSON.stringify({ received: true, lobId, trackingStatus: 'Cancelled', retryable: true }) };
   }

@@ -285,6 +285,18 @@ export const handler = async (event) => {
       if (Number(initializedTrackCount) > 0) {
         throw conflict('This classification review is immutable because CRA tracks have already been initialized from it. Start from a new saved audit instead.');
       }
+      // A complete-looking legacy/handcrafted v4 object is not a production
+      // source. The database validator verifies the exact three source files,
+      // cohort, identity pages, and canonical provenance hash before staff can
+      // attach a confirmed review that could initialize R1.
+      const { data: sourceProvenanceValid, error: sourceProvenanceError } = await db.rpc(
+        'ccc_operations_fresh_r1_audit_valid',
+        { p_audit: auditRow.audit },
+      );
+      if (sourceProvenanceError) throw sourceProvenanceError;
+      if (sourceProvenanceValid !== true) {
+        throw conflict('Classification review requires a source-bound deterministic 3B audit dated within the last 45 days. This legacy, stale, or incomplete audit remains readable but cannot start R1.');
+      }
       assertAuditCoverage(auditRow.audit);
 
       const sourceAccounts = Array.isArray(auditRow.audit?.accounts) ? auditRow.audit.accounts : [];

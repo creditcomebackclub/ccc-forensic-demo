@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { createGuideDownloadToken } = require('./_guideDownloadToken.cjs');
+const { exactNotificationPayload, signNotification } = require('./_publicIntakeNotification.cjs');
 
 const MAX_BODY_BYTES = 4_096;
 const RATE_LIMIT_WINDOW_SECONDS = 15 * 60;
@@ -189,6 +190,28 @@ async function upsertLead({ payload, ownerUserId, supabaseUrl, serviceKey }) {
   return result;
 }
 
+async function enqueueLeadNotifications({ result, intent, base, serviceKey }) {
+  const notification = exactNotificationPayload({
+    leadId: result.lead.id,
+    affiliateId: result.attribution_added && result.affiliate?.id ? result.affiliate.id : null,
+    intent,
+  });
+  const body = JSON.stringify(notification);
+  const response = await fetch(base + '/.netlify/functions/public-intake-notify-background', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CCC-Intake-Signature': signNotification(body, serviceKey),
+    },
+    body,
+    // The endpoint is a Netlify background function and should acknowledge
+    // with 202 immediately. Never let a failed dispatch turn a durable lead
+    // save into a false browser failure.
+    signal: AbortSignal.timeout(1_500),
+  });
+  if (response.status !== 202) throw new Error('notification dispatch rejected');
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: CORS_HEADERS, body: '' };
   if (event.httpMethod !== 'POST') return reply(405, { error: 'Method not allowed.' });
@@ -217,38 +240,13 @@ exports.handler = async (event) => {
     const ownerUserId = await resolveOwnerUserId(supabaseUrl, serviceKey);
     const result = await upsertLead({ payload, ownerUserId, supabaseUrl, serviceKey });
     const lead = result.lead;
-    const affiliate = result.affiliate || null;
-    const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+    const base = String(process.env.DEPLOY_URL || process.env.URL || 'https://ccc-forensic-demo.netlify.app').replace(/\/$/, '');
 
-    try {
-      const adminRes = await fetch(base + '/.netlify/functions/send-lpoa', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
-        body: JSON.stringify({
-          action: 'admin_new_lead',
-          leadName: lead.name,
-          leadEmail: lead.email,
-          leadPhone: lead.lead_phone,
-          tier: payload.tier || null,
-        }),
-      });
-      if (!adminRes.ok) console.error('Admin lead notification failed.');
-    } catch (_error) {
-      console.error('Admin lead notification unavailable.');
-    }
-
-    if (affiliate?.id && result.attribution_added) {
-      try {
-        const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
-          body: JSON.stringify({ event: 'referral_received', clientId: lead.id, affiliateId: affiliate.id }),
-        });
-        if (!partnerRes.ok) console.error('Affiliate referral notification failed.');
-      } catch (_error) {
-        console.error('Affiliate referral notification unavailable.');
-      }
-    }
+    // This call reaches a Netlify background function, whose only synchronous
+    // work is accepting the job. Email delivery and affiliate notification
+    // happen after this function returns and can never roll back the saved lead.
+    try { await enqueueLeadNotifications({ result, intent: payload.intent, base, serviceKey }); }
+    catch (_error) { console.error('Public intake notification dispatch unavailable.'); }
 
     return reply(200, {
       success: true,
@@ -270,4 +268,5 @@ exports._test = {
   isValidEmail,
   normalizeIntent,
   parsePayload,
+  enqueueLeadNotifications,
 };

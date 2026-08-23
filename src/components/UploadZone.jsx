@@ -25,7 +25,7 @@ const T = {
 const MODES = [
   { id: 'combined', label: '3-Bureau Combined', desc: 'Single file containing all three bureaus — ScoreFusion, IdentityIQ, MyScoreIQ', badge: 'Fastest' },
   { id: 'individual', label: '3 Individual Reports', desc: 'One file per bureau — parsed independently for maximum accuracy', badge: 'Most Accurate' },
-  { id: 'single', label: 'Single Bureau → Merge', desc: 'One oversized bureau at a time, then merge into one audit (best for 100+ page PDFs)', badge: 'Large PDFs' },
+  { id: 'single', label: 'Single Bureau Audit + Stage', desc: 'Create an incomplete one-bureau audit now, then merge an exact same-date 3B cohort later', badge: 'Large PDFs' },
 ];
 
 function DropZone({ label, file, onFile, onClear }) {
@@ -124,8 +124,8 @@ export default function UploadZone({ onAuditStart }) {
   };
 
   const handleMerge = () => {
-    if (clientSelection?.type !== 'existing' || !parseSummary?.canMerge) return;
-    onAuditStart({ mode: 'merge', clientSelection });
+    if (clientSelection?.type !== 'existing' || !parseSummary?.canMerge || !parseSummary?.mergeSelection) return;
+    onAuditStart({ mode: 'merge', clientSelection, mergeSelection: parseSummary.mergeSelection });
   };
 
   return (
@@ -182,8 +182,14 @@ export default function UploadZone({ onAuditStart }) {
       </button>
       {showInfo && (
         <div className="mb-5 rounded-xl p-4 text-[12px] leading-relaxed" style={{ background: '#F8FAFC', border: '1px solid ' + T.border, color: T.muted }}>
-          <p style={{ color: T.faint }}>Estimates vary with report size. Extraction instructions are cached between calls, and deterministic rules run locally without model tokens. Audits run server-side — once started, you can close this tab and the finished audit lands in the client&apos;s record.</p>
-          <p className="mt-2" style={{ color: T.faint }}>For 100+ page bureau PDFs, use Single Bureau → Merge so each file fits the 15-minute server window, then merge without re-uploading.</p>
+          <p style={{ color: T.faint }}>Estimates vary with report size. Extraction instructions are cached between calls, and deterministic rules run locally without model tokens. Audits run server-side in source-bound checkpoints — once started, you can close this tab and the finished audit lands in the client&apos;s record.</p>
+          <p className="mt-2" style={{ color: T.faint }}>Large PDFs automatically resume from the last completed page range after a provider delay, deploy, or worker interruption. Do not create a duplicate retry; reopen the same job and CCC continues it safely.</p>
+        </div>
+      )}
+
+      {mode === 'single' && parseSummary?.ambiguousVersionCount > 0 && (
+        <div className="mb-5 rounded-xl p-4 text-[12px] leading-relaxed" style={{ background: '#FFF7ED', border: '1px solid #FED7AA', color: '#9A3412' }}>
+          Multiple same-date versions exist for this staged cohort, so automatic merge is disabled to prevent mixing report cycles. Run one Combined or 3 Individual Reports audit for the corrected set.
         </div>
       )}
 
@@ -225,6 +231,11 @@ export default function UploadZone({ onAuditStart }) {
                 <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: T.faint }}>
                   Staged parses for this client
                 </div>
+                {parseSummary?.reportDate && (
+                  <div className="text-[12px] mb-2" style={{ color: T.ink }}>
+                    Newest report cohort: <strong>{parseSummary.reportDate}</strong>
+                  </div>
+                )}
                 {parseLoadError ? (
                   <p className="text-[12px] text-amber-700">
                     {parseLoadError.includes('audit_bureau_parses') || parseLoadError.includes('does not exist') || parseLoadError.includes('schema cache')
@@ -270,7 +281,7 @@ export default function UploadZone({ onAuditStart }) {
           : <>
               {mode === 'combined' && 'Run Forensic Audit'}
               {mode === 'individual' && (canSubmit() ? 'Run 3-Bureau Forensic Audit (~2–4 min)' : 'Upload all 3 bureau reports to continue')}
-              {mode === 'single' && `Parse ${selectedBureau} (stage for merge)`}
+              {mode === 'single' && `Run ${selectedBureau} audit + stage exact source`}
             </>}
       </button>
     </div>

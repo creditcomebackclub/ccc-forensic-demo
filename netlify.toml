@@ -78,6 +78,12 @@
 [functions."daily-cron"]
   schedule = "0 15 * * *"
 
+# Normal audit progress self-chains one durable checkpoint at a time. This
+# scheduled safety net reclaims only expired leases and dispatches missed due
+# retries after a platform kill/deploy interruption.
+[functions."audit-job-watchdog"]
+  schedule = "*/5 * * * *"
+
 # public-affiliate-lookup is public, unauthenticated, and read-only — unlike
 # public-intake.cjs (which has its own app-level honeypot + DB-tracked IP
 # throttle) this one has no protection at all against being hammered, or
@@ -98,6 +104,14 @@
   [functions."public-intake".rate_limit]
     window = "1m"
     limit = 5
+
+# The premium field guide stays outside the public publish directory and is
+# bundled only with its token-validated download function.
+[functions."guide-download"]
+  included_files = ["netlify/functions/assets/credit-comeback-club-credit-report-field-guide.pdf"]
+  [functions."guide-download".rate_limit]
+    window = "1m"
+    limit = 30
 
 # This unauthenticated legacy callback is tombstoned with HTTP 410. Keep an
 # edge cap while old browser bundles age out so it cannot become a noise sink.

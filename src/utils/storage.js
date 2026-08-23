@@ -4,6 +4,7 @@ import { buildPhaseProgress } from './phaseProgress';
 import { normalizeCccAccountTrackSnapshots } from './cccLetterTrackSnapshots';
 import { buildCccLetterIdentitySnapshot } from './cccLetterIdentity.js';
 import { normalizeDeletionOutcome } from './deletionOutcomes.js';
+import { compareOperationalAuditRows, operationalAudits } from './auditOperational.js';
 
 const DELETION_OUTCOME_COLUMNS = 'id,client_id,client_account_id,furnisher,account_type,bureau,bureau_code,account_last4,deletion_confirmed_at,source_kind,source_audit_id,source_letter_id,created_at,updated_at';
 
@@ -765,7 +766,9 @@ export async function getClientDetails(clientId) {
   if (deletionsRes.error && !deletionRegistryUnavailable(deletionsRes.error)) throw deletionsRes.error;
 
   const rawAudits = [...(auditsRes.data || []), ...(legacyAuditsRes.data || [])]
-    .sort((a, b) => (b.saved_at || '').localeCompare(a.saved_at || ''));
+    // An incomplete single-bureau result stays in history but never displaces
+    // the newest complete/legacy 3B audit consumed by the client UI.
+    .sort(compareOperationalAuditRows);
   const rawLetters = [...(lettersRes.data || []), ...(legacyLettersRes.data || [])]
     .sort((a, b) => (b.saved_at || '').localeCompare(a.saved_at || ''));
   const authorIds = [...new Set([
@@ -820,22 +823,63 @@ export async function findClientIdByLegacyReference(reference) {
 
 // clientId is optional and preferred over clientName when present — see
 // the client_id migration plan; clients.name has no unique constraint.
+async function resolveDeletionClientId(userId, clientName, clientId) {
+  if (clientId) return clientId;
+  const { data, error } = await supabase.from('clients').select('id')
+    .eq('user_id', userId).eq('name', clientName).limit(2);
+  if (error) throw error;
+  if ((data || []).length > 1) {
+    throw new Error('More than one client has this name. Open the exact client record before deleting.');
+  }
+  return data?.[0]?.id || null;
+}
+
+async function assertNoRetainedAuditJob(userId, clientId) {
+  if (!clientId) return;
+  const { data, error } = await supabase.from('audit_jobs').select('id')
+    .eq('user_id', userId).eq('selected_client_id', clientId).limit(1);
+  if (error) throw error;
+  if ((data || []).length) {
+    throw new Error('This client has retained forensic-audit evidence and cannot be permanently deleted. Archive or revert the client instead.');
+  }
+}
+
+async function deleteExactClientRowFirst(userId, clientId, requiredStatus = null) {
+  let query = supabase.from('clients').delete()
+    .eq('user_id', userId)
+    .eq('id', clientId);
+  if (requiredStatus) query = query.eq('status', requiredStatus);
+  const { data, error } = await query.select('id');
+  if (error) {
+    if (error.code === '23503') {
+      throw new Error('This client has retained operational or forensic evidence and cannot be permanently deleted. Archive or revert the client instead.');
+    }
+    throw error;
+  }
+  if ((data || []).length !== 1) {
+    throw new Error(requiredStatus
+      ? 'This lead is no longer eligible for permanent deletion. Refresh and review its current status.'
+      : 'This client was not found or is no longer available for deletion.');
+  }
+}
+
 export async function deleteClient(clientName, clientId) {
   const userId = await getUserId();
-  const [a, b, c] = await Promise.all([
-    clientId
-      ? supabase.from('audits').delete().eq('user_id', userId).eq('client_id', clientId)
-      : supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
-    clientId
-      ? supabase.from('letters').delete().eq('user_id', userId).eq('client_id', clientId)
-      : supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
-    clientId
-      ? supabase.from('clients').delete().eq('user_id', userId).eq('id', clientId)
-      : supabase.from('clients').delete().eq('user_id', userId).eq('name', clientName),
+  const exactClientId = await resolveDeletionClientId(userId, clientName, clientId);
+  await assertNoRetainedAuditJob(userId, exactClientId);
+  if (exactClientId) {
+    // Delete the parent first. PostgreSQL performs every CASCADE/RESTRICT
+    // check in this one atomic statement, so a concurrent audit-job insert
+    // can never leave the client's audits or letters partially erased.
+    await deleteExactClientRowFirst(userId, exactClientId);
+    return;
+  }
+  const [a, b] = await Promise.all([
+    supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
+    supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
   ]);
   if (a.error) throw a.error;
   if (b.error) throw b.error;
-  if (c.error) throw c.error;
 }
 
 export async function createLead({ name, email, phone, source, notes, referredBy }) {
@@ -859,9 +903,10 @@ export async function createLead({ name, email, phone, source, notes, referredBy
 export async function runProgressDiff(clientName, clientId) {
   const userId = await getUserId();
   const auditsQuery = clientId
-    ? supabase.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_id', clientId).order('report_date', { ascending: false }).limit(2)
-    : supabase.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_name', clientName).order('report_date', { ascending: false }).limit(2);
-  const { data: audits, error } = await auditsQuery;
+    ? supabase.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_id', clientId).order('report_date', { ascending: false }).limit(25)
+    : supabase.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_name', clientName).order('report_date', { ascending: false }).limit(25);
+  const { data: auditRows, error } = await auditsQuery;
+  const audits = operationalAudits(auditRows).slice(0, 2);
 
   if (error) throw error;
   if (!audits || audits.length < 2) {
@@ -965,26 +1010,24 @@ export async function revertClientToLead(clientName, clientId) {
 // this always has to tolerate falling back to clientName.
 export async function deleteLead(clientName, clientId) {
   const userId = await getUserId();
+  const exactClientId = await resolveDeletionClientId(userId, clientName, clientId);
+  await assertNoRetainedAuditJob(userId, exactClientId);
+  if (exactClientId) {
+    await deleteExactClientRowFirst(userId, exactClientId, 'lead');
+    return;
+  }
   // A "lead" in the dashboard can be a clients row, or purely synthesized
   // from orphan audits/letters with no clients row at all (any client_name
   // with no matching clients row reads as a lead). Only
   // deleting from clients left those orphan-only leads undeletable — the
   // delete matched zero rows, threw no error, and the lead reappeared on
   // reload. Clear all three, same as deleteClient().
-  const [a, b, c] = await Promise.all([
-    clientId
-      ? supabase.from('audits').delete().eq('user_id', userId).eq('client_id', clientId)
-      : supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
-    clientId
-      ? supabase.from('letters').delete().eq('user_id', userId).eq('client_id', clientId)
-      : supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
-    clientId
-      ? supabase.from('clients').delete().eq('user_id', userId).eq('id', clientId).eq('status', 'lead')
-      : supabase.from('clients').delete().eq('user_id', userId).eq('name', clientName).eq('status', 'lead'),
+  const [a, b] = await Promise.all([
+    supabase.from('audits').delete().eq('user_id', userId).eq('client_name', clientName),
+    supabase.from('letters').delete().eq('user_id', userId).eq('client_name', clientName),
   ]);
   if (a.error) throw a.error;
   if (b.error) throw b.error;
-  if (c.error) throw c.error;
 }
 
 // Recurring rows (month=null) repeat every month automatically; variable

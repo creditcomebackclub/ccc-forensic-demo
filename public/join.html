@@ -156,6 +156,7 @@ input:focus { outline: none; border-color: var(--navy); }
 }
 #successStep p { font-size: 13.5px; color: var(--muted); margin: 0 0 20px; line-height: 1.5; }
 .calendly-inline-widget { min-width: 280px; height: 380px; }
+.schedule-fallback { display:inline-block; margin-top:12px; color:var(--navy); font-size:13px; font-weight:700; text-underline-offset:3px; }
 @media (max-width: 480px) {
   .card { padding: 32px 22px 28px; border-radius: 16px; }
   h1 { font-size: 23px; }
@@ -202,8 +203,9 @@ input:focus { outline: none; border-color: var(--navy); }
   <div id="successStep">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
     <h2>Choose Your Consultation Time</h2>
-    <p>Book below. Once Calendly confirms your appointment, we'll email your preparation steps.</p>
+    <p data-intake-scheduling-note>Book below. Once Calendly confirms your appointment, we'll email your preparation steps.</p>
     <div class="calendly-inline-widget" data-url="https://calendly.com/creditcomebackclub/consultation"></div>
+    <a class="schedule-fallback" data-intake-calendly-fallback href="https://calendly.com/creditcomebackclub/consultation" target="_blank" rel="noopener noreferrer">Calendar not loading? Open scheduling directly →</a>
     <script type="text/javascript" src="https://assets.calendly.com/assets/external/widget.js" async></script>
   </div>
 </div>
@@ -258,12 +260,22 @@ const successStep = document.getElementById('successStep');
 const leadForm = document.getElementById('leadForm');
 const submitBtn = document.getElementById('submitBtn');
 const errorMsg = document.getElementById('errorMsg');
+const INTAKE_REQUEST_TIMEOUT_MS = 15000;
+
+function directCalendlyUrl(name, email) {
+  const url = new URL('https://calendly.com/creditcomebackclub/consultation');
+  url.searchParams.set('name', String(name || '').trim());
+  url.searchParams.set('email', String(email || '').trim().toLowerCase());
+  return url.toString();
+}
 
 function initializeIntakeCalendly(name, email) {
   const mount = successStep.querySelector('.calendly-inline-widget');
   if (!mount) return;
   const url = 'https://calendly.com/creditcomebackclub/consultation';
   const prefill = { name: String(name || '').trim(), email: String(email || '').trim().toLowerCase() };
+  const fallback = successStep.querySelector('[data-intake-calendly-fallback]');
+  if (fallback) fallback.href = directCalendlyUrl(name, email);
   const init = () => {
     if (!window.Calendly?.initInlineWidget) return;
     mount.innerHTML = '';
@@ -277,6 +289,16 @@ function initializeIntakeCalendly(name, email) {
     mount.dataset.url = fallbackUrl.toString();
     document.querySelector('script[src*="assets.calendly.com/assets/external/widget.js"]')?.addEventListener('load', init, { once: true });
   }
+}
+
+function showIntakeScheduling(payload, uncertain = false) {
+  const note = successStep.querySelector('[data-intake-scheduling-note]');
+  if (note) note.textContent = uncertain
+    ? 'The confirmation took longer than expected. You can still schedule directly below; your Calendly booking will securely complete the request.'
+    : 'Book below. Once Calendly confirms your appointment, we\'ll email your preparation steps.';
+  initializeIntakeCalendly(payload.name, payload.email);
+  formStep.style.display = 'none';
+  successStep.style.display = 'block';
 }
 
 leadForm.addEventListener('submit', async (e) => {
@@ -293,21 +315,28 @@ leadForm.addEventListener('submit', async (e) => {
     website: document.getElementById('leadWebsite').value
   };
 
+  const controller = new AbortController();
+  const requestTimer = setTimeout(() => controller.abort(), INTAKE_REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch('/api/public-intake', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
     if (!res.ok) throw new Error('Something went wrong — please try again.');
     await res.json();
-    initializeIntakeCalendly(payload.name, payload.email);
-    formStep.style.display = 'none';
-    successStep.style.display = 'block';
+    showIntakeScheduling(payload);
   } catch (err) {
+    if (err?.name === 'AbortError') {
+      showIntakeScheduling(payload, true);
+      return;
+    }
     errorMsg.textContent = err.message || 'Something went wrong — please try again.';
     submitBtn.disabled = false;
     submitBtn.textContent = 'Get My Free Consultation';
+  } finally {
+    clearTimeout(requestTimer);
   }
 });
 

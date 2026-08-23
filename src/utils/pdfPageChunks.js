@@ -26,6 +26,39 @@ export async function countPdfPages(pdfBytes) {
 }
 
 /**
+ * Rebuild one exact 1-indexed inclusive page range from its immutable source.
+ * Resumable checkpoints use this instead of relying on generated PDF bytes
+ * being bit-for-bit stable across separate Netlify invocations.
+ */
+export async function extractPdfPageRange(pdfBytes, { startPage, endPage } = {}) {
+  const bytes = toUint8Array(pdfBytes);
+  const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  const totalPages = src.getPageCount();
+  const start = Number(startPage);
+  const end = Number(endPage);
+  if (!Number.isInteger(start) || !Number.isInteger(end)
+      || start < 1 || end < start || end > totalPages) {
+    throw new Error(`Invalid PDF page range ${startPage}–${endPage} for ${totalPages} pages`);
+  }
+  if (start === 1 && end === totalPages) {
+    return {
+      bytes, base64: Buffer.from(bytes).toString('base64'),
+      startPage: start, endPage: end, totalPages,
+    };
+  }
+  const doc = await PDFDocument.create();
+  const indices = Array.from({ length: end - start + 1 }, (_, index) => start - 1 + index);
+  const copied = await doc.copyPages(src, indices);
+  copied.forEach((page) => doc.addPage(page));
+  const output = await doc.save();
+  const outputBytes = output instanceof Uint8Array ? output : new Uint8Array(output);
+  return {
+    bytes: outputBytes, base64: Buffer.from(outputBytes).toString('base64'),
+    startPage: start, endPage: end, totalPages,
+  };
+}
+
+/**
  * Split a PDF into page ranges of at most `maxPages` (with optional overlap).
  * Returns one chunk when the file is already under the limit.
  *

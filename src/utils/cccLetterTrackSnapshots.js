@@ -288,7 +288,7 @@ export function validateCccLetterTrackBinding({
   const first = snapshots[0];
   const concreteFlow = first?.concreteFlow;
   const concreteRound = first?.concreteRound;
-  if (!template || template.id !== letter.dispute_template_id
+  if (!template || template.is_active !== true || template.id !== letter.dispute_template_id
       || template.flow_code !== concreteFlow || Number(template.round_number) !== concreteRound) {
     issues.push('The saved CCC template no longer proves the bound concrete flow and round.');
   }

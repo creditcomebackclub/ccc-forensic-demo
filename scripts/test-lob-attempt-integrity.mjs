@@ -55,6 +55,9 @@ assert.match(webhook, /return_receipt_url=is\.null/);
 assert.match(webhook, /RENDERED_PDF_EVENTS[\s\S]*resolveCurrentMailAttempt[\s\S]*submissionId: resolved\.submission\.id[\s\S]*idempotencyKey: resolved\.submission\.idempotency_key[\s\S]*artifactType: 'mailpiece_pdf'/);
 assert.match(webhook, /ACTIVE_SUBMISSION_STATUSES/);
 assert.match(webhook, /TERMINAL_TRACKING_STATUSES/);
+assert.doesNotMatch(webhook, /signed_failed/, 'a signed render failure retains the exact frozen claim for safe retry');
+assert.match(webhook, /releaseCccTrackRevisionMailClaims\(resolved, 'signed_cancelled'/,
+  'only the signed cancellation lifecycle releases an accepted Lob claim');
 assert.doesNotMatch(webhook, /\/rest\/v1\/letters\?lob_id=eq\./, 'webhooks never patch or resolve letters by a non-unique Lob id');
 assert.doesNotMatch(webhook, /\/rest\/v1\/mail_submissions\?lob_id=eq\.[^\n]+\n\s*'PATCH'/, 'webhooks never mass-update submissions by Lob id');
 
@@ -197,7 +200,7 @@ try {
   const partialFailureRetry = await invokeWebhook({
     eventType: 'letter.failed',
     submissions: [baseSubmission],
-    letter: { ...baseLetter, tracking_status: 'Failed', mailed_date: null },
+    letter: { ...baseLetter, phase: 'CCC Dispute — Accuracy R1 — Equifax', tracking_status: 'Failed', mailed_date: null },
   });
   assert.equal(partialFailureRetry.result.statusCode, 200);
   assert.equal(JSON.parse(partialFailureRetry.result.body).reconciled, true, 'a retry heals a terminal letter whose exact submission write was interrupted');
@@ -205,6 +208,11 @@ try {
   assert.ok(reconciledSubmission);
   assert.match(reconciledSubmission.path, /lob_id=eq\.ltr_exact_attempt/);
   assert.match(reconciledSubmission.path, /status=eq\.submitted/);
+  assert.equal(
+    partialFailureRetry.calls.some((call) => call.path.includes('/rest/v1/rpc/release_ccc_track_revision_mail_claims')),
+    false,
+    'a signed failure never releases the exact packet/track-revision claim',
+  );
 
   const cancelled = await invokeWebhook({
     eventType: 'letter.deleted',
@@ -221,6 +229,25 @@ try {
   assert.ok(cancelledSubmission);
   assert.match(cancelledSubmission.path, /idempotency_key=eq\./);
   assert.match(cancelledSubmission.path, /status=eq\.submitted/);
+
+  const cccCancelled = await invokeWebhook({
+    eventType: 'letter.deleted',
+    submissions: [baseSubmission],
+    letter: { ...baseLetter, phase: 'CCC Dispute — Accuracy R1 — Equifax', tracking_status: 'Mailed' },
+    routeOverride: (options) => {
+      if (options.method === 'POST' && options.path === '/rest/v1/rpc/release_ccc_track_revision_mail_claims') {
+        return responseFor(200, 1);
+      }
+      return null;
+    },
+  });
+  assert.equal(cccCancelled.result.statusCode, 200);
+  const cancellationRelease = cccCancelled.calls.find((call) => call.path === '/rest/v1/rpc/release_ccc_track_revision_mail_claims');
+  assert.deepEqual(cancellationRelease?.body, {
+    p_letter_id: letterId,
+    p_mail_submission_id: submissionId,
+    p_release_reason: 'signed_cancelled',
+  }, 'a signed exact-attempt cancellation releases through the guarded server RPC only');
 
   const lateCancellation = await invokeWebhook({
     eventType: 'letter.deleted',

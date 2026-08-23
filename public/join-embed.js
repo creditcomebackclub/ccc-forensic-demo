@@ -126,8 +126,9 @@
       '<div class="ccc-success" data-ccc-success>' +
       '  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>' +
       '  <h2>You\'re In!</h2>' +
-      '  <p>Choose a time now and we\'ll email your preparation steps once your appointment is confirmed.</p>' +
+      '  <p data-ccc-scheduling-note>Choose a time now and we\'ll email your preparation steps once your appointment is confirmed.</p>' +
       '  <div data-ccc-calendly style="min-width:280px;height:430px"></div>' +
+      '  <a class="ccc-schedule-link" data-ccc-calendly-fallback href="https://calendly.com/creditcomebackclub/consultation" target="_blank" rel="noopener noreferrer">Open scheduling directly →</a>' +
       '</div>';
 
     if (refValid) {
@@ -166,9 +167,18 @@
     var errorMsg = container.querySelector('[data-ccc-error]');
     var calendlyPrefill = null;
 
+    function directCalendlyUrl() {
+      var url = new URL('https://calendly.com/creditcomebackclub/consultation');
+      url.searchParams.set('name', (calendlyPrefill && calendlyPrefill.name) || '');
+      url.searchParams.set('email', (calendlyPrefill && calendlyPrefill.email) || '');
+      return url.toString();
+    }
+
     function showCalendly() {
       var mount = container.querySelector('[data-ccc-calendly]');
       if (!mount) return;
+      var fallback = container.querySelector('[data-ccc-calendly-fallback]');
+      if (fallback) fallback.href = directCalendlyUrl();
       var init = function () {
         if (!window.Calendly || !window.Calendly.initInlineWidget) return;
         mount.innerHTML = '';
@@ -193,6 +203,20 @@
       }
     }
 
+    function showScheduling(payload, uncertain) {
+      calendlyPrefill = {
+        name: String(payload.name || '').trim(),
+        email: String(payload.email || '').trim().toLowerCase()
+      };
+      var note = container.querySelector('[data-ccc-scheduling-note]');
+      if (note) note.textContent = uncertain
+        ? 'The confirmation took longer than expected. You can still schedule directly below; your Calendly booking will securely complete the request.'
+        : 'Choose a time now and we\'ll email your preparation steps once your appointment is confirmed.';
+      formStep.style.display = 'none';
+      successStep.style.display = 'block';
+      showCalendly();
+    }
+
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       errorMsg.textContent = '';
@@ -207,25 +231,28 @@
         website: container.querySelector('[data-ccc-website]').value
       };
 
+      var controller = new AbortController();
+      var requestTimer = setTimeout(function () { controller.abort(); }, 15000);
       fetch(BASE + '/api/public-intake', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller.signal
       }).then(function (res) {
         if (!res.ok) throw new Error('Something went wrong — please try again.');
         return res.json();
       }).then(function () {
-        calendlyPrefill = {
-          name: String(payload.name || '').trim(),
-          email: String(payload.email || '').trim().toLowerCase()
-        };
-        formStep.style.display = 'none';
-        successStep.style.display = 'block';
-        showCalendly();
+        showScheduling(payload, false);
       }).catch(function (err) {
+        if (err && err.name === 'AbortError') {
+          showScheduling(payload, true);
+          return;
+        }
         errorMsg.textContent = (err && err.message) || 'Something went wrong — please try again.';
         submitBtn.disabled = false;
         submitBtn.textContent = 'Get My Free Consultation';
+      }).finally(function () {
+        clearTimeout(requestTimer);
       });
     });
 

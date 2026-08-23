@@ -15,6 +15,7 @@ import { requireAuth } from './_requireAuth.cjs';
 import { diffAuditAccounts, normalizeFurnisher } from '../../src/utils/diffEngine.js';
 import { buildPhaseProgress } from '../../src/utils/phaseProgress.js';
 import { PROGRESS_NARRATIVE_SYSTEM_PROMPT } from '../../src/prompts/progressNarrativePrompt.js';
+import { operationalAudits } from '../../src/utils/auditOperational.js';
 
 const MODEL = 'claude-sonnet-5';
 
@@ -133,14 +134,15 @@ export const handler = async (event) => {
   // callers/queued jobs that only ever knew clientName still work via the
   // fallback.
   const auditsQuery = clientId
-    ? db.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_id', clientId).order('report_date', { ascending: false }).limit(2)
-    : db.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_name', clientName).order('report_date', { ascending: false }).limit(2);
-  const { data: audits, error: auditsErr } = await auditsQuery;
+    ? db.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_id', clientId).order('report_date', { ascending: false }).limit(25)
+    : db.from('audits').select('id,report_date,audit').eq('user_id', userId).eq('client_name', clientName).order('report_date', { ascending: false }).limit(25);
+  const { data: auditRows, error: auditsErr } = await auditsQuery;
   if (auditsErr) {
     console.error('progress-narrative: audits fetch failed', auditsErr.message);
     return { statusCode: 500, body: 'audits fetch failed' };
   }
-  if (!audits || audits.length < 2) {
+  const audits = operationalAudits(auditRows).slice(0, 2);
+  if (audits.length < 2) {
     return { statusCode: 200, body: 'not enough audits yet — no-op' };
   }
 

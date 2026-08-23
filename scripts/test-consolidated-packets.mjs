@@ -17,7 +17,11 @@ import roundEmailModule from '../netlify/functions/_roundEmail.cjs';
 
 const TODAY = new Date('2026-08-14T12:00:00Z');
 const finding = (field, ruleId = `FIELD_${field}_MISMATCH`) => ({
-  ruleId, field: `Field ${field}`, outcome: 'FLAG', pageReferences: [{ bureau: 'equifax', page: 2 }],
+  ruleId,
+  field: `Field ${field}`,
+  outcome: 'FLAG',
+  evidenceRefs: [{ bureau: 'EQ', field: String(field), page: 2, rawValue: 'fixture value' }],
+  adjudication: { status: 'authorized', reason: 'Page-backed deterministic test fixture', by: 'fixture', at: '2026-08-14T12:00:00.000Z' },
 });
 
 const accountItem = (number, overrides = {}) => {

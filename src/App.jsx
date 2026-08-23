@@ -7,6 +7,7 @@ import { getUnanalyzedResponseStats } from './utils/actionItems';
 import { computeClientCommission } from './utils/affiliateCommission';
 import { getSettings } from './utils/settings';
 import { ADMIN_THEME_VARS } from './utils/adminBrand';
+import { listBureauParsesForClient, summarizeBureauParses } from './utils/auditBureauParses';
 import AffiliateProfilePanel from './components/AffiliateProfilePanel';
 import AffiliateApplicationsPanel from './components/AffiliateApplicationsPanel';
 
@@ -658,7 +659,7 @@ export default function App() {
         res = await runSingleBureauAudit(payload.file, payload.bureau, setAuditProgress, payload.clientSelection);
       } else if (payload.mode === 'merge') {
         setFileName('Merge bureau parses');
-        res = await runMergeBureauAudits(payload.clientSelection, setAuditProgress);
+        res = await runMergeBureauAudits(payload.clientSelection, setAuditProgress, payload.mergeSelection);
       }
       setAuditResult(res.audit);
       setState(STATE.RESULTS);
@@ -679,9 +680,17 @@ export default function App() {
     setError(null);
     setFileName('Merge bureau parses');
     try {
+      const rows = await listBureauParsesForClient({
+        type: 'existing', id: auditResult.clientId, name: auditResult.clientName,
+      });
+      const summary = summarizeBureauParses(rows);
+      if (!summary.canMerge || !summary.mergeSelection) {
+        throw new Error('The exact same-date three-bureau cohort is not ready. Return to upload and run the missing bureau.');
+      }
       const res = await runMergeBureauAudits(
         { type: 'existing', id: auditResult.clientId, name: auditResult.clientName },
         setAuditProgress,
+        summary.mergeSelection,
       );
       setAuditResult(res.audit);
       setState(STATE.RESULTS);

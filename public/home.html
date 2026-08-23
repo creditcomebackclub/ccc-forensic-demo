@@ -403,6 +403,7 @@ section{padding:60px 18px;}
 .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
 .modal-success { text-align: center; display: none; }
 .modal-success svg { width: 48px; height: 48px; color: #10B981; margin-bottom: 16px; }
+.intake-schedule-fallback { display:inline-block; margin:12px 0 2px; color:var(--navy); font-weight:700; text-decoration:underline; text-underline-offset:3px; }
 </style>
 </head>
 <body>
@@ -770,7 +771,7 @@ Your browser does not support the video tag.
 </div>
 <div class="footer-col">
 <h4>Resources</h4>
-<a href="https://creditcomebackclub.netlify.app/freeguide" target="_blank">Free Dispute Guide</a>
+<a href="/freeguide.html">Free Credit Report Field Guide</a>
 <a href="/login">Client Portal Login</a>
 <a href="/terms.html" target="_blank">Terms of Service</a>
 <a href="/privacy.html" target="_blank">Privacy Policy</a>
@@ -817,9 +818,10 @@ Your browser does not support the video tag.
     <div id="intakeSuccessStep" class="modal-success">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
       <div class="modal-title">You're Ready to Schedule</div>
-      <div class="modal-sub">Choose a time below. Once Calendly confirms your appointment, we'll email your preparation steps.</div>
+      <div class="modal-sub" data-intake-scheduling-note>Choose a time below. Once Calendly confirms your appointment, we'll email your preparation steps.</div>
       <!-- Calendly inline widget begin -->
       <div class="calendly-inline-widget" data-url="https://calendly.com/creditcomebackclub/consultation" style="min-width:320px;height:400px;"></div>
+      <a class="intake-schedule-fallback" data-intake-calendly-fallback href="https://calendly.com/creditcomebackclub/consultation" target="_blank" rel="noopener noreferrer">Calendar not loading? Open scheduling directly →</a>
       <script type="text/javascript" src="https://assets.calendly.com/assets/external/widget.js" async></script>
       <!-- Calendly inline widget end -->
     </div>
@@ -917,12 +919,22 @@ const intakeSuccessStep = document.getElementById('intakeSuccessStep');
 const intakeForm = document.getElementById('intakeForm');
 const intakeSubmitBtn = document.getElementById('intakeSubmitBtn');
 const intakeTier = document.getElementById('intakeTier');
+const INTAKE_REQUEST_TIMEOUT_MS = 15000;
+
+function directCalendlyUrl(name, email) {
+  const url = new URL('https://calendly.com/creditcomebackclub/consultation');
+  url.searchParams.set('name', String(name || '').trim());
+  url.searchParams.set('email', String(email || '').trim().toLowerCase());
+  return url.toString();
+}
 
 function initializeIntakeCalendly(name, email) {
   const mount = intakeSuccessStep.querySelector('.calendly-inline-widget');
   if (!mount) return;
   const url = 'https://calendly.com/creditcomebackclub/consultation';
   const prefill = { name: String(name || '').trim(), email: String(email || '').trim().toLowerCase() };
+  const fallback = intakeSuccessStep.querySelector('[data-intake-calendly-fallback]');
+  if (fallback) fallback.href = directCalendlyUrl(name, email);
   const init = () => {
     if (!window.Calendly?.initInlineWidget) return;
     mount.innerHTML = '';
@@ -936,6 +948,16 @@ function initializeIntakeCalendly(name, email) {
     mount.dataset.url = fallbackUrl.toString();
     document.querySelector('script[src*="assets.calendly.com/assets/external/widget.js"]')?.addEventListener('load', init, { once: true });
   }
+}
+
+function showIntakeScheduling(payload, uncertain = false) {
+  const note = intakeSuccessStep.querySelector('[data-intake-scheduling-note]');
+  if (note) note.textContent = uncertain
+    ? 'The confirmation took longer than expected. You can still schedule directly below; your Calendly booking will securely complete the request.'
+    : 'Choose a time below. Once Calendly confirms your appointment, we\'ll email your preparation steps.';
+  initializeIntakeCalendly(payload.name, payload.email);
+  intakeFormStep.style.display = 'none';
+  intakeSuccessStep.style.display = 'block';
 }
 
 function openIntake(tier) {
@@ -964,24 +986,29 @@ intakeForm.addEventListener('submit', async (e) => {
     website: document.getElementById('intakeWebsite').value
   };
 
+  const controller = new AbortController();
+  const requestTimer = setTimeout(() => controller.abort(), INTAKE_REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch('/api/public-intake', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
     
     if (!res.ok) throw new Error('Failed to submit');
     await res.json();
-    initializeIntakeCalendly(payload.name, payload.email);
-    
-    // Show success / Calendly
-    intakeFormStep.style.display = 'none';
-    intakeSuccessStep.style.display = 'block';
+    showIntakeScheduling(payload);
   } catch (err) {
+    if (err?.name === 'AbortError') {
+      showIntakeScheduling(payload, true);
+      return;
+    }
     alert('Sorry, there was an error submitting your request. Please try again.');
     intakeSubmitBtn.disabled = false;
     intakeSubmitBtn.textContent = 'Continue to Scheduling →';
+  } finally {
+    clearTimeout(requestTimer);
   }
 });
 

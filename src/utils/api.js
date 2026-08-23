@@ -21,8 +21,8 @@ export async function runSingleBureauAudit(file, bureau, onProgress, clientSelec
   return runAuditJob({ mode: 'single', files: [{ file, bureau }], clientSelection }, onProgress);
 }
 
-export async function runMergeBureauAudits(clientSelection, onProgress) {
-  return runAuditJob({ mode: 'merge', files: [], clientSelection }, onProgress);
+export async function runMergeBureauAudits(clientSelection, onProgress, mergeSelection) {
+  return runAuditJob({ mode: 'merge', files: [], clientSelection, mergeSelection }, onProgress);
 }
 
 export async function getReturnReceiptUrl(lobId) {

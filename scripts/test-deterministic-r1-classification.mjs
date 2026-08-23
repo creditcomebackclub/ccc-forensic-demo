@@ -19,8 +19,16 @@ function account(overrides = {}) {
     balance: 500,
     paymentHistory: 'OK OK OK',
     remarks: null,
+    accountIdentityEvidencePage: 1,
+    reportedTypeEvidencePage: 1,
+    statusTextEvidencePage: 1,
+    remarksEvidencePage: null,
     ...overrides,
   };
+  row.accountIdentityEvidencePage = row.furnisher || row.originalCreditor || row.accountNumber ? 1 : null;
+  row.reportedTypeEvidencePage = row.reportedType ? 1 : null;
+  row.statusTextEvidencePage = row.statusText ? 1 : null;
+  row.remarksEvidencePage = row.remarks ? 1 : null;
   if (!Object.prototype.hasOwnProperty.call(overrides, 'evidence')) {
     row.evidence = [
       'furnisher', 'originalCreditor', 'reportedType', 'accountType', 'accountStatus',
@@ -35,10 +43,24 @@ function account(overrides = {}) {
 function report(bureau, accounts = []) {
   return {
     bureau,
-    client,
+    bureauEvidencePage: 1,
+    reportDate: '2026-08-20',
+    reportDateEvidencePage: 1,
+    client: {
+      ...client,
+      nameEvidencePage: 1,
+      addressEvidencePage: 1,
+      scoreEvidencePage: 1,
+    },
     accounts,
     inquiries: [],
-    personalInfo: { formerAddresses: [], nameVariants: [], formerEmployers: [], currentAddress: client.address },
+    personalInfo: {
+      formerAddresses: [],
+      nameVariants: [],
+      formerEmployers: [],
+      currentAddress: client.address,
+      currentAddressEvidencePage: 1,
+    },
   };
 }
 
@@ -149,14 +171,17 @@ const suffixAmbiguity = buildDeterministicAudit(completeReports({
 assert.equal(suffixAmbiguity.accounts.length, 2);
 assert.ok(suffixAmbiguity.accounts.every((item) => item.routingFacts.blockingCodes.includes('ACCOUNT_MATCH_AMBIGUOUS')));
 
-const narrativeOnly = buildDeterministicAudit(sameEverywhere(account({
+const narrativeOnly = account({
   furnisher: 'Narrative Collector', accountType: null, accountStatus: null,
   reportedType: 'Collection account', statusText: 'Placed for collection', evidence: [],
-})));
-assert.equal(narrativeOnly.accounts[0].accountKind, 'other');
-assert.equal(narrativeOnly.accounts[0].routingFacts.status, 'review_required');
-assert.ok(narrativeOnly.accounts[0].routingFacts.blockingCodes.includes('CATEGORY_EVIDENCE_UNANCHORED'));
-assert.ok(narrativeOnly.accounts[0].routingFacts.evidence.some((item) => item.source === 'narrative_unanchored' && item.autoEligible === false));
+});
+narrativeOnly.reportedTypeEvidencePage = null;
+narrativeOnly.statusTextEvidencePage = null;
+assert.throws(
+  () => buildDeterministicAudit(sameEverywhere(narrativeOnly)),
+  /has no source page reference/,
+  'narrative-only account labels cannot enter classification without exact page evidence',
+);
 
 const zeroLate = {
   ...lateAccount,

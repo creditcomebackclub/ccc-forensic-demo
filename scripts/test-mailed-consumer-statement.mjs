@@ -149,10 +149,15 @@ assert.match(lobFunction, /flow === 'direct'[\s\S]*return 'direct'/);
 assert.match(lobFunction, /consumer_statement_captured_at=is\.null/);
 assert.match(lobFunction, /consumer_statement_text: evidence\?\.text \|\| null/);
 assert.match(lobFunction, /existing\?\.consumer_statement_sha256 === \(evidence\?\.sha256 \|\| null\)/);
+assert.match(
+  lobFunction,
+  /roundReasonRenderIssues\(\{[\s\S]*editableSections: letter\.dispute_editable_sections/,
+  'the frozen editable snapshot is used only to prove the saved rendered body exactly before mail',
+);
 assert.doesNotMatch(
   lobFunction,
-  /dispute_editable_sections/,
-  'mail-time evidence is never derived from the browser-supplied editable-sections snapshot',
+  /mailedConsumerStatementEvidence\(\s*letter\.dispute_editable_sections/,
+  'mail-time Consumer Statement evidence comes from the exact signed HTML, never the browser snapshot',
 );
 assert.ok(
   lobFunction.indexOf('await captureMailedConsumerStatement(')

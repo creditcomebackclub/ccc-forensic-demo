@@ -2731,6 +2731,224 @@ select[aria-invalid="true"] {
   margin-left: 3px;
 }
 
+.community-section {
+  background:
+    radial-gradient(circle at 9% 14%, rgba(102, 199, 244, 0.2), transparent 25%),
+    linear-gradient(180deg, #f4faff 0%, #ffffff 100%);
+}
+
+.community-card {
+  background:
+    radial-gradient(circle at 93% 4%, rgba(102, 199, 244, 0.26), transparent 28%),
+    linear-gradient(135deg, #071019 0%, #0a2232 100%);
+  border: 1px solid rgba(102, 199, 244, 0.2);
+  border-radius: 38px;
+  box-shadow: 0 34px 90px rgba(7, 27, 40, 0.18);
+  color: var(--white);
+  display: grid;
+  gap: 64px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(285px, 0.8fr);
+  overflow: hidden;
+  padding: 68px;
+  position: relative;
+}
+
+.community-copy {
+  position: relative;
+  z-index: 1;
+}
+
+.community-copy .eyebrow {
+  color: var(--blue-light);
+}
+
+.community-copy h2 {
+  font-size: clamp(42px, 5vw, 66px);
+  line-height: 0.98;
+  margin: 10px 0 24px;
+  max-width: 760px;
+}
+
+.community-lede {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 15px;
+  line-height: 1.78;
+  margin-bottom: 30px;
+  max-width: 720px;
+}
+
+.community-benefits {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0 0 34px;
+  padding: 0;
+}
+
+.community-benefits li {
+  align-items: start;
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px;
+  color: rgba(255, 255, 255, 0.62);
+  display: grid;
+  font-size: 12px;
+  gap: 4px 14px;
+  grid-template-columns: 38px 1fr;
+  line-height: 1.55;
+  padding: 15px 17px;
+}
+
+.community-benefits li > span {
+  align-items: center;
+  background: rgba(102, 199, 244, 0.12);
+  border: 1px solid rgba(102, 199, 244, 0.26);
+  border-radius: 11px;
+  color: var(--blue-light);
+  display: flex;
+  font-size: 8px;
+  font-weight: 850;
+  grid-row: 1 / span 2;
+  height: 34px;
+  justify-content: center;
+  letter-spacing: 0.08em;
+  width: 34px;
+}
+
+.community-benefits strong {
+  color: var(--white);
+  font-size: 13px;
+}
+
+.community-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 15px 20px;
+}
+
+.button-community {
+  background: var(--blue);
+  color: var(--white);
+}
+
+.button-community:hover {
+  background: var(--blue-light);
+  color: var(--ink);
+}
+
+.community-actions > span {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.community-proof {
+  align-self: stretch;
+  background: linear-gradient(155deg, #ffffff 0%, #eaf7ff 100%);
+  border: 1px solid rgba(102, 199, 244, 0.52);
+  border-radius: 28px;
+  box-shadow: 0 24px 65px rgba(0, 0, 0, 0.22);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 38px;
+  position: relative;
+  transform: rotate(1.5deg);
+}
+
+.community-proof-kicker {
+  color: var(--blue-deep);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+  margin-bottom: 18px;
+  text-transform: uppercase;
+}
+
+.community-proof > strong {
+  font-size: clamp(31px, 3.4vw, 46px);
+  letter-spacing: -0.045em;
+  line-height: 1.03;
+}
+
+.community-proof > p {
+  font-size: 13px;
+  line-height: 1.72;
+  margin: 22px 0 0;
+}
+
+.community-proof-rule {
+  background: linear-gradient(90deg, var(--blue), transparent);
+  height: 2px;
+  margin: 28px 0 18px;
+  width: 100%;
+}
+
+.community-proof > small {
+  color: var(--ink-muted);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+
+@media (max-width: 860px) {
+  .community-card {
+    gap: 34px;
+    grid-template-columns: 1fr;
+    padding: 46px;
+  }
+
+  .community-proof {
+    min-height: 330px;
+    transform: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .community-card {
+    border-radius: 26px;
+    padding: 34px 22px;
+  }
+
+  .community-copy h2 {
+    font-size: 39px;
+  }
+
+  .community-lede {
+    font-size: 14px;
+  }
+
+  .community-benefits li {
+    grid-template-columns: 34px 1fr;
+    padding: 14px;
+  }
+
+  .community-actions,
+  .button-community {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .community-actions {
+    flex-direction: column;
+  }
+
+  .button-community {
+    justify-content: center;
+    text-align: center;
+  }
+
+  .community-proof {
+    min-height: 0;
+    padding: 30px 25px;
+  }
+}
+
 .owner-input-pill {
   align-self: flex-start;
   background: #fff4d8;

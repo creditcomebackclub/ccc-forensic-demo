@@ -1067,7 +1067,9 @@ export default function ClientsPage({ onOpenAudit, isAdmin, jumpTo, filter: init
 
     const openAccount = (letter) => {
       const clientLetters = c.letters.filter((pl) => pl.accountId === letter.accountId && pl.furnisher === letter.furnisher);
-      const latestAudit = [...c.audits].sort((a, b) => (b.reportDate || '').localeCompare(a.reportDate || ''))[0];
+      // storage already ranks complete/legacy 3B baselines before immutable
+      // single-bureau staging results. Preserve that operational ordering.
+      const latestAudit = c.audits[0];
       const accountData = latestAudit && latestAudit.audit && latestAudit.audit.accounts
         ? latestAudit.audit.accounts.find((a) => a.id === letter.accountId)
         : null;

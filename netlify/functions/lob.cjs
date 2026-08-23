@@ -79,6 +79,80 @@ function supabaseRequest(path, method, body, supabaseUrl, serviceKey, extraHeade
 // allowlist has to see it too.
 const MAIL_ASSET_URL_RE = /(?:\bsrc\s*=\s*["']?|url\(\s*["']?)(https?:\/\/[^"')\s>]+)/gi;
 const CCC_SCREENSHOT_MARKER_RE = /\bdata-ccc-screenshot-id\s*=\s*["']([^"']+)["']/gi;
+const MAILPIECE_TAG_RE = /<([a-z][a-z0-9:-]*)\b([^>]*)>/gi;
+const MAILPIECE_DEPENDENCY_ATTR_RE = /\b(src|href|srcset|poster|action|formaction|data|cite|background)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/gi;
+const MAILPIECE_CSS_URL_RE = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^\s"')]+))\s*\)/gi;
+const MAILPIECE_CSS_IMPORT_RE = /@import\s+(?:url\(\s*)?(?:"([^"]*)"|'([^']*)'|([^\s"');]+))/gi;
+const ACTIVE_REMOTE_MARKUP_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'base', 'form']);
+
+function isInlineOrFragmentDependency(value) {
+  const candidate = String(value || '').trim();
+  return !candidate
+    || candidate.startsWith('#')
+    || /^(?:data|mailto|tel|cid):/i.test(candidate);
+}
+
+function splitDependencyValue(attribute, value) {
+  if (attribute !== 'srcset') return [String(value || '').trim()];
+  return String(value || '').split(',').map((entry) => entry.trim().split(/\s+/)[0]).filter(Boolean);
+}
+
+/**
+ * Lob executes its own renderer. Permit only the exact HTTPS image `src`
+ * values that the exhibit binder will re-read byte-for-byte. Hyperlinks,
+ * stylesheets, CSS imports/URLs, active elements, relative resources, and
+ * every other external dependency fail closed before a claim or purchase.
+ */
+function scanMailpieceExternalDependencies(htmlValue) {
+  const html = String(htmlValue || '');
+  const networkUrls = [];
+  const issues = [];
+  MAILPIECE_TAG_RE.lastIndex = 0;
+  let tagMatch;
+  while ((tagMatch = MAILPIECE_TAG_RE.exec(html)) !== null) {
+    const tag = String(tagMatch[1] || '').toLowerCase();
+    const attributes = String(tagMatch[2] || '');
+    if (ACTIVE_REMOTE_MARKUP_TAGS.has(tag)) {
+      issues.push(`CCC mailpieces may not contain active <${tag}> markup.`);
+    }
+    if (tag === 'meta' && /\bhttp-equiv\s*=\s*["']?refresh\b/i.test(attributes)) {
+      issues.push('CCC mailpieces may not contain a meta refresh dependency.');
+    }
+    MAILPIECE_DEPENDENCY_ATTR_RE.lastIndex = 0;
+    let attributeMatch;
+    while ((attributeMatch = MAILPIECE_DEPENDENCY_ATTR_RE.exec(attributes)) !== null) {
+      const attribute = String(attributeMatch[1] || '').toLowerCase();
+      const rawValue = attributeMatch[2] ?? attributeMatch[3] ?? attributeMatch[4] ?? '';
+      for (const value of splitDependencyValue(attribute, rawValue)) {
+        if (isInlineOrFragmentDependency(value)) continue;
+        if (tag === 'img' && attribute === 'src' && /^https:\/\/[^"'<>\s]+$/i.test(value)) {
+          networkUrls.push(value);
+        } else {
+          issues.push(`CCC mailpieces may not load ${tag}.${attribute} from ${value}.`);
+        }
+      }
+    }
+  }
+
+  MAILPIECE_CSS_URL_RE.lastIndex = 0;
+  let cssMatch;
+  while ((cssMatch = MAILPIECE_CSS_URL_RE.exec(html)) !== null) {
+    const value = cssMatch[1] ?? cssMatch[2] ?? cssMatch[3] ?? '';
+    if (!isInlineOrFragmentDependency(value)) {
+      issues.push(`CCC mailpieces may not load a CSS url() dependency from ${value}.`);
+    }
+  }
+  MAILPIECE_CSS_IMPORT_RE.lastIndex = 0;
+  while ((cssMatch = MAILPIECE_CSS_IMPORT_RE.exec(html)) !== null) {
+    const value = cssMatch[1] ?? cssMatch[2] ?? cssMatch[3] ?? '';
+    issues.push(`CCC mailpieces may not contain CSS @import (${value || 'unresolved source'}).`);
+  }
+
+  return {
+    urls: [...new Set(networkUrls)],
+    issues: [...new Set(issues)],
+  };
+}
 
 const CCC_RETURN_ADDRESS = Object.freeze({
   name: 'Credit Comeback Club',
@@ -90,6 +164,23 @@ const CCC_RETURN_ADDRESS = Object.freeze({
 });
 const CURRENT_CCC_MAIL_SERVICE = 'usps_first_class';
 const MAX_CCC_EXHIBIT_BYTES = 8 * 1024 * 1024;
+const LOB_PREACCEPT_VALIDATION_CODES = new Set([
+  'ADDRESS_LENGTH_EXCEEDS_LIMIT',
+  'FAILED_DELIVERABILITY_STRICTNESS',
+  'FILE_PAGES_BELOW_MIN',
+  'FILE_PAGES_EXCEED_MAX',
+  'FILE_SIZE_EXCEEDS_LIMIT',
+  'FOREIGN_RETURN_ADDRESS',
+  'INCONSISTENT_PAGE_DIMENSIONS',
+  'INVALID_FILE',
+  'INVALID_FILE_DIMENSIONS',
+  'INVALID_IMAGE_DPI',
+  'INVALID_INTERNATIONAL_FEATURE',
+  'INVALID_PERFORATION_RETURN_ENVELOPE',
+  'INVALID_TEMPLATE_HTML',
+  'MAIL_USE_TYPE_CAN_NOT_BE_NULL',
+  'UNEMBEDDED_FONTS',
+]);
 
 const MAILPIECE_PREFLIGHT_TIMEOUT_MS = 15000;
 
@@ -119,6 +210,14 @@ function normalizedAddressKey(address) {
   return [address?.name, address?.line1, address?.line2 || '', address?.city, address?.state, address?.zip]
     .map((value) => String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ''))
     .join('|');
+}
+
+function cccRecipientClaimSnapshot(address, furnisherKey = null) {
+  return {
+    version: 1,
+    addressKey: normalizedAddressKey(address),
+    furnisherKey: furnisherKey || null,
+  };
 }
 
 function signedStorageObjectIdentity(value, supabaseUrl) {
@@ -179,6 +278,34 @@ function sha256Hex(bytes) {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
+function cccPrintableLetterClaimSnapshot(letter) {
+  return {
+    version: 1,
+    htmlSha256: sha256Hex(Buffer.from(String(letter?.html || ''), 'utf8')),
+    phase: letter?.phase ?? null,
+    clientId: letter?.client_id ?? null,
+    clientAccountId: letter?.client_account_id ?? null,
+    clientName: letter?.client_name ?? null,
+    accountId: letter?.account_id ?? null,
+    furnisher: letter?.furnisher ?? null,
+    targetType: letter?.target_type ?? null,
+    targetBureau: letter?.target_bureau ?? null,
+    coveredFurnishers: letter?.covered_furnishers ?? null,
+    disputeTemplateId: letter?.dispute_template_id ?? null,
+    disputeFlowCode: letter?.dispute_flow_code ?? null,
+    disputeRoundNumber: letter?.dispute_round_number ?? null,
+    disputeBureauCode: letter?.dispute_bureau_code ?? null,
+    disputeTemplateSnapshot: letter?.dispute_template_snapshot ?? null,
+    disputeEditableSections: letter?.dispute_editable_sections ?? null,
+    disputeAccountSnapshot: letter?.dispute_account_snapshot ?? null,
+    cccAccountTrackSnapshots: letter?.ccc_account_track_snapshots ?? null,
+    cccLetterIdentitySnapshot: letter?.ccc_letter_identity_snapshot ?? null,
+    disputeAutomaticValuesSnapshot: letter?.dispute_automatic_values_snapshot ?? null,
+    disputeScreenshotPolicySnapshot: letter?.dispute_screenshot_policy_snapshot ?? null,
+    disputeScreenshotManifest: letter?.dispute_screenshot_manifest ?? null,
+  };
+}
+
 function scanRemoteAssetUrls(fileUrl) {
   return new Promise((resolve, reject) => {
     const u = new URL(fileUrl);
@@ -218,14 +345,12 @@ function scanRemoteAssetUrls(fileUrl) {
       res.on('end', () => {
         if (rejected) return;
         const html = Buffer.concat(chunks, receivedBytes).toString('utf8');
-        const found = new Set();
+        const dependencyScan = scanMailpieceExternalDependencies(html);
         const screenshotIds = [];
-        MAIL_ASSET_URL_RE.lastIndex = 0;
         let match;
-        while ((match = MAIL_ASSET_URL_RE.exec(html)) !== null) found.add(match[1]);
         CCC_SCREENSHOT_MARKER_RE.lastIndex = 0;
         while ((match = CCC_SCREENSHOT_MARKER_RE.exec(html)) !== null) screenshotIds.push(match[1]);
-        resolve({ html, urls: Array.from(found), screenshotIds });
+        resolve({ html, urls: dependencyScan.urls, dependencyIssues: dependencyScan.issues, screenshotIds });
       });
       res.on('error', reject);
     });
@@ -245,6 +370,7 @@ function isSuccess(res) {
 
 function requestError(res, fallback) {
   if (!res) return fallback;
+  if (typeof res.body === 'object' && res.body?.error?.message) return res.body.error.message;
   if (typeof res.body === 'object' && res.body?.message) return res.body.message;
   if (typeof res.body === 'string' && res.body) return res.body;
   return fallback;
@@ -253,7 +379,7 @@ function requestError(res, fallback) {
 async function findLetter(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/letters?id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,user_id,client_id,client_account_id,client_name,furnisher,phase,round_id,round_number,letter_kind,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,mail_service,expected_delivery_date,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,campaign_id,campaign_route_id,packet_version,dispute_basis,dispute_template_id,dispute_flow_code,dispute_round_number,dispute_bureau_code,dispute_template_snapshot,dispute_account_snapshot,ccc_account_track_snapshots,ccc_letter_identity_snapshot,dispute_automatic_values_snapshot,dispute_screenshot_policy_snapshot,dispute_screenshot_manifest',
+      + '&select=id,user_id,client_id,client_account_id,account_id,client_name,furnisher,phase,round_id,round_number,letter_kind,target_type,target_bureau,html,covered_furnishers,lob_id,mailed_date,tracking_number,tracking_status,mail_service,expected_delivery_date,enclosure_parse_blocked,enclosure_parse_issues,source_phase3_letter_id,source_bureau_response_evidence_id,campaign_id,campaign_route_id,packet_version,dispute_basis,dispute_template_id,dispute_flow_code,dispute_round_number,dispute_bureau_code,dispute_template_snapshot,dispute_editable_sections,dispute_account_snapshot,ccc_account_track_snapshots,ccc_letter_identity_snapshot,dispute_automatic_values_snapshot,dispute_screenshot_policy_snapshot,dispute_screenshot_manifest',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load letter before mailing'));
@@ -267,6 +393,11 @@ async function validateCccTrackSnapshotPreflight(letter, toAddress, supabaseUrl,
     normalizeCccAccountTrackSnapshots,
     validateCccLetterTrackBinding,
   } = await import('../../src/utils/cccLetterTrackSnapshots.js');
+  const {
+    privateInstructionLeakIssues,
+    roundReasonRenderIssues,
+    validateRoundReasonSnapshots,
+  } = await import('../../src/utils/disputeReasonSelection.js');
 
   let snapshots;
   try {
@@ -278,7 +409,7 @@ async function validateCccTrackSnapshotPreflight(letter, toAddress, supabaseUrl,
   const trackIds = snapshots.map((snapshot) => snapshot.trackId);
   const tracksResult = await supabaseRequest(
     '/rest/v1/ccc_account_tracks?id=in.(' + trackIds.map(encodeURIComponent).join(',') + ')'
-      + '&select=id,user_id,client_id,client_account_id,track_scope,bureau_code,method_version,account_kind,native_flow,current_flow,current_round,path_role,status,cycle,revision',
+      + '&select=id,user_id,client_id,client_account_id,track_scope,bureau_code,method_version,account_kind,native_flow,current_flow,current_round,path_role,status,cycle,revision,source_audit_snapshot',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(tracksResult)) throw new Error(requestError(tracksResult, 'Could not reload the bound CCC account tracks'));
@@ -286,7 +417,7 @@ async function validateCccTrackSnapshotPreflight(letter, toAddress, supabaseUrl,
   if (!letter.dispute_template_id) return ['A CCC letter requires its exact library template before mailing.'];
   const templateResult = await supabaseRequest(
     '/rest/v1/dispute_templates?id=eq.' + encodeURIComponent(letter.dispute_template_id)
-      + '&select=id,flow_code,round_number,bureau_code',
+      + '&select=id,flow_code,round_number,bureau_code,body_text,is_active',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(templateResult)) throw new Error(requestError(templateResult, 'Could not reload the bound CCC template'));
@@ -307,13 +438,39 @@ async function validateCccTrackSnapshotPreflight(letter, toAddress, supabaseUrl,
     }
   }
 
-  return validateCccLetterTrackBinding({
+  const tracks = Array.isArray(tracksResult.body) ? tracksResult.body : [];
+  const bindingIssues = validateCccLetterTrackBinding({
     letter,
-    tracks: Array.isArray(tracksResult.body) ? tracksResult.body : [],
+    tracks,
     template,
     toAddress,
     verifiedDirectRecipient,
   });
+  if (snapshots[0]?.trackScope !== 'cra') return bindingIssues;
+  let reasonIssues;
+  try {
+    reasonIssues = validateRoundReasonSnapshots({
+      accountSnapshots: letter.dispute_account_snapshot,
+      tracks,
+      bureauCode: letter.dispute_bureau_code,
+    });
+  } catch {
+    reasonIssues = ['The saved account/reason snapshot could not be verified against the frozen audit evidence.'];
+  }
+  return [
+    ...bindingIssues,
+    ...(template?.body_text === letter.dispute_template_snapshot
+      ? [] : ['The active template body no longer matches the frozen letter template. Rebuild the letter before mailing.']),
+    ...reasonIssues,
+    ...privateInstructionLeakIssues(letter.dispute_account_snapshot, letter.html),
+    ...roundReasonRenderIssues({
+      accountSnapshots: letter.dispute_account_snapshot,
+      automaticValues: letter.dispute_automatic_values_snapshot,
+      editableSections: letter.dispute_editable_sections,
+      templateText: letter.dispute_template_snapshot,
+      renderedHtml: letter.html,
+    }),
+  ];
 }
 
 function normalizedRecipient(value) {
@@ -957,6 +1114,7 @@ async function validateCccRenderedMailpiece({
 }) {
   const {
     canonicalizeCccLetterHtml,
+    canonicalizeCccMailpieceClaim,
     cccExhibitImageUrl,
     cccLetterBindingInput,
     inspectBoundCccMailpiece,
@@ -985,7 +1143,9 @@ async function validateCccRenderedMailpiece({
   } catch (error) {
     issues.push(error.message);
   }
-  if (binding.issues.length) return [...new Set(issues)];
+  if (binding.issues.length) {
+    return { issues: [...new Set(issues)], mailpieceSha256: null, attachmentManifest: [] };
+  }
 
   const expected = [];
   for (const item of Array.isArray(letter.dispute_screenshot_manifest) ? letter.dispute_screenshot_manifest : []) {
@@ -1059,6 +1219,7 @@ async function validateCccRenderedMailpiece({
   }
 
   const boundUrls = [];
+  const verifiedAssets = [];
   for (let index = 0; index < expected.length; index += 1) {
     const spec = expected[index];
     const section = parsed.sections[index];
@@ -1103,6 +1264,15 @@ async function validateCccRenderedMailpiece({
       if (signedSha256 !== sourceSha256 || signedAsset.bytes.byteLength !== sourceAsset.bytes.byteLength) {
         issues.push(`CCC exhibit ${index + 1} signed print bytes do not match the verified source object.`);
       }
+      verifiedAssets.push({
+        sourceUrl: signedUrl,
+        kind: spec.kind,
+        id: spec.id,
+        bucket: spec.bucket,
+        storagePath: spec.path,
+        sha256: sourceSha256,
+        byteSize: sourceAsset.bytes.byteLength,
+      });
     } catch (error) {
       issues.push(error.message);
     }
@@ -1111,13 +1281,27 @@ async function validateCccRenderedMailpiece({
   if (JSON.stringify(scannedMailpiece.urls) !== JSON.stringify([...new Set(boundUrls)])) {
     issues.push('The CCC mailpiece contains a remote asset outside its exact bound exhibit list.');
   }
-  return [...new Set(issues)];
+  let claimMaterial = { canonicalHtml: '', manifest: [] };
+  if (issues.length === 0) {
+    try {
+      claimMaterial = canonicalizeCccMailpieceClaim(scannedMailpiece.html, verifiedAssets);
+    } catch (error) {
+      issues.push(error.message);
+    }
+  }
+  return {
+    issues: [...new Set(issues)],
+    mailpieceSha256: issues.length === 0
+      ? sha256Hex(Buffer.from(claimMaterial.canonicalHtml, 'utf8'))
+      : null,
+    attachmentManifest: issues.length === 0 ? claimMaterial.manifest : [],
+  };
 }
 
 async function findSubmission(letterId, supabaseUrl, serviceKey) {
   const result = await supabaseRequest(
     '/rest/v1/mail_submissions?letter_id=eq.' + encodeURIComponent(letterId)
-      + '&select=id,letter_id,idempotency_key,status,lob_id,tracking_number,attempt_count,last_error,consumer_statement_text,consumer_statement_sha256,consumer_statement_captured_at',
+      + '&select=id,letter_id,idempotency_key,idempotency_created_at,lob_request_sha256,status,lob_id,tracking_number,attempt_count,last_attempt_at,submitted_at,last_error,attachment_manifest,created_at,updated_at,consumer_statement_text,consumer_statement_sha256,consumer_statement_captured_at',
     'GET', null, supabaseUrl, serviceKey
   );
   if (!isSuccess(result)) throw new Error(requestError(result, 'Could not load mail submission'));
@@ -1180,6 +1364,7 @@ async function getOrCreateSubmission(letter, requestedBy, supabaseUrl, serviceKe
       client_id: letter.client_id || null,
       requested_by: requestedBy || null,
       idempotency_key: crypto.randomUUID(),
+      idempotency_created_at: new Date().toISOString(),
       status: 'pending',
     },
     supabaseUrl,
@@ -1192,6 +1377,158 @@ async function getOrCreateSubmission(letter, requestedBy, supabaseUrl, serviceKe
   // A concurrent click may have won the unique(letter_id) insert. Fetch its
   // key and deliberately reuse it so Lob still sees both requests as one.
   return submission || findSubmission(letter.id, supabaseUrl, serviceKey);
+}
+
+function mailSubmissionReconciliationIssue(submission, nowMs = Date.now()) {
+  if (!submission) return null;
+  if (submission.status === 'accepted_unreconciled') {
+    return 'Lob accepted this mailpiece, but the local letter record is not reconciled.';
+  }
+  if (submission.status === 'submitted' && !submission.lob_id) {
+    return 'The durable submission says accepted, but its Lob ID is missing.';
+  }
+  if (submission.status === 'pending' && submission.lob_id) {
+    return 'The pending durable submission already contains a Lob ID.';
+  }
+  if (submission.status === 'pending') {
+    const createdMs = Date.parse(String(submission.idempotency_created_at || ''));
+    if (!Number.isFinite(createdMs) || createdMs > nowMs + 5 * 60 * 1000
+      || nowMs - createdMs > 24 * 60 * 60 * 1000) {
+      return 'The unresolved Lob idempotency generation is missing, invalid, future-dated, or older than 24 hours.';
+    }
+  }
+  return null;
+}
+
+async function claimCccTrackRevisionsForMail({
+  letter,
+  submission,
+  mailpieceClaim,
+  lobRequestSha256,
+  toAddress,
+  supabaseUrl,
+  serviceKey,
+}) {
+  if (!String(letter?.phase || '').startsWith('CCC Dispute —')) return [];
+  const { cccFurnisherKey } = await import('../../src/utils/cccLetterTrackSnapshots.js');
+  const isDirect = letter.ccc_account_track_snapshots?.[0]?.trackScope === 'direct';
+  const result = await supabaseRequest(
+    '/rest/v1/rpc/claim_ccc_track_revisions_for_mail',
+    'POST',
+    {
+      p_letter_id: letter.id,
+      p_mail_submission_id: submission.id,
+      p_track_snapshots: letter.ccc_account_track_snapshots,
+      p_expected_letter_snapshot: cccPrintableLetterClaimSnapshot(letter),
+      p_mailpiece_sha256: mailpieceClaim.mailpieceSha256,
+      p_lob_request_sha256: lobRequestSha256,
+      p_attachment_manifest: mailpieceClaim.attachmentManifest,
+      p_recipient_snapshot: cccRecipientClaimSnapshot(
+        toAddress,
+        isDirect ? cccFurnisherKey(letter.furnisher) : null,
+      ),
+    },
+    supabaseUrl,
+    serviceKey
+  );
+  if (!isSuccess(result)) {
+    const error = new Error(requestError(result, 'Could not claim the selected CCC account rounds for physical mail'));
+    error.code = 'CCC_TRACK_REVISION_MAIL_CLAIM_CONFLICT';
+    throw error;
+  }
+  const claims = Array.isArray(result.body) ? result.body : [];
+  if (claims.length !== letter.ccc_account_track_snapshots.length) {
+    throw new Error('The durable CCC account-round mail claim is incomplete. Nothing was sent.');
+  }
+  return claims;
+}
+
+async function releaseCccTrackRevisionMailClaims(letter, submission, releaseReason, supabaseUrl, serviceKey) {
+  if (!String(letter?.phase || '').startsWith('CCC Dispute —')) return 0;
+  const result = await supabaseRequest(
+    '/rest/v1/rpc/release_ccc_track_revision_mail_claims',
+    'POST',
+    {
+      p_letter_id: letter.id,
+      p_mail_submission_id: submission.id,
+      p_release_reason: releaseReason,
+    },
+    supabaseUrl,
+    serviceKey,
+  );
+  if (!isSuccess(result)) {
+    throw new Error(requestError(result, 'Could not safely release the CCC account-round mail claim'));
+  }
+  return Number(result.body || 0);
+}
+
+async function recordPreLobIntegrityFailure(
+  letter,
+  submission,
+  lobRequestSha256,
+  detail,
+  supabaseUrl,
+  serviceKey,
+) {
+  const marker = `PRE_LOB_INTEGRITY_FAILURE:${lobRequestSha256}:${String(detail || 'post-claim packet mismatch')}`.slice(0, 1000);
+  const result = await supabaseRequest(
+    '/rest/v1/mail_submissions?id=eq.' + encodeURIComponent(submission.id)
+      + '&letter_id=eq.' + encodeURIComponent(letter.id)
+      + '&idempotency_key=eq.' + encodeURIComponent(submission.idempotency_key)
+      + '&status=eq.pending&lob_id=is.null&submitted_at=is.null'
+      + '&attempt_count=eq.0&last_attempt_at=is.null'
+      + '&lob_request_sha256=eq.' + encodeURIComponent(lobRequestSha256),
+    'PATCH',
+    { last_error: marker, updated_at: new Date().toISOString() },
+    supabaseUrl,
+    serviceKey,
+  );
+  if (!isSuccess(result) || !Array.isArray(result.body) || result.body.length !== 1) {
+    throw new Error('The pre-Lob integrity failure is not a never-submitted exact attempt. The claim remains locked for manual reconciliation.');
+  }
+  return releaseCccTrackRevisionMailClaims(
+    letter,
+    submission,
+    'pre_lob_integrity_failure',
+    supabaseUrl,
+    serviceKey,
+  );
+}
+
+async function updateExactPendingLobAttempt(
+  letter,
+  submission,
+  lobRequestSha256,
+  patch,
+  supabaseUrl,
+  serviceKey,
+) {
+  const result = await supabaseRequest(
+    '/rest/v1/mail_submissions?id=eq.' + encodeURIComponent(submission.id)
+      + '&letter_id=eq.' + encodeURIComponent(letter.id)
+      + '&idempotency_key=eq.' + encodeURIComponent(submission.idempotency_key)
+      + '&status=eq.pending&lob_id=is.null'
+      + '&lob_request_sha256=eq.' + encodeURIComponent(lobRequestSha256),
+    'PATCH',
+    { ...patch, updated_at: new Date().toISOString() },
+    supabaseUrl,
+    serviceKey,
+  );
+  if (!isSuccess(result) || !Array.isArray(result.body) || result.body.length !== 1) {
+    throw new Error('The exact pending Lob attempt changed and now requires manual reconciliation.');
+  }
+  return result.body[0];
+}
+
+function lobErrorCode(result) {
+  const code = result?.body?.error?.code ?? result?.body?.code ?? '';
+  return String(code).trim().toUpperCase();
+}
+
+function isExplicitLobPreacceptRejection(result) {
+  const status = Number(result?.status || 0);
+  return (status === 400 || status === 422)
+    && LOB_PREACCEPT_VALIDATION_CODES.has(lobErrorCode(result));
 }
 
 async function updateSubmission(letterId, patch, supabaseUrl, serviceKey) {
@@ -1303,7 +1640,9 @@ async function prepareFailedRetry(letter, submission, supabaseUrl, serviceKey) {
     'PATCH',
     {
       idempotency_key: crypto.randomUUID(), status: 'pending', lob_id: null,
-      tracking_number: null, submitted_at: null, last_error: null,
+      idempotency_created_at: new Date().toISOString(), lob_request_sha256: null,
+      tracking_number: null, submitted_at: null, last_error: null, attachment_manifest: [],
+      attempt_count: 0, last_attempt_at: null,
       consumer_statement_text: null, consumer_statement_sha256: null,
       consumer_statement_captured_at: null,
       updated_at: new Date().toISOString(),
@@ -1355,7 +1694,9 @@ async function prepareCancelledRetry(letter, submission, supabaseUrl, serviceKey
     'PATCH',
     {
       idempotency_key: crypto.randomUUID(), status: 'pending', lob_id: null,
-      tracking_number: null, submitted_at: null, last_error: null,
+      idempotency_created_at: new Date().toISOString(), lob_request_sha256: null,
+      tracking_number: null, submitted_at: null, last_error: null, attachment_manifest: [],
+      attempt_count: 0, last_attempt_at: null,
       consumer_statement_text: null, consumer_statement_sha256: null,
       consumer_statement_captured_at: null,
       updated_at: new Date().toISOString(),
@@ -1579,11 +1920,22 @@ exports.handler = async (event) => {
       // send are acceptable.
       const durableAssetPrefix = String(supabaseUrl).replace(/\/+$/, '') + '/storage/v1/object/sign/documents/';
       const scannedMailpiece = await scanRemoteAssetUrls(mailpieceUrl);
+      if (scannedMailpiece.dependencyIssues.length > 0) {
+        return {
+          statusCode: 422,
+          body: JSON.stringify({
+            error: 'CCC MAILPIECE CONTAINS AN UNBOUND EXTERNAL RENDER DEPENDENCY — nothing was sent.',
+            issues: scannedMailpiece.dependencyIssues.slice(0, 20),
+            blocked: true,
+          }),
+        };
+      }
       const remoteAssets = scannedMailpiece.urls;
       let consumerStatementEvidence = null;
       let consumerStatementAudience = null;
+      let cccMailpieceClaim = null;
       if (String(letter.phase || '').startsWith('CCC Dispute —')) {
-        const renderedPacketIssues = await validateCccRenderedMailpiece({
+        const renderedPacket = await validateCccRenderedMailpiece({
           letter,
           mailpieceUrl,
           scannedMailpiece,
@@ -1591,16 +1943,17 @@ exports.handler = async (event) => {
           supabaseUrl,
           serviceKey,
         });
-        if (renderedPacketIssues.length > 0) {
+        if (renderedPacket.issues.length > 0) {
           return {
             statusCode: 422,
             body: JSON.stringify({
               error: 'CCC MAILPIECE DOES NOT MATCH THE REVIEWED LETTER AND EXHIBITS — nothing was sent.',
-              issues: renderedPacketIssues,
+              issues: renderedPacket.issues,
               blocked: true,
             }),
           };
         }
+        cccMailpieceClaim = renderedPacket;
         const { unresolvedCccMissingTokens } = await import('../../src/utils/cccLetterTrackSnapshots.js');
         const unresolvedTokens = unresolvedCccMissingTokens(scannedMailpiece.html);
         if (unresolvedTokens.length > 0) {
@@ -1653,7 +2006,17 @@ exports.handler = async (event) => {
       }
 
       let submission = await findSubmission(letterId, supabaseUrl, serviceKey);
-      if (submission && (submission.status === 'submitted' || submission.status === 'accepted_unreconciled') && submission.lob_id) {
+      if (submission?.status === 'accepted_unreconciled') {
+        return {
+          statusCode: 409,
+          body: JSON.stringify({
+            error: mailSubmissionReconciliationIssue(submission),
+            reconciliation_required: true,
+            blocked: true,
+          }),
+        };
+      }
+      if (submission?.status === 'submitted' && submission.lob_id) {
         return {
           statusCode: 200,
           body: JSON.stringify({
@@ -1679,7 +2042,17 @@ exports.handler = async (event) => {
 
       submission = submission || await getOrCreateSubmission(letter, admin.userId, supabaseUrl, serviceKey);
       if (!submission) throw new Error('Could not claim a durable mail submission');
-      if ((submission.status === 'submitted' || submission.status === 'accepted_unreconciled') && submission.lob_id) {
+      if (submission.status === 'accepted_unreconciled') {
+        return {
+          statusCode: 409,
+          body: JSON.stringify({
+            error: mailSubmissionReconciliationIssue(submission),
+            reconciliation_required: true,
+            blocked: true,
+          }),
+        };
+      }
+      if (submission.status === 'submitted' && submission.lob_id) {
         return {
           statusCode: 200,
           body: JSON.stringify({
@@ -1699,6 +2072,18 @@ exports.handler = async (event) => {
       }
       if (submission.status === 'cancelled') {
         submission = await prepareCancelledRetry(letter, submission, supabaseUrl, serviceKey);
+      }
+
+      const reconciliationIssue = mailSubmissionReconciliationIssue(submission);
+      if (reconciliationIssue) {
+        return {
+          statusCode: 409,
+          body: JSON.stringify({
+            error: `MANUAL MAIL RECONCILIATION REQUIRED — ${reconciliationIssue} Nothing was sent.`,
+            reconciliation_required: true,
+            blocked: true,
+          }),
+        };
       }
 
       // Persist the one supported current service before Lob can emit an
@@ -1724,34 +2109,6 @@ exports.handler = async (event) => {
       }
       letter.mail_service = CURRENT_CCC_MAIL_SERVICE;
 
-      try {
-        await captureMailedConsumerStatement(
-          letterId,
-          consumerStatementEvidence,
-          consumerStatementAudience,
-          supabaseUrl,
-          serviceKey
-        );
-      } catch (captureError) {
-        if (captureError.code !== 'CONSUMER_STATEMENT_CAPTURE_CONFLICT') throw captureError;
-        return {
-          statusCode: 409,
-          body: JSON.stringify({ error: captureError.message, blocked: true }),
-        };
-      }
-
-      await updateSubmission(letterId, {
-        status: 'pending',
-        attempt_count: (submission.attempt_count || 0) + 1,
-        last_attempt_at: new Date().toISOString(),
-        last_error: null,
-        attachment_manifest: validatedAttachments,
-      }, supabaseUrl, serviceKey);
-      await updatePacketCoverage(letter, {
-        mail_status: 'processing',
-        tracking_status: null,
-      }, supabaseUrl, serviceKey);
-
       const mailService = CURRENT_CCC_MAIL_SERVICE;
       const letterPayload = {
         description: description || 'CCC Dispute Letter',
@@ -1773,17 +2130,11 @@ exports.handler = async (event) => {
           address_zip: CCC_RETURN_ADDRESS.zip,
           address_country: 'US',
         },
-        // For CCC, send the exact bytes this server just re-read and validated
-        // instead of asking Lob to fetch a browser-owned URL a second time.
-        // This closes the validate-A/print-B race for the irreversible send.
         file: scannedMailpiece.html,
-        // Text letters print B&W double-sided — enclosures are grayscaled
-        // upstream anyway, and this roughly halves the per-letter cost
         color: false,
         double_sided: true,
         address_placement: 'top_first_page',
         mail_type: 'usps_first_class',
-        // Lets the webhook match the letter row even if lob_id never got saved
         metadata: {
           letter_id: String(letterId),
           mail_submission_id: String(submission.id),
@@ -1791,6 +2142,103 @@ exports.handler = async (event) => {
           mail_service: CURRENT_CCC_MAIL_SERVICE,
         },
       };
+      const lobRequestSha256 = sha256Hex(Buffer.from(JSON.stringify(letterPayload), 'utf8'));
+
+      try {
+        await captureMailedConsumerStatement(
+          letterId,
+          consumerStatementEvidence,
+          consumerStatementAudience,
+          supabaseUrl,
+          serviceKey
+        );
+      } catch (captureError) {
+        if (captureError.code !== 'CONSUMER_STATEMENT_CAPTURE_CONFLICT') throw captureError;
+        return {
+          statusCode: 409,
+          body: JSON.stringify({ error: captureError.message, blocked: true }),
+        };
+      }
+
+      // Claim only after every validation and Consumer Statement capture has
+      // succeeded. The claim also freezes the exact final packet bytes,
+      // all-exhibit manifest, and recipient, so racing tabs cannot
+      // mail one packet while recording another.
+      try {
+        await claimCccTrackRevisionsForMail({
+          letter,
+          submission,
+          mailpieceClaim: cccMailpieceClaim,
+          lobRequestSha256,
+          toAddress,
+          supabaseUrl,
+          serviceKey,
+        });
+      } catch (claimError) {
+        if (claimError.code !== 'CCC_TRACK_REVISION_MAIL_CLAIM_CONFLICT') throw claimError;
+        return {
+          statusCode: 409,
+          body: JSON.stringify({ error: claimError.message, blocked: true }),
+        };
+      }
+      if (cccMailpieceClaim) {
+        // The active claim makes every referenced private storage object
+        // browser-immutable. Re-read all source/signed bytes after that lock so
+        // a storage race can fail closed before Lob ever sees the packet.
+        const postClaimPacket = await validateCccRenderedMailpiece({
+          letter,
+          mailpieceUrl,
+          scannedMailpiece,
+          validatedAttachments,
+          supabaseUrl,
+          serviceKey,
+        });
+        if (postClaimPacket.issues.length > 0
+          || postClaimPacket.mailpieceSha256 !== cccMailpieceClaim.mailpieceSha256
+          || JSON.stringify(postClaimPacket.attachmentManifest) !== JSON.stringify(cccMailpieceClaim.attachmentManifest)) {
+          try {
+            await recordPreLobIntegrityFailure(
+              letter,
+              submission,
+              lobRequestSha256,
+              postClaimPacket.issues.join('; ') || 'post-claim packet digest or exhibit manifest mismatch',
+              supabaseUrl,
+              serviceKey,
+            );
+          } catch (releaseError) {
+            return {
+              statusCode: 409,
+              body: JSON.stringify({
+                error: `CCC PACKET CHANGED AFTER AN UNCERTAIN OR PREVIOUS LOB ATTEMPT — ${releaseError.message}`,
+                reconciliation_required: true,
+                blocked: true,
+              }),
+            };
+          }
+          await updatePacketCoverage(letter, { mail_status: 'failed', tracking_status: null }, supabaseUrl, serviceKey);
+          return {
+            statusCode: 409,
+            body: JSON.stringify({
+              error: 'CCC PACKET ASSETS CHANGED BEFORE LOB WAS CALLED — the never-submitted claim was released and rotated. Correct the packet, review it again, and retry.',
+              issues: postClaimPacket.issues,
+              corrected_retry_allowed: true,
+              blocked: true,
+            }),
+          };
+        }
+      }
+      await updateExactPendingLobAttempt(letter, submission, lobRequestSha256, {
+        status: 'pending',
+        attempt_count: (submission.attempt_count || 0) + 1,
+        last_attempt_at: new Date().toISOString(),
+        last_error: null,
+        attachment_manifest: validatedAttachments,
+      }, supabaseUrl, serviceKey);
+      await updatePacketCoverage(letter, {
+        mail_status: 'processing',
+        tracking_status: null,
+      }, supabaseUrl, serviceKey);
+
       // This key was persisted before the Lob request. A reload or a second
       // tab therefore hits the same Lob idempotency record rather than
       // creating another physical mailpiece.
@@ -1798,14 +2246,29 @@ exports.handler = async (event) => {
         'Idempotency-Key': String(submission.idempotency_key),
       });
       if (!isSuccess(result) || !result.body?.id) {
-        // Lob explicitly rejected this request and did not return an accepted
-        // mailpiece identity. Keep the attempt pending with the same durable
-        // idempotency key so staff can safely retry; `failed` is reserved for
-        // a signed letter.failed webhook tied to one accepted Lob attempt.
-        await updateSubmission(letterId, {
+        // Only an exact documented validation code proves that Lob rejected
+        // the request before acceptance; that guarded path rotates to a fresh
+        // key. Unknown, conflict, transient, and transport outcomes retain the
+        // frozen attempt for manual reconciliation. `failed` is reserved for a
+        // signed letter.failed webhook tied to one accepted Lob attempt.
+        const explicitRejection = isExplicitLobPreacceptRejection(result);
+        const rejectionCode = lobErrorCode(result);
+        const rejectionMessage = requestError(result, 'Lob did not accept the letter');
+        await updateExactPendingLobAttempt(letter, submission, lobRequestSha256, {
           status: 'pending',
-          last_error: requestError(result, 'Lob did not accept the letter'),
+          last_error: explicitRejection
+            ? `LOB_PREACCEPT_REJECTED:${rejectionCode}:${lobRequestSha256}:${rejectionMessage}`.slice(0, 1000)
+            : `LOB_UNCERTAIN:${Number(result.status || 0)}:${rejectionCode || 'UNKNOWN'}:${rejectionMessage}`.slice(0, 1000),
         }, supabaseUrl, serviceKey);
+        if (explicitRejection) {
+          await releaseCccTrackRevisionMailClaims(
+            letter,
+            submission,
+            'lob_rejected_preaccept',
+            supabaseUrl,
+            serviceKey,
+          );
+        }
         await updatePacketCoverage(letter, { mail_status: 'failed', tracking_status: null }, supabaseUrl, serviceKey);
         return { statusCode: result.status || 502, body: JSON.stringify(result.body || { error: 'Lob did not accept the letter' }) };
       }
@@ -1963,7 +2426,11 @@ exports.handler = async (event) => {
 // used in production.
 exports.durableMailpieceUrl = durableMailpieceUrl;
 exports.MAIL_ASSET_URL_RE = MAIL_ASSET_URL_RE;
+exports.scanMailpieceExternalDependencies = scanMailpieceExternalDependencies;
 exports.cccCraSensitiveAutomaticValueIssues = cccCraSensitiveAutomaticValueIssues;
 exports.requiredCccAutomaticIdentityIssues = requiredCccAutomaticIdentityIssues;
 exports.signedStorageObjectIdentity = signedStorageObjectIdentity;
+exports.isExplicitLobPreacceptRejection = isExplicitLobPreacceptRejection;
+exports.lobErrorCode = lobErrorCode;
+exports.mailSubmissionReconciliationIssue = mailSubmissionReconciliationIssue;
 exports.CCC_RETURN_ADDRESS = CCC_RETURN_ADDRESS;

@@ -125,9 +125,10 @@ const guideSource = readFileSync(new URL('../public/freeguide.html', import.meta
 assert(!/no[ -]?email required/i.test(guideSource), 'guide page no longer claims that email is unnecessary');
 assert(!/openIntake\('Guide Download'\)/.test(guideSource), 'the on-page guide does not pretend a download is required');
 assert(!/href="downloads\/7-Metro2-Dispute-Templates\.pdf"/i.test(guideSource), 'guide PDF is no longer exposed through a direct untracked link');
-assert(!guideSource.includes('intake.downloadUrl'), 'the current guide does not request a retired downloadable asset');
+assert(guideSource.includes("intent:'guide_download'") && guideSource.includes('result.downloadUrl'), 'dedicated guide form exchanges a guide intent for a tracked download URL');
+assert(guideSource.includes('triggerGuideDownload(result.downloadUrl)'), 'returned tracked URL triggers the browser download');
 const guideEndpoint = readFileSync(new URL('../netlify/functions/guide-download.cjs', import.meta.url), 'utf8');
-assert(guideEndpoint.includes("'guide:viewed'") && /statusCode:\s*302/.test(guideEndpoint), 'historic tracked links record a guide view and redirect to the current page');
+assert(guideEndpoint.includes("'guide:downloaded'") && /isBase64Encoded:\s*true/.test(guideEndpoint), 'tracked endpoint records the download and returns a private base64 PDF');
 assert(!/7-Metro2-Dispute-Templates/.test(guideEndpoint), 'the tracked endpoint cannot issue the retired PDF');
 
 function response(body, status = 200) {
@@ -262,9 +263,9 @@ globalThis.fetch = async (url, options = {}) => {
 };
 const trackedGuideToken = createGuideDownloadToken('lead-1', 'test-service-key');
 const guideDownloadResult = await guideDownloadHandler({ httpMethod: 'GET', queryStringParameters: { token: trackedGuideToken } });
-assert(guideDownloadResult.statusCode === 302 && guideDownloadResult.headers.Location === '/freeguide.html', 'valid historic guide token redirects to the current guide');
+assert(guideDownloadResult.statusCode === 200 && guideDownloadResult.headers['Content-Type'] === 'application/pdf' && guideDownloadResult.isBase64Encoded, 'valid tracked guide token returns the bundled PDF as an attachment');
 const guideTrackingPatch = calls.find((call) => call.options.method === 'PATCH');
-assert(JSON.parse(guideTrackingPatch?.options.body || '{}').tags?.includes('guide:viewed'), 'guide redirect records the current guide view');
+assert(JSON.parse(guideTrackingPatch?.options.body || '{}').tags?.includes('guide:downloaded'), 'guide endpoint records the completed download');
 
 globalThis.fetch = originalFetch;
 

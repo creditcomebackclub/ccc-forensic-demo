@@ -1,6 +1,7 @@
 const CALENDLY_URL = 'https://calendly.com/creditcomebackclub/consultation?hide_gdpr_banner=1';
 const CALENDLY_SCRIPT_URL = 'https://assets.calendly.com/assets/external/widget.js';
 const CALENDLY_STYLE_URL = 'https://assets.calendly.com/assets/external/widget.css';
+const CALENDLY_LOAD_TIMEOUT_MS = 8000;
 const ALLOWED_TIERS = new Set(['Standard', 'VIP', 'Paid In Full']);
 
 const intakeForm = document.querySelector('[data-live-intake-form]');
@@ -68,20 +69,62 @@ function loadCalendlyWidget() {
 
   return new Promise((resolve, reject) => {
     let script = document.querySelector(`script[src="${CALENDLY_SCRIPT_URL}"]`);
+    let settled = false;
+    let timer;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      script?.removeEventListener('load', handleLoad);
+      script?.removeEventListener('error', handleError);
+      callback(value);
+    };
     const handleLoad = () => window.Calendly?.initInlineWidget
-      ? resolve()
-      : reject(new Error('Calendly did not initialize.'));
-    const handleError = () => reject(new Error('Calendly could not load.'));
+      ? finish(resolve)
+      : finish(reject, new Error('Calendly did not initialize.'));
+    const handleError = () => finish(reject, new Error('Calendly could not load.'));
 
     if (!script) {
       script = document.createElement('script');
       script.src = CALENDLY_SCRIPT_URL;
       script.async = true;
-      document.head.appendChild(script);
     }
     script.addEventListener('load', handleLoad, { once: true });
     script.addEventListener('error', handleError, { once: true });
+    timer = window.setTimeout(
+      () => finish(reject, new Error('Calendly took too long to load.')),
+      CALENDLY_LOAD_TIMEOUT_MS,
+    );
+    if (!script.isConnected) document.head.appendChild(script);
   });
+}
+
+function directCalendlyUrl(payload) {
+  const fallbackUrl = new URL(CALENDLY_URL);
+  fallbackUrl.searchParams.set('name', payload.name);
+  fallbackUrl.searchParams.set('email', payload.email);
+  return fallbackUrl.toString();
+}
+
+function showCalendarStage() {
+  intakeForm.hidden = true;
+  if (calendarStage) {
+    calendarStage.hidden = false;
+    calendarStage.focus();
+  }
+}
+
+function showDirectCalendlyFallback(payload, message) {
+  showCalendarStage();
+  if (!calendarMount) return;
+  const fallback = document.createElement('a');
+  fallback.href = directCalendlyUrl(payload);
+  fallback.className = 'button button-dark calendly-fallback-link';
+  fallback.textContent = 'Open the scheduling calendar';
+  fallback.target = '_blank';
+  fallback.rel = 'noopener noreferrer';
+  calendarMount.replaceChildren(fallback);
+  setStatus(calendarStatus, message, 'error');
 }
 
 async function initializeCalendly(payload) {
@@ -99,15 +142,7 @@ async function initializeCalendly(payload) {
     });
     setStatus(calendarStatus, 'Select a time in the scheduler above. Calendly will email your confirmation.');
   } catch (_error) {
-    const fallback = document.createElement('a');
-    const fallbackUrl = new URL(CALENDLY_URL);
-    fallbackUrl.searchParams.set('name', payload.name);
-    fallbackUrl.searchParams.set('email', payload.email);
-    fallback.href = fallbackUrl.toString();
-    fallback.className = 'button button-dark calendly-fallback-link';
-    fallback.textContent = 'Open the scheduling calendar';
-    calendarMount.replaceChildren(fallback);
-    setStatus(calendarStatus, 'The embedded calendar is unavailable. Use the secure scheduling link above.', 'error');
+    showDirectCalendlyFallback(payload, 'The embedded calendar is unavailable. Use the secure scheduling link above.');
   }
 }
 
@@ -161,16 +196,17 @@ intakeForm?.addEventListener('submit', async (event) => {
       throw new Error('We could not save your request. Please try again.');
     }
 
-    intakeForm.hidden = true;
-    if (calendarStage) {
-      calendarStage.hidden = false;
-      calendarStage.focus();
-    }
+    showCalendarStage();
     await initializeCalendly(payload);
   } catch (error) {
-    const message = error?.name === 'AbortError'
-      ? 'The request took too long. Please check your connection and try again.'
-      : (error?.message || 'We could not save your request. Please try again.');
+    if (error?.name === 'AbortError') {
+      showDirectCalendlyFallback(
+        payload,
+        'Confirmation took longer than expected. Schedule directly above; Calendly will securely complete your request.',
+      );
+      return;
+    }
+    const message = error?.message || 'We could not save your request. Please try again.';
     setStatus(intakeStatus, message, 'error');
     if (submitButton) {
       submitButton.disabled = false;

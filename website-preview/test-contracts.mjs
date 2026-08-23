@@ -105,6 +105,16 @@ check(
   'consultation widget uses customer-facing copy while its single Preview only chip is explicitly local-only',
 );
 check(html.includes('Veteran-Owned &amp; Operated'), 'veteran-owned trust signal is present');
+check(
+  html.includes('id="community"')
+    && html.includes('Your comeback does not have to happen in silence.')
+    && html.includes('More than 280 members and growing')
+    && html.includes('href="https://www.facebook.com/groups/creditcomebackclub"')
+    && html.includes('target="_blank"')
+    && html.includes('rel="noopener noreferrer"')
+    && html.includes('Join the free Facebook community'),
+  'Facebook group is presented as a meaningful, safely linked education-community CTA',
+);
 check(html.includes('Your Story. The Facts. The Pressure.'), 'owner-approved public framework leads the method');
 check(
   html.includes('You are more than a credit score. <span>Your report should reflect the facts.</span>')

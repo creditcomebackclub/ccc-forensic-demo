@@ -14,19 +14,22 @@ import { ACCOUNT_ENRICHMENT_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { COMBINED_CREDIT_EXTRACTION_SCHEMA, CREDIT_BUREAU_EXTRACTION_SCHEMA } from '../../src/utils/creditExtractionSchemas.js';
 import { CREDIT_EXTRACTION_SYSTEM_PROMPT, bureauExtractionPrompt, combinedExtractionPrompt } from '../../src/prompts/extractionPrompts.js';
 import {
+  assertReportCohort,
+  assertExtractionPageBounds,
   buildDeterministicAudit,
   coerceBureauExtraction,
   mergeBureauExtractions,
   mergeCombinedExtractions,
+  rebaseExtractionPageRefs,
 } from '../../src/utils/deterministicAudit.js';
 import { resolveAuditIdentities } from '../../src/utils/accountIdentity.js';
 import { normalizeFurnisher } from '../../src/utils/diffEngine.js';
-import { randomUUID } from 'crypto';
-import { requireStaff } from './_requireAuth.cjs';
+import { createHash, randomUUID } from 'crypto';
+import { requireStaffOrSystem } from './_requireAuth.cjs';
 import {
   buildReportContent, accountEnrichmentPrompt, todayLong,
 } from '../../src/utils/auditPrompts.js';
-import { describePdfChunk, splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
+import { describePdfChunk, extractPdfPageRange, splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
 import { logClaudeCall, preflightTokenCount, usageFromMessage } from './_claudeRuntime.mjs';
 
 // This is deliberately a pinned application choice, not an environment
@@ -35,11 +38,11 @@ import { logClaudeCall, preflightTokenCount, usageFromMessage } from './_claudeR
 const AUDIT_MODEL = 'claude-sonnet-5';
 const AUDIT_EFFORT = 'high';
 const ANTHROPIC_OPTIONS = {
-  // Bound automatic retries so a transient 429/5xx gets a second chance
-  // without a background function spending its whole 15-minute window
-  // retrying one request.
-  maxRetries: 2,
-  timeout: 8 * 60 * 1000,
+  // Durable checkpoint attempts own retries. SDK retries can otherwise turn
+  // one provider dispatch into multiple long requests that outlive both the
+  // worker budget and its lease.
+  maxRetries: 0,
+  timeout: 6 * 60 * 1000,
 };
 const SYSTEM = [{ type: 'text', text: CREDIT_EXTRACTION_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }];
 
@@ -51,17 +54,122 @@ const PRICE = { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 };
 // scan rather than a normal text export. HTML/text also has the separate
 // post-cleanup character cap in reportText.js.
 const MAX_TOTAL_REPORT_BYTES = 15 * 1024 * 1024;
+const AUDIT_PROVENANCE_VERSION = 'audit-provenance-v1';
+const RESUMABLE_WORKFLOW_VERSION = 'resumable-audit-v1';
+const WORKER_LEASE_SECONDS = 13 * 60;
+const WORKER_BUDGET_MS = 11.5 * 60 * 1000;
+const MIN_PROVIDER_BUDGET_MS = 7 * 60 * 1000;
+// The real 29-page timeout must never collapse back into one provider call.
+// Eight-page windows (with splitPdfByPages' two-page overlap) keep each call
+// bounded while the deterministic merge de-duplicates repeated evidence.
+const RESUMABLE_PDF_CHUNK_PAGES = 8;
+
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function checkpointInputSha256({ sourceSha256, startPage, endPage, totalPages }) {
+  return sha256(canonicalJson({
+    workflowVersion: RESUMABLE_WORKFLOW_VERSION,
+    sourceSha256,
+    startPage,
+    endPage,
+    totalPages,
+  }));
+}
+
+function uuidFromSha256(value) {
+  const hex = sha256(value).slice(0, 32).split('');
+  hex[12] = '5';
+  hex[16] = ['8', '9', 'a', 'b'][parseInt(hex[16], 16) % 4];
+  const joined = hex.join('');
+  return `${joined.slice(0, 8)}-${joined.slice(8, 12)}-${joined.slice(12, 16)}-${joined.slice(16, 20)}-${joined.slice(20)}`;
+}
+
+function parseSha256(parse) {
+  return sha256(canonicalJson(parse));
+}
+
+function provenanceSha256(provenance) {
+  const payload = { ...provenance };
+  delete payload.provenanceSha256;
+  delete payload.provenanceCanonical;
+  return sha256(canonicalJson(payload));
+}
+
+function provenanceCanonical(provenance) {
+  const payload = { ...provenance };
+  delete payload.provenanceSha256;
+  delete payload.provenanceCanonical;
+  return canonicalJson(payload);
+}
+
+function cohortKeyFor(clientId, cohort) {
+  return sha256(canonicalJson({
+    clientId,
+    reportDate: cohort.reportDate,
+    canonicalName: cohort.identity.canonicalName,
+  }));
+}
+
+function sourceRecord({ bureauParse, report, file, parseId = null, sourceJobId, pageCount = null, chunkCount = null }) {
+  return {
+    bureau: bureauParse.bureau,
+    reportDate: bureauParse.reportDate,
+    reportDateRaw: bureauParse.reportDateRaw || null,
+    reportDateEvidencePage: bureauParse.reportDateEvidencePage ?? null,
+    bureauEvidencePage: bureauParse.bureauEvidencePage ?? null,
+    reportSectionStartEvidencePage: bureauParse.reportSectionStartEvidencePage ?? null,
+    clientName: bureauParse.client?.name || null,
+    clientNameEvidencePage: bureauParse.client?.nameEvidencePage ?? null,
+    dateOfBirth: bureauParse.personalInfo?.dateOfBirth || null,
+    dateOfBirthEvidencePage: bureauParse.personalInfo?.dateOfBirthEvidencePage ?? null,
+    sourceJobId,
+    parseId,
+    parseSha256: parseSha256(bureauParse),
+    filePath: report?.sourcePath || file?.path || null,
+    fileSha256: report?.sourceSha256 || null,
+    fileBytes: report?.sourceBytes || null,
+    mediaType: report?.mediaType || null,
+    pageCount,
+    chunkCount,
+  };
+}
+
+function buildAuditProvenance({ mode, sourceJobId, cohort, cohortKey, sources, evaluatedAt }) {
+  const orderedSources = [...(sources || [])].sort((a, b) => String(a.bureau).localeCompare(String(b.bureau)));
+  const base = {
+    version: AUDIT_PROVENANCE_VERSION,
+    mode,
+    sourceJobId,
+    evaluatedAt,
+    reportDate: cohort.reportDate,
+    ageDaysAtEvaluation: cohort.ageDays,
+    cohortKey,
+    coherent: true,
+    exactThreeBureau: cohort.complete === true,
+    clientIdentity: cohort.identity,
+    sources: orderedSources,
+  };
+  const canonical = canonicalJson(base);
+  return {
+    ...base,
+    provenanceCanonical: canonical,
+    provenanceSha256: sha256(canonical),
+  };
+}
 
 function slug(s) {
   return String(s || 'unknown')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '') || 'unknown';
-}
-
-function todayISO() {
-  const d = new Date();
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 
 function usdFor(u) {
@@ -141,6 +249,19 @@ function textFromVerifiedModelMessage(message, operation) {
 // unsplit call can hit this even though nothing was ever "too many pages."
 function isOutputLimitError(err) {
   return err instanceof Error && /hit the output limit/i.test(err.message);
+}
+
+function isProviderTimeoutError(err) {
+  if (!(err instanceof Error)) return false;
+  return ['APIConnectionTimeoutError', 'TimeoutError', 'AbortError'].includes(err.name)
+    || /\b(?:timed?\s*out|timeout)\b/i.test(err.message || '');
+}
+
+function terminalAuditError(message, type = 'audit_integrity_error') {
+  const error = new Error(message);
+  error.auditTerminal = true;
+  error.auditErrorType = type;
+  return error;
 }
 
 function normalizedMediaType(value) {
@@ -292,7 +413,12 @@ function hasExpectedAuditFiles(job, userId, jobId) {
 
   // Merge jobs reuse staged bureau parses — no PDF upload required.
   if (job.mode === 'merge') {
-    return files.length === 0 && !!job.selected_client_id;
+    const selection = job.merge_selection;
+    const parseIds = Array.isArray(selection?.parseIds) ? selection.parseIds : [];
+    return files.length === 0 && !!job.selected_client_id
+      && typeof selection?.cohortKey === 'string' && /^[0-9a-f]{64}$/i.test(selection.cohortKey)
+      && parseIds.length === 3 && new Set(parseIds).size === 3
+      && parseIds.every((id) => isUuid(id));
   }
 
   if (!files.length || !files.every((file) => isOwnedAuditUpload(file?.path, userId, jobId))) return false;
@@ -325,10 +451,11 @@ function bureauDisplayName(key) {
 
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
+  const invocationStartedAt = Date.now();
 
   let caller;
   try {
-    caller = await requireStaff(event);
+    caller = await requireStaffOrSystem(event);
   } catch (e) {
     if (e && e.statusCode) return e;
     console.error('audit-run: could not authenticate caller', e);
@@ -342,8 +469,8 @@ export const handler = async (event) => {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (!supabaseUrl || !serviceKey || !anthropicKey) {
-    console.error('audit-run: missing env (supabase or ANTHROPIC_API_KEY)');
+  if (!supabaseUrl || !serviceKey) {
+    console.error('audit-run: missing Supabase server environment');
     return { statusCode: 500, body: 'server not configured' };
   }
 
@@ -358,52 +485,65 @@ export const handler = async (event) => {
     realtime: { transport: ws },
   });
 
-  // A process can be terminated after claiming a job (deployment, provider
-  // outage, or the background-function limit). Mark abandoned work terminal
-  // before accepting new work from the same staff member so it is visible and
-  // retryable instead of remaining "running" forever. Active streams refresh
-  // updated_at continuously, so this does not touch a live job.
-  const staleCutoff = new Date(Date.now() - 20 * 60 * 1000).toISOString();
-  const { error: staleRecoveryErr } = await db
-    .from('audit_jobs')
-    .update({
-      status: 'error',
-      stage: 'Interrupted — retry required',
-      error: 'Audit worker stopped before completing. Please retry the audit.',
-      finished_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('user_id', caller.userId)
-    .eq('status', 'running')
-    .lt('updated_at', staleCutoff);
-  if (staleRecoveryErr) console.warn('audit-run: stale-job recovery failed', staleRecoveryErr.message);
-
-  // Confirm the queued job belongs to the authenticated staff member and
-  // only references that member's transient upload directory before any
-  // service-role mutation or model call.
-  const { data: queuedJob, error: queuedJobErr } = await db
-    .from('audit_jobs')
-    .select('id, mode, files, selected_client_id, selected_client_is_new')
-    .eq('id', jobId)
-    .eq('user_id', caller.userId)
-    .eq('status', 'queued')
-    .maybeSingle();
-  if (queuedJobErr || !queuedJob) {
-    console.warn('audit-run: job not available to caller', jobId, queuedJobErr?.message);
+  // Resolve ownership before the service-role claim. Browser calls must own
+  // the row; chained/watchdog calls authenticate with the server-only key and
+  // derive the owner from the durable row rather than trusting request JSON.
+  let jobQuery = db.from('audit_jobs').select('*').eq('id', jobId);
+  if (!caller.isSystem) jobQuery = jobQuery.eq('user_id', caller.userId);
+  const { data: availableJob, error: availableJobErr } = await jobQuery.maybeSingle();
+  if (availableJobErr || !availableJob) {
+    console.warn('audit-run: job not available to caller', jobId, availableJobErr?.message);
     return { statusCode: 409, body: 'job not claimable' };
   }
-  if (!hasExpectedAuditFiles(queuedJob, caller.userId, jobId)) {
+  if (availableJob.status === 'done') return { statusCode: 200, body: 'already complete' };
+  if (availableJob.workflow_version !== RESUMABLE_WORKFLOW_VERSION) {
+    return { statusCode: 409, body: 'legacy audit job cannot resume without source digests' };
+  }
+  if (!anthropicKey) {
+    console.error('audit-run: missing ANTHROPIC_API_KEY');
+    await db.from('audit_jobs').update({
+      status: 'error', stage: 'Audit server configuration required',
+      error: 'The audit provider is not configured. No provider request was made.',
+      retryable: false, next_retry_at: null, finished_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', jobId).eq('user_id', availableJob.user_id)
+      .eq('workflow_version', RESUMABLE_WORKFLOW_VERSION)
+      .in('status', ['queued', 'waiting', 'retryable']);
+    return { statusCode: 500, body: 'audit provider not configured' };
+  }
+
+  const ownerUserId = availableJob.user_id;
+  const leaseToken = randomUUID();
+  const invokedBy = caller.isSystem
+    ? (String(event.headers?.['x-ccc-audit-invoker'] || '').toLowerCase() === 'watchdog' ? 'watchdog' : 'chain')
+    : 'staff';
+  const { data: claimResult, error: claimErr } = await db.rpc('ccc_claim_audit_job', {
+    p_job_id: jobId,
+    p_lease_token: leaseToken,
+    p_invoked_by: invokedBy,
+    p_lease_seconds: WORKER_LEASE_SECONDS,
+  });
+  if (claimErr || claimResult !== true) {
+    if (claimErr) console.warn('audit-run: lease claim failed', jobId, claimErr.message);
+    return { statusCode: 409, body: 'job already leased or not ready' };
+  }
+
+  const { data: job, error: claimedJobErr } = await db.from('audit_jobs').select('*')
+    .eq('id', jobId).eq('user_id', ownerUserId).eq('lease_token', leaseToken).maybeSingle();
+  if (claimedJobErr || !job) return { statusCode: 409, body: 'claimed job unavailable' };
+
+  // Confirm source paths and mode again under the lease before any provider
+  // call. The worker later verifies byte size and SHA-256 against the manifest.
+  if (!hasExpectedAuditFiles(job, ownerUserId, jobId)) {
     // Fail closed rather than leaving a malformed caller-owned job queued
     // indefinitely. Only validated owned paths are removed.
-    const now = new Date().toISOString();
-    const { error: rejectErr } = await db.from('audit_jobs').update({
-      status: 'error', stage: 'Rejected invalid report upload',
-      error: 'Audit job contains invalid report files or mode.',
-      finished_at: now, updated_at: now,
-    }).eq('id', jobId).eq('user_id', caller.userId).eq('status', 'queued');
-    if (rejectErr) console.warn('audit-run: could not mark invalid job failed', rejectErr.message);
-    const ownedPaths = (queuedJob.files || []).map((file) => file?.path)
-      .filter((path) => isOwnedAuditUpload(path, caller.userId, jobId));
+    await db.rpc('ccc_release_audit_job', {
+      p_job_id: jobId, p_lease_token: leaseToken, p_status: 'error',
+      p_stage: 'Rejected invalid report upload', p_error_type: 'invalid_manifest',
+      p_error_message: 'Audit job contains invalid report files or mode.',
+    });
+    const ownedPaths = (job.files || []).map((file) => file?.path)
+      .filter((path) => isOwnedAuditUpload(path, ownerUserId, jobId));
     if (ownedPaths.length) await db.storage.from('documents').remove(ownedPaths).catch(() => {});
     return { statusCode: 400, body: 'job contains invalid report upload paths' };
   }
@@ -412,53 +552,43 @@ export const handler = async (event) => {
   // model call. A new prospect is created by the staff picker first and then
   // arrives here as that exact UUID. Never let extracted names select, merge,
   // or create a client implicitly.
-  if (queuedJob.selected_client_is_new || !isUuid(queuedJob.selected_client_id)) {
-    const now = new Date().toISOString();
-    await db.from('audit_jobs').update({
-      status: 'error', stage: 'Exact client selection required',
-      error: 'Create or select the exact CRM lead before running this audit.',
-      finished_at: now, updated_at: now,
-    }).eq('id', jobId).eq('user_id', caller.userId).eq('status', 'queued');
-    const ownedPaths = (queuedJob.files || []).map((file) => file?.path)
-      .filter((path) => isOwnedAuditUpload(path, caller.userId, jobId));
+  if (job.selected_client_is_new || !isUuid(job.selected_client_id)) {
+    await db.rpc('ccc_release_audit_job', {
+      p_job_id: jobId, p_lease_token: leaseToken, p_status: 'error',
+      p_stage: 'Exact client selection required', p_error_type: 'invalid_client',
+      p_error_message: 'Create or select the exact CRM lead before running this audit.',
+    });
+    const ownedPaths = (job.files || []).map((file) => file?.path)
+      .filter((path) => isOwnedAuditUpload(path, ownerUserId, jobId));
     if (ownedPaths.length) await db.storage.from('documents').remove(ownedPaths).catch(() => {});
     return { statusCode: 400, body: 'exact client selection required' };
   }
 
   const { data: selectedRows, error: selectedClientError } = await db.from('clients')
-    .select('id,name')
-    .eq('id', queuedJob.selected_client_id)
-    .eq('user_id', caller.userId)
+    .select('id,name,date_of_birth,address')
+    .eq('id', job.selected_client_id)
+    .eq('user_id', ownerUserId)
     .limit(2);
   if (selectedClientError || !selectedRows || selectedRows.length !== 1) {
-    const now = new Date().toISOString();
-    await db.from('audit_jobs').update({
-      status: 'error', stage: 'Selected client unavailable',
-      error: 'The selected CRM client no longer exists or is not available to this staff account.',
-      finished_at: now, updated_at: now,
-    }).eq('id', jobId).eq('user_id', caller.userId).eq('status', 'queued');
-    const ownedPaths = (queuedJob.files || []).map((file) => file?.path)
-      .filter((path) => isOwnedAuditUpload(path, caller.userId, jobId));
+    await db.rpc('ccc_release_audit_job', {
+      p_job_id: jobId, p_lease_token: leaseToken, p_status: 'error',
+      p_stage: 'Selected client unavailable', p_error_type: 'client_unavailable',
+      p_error_message: 'The selected CRM client no longer exists or is not available to this staff account.',
+    });
+    const ownedPaths = (job.files || []).map((file) => file?.path)
+      .filter((path) => isOwnedAuditUpload(path, ownerUserId, jobId));
     if (ownedPaths.length) await db.storage.from('documents').remove(ownedPaths).catch(() => {});
     return { statusCode: 403, body: 'selected client unavailable' };
   }
   const selectedJobClient = selectedRows[0];
-
-  // Atomic claim — only proceeds if the caller owns a row that is still
-  // queued. Authenticated clients cannot reach this point, and one staff
-  // member cannot consume another staff member's queued job.
-  const { data: claimed, error: claimErr } = await db
-    .from('audit_jobs')
-    .update({ status: 'running', started_at: new Date().toISOString(), updated_at: new Date().toISOString(), stage: 'Starting analysis', pct: null, tokens: 0 })
-    .eq('id', jobId)
-    .eq('user_id', caller.userId)
-    .eq('status', 'queued')
-    .select();
-  if (claimErr || !claimed || claimed.length === 0) {
-    console.warn('audit-run: job not claimable', jobId, claimErr?.message);
-    return { statusCode: 409, body: 'job not claimable' };
+  if (!job.created_at || !Number.isFinite(new Date(job.created_at).getTime())) {
+    await db.rpc('ccc_release_audit_job', {
+      p_job_id: jobId, p_lease_token: leaseToken, p_status: 'error',
+      p_stage: 'Invalid immutable evaluation clock', p_error_type: 'invalid_clock',
+      p_error_message: 'This audit job has no valid creation timestamp and cannot produce a reproducible audit.',
+    });
+    return { statusCode: 500, body: 'audit job is missing its immutable evaluation timestamp' };
   }
-  const job = claimed[0];
 
   const anthropic = new Anthropic({ apiKey: anthropicKey, ...ANTHROPIC_OPTIONS });
   const usageLog = [];
@@ -469,15 +599,18 @@ export const handler = async (event) => {
     if (!force && now - lastWrite < 1200) return; // throttle progress writes
     lastWrite = now;
     const { error } = await db.from('audit_jobs')
-      .update({ ...patch, updated_at: new Date().toISOString() })
-      .eq('id', jobId);
+      .update({ ...patch, updated_at: new Date().toISOString(), last_heartbeat_at: new Date().toISOString() })
+      .eq('id', jobId).eq('lease_token', leaseToken);
     if (error) throw new Error('Could not persist audit job state: ' + error.message);
   };
 
   const progress = (stage, pct) => (tokens) =>
     updateJob({ stage, pct, tokens: tokens || 0 }, tokens === 0);
 
-  async function claudeCall(userContent, { maxTokens = 64000, schema = null, onTokens = null, effort = AUDIT_EFFORT, operation = 'audit.analysis' } = {}) {
+  async function claudeCall(userContent, {
+    maxTokens = 64000, schema = null, onTokens = null, effort = AUDIT_EFFORT,
+    operation = 'audit.analysis', checkpoint = null,
+  } = {}) {
     const params = {
       model: AUDIT_MODEL,
       max_tokens: maxTokens,
@@ -486,44 +619,116 @@ export const handler = async (event) => {
       output_config: { effort },
     };
     if (schema) params.output_config.format = { type: 'json_schema', schema };
-    await preflightTokenCount(anthropic, params, { operation: 'Credit report analysis' });
-
     const startedAt = new Date();
-    const stream = anthropic.messages.stream(params);
-    if (onTokens) {
-      let chars = 0;
-      stream.on('text', (delta) => {
-        chars += delta.length;
-        // Progress is operational telemetry; an intermittent write must not
-        // crash an otherwise-valid model stream through an unhandled promise.
-        void onTokens(Math.round(chars / 4)).catch((e) => {
-          console.warn('audit-run: progress write failed', e.message);
-        }); // ~4 chars/token readout
-      });
+    let providerAttempt = null;
+    let msg = null;
+    if (checkpoint) {
+      const { data: attemptRow } = await db.from('audit_job_attempts')
+        .select('id').eq('job_id', jobId).eq('lease_token', leaseToken).eq('status', 'running').maybeSingle();
+      const requestSha256 = sha256(canonicalJson({
+        model: AUDIT_MODEL, effort, maxTokens, operation,
+        checkpointId: checkpoint.id, inputSha256: checkpoint.input_sha256,
+        schema: schema || null,
+      }));
+      const { data: providerRow, error: providerInsertError } = await db.from('audit_provider_attempts').insert({
+        job_id: jobId,
+        checkpoint_id: checkpoint.id,
+        job_attempt_id: attemptRow?.id || null,
+        model: AUDIT_MODEL,
+        operation,
+        attempt_no: checkpoint.attempt_count,
+        request_sha256: requestSha256,
+        status: 'started',
+        started_at: startedAt.toISOString(),
+      }).select('id').single();
+      if (providerInsertError) throw new Error('Could not record provider attempt before dispatch: ' + providerInsertError.message);
+      providerAttempt = providerRow;
     }
-    const msg = await stream.finalMessage();
-    const text = textFromVerifiedModelMessage(msg, 'Audit analysis');
 
-    const u = usageFromMessage(msg);
-    await logClaudeCall(db, {
-      userId: caller.userId, operation, entityType: 'audit_job', entityId: jobId,
-      model: AUDIT_MODEL, effort, promptVersion: 'audit-v2', attempt: usageLog.length + 1,
-      status: 'completed', startedAt, requestId: msg._request_id, usage: u,
-      stopReason: msg.stop_reason,
-    });
-    usageLog.push({
-      model: msg.model,
-      effort,
-      input: u.input_tokens || 0,
-      output: u.output_tokens || 0,
-      cache_read: u.cache_read_input_tokens || 0,
-      cache_write: u.cache_creation_input_tokens || 0,
-      est_cost_usd: Math.round(usdFor(u) * 10000) / 10000,
-      stop_reason: msg.stop_reason,
-    });
-    console.log('[audit-usage]', JSON.stringify(usageLog[usageLog.length - 1]));
-
-    return text;
+    try {
+      await preflightTokenCount(anthropic, params, { operation: 'Credit report analysis' });
+      // Count-tokens is also a network request. Recompute the hard window
+      // after it returns, then abort the provider stream before either the
+      // durable lease or Netlify budget can expire.
+      const leaseRemainingMs = new Date(job.lease_expires_at || 0).getTime() - Date.now();
+      const providerWindowMs = Math.min(
+        ANTHROPIC_OPTIONS.timeout,
+        remainingBudgetMs() - 30_000,
+        leaseRemainingMs - 30_000,
+      );
+      if (!Number.isFinite(providerWindowMs) || providerWindowMs < 60_000) {
+        const deadlineError = new Error('Provider dispatch deferred because the worker deadline is too close.');
+        deadlineError.auditDeadline = true;
+        throw deadlineError;
+      }
+      const stream = anthropic.messages.stream(params, {
+        signal: AbortSignal.timeout(Math.floor(providerWindowMs)),
+      });
+      if (onTokens) {
+        let chars = 0;
+        stream.on('text', (delta) => {
+          chars += delta.length;
+          // Progress is operational telemetry; an intermittent write must not
+          // crash an otherwise-valid model stream through an unhandled promise.
+          void onTokens(Math.round(chars / 4)).catch((e) => {
+            console.warn('audit-run: progress write failed', e.message);
+          }); // ~4 chars/token readout
+        });
+      }
+      msg = await stream.finalMessage();
+      const text = textFromVerifiedModelMessage(msg, 'Audit analysis');
+      const u = usageFromMessage(msg);
+      const callUsage = {
+        model: msg.model,
+        effort,
+        input: u.input_tokens || 0,
+        output: u.output_tokens || 0,
+        cache_read: u.cache_read_input_tokens || 0,
+        cache_write: u.cache_creation_input_tokens || 0,
+        est_cost_usd: Math.round(usdFor(u) * 10000) / 10000,
+        stop_reason: msg.stop_reason,
+      };
+      if (providerAttempt) {
+        const { error: providerUpdateError } = await db.from('audit_provider_attempts').update({
+          status: 'completed', provider_request_id: msg._request_id || null,
+          stop_reason: msg.stop_reason || null, response_sha256: sha256(text),
+          usage: callUsage, finished_at: new Date().toISOString(),
+        }).eq('id', providerAttempt.id).eq('status', 'started');
+        if (providerUpdateError) throw new Error('Could not record completed provider attempt: ' + providerUpdateError.message);
+      }
+      await logClaudeCall(db, {
+        userId: ownerUserId, operation, entityType: 'audit_job', entityId: jobId,
+        model: AUDIT_MODEL, effort, promptVersion: 'audit-v2', attempt: checkpoint?.attempt_count || usageLog.length + 1,
+        status: 'completed', startedAt, requestId: msg._request_id, usage: u,
+        stopReason: msg.stop_reason,
+      });
+      usageLog.push(callUsage);
+      console.log('[audit-usage]', JSON.stringify(callUsage));
+      return text;
+    } catch (error) {
+      const outputLimit = isOutputLimitError(error) || msg?.stop_reason === 'max_tokens';
+      if (outputLimit && error && typeof error === 'object') error.auditOutputLimit = true;
+      const providerTimeout = isProviderTimeoutError(error);
+      if (providerTimeout && error && typeof error === 'object') error.auditProviderTimeout = true;
+      if (providerAttempt) {
+        await db.from('audit_provider_attempts').update({
+          status: outputLimit ? 'output_limit' : 'failed',
+          provider_request_id: msg?._request_id || null,
+          stop_reason: msg?.stop_reason || null,
+          error_type: outputLimit ? 'output_limit' : (error?.name || 'provider_error'),
+          error_message: error?.message || 'Provider request failed',
+          finished_at: new Date().toISOString(),
+        }).eq('id', providerAttempt.id).eq('status', 'started');
+      }
+      await logClaudeCall(db, {
+        userId: ownerUserId, operation, entityType: 'audit_job', entityId: jobId,
+        model: AUDIT_MODEL, effort, promptVersion: 'audit-v2',
+        attempt: checkpoint?.attempt_count || usageLog.length + 1,
+        status: 'error', startedAt, requestId: msg?._request_id,
+        stopReason: msg?.stop_reason, errorType: error?.name, errorMessage: error?.message,
+      }).catch(() => {});
+      throw error;
+    }
   }
 
   const downloadedReports = new Map();
@@ -547,7 +752,26 @@ export const handler = async (event) => {
     if (!isSupportedAuditMediaType(mediaType)) {
       throw new Error('Unsupported report format. Upload a PDF, HTML, or plain-text credit report.');
     }
-    const report = { bytes, base64: bytes.toString('base64'), mediaType };
+    const report = {
+      bytes,
+      base64: bytes.toString('base64'),
+      mediaType,
+      sourcePath: file.path,
+      sourceSha256: sha256(bytes),
+      sourceBytes: bytes.length,
+    };
+    if (!/^[0-9a-f]{64}$/i.test(String(file.sha256 || ''))
+        || report.sourceSha256 !== String(file.sha256).toLowerCase()
+        || report.sourceBytes !== Number(file.bytes)) {
+      throw terminalAuditError('Uploaded report bytes do not match the immutable source manifest. Re-upload the original report.', 'source_digest_mismatch');
+    }
+    const manifestSource = (job.source_manifest || []).find((source) => source?.path === file.path);
+    if (!manifestSource
+        || manifestSource.sha256 !== report.sourceSha256
+        || Number(manifestSource.bytes) !== report.sourceBytes
+        || Number(manifestSource.index) !== (job.files || []).findIndex((candidate) => candidate?.path === file.path)) {
+      throw terminalAuditError('Uploaded report is not bound to this logical audit manifest.', 'source_manifest_mismatch');
+    }
     downloadedReportBytes += bytes.length;
     downloadedReports.set(file.path, report);
     return report;
@@ -561,6 +785,247 @@ export const handler = async (event) => {
     return splitPdfByPages(pdfBytes);
   }
 
+  const remainingBudgetMs = () => WORKER_BUDGET_MS - (Date.now() - invocationStartedAt);
+  let leaseClosed = false;
+
+  async function dispatchNext(invoker = 'chain') {
+    const base = process.env.DEPLOY_URL || process.env.URL || 'https://ccc-forensic-demo.netlify.app';
+    const response = await fetch(base + '/.netlify/functions/audit-run-background', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + serviceKey,
+        'x-ccc-audit-invoker': invoker,
+      },
+      body: JSON.stringify({ jobId }),
+    });
+    if (!response.ok && response.status !== 409) {
+      throw new Error(`Could not chain audit checkpoint worker (HTTP ${response.status}).`);
+    }
+  }
+
+  async function releaseLease({
+    status = 'waiting', stage = 'Continuing from saved checkpoint',
+    errorType = null, errorMessage = null, retryAt = new Date().toISOString(), checkpointId = null,
+  } = {}) {
+    const { data, error } = await db.rpc('ccc_release_audit_job', {
+      p_job_id: jobId,
+      p_lease_token: leaseToken,
+      p_status: status,
+      p_stage: stage,
+      p_error_type: errorType,
+      p_error_message: errorMessage,
+      p_next_retry_at: retryAt,
+      p_checkpoint_id: checkpointId,
+    });
+    if (error || data !== true) throw new Error('Could not release audit lease safely: ' + (error?.message || 'lease mismatch'));
+    leaseClosed = true;
+  }
+
+  function checkpointKey(spec) {
+    return sha256(canonicalJson({
+      version: RESUMABLE_WORKFLOW_VERSION,
+      kind: spec.kind,
+      bureau: spec.bureau || null,
+      sourceIndex: spec.source_index ?? null,
+      sourceSha256: spec.source_sha256 || null,
+      inputSha256: spec.input_sha256 || null,
+      startPage: spec.start_page || null,
+      endPage: spec.end_page || null,
+    }));
+  }
+
+  async function ensureCheckpointPlan() {
+    const { data: existingRows, error: existingError } = await db.from('audit_job_checkpoints')
+      .select('id,checkpoint_key,status,source_index,source_path,source_sha256,source_bytes,input_sha256,start_page,end_page,total_pages,chunk_index,chunk_count,kind,bureau,sequence')
+      .eq('job_id', jobId).order('sequence');
+    if (existingError) throw new Error('Could not load audit checkpoint plan: ' + existingError.message);
+    if ((job.expected_checkpoint_count || 0) > 0) {
+      const active = (existingRows || []).filter((row) => row.status !== 'superseded');
+      if (active.length !== Number(job.expected_checkpoint_count)) {
+        throw terminalAuditError('Saved audit checkpoint plan count no longer matches the logical job.', 'checkpoint_plan_mismatch');
+      }
+      return active;
+    }
+
+    const rows = [];
+    if (job.mode === 'merge') {
+      const spec = {
+        job_id: jobId, sequence: 0, kind: 'merge', bureau: null,
+        source_index: null, source_path: null, source_sha256: null,
+        source_bytes: null, source_media_type: null, input_sha256: null,
+        start_page: null, end_page: null, total_pages: null,
+        chunk_index: null, chunk_count: null, status: 'pending',
+      };
+      rows.push({ ...spec, checkpoint_key: checkpointKey(spec) });
+    } else {
+      for (let sourceIndex = 0; sourceIndex < (job.files || []).length; sourceIndex += 1) {
+        const file = job.files[sourceIndex];
+        const report = await downloadReport(file);
+        const bureau = job.mode === 'combined' ? null : normalizeBureauKey(file.bureau);
+        const kind = job.mode === 'combined' ? 'combined_chunk' : 'bureau_chunk';
+        let chunks;
+        if (report.mediaType.includes('pdf')) {
+          chunks = await splitPdfByPages(report.bytes, { maxPages: RESUMABLE_PDF_CHUNK_PAGES });
+        } else {
+          chunks = [{
+            bytes: report.bytes, base64: report.base64,
+            startPage: 1, endPage: 1, totalPages: 1, index: 0, chunkCount: 1,
+          }];
+        }
+        for (const chunk of chunks) {
+          const spec = {
+            job_id: jobId,
+            // Page-derived ordering stays stable even if a dense range must
+            // be split more than once. The superseded parent may share the
+            // left child's start page, but only active rows reach the merge.
+            sequence: sourceIndex * 1000000 + chunk.startPage * 100,
+            kind,
+            bureau,
+            source_index: sourceIndex,
+            source_path: report.sourcePath,
+            source_sha256: report.sourceSha256,
+            source_bytes: report.sourceBytes,
+            source_media_type: report.mediaType,
+            input_sha256: checkpointInputSha256({
+              sourceSha256: report.sourceSha256,
+              startPage: chunk.startPage,
+              endPage: chunk.endPage,
+              totalPages: chunk.totalPages,
+            }),
+            start_page: chunk.startPage,
+            end_page: chunk.endPage,
+            total_pages: chunk.totalPages,
+            chunk_index: chunk.index,
+            chunk_count: chunk.chunkCount,
+            status: 'pending',
+          };
+          rows.push({ ...spec, checkpoint_key: checkpointKey(spec) });
+        }
+      }
+    }
+    if (!rows.length) throw new Error('Audit checkpoint planning produced no work.');
+    const { error: planInsertError } = await db.from('audit_job_checkpoints')
+      .upsert(rows, { onConflict: 'job_id,checkpoint_key', ignoreDuplicates: true });
+    if (planInsertError) throw new Error('Could not persist audit checkpoint plan: ' + planInsertError.message);
+    const { data: plannedRows, error: plannedError } = await db.from('audit_job_checkpoints')
+      .select('*').eq('job_id', jobId).neq('status', 'superseded').order('sequence');
+    if (plannedError || !plannedRows || plannedRows.length !== rows.length) {
+      throw new Error('Audit checkpoint plan could not be verified after creation.');
+    }
+    const { error: jobPlanError } = await db.from('audit_jobs').update({
+      expected_checkpoint_count: plannedRows.length,
+      completed_checkpoint_count: plannedRows.filter((row) => row.status === 'done').length,
+      stage: `Prepared ${plannedRows.length} durable checkpoint${plannedRows.length === 1 ? '' : 's'}`,
+      updated_at: new Date().toISOString(), last_heartbeat_at: new Date().toISOString(),
+    }).eq('id', jobId).eq('lease_token', leaseToken);
+    if (jobPlanError) throw new Error('Could not bind checkpoint plan to audit job: ' + jobPlanError.message);
+    job.expected_checkpoint_count = plannedRows.length;
+    return plannedRows;
+  }
+
+  async function checkpointInput(checkpoint) {
+    if (checkpoint.kind === 'merge') return null;
+    const file = (job.files || [])[Number(checkpoint.source_index)];
+    if (!file || file.path !== checkpoint.source_path) throw terminalAuditError('Checkpoint source index/path binding is invalid.', 'checkpoint_source_mismatch');
+    const report = await downloadReport(file);
+    if (report.sourceSha256 !== checkpoint.source_sha256
+        || report.sourceBytes !== Number(checkpoint.source_bytes)
+        || report.mediaType !== checkpoint.source_media_type) {
+      throw terminalAuditError('Checkpoint source no longer matches its immutable manifest.', 'checkpoint_source_mismatch');
+    }
+    let chunk;
+    if (report.mediaType.includes('pdf')) {
+      chunk = await extractPdfPageRange(report.bytes, {
+        startPage: checkpoint.start_page,
+        endPage: checkpoint.end_page,
+      });
+      chunk.index = checkpoint.chunk_index;
+      chunk.chunkCount = checkpoint.chunk_count;
+    } else {
+      chunk = {
+        bytes: report.bytes, base64: report.base64,
+        startPage: 1, endPage: 1, totalPages: 1, index: 0, chunkCount: 1,
+      };
+    }
+    const expectedInputSha256 = checkpointInputSha256({
+      sourceSha256: report.sourceSha256,
+      startPage: checkpoint.start_page,
+      endPage: checkpoint.end_page,
+      totalPages: checkpoint.total_pages,
+    });
+    if (!chunk || expectedInputSha256 !== checkpoint.input_sha256
+        || chunk.totalPages !== checkpoint.total_pages) {
+      throw terminalAuditError('Checkpoint input page range no longer matches the saved source-bound plan.', 'checkpoint_input_mismatch');
+    }
+    return { file, report, chunk };
+  }
+
+  function checkpointStage(checkpoint) {
+    if (checkpoint.kind === 'merge') return 'Merging saved bureau parses';
+    const label = checkpoint.bureau ? bureauDisplayName(checkpoint.bureau) : '3-bureau report';
+    return `Extracting ${label} · pages ${checkpoint.start_page}–${checkpoint.end_page} of ${checkpoint.total_pages}`;
+  }
+
+  async function processExtractionCheckpoint(checkpoint) {
+    const input = await checkpointInput(checkpoint);
+    const stage = checkpointStage(checkpoint);
+    const pct = Math.max(2, Math.min(82, Math.round((checkpoint.sequence + 1) / Math.max(1, job.expected_checkpoint_count) * 80)));
+    await progress(stage, pct)(0);
+    if (remainingBudgetMs() < MIN_PROVIDER_BUDGET_MS) {
+      await releaseLease({
+        status: 'waiting',
+        stage: 'Saved checkpoint ready for the next worker',
+        checkpointId: checkpoint.id,
+      });
+      await dispatchNext();
+      return { yielded: true };
+    }
+
+    let raw;
+    if (checkpoint.kind === 'combined_chunk') {
+      raw = await claudeCall(
+        buildReportContent(input.chunk.base64, combinedExtractionPrompt(input.chunk), input.report.mediaType),
+        {
+          schema: COMBINED_CREDIT_EXTRACTION_SCHEMA,
+          onTokens: progress(stage, pct),
+          operation: 'audit.report_extraction', checkpoint,
+        },
+      );
+      const parsed = parseAuditJSON(raw);
+      const rebased = rebaseExtractionPageRefs(parsed, checkpoint.start_page - 1);
+      for (const extractedReport of rebased?.reports || []) {
+        assertExtractionPageBounds(extractedReport, checkpoint.total_pages);
+      }
+      return rebased;
+    }
+
+    const bureauKey = normalizeBureauKey(checkpoint.bureau);
+    raw = await claudeCall(
+      buildReportContent(input.chunk.base64, bureauExtractionPrompt(bureauKey, input.chunk), input.report.mediaType),
+      {
+        schema: CREDIT_BUREAU_EXTRACTION_SCHEMA,
+        onTokens: progress(stage, pct),
+        operation: 'audit.report_extraction', checkpoint,
+      },
+    );
+    const rebased = rebaseExtractionPageRefs(parseAuditJSON(raw), checkpoint.start_page - 1);
+    assertExtractionPageBounds(rebased, checkpoint.total_pages);
+    return rebased;
+  }
+
+  async function completeCheckpoint(checkpoint, output) {
+    const callUsage = usageLog[usageLog.length - 1] || null;
+    const { data, error } = await db.rpc('ccc_complete_audit_checkpoint', {
+      p_checkpoint_id: checkpoint.id,
+      p_lease_token: leaseToken,
+      p_output: output,
+      p_output_sha256: parseSha256(output),
+      p_usage: callUsage,
+    });
+    if (error || data !== true) throw new Error('Could not save completed audit checkpoint: ' + (error?.message || 'lease mismatch'));
+  }
+
   async function runBureauChunks(chunks, { bureauKey, bureauName, stage, pct }) {
     console.log(`[audit] ${bureauName} PDF is ${chunks[0].totalPages} pages — splitting into ${chunks.length} parts`);
     const parts = [];
@@ -572,7 +1037,9 @@ export const handler = async (event) => {
         buildReportContent(chunk.base64, prompt, 'application/pdf'),
         { schema: CREDIT_BUREAU_EXTRACTION_SCHEMA, onTokens: progress(chunkStage, pct), operation: 'audit.report_extraction' },
       );
-      parts.push(assertBureauOutput(coerceBureauExtraction(parseAuditJSON(raw), bureauKey), bureauName));
+      const rebased = rebaseExtractionPageRefs(parseAuditJSON(raw), chunk.startPage - 1);
+      assertExtractionPageBounds(rebased, chunk.totalPages);
+      parts.push(rebased);
     }
     return assertBureauOutput(mergeBureauExtractions(parts, bureauKey), bureauName);
   }
@@ -581,7 +1048,9 @@ export const handler = async (event) => {
     const bureauKey = normalizeBureauKey(bureauName);
     const chunks = await pdfChunksForReport(report);
     if (chunks && chunks.length > 1) {
-      return runBureauChunks(chunks, { bureauKey, bureauName, stage, pct });
+      const parse = await runBureauChunks(chunks, { bureauKey, bureauName, stage, pct });
+      assertExtractionPageBounds(parse, chunks[0].totalPages);
+      return { parse, pageCount: chunks[0].totalPages, chunkCount: chunks.length };
     }
 
     try {
@@ -589,7 +1058,12 @@ export const handler = async (event) => {
         buildReportContent(report.base64, bureauExtractionPrompt(bureauKey), report.mediaType),
         { schema: CREDIT_BUREAU_EXTRACTION_SCHEMA, onTokens: progress(stage, pct), operation: 'audit.report_extraction' },
       );
-      return assertBureauOutput(coerceBureauExtraction(parseAuditJSON(raw), bureauKey), bureauName);
+      const pageCount = chunks?.[0]?.totalPages || 1;
+      const rawParse = parseAuditJSON(raw);
+      assertExtractionPageBounds(rawParse, pageCount);
+      const parse = assertBureauOutput(coerceBureauExtraction(rawParse, bureauKey), bureauName);
+      assertExtractionPageBounds(parse, pageCount);
+      return { parse, pageCount, chunkCount: 1 };
     } catch (err) {
       const totalPages = chunks?.[0]?.totalPages || 0;
       if (!isOutputLimitError(err) || totalPages < 2) throw err;
@@ -597,7 +1071,9 @@ export const handler = async (event) => {
       const forcedChunks = await splitPdfByPages(report.bytes || Buffer.from(report.base64, 'base64'), {
         maxPages: Math.max(1, Math.ceil(totalPages / 2)),
       });
-      return runBureauChunks(forcedChunks, { bureauKey, bureauName, stage, pct });
+      const parse = await runBureauChunks(forcedChunks, { bureauKey, bureauName, stage, pct });
+      assertExtractionPageBounds(parse, forcedChunks[0].totalPages);
+      return { parse, pageCount: forcedChunks[0].totalPages, chunkCount: forcedChunks.length };
     }
   }
 
@@ -612,7 +1088,11 @@ export const handler = async (event) => {
         onTokens: progress(chunkStage, null),
         operation: 'audit.report_extraction',
       });
-      parts.push(parseAuditJSON(raw));
+      const rebased = rebaseExtractionPageRefs(parseAuditJSON(raw), chunk.startPage - 1);
+      for (const extractedReport of rebased?.reports || []) {
+        assertExtractionPageBounds(extractedReport, chunk.totalPages);
+      }
+      parts.push(rebased);
     }
     return mergeCombinedExtractions(parts);
   }
@@ -620,7 +1100,9 @@ export const handler = async (event) => {
   async function parseCombinedExtractionChunked({ report, stage }) {
     const chunks = await pdfChunksForReport(report);
     if (chunks && chunks.length > 1) {
-      return runCombinedChunks(chunks, { stage });
+      const reports = await runCombinedChunks(chunks, { stage });
+      reports.forEach((parsed) => assertExtractionPageBounds(parsed, chunks[0].totalPages));
+      return { reports, pageCount: chunks[0].totalPages, chunkCount: chunks.length };
     }
 
     try {
@@ -628,7 +1110,14 @@ export const handler = async (event) => {
         buildReportContent(report.base64, combinedExtractionPrompt(null), report.mediaType),
         { schema: COMBINED_CREDIT_EXTRACTION_SCHEMA, onTokens: progress(stage, null), operation: 'audit.report_extraction' },
       );
-      return mergeCombinedExtractions([parseAuditJSON(raw)]);
+      const pageCount = chunks?.[0]?.totalPages || 1;
+      const rawExtraction = parseAuditJSON(raw);
+      for (const extractedReport of rawExtraction?.reports || []) {
+        assertExtractionPageBounds(extractedReport, pageCount);
+      }
+      const reports = mergeCombinedExtractions([rawExtraction]);
+      reports.forEach((parsed) => assertExtractionPageBounds(parsed, pageCount));
+      return { reports, pageCount, chunkCount: 1 };
     } catch (err) {
       const totalPages = chunks?.[0]?.totalPages || 0;
       if (!isOutputLimitError(err) || totalPages < 2) throw err;
@@ -636,7 +1125,9 @@ export const handler = async (event) => {
       const forcedChunks = await splitPdfByPages(report.bytes || Buffer.from(report.base64, 'base64'), {
         maxPages: Math.max(1, Math.ceil(totalPages / 2)),
       });
-      return runCombinedChunks(forcedChunks, { stage });
+      const reports = await runCombinedChunks(forcedChunks, { stage });
+      reports.forEach((parsed) => assertExtractionPageBounds(parsed, forcedChunks[0].totalPages));
+      return { reports, pageCount: forcedChunks[0].totalPages, chunkCount: forcedChunks.length };
     }
   }
 
@@ -645,38 +1136,93 @@ export const handler = async (event) => {
     return { clientName: selectedJobClient.name, clientId: selectedJobClient.id };
   }
 
-  async function saveBureauParseRow({ bureauKey, bureauParse, pageCount = null, chunkCount = null }) {
+  async function saveBureauParseRow({ bureauKey, bureauParse, report, file, pageCount = null, chunkCount = null }) {
     const { clientName, clientId } = await resolveClientForParse(bureauParse);
+    const cohort = assertReportCohort([bureauParse], {
+      requireThree: false,
+      selectedClient: selectedJobClient,
+      now: job.created_at,
+    });
+    const cohortKey = cohortKeyFor(clientId, cohort);
+    const parseId = uuidFromSha256(`${jobId}:${bureauKey}:${report.sourceSha256}`);
+    const source = sourceRecord({
+      bureauParse, report, file, parseId, sourceJobId: jobId, pageCount, chunkCount,
+    });
+    const provenance = buildAuditProvenance({
+      mode: 'single', sourceJobId: jobId, cohort, cohortKey,
+      sources: [source], evaluatedAt: job.created_at,
+    });
     const row = {
+      id: parseId,
       user_id: job.user_id,
       client_id: clientId,
       client_name: clientName,
       bureau: bureauKey,
-      report_date: todayISO(),
+      report_date: cohort.reportDate,
       parse: bureauParse,
       source_job_id: jobId,
+      source_path: report.sourcePath,
+      source_sha256: report.sourceSha256,
+      source_bytes: report.sourceBytes,
+      source_media_type: report.mediaType,
+      parse_sha256: source.parseSha256,
+      cohort_key: cohortKey,
+      provenance,
       page_count: pageCount,
       chunk_count: chunkCount,
-      updated_at: new Date().toISOString(),
     };
 
-    // Upsert by deleting prior row for this staff+client+bureau, then insert.
-    // Partial unique indexes make ON CONFLICT awkward across null client_id.
-    let del = db.from('audit_bureau_parses').delete().eq('user_id', job.user_id).eq('bureau', bureauKey);
-    if (clientId) del = del.eq('client_id', clientId);
-    else del = del.is('client_id', null).eq('client_name', clientName);
-    await del;
+    // A worker can be terminated after this immutable staging insert but
+    // before the parent job is marked done. Resume the exact source-bound row
+    // instead of creating a second parse version for the same logical job.
+    const { data: priorRows, error: priorError } = await db.from('audit_bureau_parses')
+      .select('id,parse_sha256,source_sha256,cohort_key,provenance')
+      .eq('source_job_id', jobId).eq('bureau', bureauKey).limit(2);
+    if (priorError) throw new Error('Could not verify prior bureau staging state: ' + priorError.message);
+    if ((priorRows || []).length > 1) throw new Error('Logical audit has duplicate immutable bureau staging rows.');
+    if (priorRows?.length === 1) {
+      const prior = priorRows[0];
+      if (prior.parse_sha256 !== row.parse_sha256
+          || prior.source_sha256 !== row.source_sha256
+          || prior.cohort_key !== row.cohort_key
+          || prior.provenance?.provenanceSha256 !== row.provenance.provenanceSha256) {
+        throw new Error('Prior staged bureau row does not match the resumed checkpoint output.');
+      }
+      row.id = prior.id;
+      row.provenance = prior.provenance;
+    }
 
-    const { error } = await db.from('audit_bureau_parses').insert(row);
-    if (error) throw new Error('Could not save bureau parse: ' + error.message);
+    // Immutable/versioned insert. A rerun creates a new source-bound row; it
+    // never mutates or deletes the prior parse. The source-job unique index
+    // makes an accidental same-job replay observable instead of overwriting.
+    if (!priorRows?.length) {
+      const { error } = await db.from('audit_bureau_parses').insert(row);
+      if (error) throw new Error('Could not save bureau parse: ' + error.message);
+    }
 
     let readyQuery = db.from('audit_bureau_parses')
-      .select('bureau,updated_at')
-      .eq('user_id', job.user_id);
+      .select('id,bureau,cohort_key,created_at')
+      .eq('user_id', job.user_id)
+      .eq('cohort_key', cohortKey)
+      .order('created_at', { ascending: false });
     if (clientId) readyQuery = readyQuery.eq('client_id', clientId);
     else readyQuery = readyQuery.is('client_id', null).eq('client_name', clientName);
     const { data: readyRows } = await readyQuery;
-    const ready = [...new Set((readyRows || []).map((r) => normalizeBureauKey(r.bureau)).filter(Boolean))];
+    const selectedByBureau = {};
+    const versionCounts = {};
+    for (const candidate of readyRows || []) {
+      const key = normalizeBureauKey(candidate.bureau);
+      if (key) versionCounts[key] = (versionCounts[key] || 0) + 1;
+      if (key && !selectedByBureau[key]) selectedByBureau[key] = candidate;
+    }
+    const ready = Object.keys(selectedByBureau);
+    const exactVersionSet = ready.length === 3
+      && (readyRows || []).length === 3
+      && ['equifax', 'experian', 'transunion'].every((key) => versionCounts[key] === 1);
+    const mergeSelection = exactVersionSet ? {
+      cohortKey,
+      parseIds: ['equifax', 'experian', 'transunion'].map((key) => selectedByBureau[key].id),
+    } : null;
 
     return {
       kind: 'bureau_parse',
@@ -688,7 +1234,11 @@ export const handler = async (event) => {
       chunkCount,
       readyBureaus: ready,
       missingBureaus: ['equifax', 'experian', 'transunion'].filter((b) => !ready.includes(b)),
-      canMerge: ready.length === 3,
+      canMerge: exactVersionSet,
+      cohortKey,
+      parseId: row.id,
+      mergeSelection,
+      provenance,
       parse: bureauParse,
     };
   }
@@ -697,25 +1247,110 @@ export const handler = async (event) => {
     if (!job.selected_client_id) {
       throw new Error('Merge requires an existing client selection so the three bureau parses can be found.');
     }
+    const selection = job.merge_selection || {};
+    const parseIds = Array.isArray(selection.parseIds) ? selection.parseIds : [];
+    if (parseIds.length !== 3 || new Set(parseIds).size !== 3 || !/^[0-9a-f]{64}$/i.test(String(selection.cohortKey || ''))) {
+      throw new Error('Merge requires one exact source-bound parse from each bureau cohort.');
+    }
     const { data, error } = await db.from('audit_bureau_parses')
-      .select('bureau,parse,client_id,client_name,updated_at')
+      .select('id,bureau,parse,parse_sha256,client_id,client_name,report_date,source_job_id,source_path,source_sha256,source_bytes,source_media_type,cohort_key,provenance,page_count,chunk_count,created_at')
       .eq('user_id', job.user_id)
       .eq('client_id', job.selected_client_id)
-      .order('updated_at', { ascending: false });
+      .in('id', parseIds);
     if (error) throw new Error('Could not load bureau parses: ' + error.message);
+    if (!data || data.length !== 3) throw new Error('One or more selected staged parses no longer exists. Re-run the missing bureau.');
+
+    const { data: cohortRows, error: cohortRowsError } = await db.from('audit_bureau_parses')
+      .select('id,bureau')
+      .eq('user_id', job.user_id)
+      .eq('client_id', job.selected_client_id)
+      .eq('cohort_key', selection.cohortKey);
+    if (cohortRowsError) throw new Error('Could not verify the exact staged cohort: ' + cohortRowsError.message);
+    const selectedIds = new Set(parseIds);
+    if (!cohortRows || cohortRows.length !== 3 || cohortRows.some((row) => !selectedIds.has(row.id))) {
+      throw new Error('This staged cohort contains multiple same-date parse versions. Use one new Combined or 3 Individual Reports audit so report cycles cannot be mixed.');
+    }
 
     const byBureau = {};
-    for (const row of data || []) {
+    const sources = [];
+    for (const row of data) {
       const key = normalizeBureauKey(row.bureau);
-      if (!key || byBureau[key]) continue;
+      if (!key || byBureau[key]) throw new Error('Selected staged parses do not contain exactly one row per bureau.');
+      if (row.cohort_key !== selection.cohortKey) throw new Error('Selected staged parses belong to different report cohorts.');
+      if (!/^[0-9a-f]{64}$/i.test(String(row.source_sha256 || ''))
+          || !/^[0-9a-f]{64}$/i.test(String(row.parse_sha256 || ''))
+          || row.parse_sha256 !== parseSha256(row.parse)) {
+        throw new Error(`The saved ${bureauDisplayName(key)} parse no longer matches its immutable source digest.`);
+      }
+      if (row.provenance?.version !== AUDIT_PROVENANCE_VERSION
+          || row.provenance?.provenanceCanonical !== provenanceCanonical(row.provenance)
+          || row.provenance?.provenanceSha256 !== provenanceSha256(row.provenance)) {
+        throw new Error(`The saved ${bureauDisplayName(key)} provenance record is incomplete or altered.`);
+      }
+      const boundSources = Array.isArray(row.provenance.sources) ? row.provenance.sources : [];
+      const bound = boundSources[0];
+      if (boundSources.length !== 1
+          || row.provenance.exactThreeBureau !== false
+          || row.provenance.cohortKey !== row.cohort_key
+          || row.provenance.reportDate !== String(row.report_date)
+          || row.provenance.sourceJobId !== row.source_job_id
+          || bound?.bureau !== key
+          || bound?.reportDate !== String(row.report_date)
+          || bound?.sourceJobId !== row.source_job_id
+          || bound?.parseId !== row.id
+          || bound?.parseSha256 !== row.parse_sha256
+          || bound?.filePath !== row.source_path
+          || bound?.fileSha256 !== row.source_sha256
+          || Number(bound?.fileBytes) !== Number(row.source_bytes)
+          || bound?.mediaType !== row.source_media_type
+          || Number(bound?.pageCount) !== Number(row.page_count)
+          || Number(bound?.chunkCount) !== Number(row.chunk_count)
+          || bound?.clientName !== row.parse?.client?.name
+          || Number(bound?.clientNameEvidencePage) !== Number(row.parse?.client?.nameEvidencePage)
+          || Number(bound?.reportSectionStartEvidencePage) !== Number(row.parse?.reportSectionStartEvidencePage)
+          || (bound?.dateOfBirth || null) !== (row.parse?.personalInfo?.dateOfBirth || null)
+          || Number(bound?.dateOfBirthEvidencePage || 0) !== Number(row.parse?.personalInfo?.dateOfBirthEvidencePage || 0)) {
+        throw new Error(`The saved ${bureauDisplayName(key)} parse is not bound to the exact selected source record.`);
+      }
+      assertExtractionPageBounds(row.parse, Number(row.page_count) || 1);
       byBureau[key] = assertBureauOutput(coerceBureauExtraction(row.parse, key), bureauDisplayName(key));
+      assertExtractionPageBounds(byBureau[key], Number(row.page_count) || 1);
+      sources.push({
+        bureau: key,
+        reportDate: String(row.report_date),
+        reportDateRaw: row.parse?.reportDateRaw || null,
+        reportDateEvidencePage: row.parse?.reportDateEvidencePage ?? null,
+        bureauEvidencePage: row.parse?.bureauEvidencePage ?? null,
+        reportSectionStartEvidencePage: row.parse?.reportSectionStartEvidencePage ?? null,
+        clientName: row.parse?.client?.name || null,
+        clientNameEvidencePage: row.parse?.client?.nameEvidencePage ?? null,
+        dateOfBirth: row.parse?.personalInfo?.dateOfBirth || null,
+        dateOfBirthEvidencePage: row.parse?.personalInfo?.dateOfBirthEvidencePage ?? null,
+        sourceJobId: row.source_job_id,
+        parseId: row.id,
+        parseSha256: row.parse_sha256,
+        filePath: row.source_path,
+        fileSha256: row.source_sha256,
+        fileBytes: row.source_bytes,
+        mediaType: row.source_media_type,
+        pageCount: row.page_count,
+        chunkCount: row.chunk_count,
+      });
     }
     for (const key of ['equifax', 'experian', 'transunion']) {
       if (!byBureau[key]) {
         throw new Error(`Missing ${bureauDisplayName(key)} parse for this client. Run Single Bureau for each bureau first, then merge.`);
       }
     }
-    return byBureau;
+    const reports = [byBureau.equifax, byBureau.experian, byBureau.transunion];
+    const cohort = assertReportCohort(reports, {
+      requireThree: true,
+      selectedClient: selectedJobClient,
+      now: job.created_at,
+    });
+    const expectedCohortKey = cohortKeyFor(job.selected_client_id, cohort);
+    if (expectedCohortKey !== selection.cohortKey) throw new Error('Selected staged parses do not match their bound client/report cohort.');
+    return { byBureau, reports, sources, cohort, cohortKey: expectedCohortKey };
   }
 
   async function finalizeUnifiedAudit(audit, { skipEnrichment = false, files = [], today } = {}) {
@@ -797,7 +1432,7 @@ export const handler = async (event) => {
     // potentially duplicated client name/report date.
     audit.auditId = savedAuditId;
 
-    (async () => {
+    if (audit.reportCoverage?.complete === true) (async () => {
       try {
         const clientName = savedClientName || (audit && audit.client && audit.client.name) || null;
         if (!clientName) return;
@@ -819,6 +1454,7 @@ export const handler = async (event) => {
   // upsert (same slug__date id), and the lead-row upsert — attributed to the
   // job's user so the audit lands in their records even if the tab closed.
   async function saveAuditAs(userId, audit, job) {
+    const isComplete3B = audit?.reportCoverage?.complete === true;
     // Enforce the addressStatus/furnisherAddress pairing server-side rather
     // than trusting masterPrompt.js's instructions alone — confirmed live
     // (William Pope's Navy Federal, Austin Mote's Suzuki account) that the
@@ -841,13 +1477,16 @@ export const handler = async (event) => {
     const extractedClientName = (audit && audit.client && audit.client.name) || 'Unknown Client';
     const clientName = selectedJobClient.name;
     const clientAddress = (audit && audit.client && audit.client.address) || null;
-    const reportDate = (audit && audit.client && audit.client.reportDate) || todayISO();
+    const reportDate = audit && audit.client && audit.client.reportDate;
+    if (audit?.evaluationMode === 'deterministic' && !/^\d{4}-\d{2}-\d{2}$/.test(String(reportDate || ''))) {
+      throw new Error('Deterministic audit has no source-derived report date and cannot be saved.');
+    }
     const clientId = selectedJobClient.id;
     if (extractedClientName.trim().toLowerCase() !== clientName.trim().toLowerCase()) {
-      console.warn('[audit] report name differs from exact staff-selected CRM client; attribution remains bound to selected UUID');
+      console.info('[audit] source consumer name includes a permitted middle-name/suffix formatting difference from the selected CRM client');
     }
 
-    try {
+    if (isComplete3B) try {
       const scores = audit.scores || (audit.client && audit.client.scores);
       if (clientName && scores) {
         // address MUST be in this select list: the auto-populate below guards
@@ -862,17 +1501,16 @@ export const handler = async (event) => {
         const existingQuery = db.from('clients').select(PROFILE_COLS)
           .eq('id', clientId).eq('user_id', userId).limit(1);
         const { data: existing } = await existingQuery;
-        const hasScores = existing && existing.length > 0 && (existing[0].score_eq_start || existing[0].score_exp_start || existing[0].score_tu_start);
-        if (!hasScores) {
+        if (existing && existing.length > 0) {
           const eq = scores.equifax || scores.eq || null;
           const exp = scores.experian || scores.exp || null;
           const tu = scores.transunion || scores.tu || null;
-          if (eq || exp || tu) {
-            await db.from('clients').update({
-              score_eq_start: eq ? parseInt(eq) : null,
-              score_exp_start: exp ? parseInt(exp) : null,
-              score_tu_start: tu ? parseInt(tu) : null,
-            }).eq('id', clientId).eq('user_id', userId);
+          const scorePatch = {};
+          if (!existing[0].score_eq_start && eq) scorePatch.score_eq_start = parseInt(eq);
+          if (!existing[0].score_exp_start && exp) scorePatch.score_exp_start = parseInt(exp);
+          if (!existing[0].score_tu_start && tu) scorePatch.score_tu_start = parseInt(tu);
+          if (Object.keys(scorePatch).length) {
+            await db.from('clients').update(scorePatch).eq('id', clientId).eq('user_id', userId);
           }
         }
 
@@ -880,10 +1518,12 @@ export const handler = async (event) => {
         const pi = audit.personalInfo || (audit.client && audit.client.personalInfo);
         if (pi && existing && existing.length > 0) {
           const profilePatch = {};
-          if (pi.dateOfBirth && !existing[0].date_of_birth) profilePatch.date_of_birth = pi.dateOfBirth;
-          if (pi.phone && !existing[0].phone) profilePatch.phone = pi.phone;
-          // currentAddress in personalInfo is the "listed address on report" — only use as address fallback
-          const reportCurrentAddress = pi.currentAddress || clientAddress;
+          if (pi.dateOfBirth && pi.dateOfBirthEvidencePage && !existing[0].date_of_birth) profilePatch.date_of_birth = pi.dateOfBirth;
+          if (pi.phone && pi.phoneEvidence?.page && !existing[0].phone) profilePatch.phone = pi.phone;
+          // Only the client address independently matched to the selected CRM
+          // identity may populate the canonical mailing profile. A bare PI
+          // cleanup value is not sufficient for future dispute mail.
+          const reportCurrentAddress = audit.client?.addressEvidence?.page ? clientAddress : null;
           if (reportCurrentAddress && !existing[0].address) profilePatch.address = reportCurrentAddress;
 
           if (Object.keys(profilePatch).length > 0) {
@@ -905,7 +1545,7 @@ export const handler = async (event) => {
     // must never block the audit save; accounts simply won't carry a
     // clientAccountId and Phase 3 falls back to (and blocks on) furnisher
     // matching.
-    try {
+    if (isComplete3B) try {
       const identityQuery = db.from('client_accounts')
         .select('id,norm_furnisher,original_creditor,account_last4')
         .eq('user_id', userId).eq('client_id', clientId);
@@ -981,13 +1621,13 @@ export const handler = async (event) => {
     // genuinely couldn't be resolved (exact-name ambiguity) — same
     // collision risk that already existed there, not a new one.
     const auditId = clientId
-      ? slug(clientName) + '__' + clientId + '__' + reportDate
-      : slug(clientName) + '__' + reportDate;
+      ? slug(clientName) + '__' + clientId + '__' + reportDate + '__' + job.id
+      : slug(clientName) + '__' + reportDate + '__' + job.id;
 
     if (audit.client && clientId) audit.client.id = clientId;
 
     const savedAt = new Date().toISOString();
-    const { error } = await db.from('audits').upsert({
+    const { error } = await db.from('audits').insert({
       id: auditId,
       user_id: userId,
       created_by: userId,
@@ -1010,133 +1650,272 @@ export const handler = async (event) => {
     // default — which is 'active', not 'lead'. Whether someone shows up
     // under Leads or Clients must never depend on whether the model could
     // read a score off their report.
-    await db.from('clients').upsert({
-      user_id: userId, name: clientName, address: clientAddress, status: 'lead',
-    }, { onConflict: 'user_id,name', ignoreDuplicates: true });
+    if (isComplete3B) {
+      await db.from('clients').upsert({
+        user_id: userId, name: clientName, address: clientAddress, status: 'lead',
+      }, { onConflict: 'user_id,name', ignoreDuplicates: true });
+    }
 
     return { clientName, clientId, auditId, savedAt };
   }
 
-  const filePaths = (job.files || []).map((f) => f.path);
+  let activeCheckpoint = null;
   try {
     const t = todayLong();
     const files = job.files || [];
-    let audit;
-    let jobResult = null;
+    await ensureCheckpointPlan();
 
-    if (job.mode === 'single') {
-      const f = files[0];
-      if (!f) throw new Error('No report file attached to this job.');
-      const bureauKey = normalizeBureauKey(f.bureau);
-      if (!bureauKey) throw new Error('Single bureau jobs require Equifax, Experian, or TransUnion.');
-      const bureauName = bureauDisplayName(bureauKey);
-      const stage = `Parsing ${bureauName} report`;
-      await progress(stage, 10)(0);
-      const report = await downloadReport(f);
-      const chunks = await pdfChunksForReport(report);
-      const bureauParse = await parseBureauReportChunked({
-        report, bureauName, stage, pct: 10, today: t,
-      });
-      await progress(`Saving ${bureauName} parse`, 90)(0);
-      jobResult = await saveBureauParseRow({
-        bureauKey,
-        bureauParse,
-        pageCount: chunks?.[0]?.totalPages || null,
-        chunkCount: chunks?.length || 1,
-      });
-    } else if (job.mode === 'merge') {
-      await progress('Loading staged bureau parses', 10)(0);
-      const parsed = await loadBureauParsesForMerge();
-      await progress('Applying deterministic cross-bureau rules', 40)(0);
-      audit = assertAuditOutput(buildDeterministicAudit(
-        [parsed.equifax, parsed.experian, parsed.transunion],
-        { reportDate: todayISO() },
-      ));
-      audit = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files: [], today: t });
-      jobResult = audit;
-    } else if (job.mode === 'combined') {
-      const f = files[0];
-      if (!f) throw new Error('No report file attached to this job.');
-      const stage = 'Extracting 3-bureau report';
-      await progress(stage, null)(0);
-      const report = await downloadReport(f);
-      const extracted = await parseCombinedExtractionChunked({ report, stage });
-      await progress('Applying deterministic report rules', 85)(0);
-      audit = assertAuditOutput(buildDeterministicAudit(extracted, { reportDate: todayISO() }));
-      audit = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files, today: t });
-      jobResult = audit;
-    } else if (job.mode === 'individual') {
-      const byBureau = {};
-      for (const f of files) byBureau[(f.bureau || '').toLowerCase()] = f;
-      const parsed = {};
-      const stages = [
-        ['equifax', 'Extracting Equifax report', 5],
-        ['experian', 'Extracting Experian report', 30],
-        ['transunion', 'Extracting TransUnion report', 55],
-      ];
-      for (const [key, stage, pct] of stages) {
-        const f = byBureau[key];
-        if (!f) throw new Error('Missing ' + key + ' file on this job.');
-        await progress(stage, pct)(0);
-        const report = await downloadReport(f);
-        const bureauName = bureauDisplayName(key);
-        parsed[key] = await parseBureauReportChunked({
-          report, bureauName, stage, pct, today: t,
+    const { data: claimedCheckpointRows, error: checkpointClaimError } = await db.rpc(
+      'ccc_claim_next_audit_checkpoint',
+      { p_job_id: jobId, p_lease_token: leaseToken },
+    );
+    if (checkpointClaimError) throw new Error('Could not claim the next audit checkpoint: ' + checkpointClaimError.message);
+    activeCheckpoint = Array.isArray(claimedCheckpointRows) ? claimedCheckpointRows[0] : claimedCheckpointRows;
+
+    if (activeCheckpoint) {
+      if (activeCheckpoint.kind === 'merge') {
+        await completeCheckpoint(activeCheckpoint, {
+          ready: true,
+          mergeSelectionSha256: sha256(canonicalJson(job.merge_selection || null)),
         });
+      } else {
+        const output = await processExtractionCheckpoint(activeCheckpoint);
+        if (output?.yielded) return { statusCode: 200, body: 'yielded before provider dispatch' };
+        await completeCheckpoint(activeCheckpoint, output);
       }
-      await progress('Applying deterministic cross-bureau rules', 80)(0);
-      audit = assertAuditOutput(buildDeterministicAudit(
-        [parsed.equifax, parsed.experian, parsed.transunion],
-        { reportDate: todayISO() },
-      ));
-      audit = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files, today: t });
-      jobResult = audit;
-    } else {
-      throw new Error('Unknown audit mode: ' + job.mode);
+
+      // One provider-bearing checkpoint per invocation. This is the boundary
+      // that prevents a three-report audit from becoming a 15-minute
+      // sequential monolith. The next background invocation reclaims no work;
+      // it starts from the next durable checkpoint.
+      if (activeCheckpoint.kind !== 'merge') {
+        await releaseLease({ status: 'waiting', stage: 'Checkpoint saved · continuing audit' });
+        try { await dispatchNext(); } catch (chainError) {
+          console.warn('[audit] checkpoint saved; watchdog will resume after chain failure:', chainError.message);
+        }
+        return { statusCode: 200, body: 'checkpoint saved' };
+      }
     }
 
-    const totals = usageLog.reduce((s, u) => ({
-      input: s.input + u.input, output: s.output + u.output,
-      cache_read: s.cache_read + u.cache_read, cache_write: s.cache_write + u.cache_write,
-      est_cost_usd: Math.round((s.est_cost_usd + u.est_cost_usd) * 10000) / 10000,
-    }), { input: 0, output: 0, cache_read: 0, cache_write: 0, est_cost_usd: 0 });
+    // A merge checkpoint can finalize in the same invocation. Once every
+    // checkpoint is durable, later failures belong to finalization—not to the
+    // already-terminal checkpoint—and must never try to mutate it.
+    activeCheckpoint = null;
 
-    await updateJob({
-      status: 'done', stage: 'Complete', pct: 100, result: jobResult,
-      usage: {
-        model: AUDIT_MODEL,
-        effort: AUDIT_EFFORT,
-        calls: usageLog,
-        totals,
-      },
-      finished_at: new Date().toISOString(),
-    }, true);
+    const { data: checkpoints, error: checkpointLoadError } = await db.from('audit_job_checkpoints')
+      .select('*').eq('job_id', jobId).neq('status', 'superseded').order('sequence');
+    if (checkpointLoadError) throw new Error('Could not load completed audit checkpoints: ' + checkpointLoadError.message);
+    const expected = Number(job.expected_checkpoint_count) || checkpoints?.length || 0;
+    if (!checkpoints || checkpoints.length !== expected || checkpoints.some((checkpoint) => checkpoint.status !== 'done')) {
+      const retryAt = (checkpoints || [])
+        .filter((checkpoint) => checkpoint.status === 'retryable' && checkpoint.next_retry_at)
+        .map((checkpoint) => checkpoint.next_retry_at).sort()[0] || new Date().toISOString();
+      await releaseLease({ status: 'waiting', stage: 'Waiting to resume saved audit checkpoints', retryAt });
+      return { statusCode: 200, body: 'waiting for checkpoint retry' };
+    }
+
+    for (const checkpoint of checkpoints) {
+      if (checkpoint.output_sha256 !== parseSha256(checkpoint.output)) {
+        throw terminalAuditError('Completed checkpoint output no longer matches its immutable digest.', 'checkpoint_output_mismatch');
+      }
+      if (checkpoint.kind !== 'merge') {
+        const source = (job.source_manifest || [])[Number(checkpoint.source_index)];
+        if (!source || source.path !== checkpoint.source_path
+            || source.sha256 !== checkpoint.source_sha256
+            || Number(source.bytes) !== Number(checkpoint.source_bytes)) {
+          throw terminalAuditError('Completed checkpoint provenance no longer matches the logical source manifest.', 'checkpoint_provenance_mismatch');
+        }
+      } else if (checkpoint.output?.mergeSelectionSha256 !== sha256(canonicalJson(job.merge_selection || null))) {
+        throw terminalAuditError('Merge checkpoint no longer matches the exact staged parse selection.', 'merge_selection_mismatch');
+      }
+    }
+
+    // If Netlify stopped after the audit insert but before job completion,
+    // finish the same logical job from that exact row instead of repeating
+    // final-save side effects or creating a duplicate audit.
+    const auditSuffix = `__${job.id}`;
+    const { data: priorAudits, error: priorAuditError } = await db.from('audits')
+      .select('id,audit').eq('user_id', ownerUserId).eq('client_id', job.selected_client_id)
+      .like('id', `%${auditSuffix}`).limit(2);
+    if (priorAuditError) throw new Error('Could not verify final audit idempotency: ' + priorAuditError.message);
+
+    let jobResult;
+    if ((priorAudits || []).length === 1) {
+      jobResult = { ...priorAudits[0].audit, auditId: priorAudits[0].id };
+    } else {
+      if ((priorAudits || []).length > 1) throw terminalAuditError('Logical job is associated with multiple persisted audits.', 'duplicate_final_audit');
+      let audit;
+      if (job.mode === 'merge') {
+        await progress('Loading exact staged bureau cohort', 84)(0);
+        const staged = await loadBureauParsesForMerge();
+        const provenance = buildAuditProvenance({
+          mode: 'merge', sourceJobId: jobId, cohort: staged.cohort, cohortKey: staged.cohortKey,
+          sources: staged.sources, evaluatedAt: job.created_at,
+        });
+        audit = assertAuditOutput(buildDeterministicAudit(staged.reports, {
+          reportDate: staged.cohort.reportDate, evaluatedAt: job.created_at, provenance,
+        }));
+        jobResult = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files: [], today: t });
+      } else if (job.mode === 'combined') {
+        const reports = mergeCombinedExtractions(checkpoints.map((checkpoint) => checkpoint.output));
+        const pageCount = Number(checkpoints[0]?.total_pages) || 1;
+        reports.forEach((reportParse) => assertExtractionPageBounds(reportParse, pageCount));
+        const cohort = assertReportCohort(reports, {
+          requireThree: true, selectedClient: selectedJobClient, now: job.created_at,
+        });
+        const cohortKey = cohortKeyFor(selectedJobClient.id, cohort);
+        const sourceReport = await downloadReport(files[0]);
+        const sources = reports.map((bureauParse) => sourceRecord({
+          bureauParse, report: sourceReport, file: files[0], sourceJobId: jobId,
+          pageCount, chunkCount: checkpoints.length,
+        }));
+        const provenance = buildAuditProvenance({
+          mode: 'combined', sourceJobId: jobId, cohort, cohortKey, sources, evaluatedAt: job.created_at,
+        });
+        audit = assertAuditOutput(buildDeterministicAudit(reports, {
+          reportDate: cohort.reportDate, evaluatedAt: job.created_at, provenance,
+        }));
+        jobResult = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files, today: t });
+      } else {
+        const parsed = {};
+        const meta = {};
+        for (const key of (job.mode === 'single'
+          ? [normalizeBureauKey(files[0]?.bureau)]
+          : ['equifax', 'experian', 'transunion'])) {
+          if (!key) throw new Error('Audit checkpoint has no valid bureau binding.');
+          const bureauCheckpoints = checkpoints.filter((checkpoint) => checkpoint.bureau === key);
+          if (!bureauCheckpoints.length) throw new Error(`Missing ${bureauDisplayName(key)} checkpoints.`);
+          parsed[key] = assertBureauOutput(mergeBureauExtractions(
+            bureauCheckpoints.map((checkpoint) => checkpoint.output), key,
+          ), bureauDisplayName(key));
+          const pageCount = Number(bureauCheckpoints[0].total_pages) || 1;
+          assertExtractionPageBounds(parsed[key], pageCount);
+          meta[key] = { pageCount, chunkCount: bureauCheckpoints.length };
+        }
+
+        if (job.mode === 'single') {
+          const key = normalizeBureauKey(files[0]?.bureau);
+          const report = await downloadReport(files[0]);
+          const staged = await saveBureauParseRow({
+            bureauKey: key, bureauParse: parsed[key], report, file: files[0],
+            pageCount: meta[key].pageCount, chunkCount: meta[key].chunkCount,
+          });
+          audit = assertAuditOutput(buildDeterministicAudit([parsed[key]], {
+            reportDate: parsed[key].reportDate, evaluatedAt: job.created_at, provenance: staged.provenance,
+          }), `${bureauDisplayName(key)} standalone audit`);
+          audit.kind = 'single_bureau_audit';
+          audit.singleBureauStatus = {
+            bureau: staged.bureau, parseId: staged.parseId, cohortKey: staged.cohortKey,
+            readyBureaus: staged.readyBureaus, missingBureaus: staged.missingBureaus,
+            canMerge: staged.canMerge, mergeSelection: staged.mergeSelection,
+            r1Eligible: false, reason: 'A single-bureau audit is incomplete and cannot initialize R1.',
+          };
+          jobResult = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files, today: t });
+        } else {
+          const reports = [parsed.equifax, parsed.experian, parsed.transunion];
+          const cohort = assertReportCohort(reports, {
+            requireThree: true, selectedClient: selectedJobClient, now: job.created_at,
+          });
+          const cohortKey = cohortKeyFor(selectedJobClient.id, cohort);
+          const fileByBureau = Object.fromEntries(files.map((file) => [normalizeBureauKey(file.bureau), file]));
+          const reportByBureau = {};
+          for (const key of ['equifax', 'experian', 'transunion']) {
+            reportByBureau[key] = await downloadReport(fileByBureau[key]);
+          }
+          const sources = reports.map((bureauParse) => sourceRecord({
+            bureauParse,
+            report: reportByBureau[bureauParse.bureau],
+            file: fileByBureau[bureauParse.bureau], sourceJobId: jobId,
+            pageCount: meta[bureauParse.bureau].pageCount,
+            chunkCount: meta[bureauParse.bureau].chunkCount,
+          }));
+          const provenance = buildAuditProvenance({
+            mode: 'individual', sourceJobId: jobId, cohort, cohortKey, sources, evaluatedAt: job.created_at,
+          });
+          audit = assertAuditOutput(buildDeterministicAudit(reports, {
+            reportDate: cohort.reportDate, evaluatedAt: job.created_at, provenance,
+          }));
+          jobResult = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files, today: t });
+        }
+      }
+    }
+
+    const calls = checkpoints.map((checkpoint) => checkpoint.usage).filter(Boolean);
+    const totals = calls.reduce((sum, call) => ({
+      input: sum.input + Number(call.input || 0),
+      output: sum.output + Number(call.output || 0),
+      cache_read: sum.cache_read + Number(call.cache_read || 0),
+      cache_write: sum.cache_write + Number(call.cache_write || 0),
+      est_cost_usd: Math.round((sum.est_cost_usd + Number(call.est_cost_usd || 0)) * 10000) / 10000,
+    }), { input: 0, output: 0, cache_read: 0, cache_write: 0, est_cost_usd: 0 });
+    const finalUsage = { model: AUDIT_MODEL, effort: AUDIT_EFFORT, calls, totals };
+    const finalAuditId = jobResult?.auditId;
+    if (!finalAuditId) throw new Error('Final audit save did not return an immutable audit id.');
+    const { data: finished, error: finishError } = await db.rpc('ccc_finish_audit_job', {
+      p_job_id: jobId, p_lease_token: leaseToken, p_result: jobResult,
+      p_usage: finalUsage, p_final_audit_id: finalAuditId,
+    });
+    if (finishError || finished !== true) throw new Error('Could not atomically finish logical audit job: ' + (finishError?.message || 'lease mismatch'));
+    leaseClosed = true;
   } catch (e) {
     console.error('audit-run failed:', e);
+    if ((e?.auditOutputLimit || e?.auditProviderTimeout) && activeCheckpoint
+        && Number(activeCheckpoint.end_page) - Number(activeCheckpoint.start_page) + 1 >= 4) {
+      const mid = Math.floor((Number(activeCheckpoint.start_page) + Number(activeCheckpoint.end_page)) / 2);
+      const leftInputSha256 = checkpointInputSha256({
+        sourceSha256: activeCheckpoint.source_sha256,
+        startPage: Number(activeCheckpoint.start_page),
+        endPage: mid + 1,
+        totalPages: Number(activeCheckpoint.total_pages),
+      });
+      const rightInputSha256 = checkpointInputSha256({
+        sourceSha256: activeCheckpoint.source_sha256,
+        startPage: mid,
+        endPage: Number(activeCheckpoint.end_page),
+        totalPages: Number(activeCheckpoint.total_pages),
+      });
+      const { data: split, error: splitError } = await db.rpc('ccc_split_audit_checkpoint', {
+        p_checkpoint_id: activeCheckpoint.id,
+        p_lease_token: leaseToken,
+        p_left_input_sha256: leftInputSha256,
+        p_right_input_sha256: rightInputSha256,
+      });
+      if (!splitError && split === true) {
+        await releaseLease({ status: 'waiting', stage: 'Dense or slow pages saved as smaller checkpoints' });
+        try { await dispatchNext(); } catch (chainError) {
+          console.warn('[audit] split saved; watchdog will resume after chain failure:', chainError.message);
+        }
+        return { statusCode: 200, body: 'dense checkpoint split safely' };
+      }
+      console.error('audit-run: output-limit split failed', splitError?.message || 'lease mismatch');
+    }
+    const attempts = Number(activeCheckpoint?.attempt_count || 0);
+    const consecutiveJobRetries = Number(job?.retry_count || 0);
+    // Never pay for the exact same deterministic output-limit failure again.
+    // Eligible PDF ranges were split above; a minimum-size range is terminal
+    // and needs operator review rather than blind provider retries.
+    const retryable = !e?.auditTerminal && !e?.auditOutputLimit
+      && (activeCheckpoint ? attempts < 3 : consecutiveJobRetries < 3);
+    const delayMs = Math.min(5 * 60 * 1000, 5000 * (2 ** Math.max(0, attempts - 1)));
     await logClaudeCall(db, {
-      userId: caller.userId, operation: 'audit.pipeline', entityType: 'audit_job', entityId: jobId,
+      userId: ownerUserId, operation: 'audit.pipeline', entityType: 'audit_job', entityId: jobId,
       model: AUDIT_MODEL, effort: AUDIT_EFFORT, promptVersion: 'audit-v2', status: 'error',
       startedAt: new Date(), errorType: e.name, errorMessage: e.message,
-    });
-    try {
-      await updateJob({
-        status: 'error', error: e.message || 'Audit failed',
-        usage: usageLog.length ? {
-          model: AUDIT_MODEL,
-          effort: AUDIT_EFFORT,
-          calls: usageLog,
-        } : null,
-        finished_at: new Date().toISOString(),
-      }, true);
-    } catch (jobWriteErr) {
-      // Stale-job recovery at the start of the next request makes a failed
-      // terminal write observable/retryable instead of silently stranding it.
-      console.error('audit-run: could not persist failed job state', jobWriteErr.message);
-    }
-  } finally {
-    // Uploaded report files are transient — remove them either way
-    if (filePaths.length) {
-      await db.storage.from('documents').remove(filePaths).catch(() => {});
+    }).catch(() => {});
+    if (!leaseClosed) {
+      try {
+        await releaseLease({
+          status: retryable ? 'retryable' : 'error',
+          stage: retryable ? 'Checkpoint paused · safe resume scheduled' : 'Audit stopped for review',
+          errorType: e.auditErrorType || e.name || 'audit_error', errorMessage: e.message || 'Audit failed',
+          retryAt: retryable ? new Date(Date.now() + delayMs).toISOString() : null,
+          checkpointId: activeCheckpoint?.id || null,
+        });
+      } catch (jobWriteErr) {
+        // The watchdog owns recovery when a platform kill prevents the
+        // terminal/retryable write. It reclaims only an expired lease.
+        console.error('audit-run: could not persist retry state', jobWriteErr.message);
+      }
     }
   }
 

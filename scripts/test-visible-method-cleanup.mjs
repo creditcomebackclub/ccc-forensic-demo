@@ -31,8 +31,8 @@ assert.doesNotMatch(
 );
 assert.doesNotMatch(
   joined,
-  /pricing-work-fee|Guide Download|guide_download|7-Metro2-Dispute-Templates/i,
-  'retired guide and fee hooks must not remain reachable from assigned public pages',
+  /pricing-work-fee|7-Metro2-Dispute-Templates/i,
+  'retired Metro 2 guide and fee hooks must not remain reachable from assigned public pages',
 );
 
 const dashboard = sources.get('../src/components/DashboardPage.jsx');
@@ -54,10 +54,12 @@ for (const file of ['../public/home.html', '../public/freeguide.html', '../publi
 }
 
 const guide = sources.get('../public/freeguide.html');
-assert.match(guide, /Seven Credit Report Facts Worth/);
-assert.match(guide, /Compare · Document · Explain/);
-assert.doesNotMatch(guide, /downloadUrl|guideDownloadLink/,
-  'the public guide must not expose the retired downloadable course asset');
+assert.match(guide, /Review your credit reports with a/);
+assert.match(guide, /Read\. Document\. Write\. Track\./);
+assert.match(guide, /intent:'guide_download'/,
+  'the current free guide uses a dedicated tracked download intent');
+assert.doesNotMatch(guide, /netlify\/functions\/assets|credit-comeback-club-credit-report-field-guide\.pdf/,
+  'the public page must not expose the private bundled PDF path or filename');
 
 const netlify = readFileSync(new URL('../netlify.toml', import.meta.url), 'utf8');
 assert.match(
@@ -69,6 +71,11 @@ assert.equal(
   existsSync(new URL('../public/downloads/7-Metro2-Dispute-Templates.pdf', import.meta.url)),
   false,
   'the retired Metro 2 PDF must not remain in the publicly served directory',
+);
+assert.equal(
+  existsSync(new URL('../netlify/functions/assets/credit-comeback-club-credit-report-field-guide.pdf', import.meta.url)),
+  true,
+  'the new field guide must remain private inside the function bundle',
 );
 assert.equal(
   existsSync(new URL('../docs/archive/retired-public-assets/7-Metro2-Dispute-Templates.pdf', import.meta.url)),

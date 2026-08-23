@@ -15,7 +15,6 @@ import {
   saveCccLetterIdentity,
 } from '../utils/cccLetterIdentityApi.js';
 import {
-  accountsMissingConfirmedDisputeFacts,
   buildAutomaticTemplateValues,
   extractTemplateTokens,
   maskAccountNumber,
@@ -41,6 +40,17 @@ import {
   validateDisputeScreenshotManifest,
 } from '../utils/disputeScreenshots.js';
 import { disputeAccountKey } from '../utils/disputeTrackingRules.js';
+import { PACKET_MAX_ACCOUNTS } from '../utils/campaignBlueprint.js';
+import {
+  INTERNAL_STAFF_INSTRUCTIONS_MAX,
+  blankRoundReasonSelection,
+  buildRoundReasonSnapshots,
+  evidenceReasonsForAccount,
+  privateInstructionLeakIssues,
+  roundSelectionDraftSuffix,
+  roundReasonRenderIssues,
+  validateRoundReasonSnapshots,
+} from '../utils/disputeReasonSelection.js';
 import { saveLetter } from '../utils/storage.js';
 import { supabase } from '../utils/supabase.js';
 
@@ -164,7 +174,11 @@ export function buildStateDrivenCraWorkItems(audit, initialTracks) {
 
     const account = accountById.get(snapshot.clientAccountId);
     if (!account) throw new Error(`CCC track ${snapshot.trackId} has no exact canonical account in this saved audit.`);
-    if (!Array.isArray(account.bureaus) || !account.bureaus.includes(snapshot.bureauCode)) {
+    const frozenAccount = trackField(track, 'sourceAuditSnapshot', 'source_audit_snapshot');
+    if (!frozenAccount || exactUuid(frozenAccount.clientAccountId || frozenAccount.client_account_id, 'Frozen audit account') !== snapshot.clientAccountId) {
+      throw new Error(`CCC track ${snapshot.trackId} is missing its exact frozen audit account evidence.`);
+    }
+    if (!Array.isArray(frozenAccount.bureaus) || !frozenAccount.bureaus.includes(snapshot.bureauCode)) {
       throw new Error(`CCC track ${snapshot.trackId} does not match the account’s frozen bureau coverage.`);
     }
     const bureau = DISPUTE_BUREAUS.find((item) => item.code === snapshot.bureauCode);
@@ -186,24 +200,31 @@ export function buildStateDrivenCraWorkItems(audit, initialTracks) {
       accounts: [],
     };
     group.tracks.push(track);
-    group.accounts.push(account);
+    group.accounts.push(frozenAccount);
     groups.set(key, group);
   }
 
-  const workItems = [...groups.values()].map((group) => {
+  const workItems = [...groups.values()].flatMap((group) => {
     const paired = group.tracks.map((track, index) => ({
       track,
       snapshot: trackSnapshot(track),
       account: group.accounts[index],
     })).sort((left, right) => left.snapshot.clientAccountId.localeCompare(right.snapshot.clientAccountId));
-    const snapshots = normalizeCccAccountTrackSnapshots(paired.map((item) => item.snapshot));
-    if (snapshots.length !== paired.length) throw new Error('CCC could not prove exact account coverage for a letter work item.');
-    return {
-      ...group,
-      tracks: paired.map((item) => item.track),
-      accounts: paired.map((item) => item.account),
-      snapshots,
-    };
+    const packetCount = Math.ceil(paired.length / PACKET_MAX_ACCOUNTS);
+    return Array.from({ length: packetCount }, (_, packetIndex) => {
+      const packet = paired.slice(packetIndex * PACKET_MAX_ACCOUNTS, (packetIndex + 1) * PACKET_MAX_ACCOUNTS);
+      const snapshots = normalizeCccAccountTrackSnapshots(packet.map((item) => item.snapshot));
+      if (snapshots.length !== packet.length) throw new Error('CCC could not prove exact account coverage for a letter work item.');
+      return {
+        ...group,
+        key: `${group.key}|packet:${packetIndex + 1}`,
+        packetIndex: packetIndex + 1,
+        packetCount,
+        tracks: packet.map((item) => item.track),
+        accounts: packet.map((item) => item.account),
+        snapshots,
+      };
+    });
   }).sort((left, right) => (
     (BUREAU_ORDER.get(left.bureau.code) ?? 99) - (BUREAU_ORDER.get(right.bureau.code) ?? 99)
     || left.logicalFlow.localeCompare(right.logicalFlow)
@@ -211,43 +232,6 @@ export function buildStateDrivenCraWorkItems(audit, initialTracks) {
   ));
   if (!workItems.length) throw new Error('No active CRA letter work items were returned.');
   return workItems;
-}
-
-function boundedText(value, label, limit = 8000) {
-  const result = String(value ?? '').trim();
-  if (result.length > limit) throw new Error(`${label} exceeds the ${limit.toLocaleString()} character evidence limit.`);
-  return result;
-}
-
-function buildAccountIssueSnapshots(accounts) {
-  if (!Array.isArray(accounts) || !accounts.length || accounts.length > 50) {
-    throw new Error('A CRA letter must cover between 1 and 50 exact canonical accounts.');
-  }
-  const snapshots = accounts.map((account) => {
-    const clientAccountId = exactUuid(account?.clientAccountId, 'Covered client account');
-    const violations = Array.isArray(account?.violations) ? account.violations : [];
-    if (violations.length > 50) throw new Error(`${account?.furnisher || 'An account'} has more than 50 issue findings; review it before saving.`);
-    return {
-      accountKey: `client-account:${clientAccountId}`,
-      clientAccountId,
-      furnisher: boundedText(account?.furnisher || 'Unknown furnisher', 'Furnisher', 500),
-      accountNumberMasked: maskAccountNumber(account?.accountNumberMasked || account?.accountNumber) || null,
-      primaryViolation: boundedText(account?.primaryViolation, 'Primary violation'),
-      violations: violations.map((violation, index) => ({
-        field: boundedText(violation?.field, `Finding ${index + 1} field`, 500),
-        issue: boundedText(violation?.issue, `Finding ${index + 1} issue`),
-        reason: boundedText(violation?.reason, `Finding ${index + 1} reason`),
-        currentlyReports: boundedText(violation?.currentlyReports, `Finding ${index + 1} current value`),
-        shouldReport: boundedText(violation?.shouldReport, `Finding ${index + 1} expected value`),
-        statute: boundedText(violation?.statute, `Finding ${index + 1} statute`, 500),
-        severity: boundedText(violation?.severity, `Finding ${index + 1} severity`, 100),
-      })),
-    };
-  });
-  if (new TextEncoder().encode(JSON.stringify(snapshots)).byteLength > 512 * 1024) {
-    throw new Error('The reviewed account issue evidence exceeds the 512 KB letter limit. Split the work into reviewed account groups.');
-  }
-  return snapshots;
 }
 
 function buildAutomaticValuesSnapshot(template, automaticValues) {
@@ -352,7 +336,7 @@ async function recheckExactServerState(workItem, selectedTemplate, audit) {
   if (templateAudienceForFlow(templateRow.flow_code) !== 'cra') {
     throw new Error('The selected physical template is not a bureau/CRA template.');
   }
-  return currentSnapshots;
+  return { snapshots: currentSnapshots, tracks: rows };
 }
 
 function WorkItemPill({ item, selected, onClick }) {
@@ -362,8 +346,81 @@ function WorkItemPill({ item, selected, onClick }) {
       <div className="text-[9px] font-bold uppercase tracking-wider text-blue-700">{item.bureau.name} · server-owned state</div>
       <div className="mt-0.5 text-[12px] font-semibold text-navy">{logicalFlowLabel(item.logicalFlow)} R{item.logicalRound}</div>
       {aliased && <div className="mt-0.5 text-[9px] text-gray-500">Uses {FLOW_LABELS[item.concreteFlow] || item.concreteFlow} R{item.concreteRound}</div>}
-      <div className="mt-1 text-[10px] text-gray-500">{item.accounts.length} exact account{item.accounts.length === 1 ? '' : 's'} in this letter</div>
+      <div className="mt-1 text-[10px] text-gray-500">
+        {item.accounts.length} available account{item.accounts.length === 1 ? '' : 's'} · max {PACKET_MAX_ACCOUNTS}
+        {item.packetCount > 1 ? ` · packet ${item.packetIndex} of ${item.packetCount}` : ''}
+      </div>
     </button>
+  );
+}
+
+function RoundAccountSelector({ account, bureauCode, choice, onInclude, onReason, onInstructions }) {
+  const reasons = evidenceReasonsForAccount(account, bureauCode);
+  const included = Boolean(choice?.included);
+  const selectedReasonIds = choice?.reasonIds || [];
+  return (
+    <div className={`rounded-lg border p-3 ${included ? 'border-blue-300 bg-blue-50/70' : 'border-gray-200 bg-white'}`}>
+      <label className="flex cursor-pointer items-start gap-2">
+        <input
+          type="checkbox"
+          checked={included}
+          disabled={!reasons.length}
+          onChange={(event) => onInclude(event.target.checked)}
+          className="mt-0.5 accent-blue-700"
+        />
+        <span className="min-w-0">
+          <span className="block truncate text-[11px] font-semibold text-navy">{account.furnisher || 'Unknown furnisher'}</span>
+          <span className="mt-0.5 block text-[9px] text-gray-500">{maskAccountNumber(account.accountNumberMasked || account.accountNumber) || 'Account number not shown'} · {reasons.length} supported reason{reasons.length === 1 ? '' : 's'}</span>
+        </span>
+        <span className="ml-auto shrink-0 text-[8px] font-bold uppercase tracking-wider text-blue-700">Include this round</span>
+      </label>
+      {!reasons.length && (
+        <div className="mt-2 rounded bg-amber-50 p-2 text-[9px] leading-relaxed text-amber-800">
+          No authorized finding has source evidence for {bureauCode}. This account cannot be added through a free-form allegation.
+        </div>
+      )}
+      {included && !!reasons.length && (
+        <div className="mt-3 border-t border-blue-200 pt-3">
+          <div className="text-[9px] font-bold uppercase tracking-wider text-navy">Choose the facts for this letter</div>
+          <p className="mt-1 text-[8px] leading-relaxed text-gray-500">The selected report fact and requested correction print in this account’s issue block. Private team instructions remain separate.</p>
+          <div className="mt-2 space-y-2">
+            {reasons.map((reason) => (
+              <label key={reason.reasonId} className="flex cursor-pointer items-start gap-2 rounded-md border border-blue-100 bg-white p-2">
+                <input
+                  type="checkbox"
+                  checked={selectedReasonIds.includes(reason.reasonId)}
+                  onChange={(event) => onReason(reason.reasonId, event.target.checked)}
+                  className="mt-0.5 accent-blue-700"
+                />
+                <span className="min-w-0">
+                  <span className="block text-[9px] font-semibold leading-relaxed text-navy">{reason.field}</span>
+                  <span className="mt-0.5 block text-[9px] leading-relaxed text-gray-600">{reason.issue}</span>
+                  {reason.currentlyReports && <span className="mt-1 block text-[8px] leading-relaxed text-gray-500"><strong>Report shows:</strong> {reason.currentlyReports}</span>}
+                  {(reason.shouldReport || reason.challengeStatement) && (
+                    <span className="mt-1 block text-[8px] leading-relaxed text-blue-800"><strong>Requested correction:</strong> {reason.shouldReport || reason.challengeStatement}</span>
+                  )}
+                  <span className="mt-1 block text-[8px] font-medium text-blue-700">
+                    {reason.evidenceRefs.map((ref) => `${ref.bureauCode}${ref.page ? ` p.${ref.page}` : ' source value'}`).join(' · ')}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <label className="mt-3 block">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">Private staff instructions (optional)</span>
+            <textarea
+              value={choice?.internalStaffInstructions || ''}
+              onChange={(event) => onInstructions(event.target.value)}
+              maxLength={INTERNAL_STAFF_INSTRUCTIONS_MAX}
+              rows={3}
+              className="mt-1 w-full rounded-md border border-blue-200 bg-white px-2.5 py-2 text-[10px] leading-relaxed"
+              placeholder="Example: Lead with the Equifax balance conflict. Do not mention the late-payment pattern in this round."
+            />
+            <span className="mt-1 block text-[8px] leading-relaxed text-gray-500">Internal only. These instructions guide your team and are never merged into the letter or sent to Claude.</span>
+          </label>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -388,6 +445,7 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
   const [savingIdentity, setSavingIdentity] = useState(false);
   const [sectionsByKey, setSectionsByKey] = useState({});
   const [screenshotsByKey, setScreenshotsByKey] = useState({});
+  const [roundSelectionsByKey, setRoundSelectionsByKey] = useState({});
   const [storyNotes, setStoryNotes] = useState('');
   const [storyNotesVersion, setStoryNotesVersion] = useState('');
   const [storyNotesDirty, setStoryNotesDirty] = useState(false);
@@ -423,6 +481,7 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
     setTemplateIdsByKey({});
     setSectionsByKey({});
     setScreenshotsByKey({});
+    setRoundSelectionsByKey({});
     setSelectionsByKey({});
     setStoryNotes('');
     setStoryNotesVersion('');
@@ -457,6 +516,33 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
   const workItem = routing.workItems.find((item) => item.key === workKey) || routing.workItems[0] || null;
   const sections = sectionsByKey[workItem?.key] || blankSections();
   const screenshots = screenshotsByKey[workItem?.key] || [];
+  const roundSelection = roundSelectionsByKey[workItem?.key] || blankRoundReasonSelection(workItem?.accounts || []);
+  const reasonBuild = useMemo(() => {
+    try {
+      return {
+        snapshots: buildRoundReasonSnapshots({
+          accounts: workItem?.accounts || [],
+          bureauCode: workItem?.bureau?.code,
+          selection: roundSelection,
+        }),
+        error: null,
+      };
+    } catch (selectionError) {
+      return { snapshots: [], error: selectionError?.message || 'Review the account and reason selections.' };
+    }
+  }, [workItem, roundSelection]);
+  const selectedAccountSnapshots = reasonBuild.snapshots;
+  const selectedAccountIdSet = useMemo(() => new Set(selectedAccountSnapshots.map((item) => item.clientAccountId)), [selectedAccountSnapshots]);
+  const selectedAccounts = (workItem?.accounts || []).filter((account) => selectedAccountIdSet.has(String(account.clientAccountId || account.client_account_id || '').toLowerCase()));
+  const selectedTrackSnapshots = (workItem?.snapshots || []).filter((snapshot) => selectedAccountIdSet.has(snapshot.clientAccountId));
+  const selectedTracks = (workItem?.tracks || []).filter((track) => selectedAccountIdSet.has(String(trackField(track, 'clientAccountId', 'client_account_id') || '').toLowerCase()));
+  const selectedScreenshots = screenshots.filter((item) => selectedAccountIdSet.has(String(item.clientAccountId || '').toLowerCase()));
+  const selectedWorkItem = workItem && selectedAccountSnapshots.length ? {
+    ...workItem,
+    accounts: selectedAccounts,
+    tracks: selectedTracks,
+    snapshots: selectedTrackSnapshots,
+  } : null;
   const matches = useMemo(() => {
     if (!workItem) return [];
     return templates.filter((template) => template.active
@@ -499,8 +585,8 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
     identity: mergeIdentity,
     audit,
     bureau: workItem?.bureau || {},
-    accounts: workItem?.accounts || [],
-    screenshots,
+    accounts: selectedAccountSnapshots,
+    screenshots: selectedScreenshots,
     strictIdentity: true,
   });
   const values = { ...autoValues, ...sections };
@@ -518,18 +604,17 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
     && token !== 'screenshots'
     && token !== 'optional_strengthener');
   const missingAutomatic = requiredMissing.filter((token) => automaticTokenSet.has(token));
-  const missingFactAccounts = workItem ? accountsMissingConfirmedDisputeFacts(workItem.accounts) : [];
   const screenshotPolicy = buildDisputeScreenshotPolicySnapshot(selectedTemplate || {});
   const screenshotsRequired = Boolean(workItem && screenshotPolicy.required);
   const missingScreenshotCoverage = screenshotsRequired
-    ? missingScreenshotAccounts(workItem?.accounts || [], screenshots)
+    ? missingScreenshotAccounts(selectedAccountSnapshots, selectedScreenshots)
     : [];
   const previewReady = Boolean(identityReady && selectedTemplate && isCraTemplate && !templateContractError && !unknown.length
-    && !missingAutomatic.length && !missingFactAccounts.length);
+    && !missingAutomatic.length && !reasonBuild.error);
   const bodyHtml = previewReady
     ? renderDisputeTemplate(selectedTemplate.body, { ...values, screenshots: '' }, ['screenshots'])
     : '';
-  const previewExhibits = previewReady ? screenshotsHtml(screenshots) : '';
+  const previewExhibits = previewReady ? screenshotsHtml(selectedScreenshots) : '';
   const letterTitle = workItem
     ? `${workItem.bureau.name} ${logicalFlowLabel(workItem.logicalFlow)} R${workItem.logicalRound}`
     : 'CCC CRA dispute letter';
@@ -539,6 +624,30 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
     if (!workItem) return;
     setSectionsByKey((current) => ({ ...current, [workItem.key]: { ...(current[workItem.key] || blankSections()), [key]: value } }));
     setSavedId(null);
+  };
+
+  const updateRoundAccountSelection = (account, patch) => {
+    if (!workItem) return;
+    const accountId = String(account?.clientAccountId || account?.client_account_id || '').toLowerCase();
+    const base = roundSelection[accountId] || { included: false, reasonIds: [], internalStaffInstructions: '' };
+    setRoundSelectionsByKey((current) => ({
+      ...current,
+      [workItem.key]: {
+        ...(current[workItem.key] || blankRoundReasonSelection(workItem.accounts)),
+        [accountId]: { ...base, ...patch },
+      },
+    }));
+    setSavedId(null);
+  };
+
+  const toggleRoundReason = (account, reasonId, checked) => {
+    const accountId = String(account?.clientAccountId || account?.client_account_id || '').toLowerCase();
+    const currentIds = roundSelection[accountId]?.reasonIds || [];
+    updateRoundAccountSelection(account, {
+      reasonIds: checked
+        ? [...new Set([...currentIds, reasonId])]
+        : currentIds.filter((item) => item !== reasonId),
+    });
   };
 
   const selectionKey = (fieldKey) => `${workItem?.key || 'none'}:${fieldKey}`;
@@ -775,10 +884,7 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
     if (!isCraTemplate) { setError('The selected physical template is not a bureau/CRA template.'); return; }
     if (templateContractError) { setError(templateContractError); return; }
     if (unknown.length) { setError(`Template has unsupported curlys: ${unknown.map((token) => `{${token}}`).join(', ')}`); return; }
-    if (missingFactAccounts.length) {
-      setError(`Confirm at least one exact issue for every covered account before composing. Missing: ${missingFactAccounts.map((account) => account.furnisher || account.clientAccountId).join('; ')}`);
-      return;
-    }
+    if (reasonBuild.error || !selectedWorkItem) { setError(reasonBuild.error || 'Select at least one account and its evidence-backed reason.'); return; }
     if (requiredMissing.length) {
       const profileTokens = requiredMissing.filter((token) => automaticTokenSet.has(token));
       setError(profileTokens.length
@@ -810,13 +916,13 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
         ...freshIdentity,
         ...cccLetterIdentityAutomaticValues(currentLetterIdentitySnapshot),
       };
-      const accountSnapshots = buildAccountIssueSnapshots(workItem.accounts);
-      const screenshotUpload = await persistScreenshots(screenshots);
+      const accountSnapshots = selectedAccountSnapshots;
+      const screenshotUpload = await persistScreenshots(selectedScreenshots);
       uploadedPaths = screenshotUpload.uploadedPaths;
       const persistedScreenshots = screenshotUpload.persisted;
       const screenshotManifest = buildDisputeScreenshotManifest(persistedScreenshots);
       const screenshotIssues = validateDisputeScreenshotManifest({
-        accounts: workItem.accounts,
+        accounts: accountSnapshots,
         manifest: screenshotManifest,
         policy: screenshotPolicy,
         userId: screenshotUpload.userId,
@@ -828,14 +934,30 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
         identity: currentMergeIdentity,
         audit,
         bureau: workItem.bureau,
-        accounts: workItem.accounts,
+        accounts: accountSnapshots,
         screenshots: [],
         strictIdentity: true,
       });
       const automaticValuesSnapshot = buildAutomaticValuesSnapshot(selectedTemplate, storedAutoValues);
-      const currentTrackSnapshots = await recheckExactServerState(workItem, selectedTemplate, audit);
+      const currentState = await recheckExactServerState(selectedWorkItem, selectedTemplate, audit);
+      const reasonSnapshotIssues = validateRoundReasonSnapshots({
+        accountSnapshots,
+        tracks: currentState.tracks,
+        bureauCode: workItem.bureau.code,
+      });
+      if (reasonSnapshotIssues.length) throw new Error(reasonSnapshotIssues.join(' '));
       const storedBodyHtml = renderDisputeTemplate(selectedTemplate.body, { ...storedAutoValues, ...sections }, ['screenshots']);
       const storedLetterHtml = wrapDisputeLetterHtml(storedBodyHtml, letterTitle);
+      const instructionLeakIssues = privateInstructionLeakIssues(accountSnapshots, storedLetterHtml);
+      if (instructionLeakIssues.length) throw new Error(instructionLeakIssues.join(' '));
+      const mergeIntegrityIssues = roundReasonRenderIssues({
+        accountSnapshots,
+        automaticValues: automaticValuesSnapshot,
+        editableSections: sections,
+        templateText: selectedTemplate.body,
+        renderedHtml: storedLetterHtml,
+      });
+      if (mergeIntegrityIssues.length) throw new Error(mergeIntegrityIssues.join(' '));
       const physicalLabel = FLOW_LABELS[workItem.concreteFlow] || workItem.concreteFlow;
       const logicalLabel = logicalFlowLabel(workItem.logicalFlow);
       const syntheticAccount = {
@@ -843,18 +965,26 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
         furnisher: workItem.bureau.name,
         type: null,
       };
+      const deterministicSaveSuffix = await roundSelectionDraftSuffix({
+        accountSnapshots,
+        trackSnapshots: currentState.snapshots,
+        template: selectedTemplate,
+        automaticValues: automaticValuesSnapshot,
+        editableSections: sections,
+        screenshotManifest,
+      });
       const id = await saveLetter(
         syntheticAccount,
         { ...audit.client, id: identity.id, name: freshIdentity.clientName, address: storedAutoValues.client_address },
         storedLetterHtml,
         `${logicalLabel} R${workItem.logicalRound} prepared for ${workItem.bureau.name} using ${physicalLabel} R${workItem.concreteRound}.`,
         `CCC Dispute — ${physicalLabel} R${workItem.concreteRound} — ${workItem.bureau.name}`,
-        '',
+        deterministicSaveSuffix,
         {
           letterKind: 'dispute',
           targetType: templateAudience === 'cra' ? 'bureau' : null,
           targetBureau: templateAudience === 'cra' ? workItem.bureau.slug : null,
-          coveredFurnishers: workItem.accounts.map((account) => account.furnisher).filter(Boolean),
+          coveredFurnishers: accountSnapshots.map((account) => account.furnisher).filter(Boolean),
           disputeTemplateId: selectedTemplate.id,
           disputeTemplateName: `${selectedTemplate.name} ${selectedTemplate.version}`.trim(),
           disputeTemplateVersionLabel: selectedTemplate.version,
@@ -865,7 +995,7 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
           disputeTemplateSnapshot: selectedTemplate.body,
           disputeEditableSections: sections,
           disputeAccountSnapshot: accountSnapshots,
-          cccAccountTrackSnapshots: currentTrackSnapshots,
+          cccAccountTrackSnapshots: currentState.snapshots,
           cccLetterIdentitySnapshot: currentLetterIdentitySnapshot,
           disputeAutomaticValuesSnapshot: automaticValuesSnapshot,
           disputeScreenshotPolicySnapshot: screenshotPolicy,
@@ -977,6 +1107,39 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
               )}
 
               {workItem && (
+                <div className="mt-4 rounded-xl border border-blue-200 bg-[#F7FBFF] p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-blue-800">Accounts & dispute reasons</div>
+                      <p className="mt-1 text-[9px] leading-relaxed text-gray-600">Choose what goes on this physical letter. Only findings supported by this account’s frozen {workItem.bureau.name} audit evidence are available.</p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[8px] font-bold uppercase tracking-wider text-blue-700">
+                      {selectedAccountSnapshots.length} / {PACKET_MAX_ACCOUNTS} selected
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {workItem.accounts.map((account) => {
+                      const accountId = String(account.clientAccountId || account.client_account_id || '').toLowerCase();
+                      const choice = roundSelection[accountId] || { included: false, reasonIds: [], internalStaffInstructions: '' };
+                      return (
+                        <RoundAccountSelector
+                          key={accountId}
+                          account={account}
+                          bureauCode={workItem.bureau.code}
+                          choice={choice}
+                          onInclude={(included) => updateRoundAccountSelection(account, { included })}
+                          onReason={(reasonId, checked) => toggleRoundReason(account, reasonId, checked)}
+                          onInstructions={(internalStaffInstructions) => updateRoundAccountSelection(account, { internalStaffInstructions })}
+                        />
+                      );
+                    })}
+                  </div>
+                  {reasonBuild.error && <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-2 text-[9px] font-medium leading-relaxed text-amber-800">{reasonBuild.error}</div>}
+                  <p className="mt-2 text-[8px] leading-relaxed text-gray-500">Unchecked accounts remain on their current server-owned round. Saving or mailing this letter cannot attach, advance, or bind an unchecked account.</p>
+                </div>
+              )}
+
+              {workItem && (
                 <div className="mt-4">
                   <label className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-gray-400">Exact active template</label>
                   {matches.length ? (
@@ -996,11 +1159,6 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
                 </div>
               )}
 
-              {!!missingFactAccounts.length && (
-                <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-[10px] leading-relaxed text-red-700">
-                  <strong>Confirmed issue facts required:</strong> {missingFactAccounts.map((account) => account.furnisher || account.clientAccountId).join('; ')}. The letter preview and save are blocked.
-                </div>
-              )}
               {!!missingAutomatic.length && (
                 <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-[10px] leading-relaxed text-red-700">
                   <strong>Correct the client profile/report:</strong> {missingAutomatic.map((token) => `{${token}}`).join(', ')} must be populated for this exact template. The preview and save are blocked.
@@ -1097,9 +1255,9 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
                   <p className="mt-1 text-[10px] font-medium leading-relaxed text-amber-800">{screenshotPolicy.staffInstructions}</p>
                   <p className="mt-1 text-[9px] leading-relaxed text-amber-700">Your team reviews and crops each image, then assigns it to the exact account below. CCC appends the approved exhibits to the Lob packet; Claude does not choose the crop.</p>
                   <div className="mt-3 space-y-2">
-                    {(workItem?.accounts || []).map((account) => {
+                    {selectedAccounts.map((account) => {
                       const accountKey = disputeAccountKey(account);
-                      const accountScreenshots = screenshots.filter((item) => disputeAccountKey(item) === accountKey);
+                      const accountScreenshots = selectedScreenshots.filter((item) => disputeAccountKey(item) === accountKey);
                       return (
                         <div key={accountKey} className={`rounded-md border p-2.5 ${accountScreenshots.length ? 'border-green-200 bg-green-50' : 'border-amber-300 bg-white'}`}>
                           <div className="flex items-start justify-between gap-2">
@@ -1142,7 +1300,7 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
               <button
                 onClick={saveCampaignLetter}
                 disabled={saving || savingIdentity || savingStoryNotes || !!rewritingKey || !identityReady || !selectedTemplate || !workItem || !isCraTemplate
-                  || !!templateContractError || unknown.length > 0 || missingFactAccounts.length > 0
+                  || !!templateContractError || unknown.length > 0 || !!reasonBuild.error
                   || missingAutomatic.length > 0 || missingScreenshotCoverage.length > 0}
                 className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg bg-[#C9A84C] py-3 text-[10px] font-bold uppercase tracking-wider text-[#121F38] disabled:opacity-40"
               >
@@ -1156,7 +1314,7 @@ export default function DisputeCampaignStudio({ audit, initialTracks, onClose, o
                 <iframe title="Merged campaign letter preview" srcDoc={letterHtml} sandbox="allow-same-origin" className="h-full w-full rounded-lg bg-white shadow-lg" />
               ) : (
                 <div className="flex h-full items-center justify-center text-center text-gray-500">
-                  <div><FileText size={38} className="mx-auto mb-3 text-gray-400" /><div className="text-sm font-semibold">Letter preview blocked</div><div className="mt-1 max-w-md text-xs">CCC needs an exact active physical template, complete automatic profile fields, and confirmed issue facts for every covered account.</div></div>
+                  <div><FileText size={38} className="mx-auto mb-3 text-gray-400" /><div className="text-sm font-semibold">Letter preview blocked</div><div className="mt-1 max-w-md text-xs">Select the accounts for this round, choose at least one supported reason for each, and complete the required client and template fields.</div></div>
                 </div>
               )}
             </section>

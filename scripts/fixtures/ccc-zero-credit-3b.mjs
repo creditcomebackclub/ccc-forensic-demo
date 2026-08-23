@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { buildDeterministicAudit } from '../../src/utils/deterministicAudit.js';
+import { CREDIT_ACCOUNT_FIELD_NAMES } from '../../src/utils/creditExtractionSchemas.js';
 import {
   buildClassificationReviewSnapshot,
   buildInitialAccountTrackStates,
@@ -26,21 +27,52 @@ function evidence(row) {
     .map((field) => ({ field, rawValue: row[field], page: 4, label: field }));
 }
 
+const NUMERIC_FIELDS = new Set([
+  'balance', 'pastDue', 'scheduledMonthlyPayment', 'originalLoanAmount',
+  'creditLimit', 'actualPaymentAmount', 'originalChargeOffAmount',
+]);
+
+function extractedFields(row) {
+  return CREDIT_ACCOUNT_FIELD_NAMES.map((name) => {
+    const value = row[name];
+    const shown = value !== null && value !== undefined && value !== '';
+    return {
+      name,
+      rawValue: shown ? String(value) : null,
+      numericValue: shown && NUMERIC_FIELDS.has(name) && Number.isFinite(Number(value))
+        ? Number(value)
+        : null,
+      state: shown ? 'PRESENT' : 'NOT_SHOWN',
+      page: shown ? 4 : null,
+      label: name,
+    };
+  });
+}
+
 function account(overrides) {
   const row = {
     furnisher: 'Fixture Bank',
+    furnisherAddress: null,
     originalCreditor: 'Fixture Bank',
     accountNumber: 'XXXX0000',
+    accountIdentityEvidencePage: 4,
     reportedType: 'Installment account',
+    reportedTypeEvidencePage: 4,
+    portfolioType: 'I',
     accountType: '00',
     accountStatus: '11',
     statusText: 'Current',
+    statusTextEvidencePage: 4,
     dateOpened: '2021-03-01',
     balance: 0,
     paymentHistory: 'OK OK OK',
+    consumerDisputeIndicator: 'UNKNOWN',
+    consumerDisputeIndicatorEvidencePage: null,
     remarks: null,
+    remarksEvidencePage: null,
     ...overrides,
   };
+  row.fields = extractedFields(row);
   row.evidence = evidence(row);
   return row;
 }
@@ -84,17 +116,38 @@ function late(history) {
 }
 
 function bureauReport(bureau, lateHistory) {
+  const score = bureau === 'equifax' ? 602 : bureau === 'experian' ? 617 : 594;
   return {
     bureau,
-    client,
-    scores: bureau === 'equifax' ? { equifax: 602 } : bureau === 'experian' ? { experian: 617 } : { transunion: 594 },
+    bureauEvidencePage: 1,
+    reportSectionStart: true,
+    reportSectionStartEvidencePage: 1,
+    reportDate: client.reportDate,
+    reportDateRaw: 'August 20, 2026',
+    reportDateEvidencePage: 1,
+    client: {
+      name: client.name,
+      nameEvidencePage: 1,
+      address: client.address,
+      addressEvidencePage: 1,
+      score,
+      scoreEvidencePage: 1,
+    },
     accounts: [collection, chargeOff, late(lateHistory)],
     inquiries: [],
     personalInfo: {
       currentAddress: client.address,
+      currentAddressEvidencePage: 1,
       formerAddresses: ['44 Prior Avenue, Fruita, CO 81521'],
+      formerAddressEvidence: [{ value: '44 Prior Avenue, Fruita, CO 81521', page: 2 }],
       nameVariants: ['Jordan Z Fixture'],
+      nameVariantEvidence: [{ value: 'Jordan Z Fixture', page: 2 }],
       formerEmployers: [],
+      formerEmployerEvidence: [],
+      dateOfBirth: null,
+      dateOfBirthEvidencePage: null,
+      phone: null,
+      phoneEvidencePage: null,
     },
   };
 }

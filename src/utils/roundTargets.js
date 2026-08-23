@@ -1,5 +1,6 @@
 import { normalizeFurnisher, lastFour } from './diffEngine.js';
 import { supabase } from './supabase.js';
+import { isOperationalCreditAudit } from './auditOperational.js';
 
 const BUREAU_CODE = { EQ: 'equifax', EXP: 'experian', TU: 'transunion' };
 export const BUREAU_LABEL = { equifax: 'Equifax', experian: 'Experian', transunion: 'TransUnion' };
@@ -10,12 +11,14 @@ export const BUREAU_LABEL = { equifax: 'Equifax', experian: 'Experian', transuni
  */
 export async function resolveActiveBureaus({ clientId, clientName, clientAccountId, accountId, furnisher }) {
   if (!clientId && !clientName) throw new Error('A client identity is required to resolve reporting bureaus.');
-  const query = supabase.from('audits').select('id,report_date,saved_at,audit').order('saved_at', { ascending: false }).limit(1);
+  // Keep immutable single-bureau source results visible in audit history, but
+  // never let one replace the latest complete 3B baseline used for a round.
+  const query = supabase.from('audits').select('id,report_date,saved_at,audit').order('saved_at', { ascending: false }).limit(25);
   const { data, error } = clientId
     ? await query.eq('client_id', clientId)
     : await query.eq('client_name', clientName);
   if (error) throw new Error('Could not load the latest audit: ' + error.message);
-  const auditRecord = data?.[0] || null;
+  const auditRecord = (data || []).find(isOperationalCreditAudit) || null;
   const accounts = auditRecord?.audit?.accounts || [];
   if (!accounts.length) throw new Error('No audit is available for this client.');
 
