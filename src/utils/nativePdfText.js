@@ -6,6 +6,7 @@
 // send `compactText` to an extraction model only when `status === 'eligible'`.
 
 export const NATIVE_PDF_TEXT_FORMAT = 'ccc-pdf-layout-v1';
+export const NATIVE_PDF_CONTEXT_LEGEND_FORMAT = 'ccc-source-derived-bureau-column-legend-v1';
 
 export const NATIVE_PDF_TEXT_ELIGIBILITY = Object.freeze({
   minPageTextChars: 200,
@@ -63,6 +64,55 @@ const FORMAT_LEGEND = [
   `[[${NATIVE_PDF_TEXT_FORMAT};pt;top-left;rows=y|x:text]]`,
   'Each row starts with y; each following x:text segment is a visual cell.',
 ].join('\n');
+
+const CONTEXT_COLUMN_POSITIONS = Object.freeze(['left', 'center', 'right']);
+const CONTEXT_COLUMN_BUREAU_ORDER = Object.freeze(['transunion', 'equifax', 'experian']);
+
+function normalizedContextOnlyPageLegends(value) {
+  if (!Array.isArray(value)) {
+    throw new Error('Native PDF context-only page legends are invalid.');
+  }
+  const pages = new Map();
+  for (const entry of value) {
+    const pageNumber = Number(entry?.pageNumber);
+    if (!Number.isInteger(pageNumber) || pageNumber < 1 || pages.has(pageNumber)) {
+      throw new Error('Native PDF context-only page binding is invalid.');
+    }
+    if (!Array.isArray(entry?.columns) || entry.columns.length !== 3) {
+      throw new Error('Native PDF context-only bureau columns are invalid.');
+    }
+    const columns = entry.columns.map((column, index) => ({
+      position: String(column?.position || '').trim().toLowerCase(),
+      bureau: String(column?.bureau || '').trim().toLowerCase(),
+      index,
+    }));
+    if (columns.some((column, index) => (
+      column.position !== CONTEXT_COLUMN_POSITIONS[index]
+      || column.bureau !== CONTEXT_COLUMN_BUREAU_ORDER[index]
+    ))) {
+      throw new Error('Native PDF context-only bureau-column order is invalid.');
+    }
+    pages.set(pageNumber, { pageNumber, columns });
+  }
+  return pages;
+}
+
+function contextOnlyCompactPage(page, totalPages, contextLegend) {
+  const pageTag = `[[PAGE ${page.pageNumber}/${totalPages};${page.width}x${page.height};r${page.rotation}]]`;
+  const y = roundCoordinate(page.height / 2);
+  const xPositions = [page.width / 6, page.width / 2, page.width * (5 / 6)];
+  const row = [
+    String(y),
+    ...contextLegend.columns.map((column, index) => (
+      `${roundCoordinate(xPositions[index])}:${column.position.toUpperCase()} COLUMN=${column.bureau.toUpperCase()}`
+    )),
+  ].join('|');
+  return [
+    pageTag,
+    `[[CONTEXT_ONLY;${NATIVE_PDF_CONTEXT_LEGEND_FORMAT}]]`,
+    row,
+  ].join('\n');
+}
 
 function copyPdfBytes(pdfBytes) {
   if (pdfBytes instanceof ArrayBuffer) return new Uint8Array(pdfBytes.slice(0));
@@ -687,7 +737,9 @@ function pageEligibilityReasonCodes(page) {
 export async function extractNativePdfText(pdfBytes, {
   pdfJsLoader = defaultPdfJsLoader,
   pdfLibLoader = defaultPdfLibLoader,
+  contextOnlyPageLegends = [],
 } = {}) {
+  const contextLegends = normalizedContextOnlyPageLegends(contextOnlyPageLegends);
   let loadingTask = null;
   let document = null;
   let knownTotalPages = null;
@@ -719,6 +771,9 @@ export async function extractNativePdfText(pdfBytes, {
         reasonCodes: ['page_count_mismatch'],
       });
     }
+    if ([...contextLegends.keys()].some((pageNumber) => pageNumber > knownTotalPages)) {
+      throw new Error('Native PDF context-only page is outside the document.');
+    }
 
     const extractedPages = [];
     for (let pageNumber = 1; pageNumber <= knownTotalPages; pageNumber += 1) {
@@ -739,13 +794,31 @@ export async function extractNativePdfText(pdfBytes, {
           pdfJs,
         );
         const measuredPage = { ...layout, ...operatorMetrics };
-        const reasonCodes = pageEligibilityReasonCodes(measuredPage);
-        const classification = !reasonCodes.length
-          ? 'native_text'
-          : measuredPage.largestPaintedImageRatio >= NATIVE_PDF_TEXT_ELIGIBILITY.maxPaintedImagePageRatio
-            ? 'scan_candidate'
-            : 'ineligible_native_text';
-        extractedPages.push({ ...measuredPage, reasonCodes, classification });
+        const contextLegend = contextLegends.get(pageNumber) || null;
+        // A context page exists only to carry the source-derived bureau-column
+        // legend. Its original text/image content is never serialized or sent
+        // as a vision supplement, and its source layout cannot make otherwise
+        // eligible substantive data pages fall back to the full source PDF.
+        const reasonCodes = contextLegend ? [] : pageEligibilityReasonCodes(measuredPage);
+        const classification = contextLegend
+          ? 'context_only'
+          : !reasonCodes.length
+            ? 'native_text'
+            : measuredPage.largestPaintedImageRatio >= NATIVE_PDF_TEXT_ELIGIBILITY.maxPaintedImagePageRatio
+              ? 'scan_candidate'
+              : 'ineligible_native_text';
+        extractedPages.push({
+          ...measuredPage,
+          ...(contextLegend
+            ? {
+              compactPage: contextOnlyCompactPage(measuredPage, knownTotalPages, contextLegend),
+              contextOnly: true,
+              contextLegendFormat: NATIVE_PDF_CONTEXT_LEGEND_FORMAT,
+            }
+            : {}),
+          reasonCodes,
+          classification,
+        });
       } finally {
         page.cleanup?.();
       }
@@ -789,11 +862,11 @@ export async function extractNativePdfText(pdfBytes, {
       return sum;
     }, emptyTotals());
     totals.eligiblePages = extractedPages.filter(
-      (page) => page.classification === 'native_text',
+      (page) => ['native_text', 'context_only'].includes(page.classification),
     ).length;
     totals.eligiblePageRatio = totals.eligiblePages / knownTotalPages;
     const visionSupplementPageNumbers = extractedPages
-      .filter((page) => page.paintedImages > 0)
+      .filter((page) => !page.contextOnly && page.paintedImages > 0)
       .map((page) => page.pageNumber);
     totals.visionSupplementPages = visionSupplementPageNumbers.length;
 
@@ -821,7 +894,7 @@ export async function extractNativePdfText(pdfBytes, {
     const eligible = !reasonCodes.length;
     const publicPages = extractedPages.map(({ compactPage, ...page }) => page);
     const fallbackPageNumbers = extractedPages
-      .filter((page) => page.classification !== 'native_text')
+      .filter((page) => !['native_text', 'context_only'].includes(page.classification))
       .map((page) => page.pageNumber);
 
     return {

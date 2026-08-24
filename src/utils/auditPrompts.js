@@ -108,7 +108,7 @@ export function buildNativeReportContent(compactText, label, {
           ? `Immutable page map (LOCAL→SOURCE): ${normalizedSourcePageMap.map((sourcePage, index) => `${index + 1}→${sourcePage}`).join(', ')}.`
           : 'Local pages map contiguously to the supplied report range.',
         normalizedContextPages.length
-          ? `Context-only LOCAL page${normalizedContextPages.length === 1 ? '' : 's'}: ${normalizedContextPages.join(', ')}. Follow the final extraction instruction for the narrow metadata those pages may support.`
+          ? `Context-only LOCAL page${normalizedContextPages.length === 1 ? '' : 's'}: ${normalizedContextPages.join(', ')}. Each contains only a source-derived bureau-column legend and may support bureau identity only; it contains no substantive source-page data.`
           : 'No context-only page is present.',
         'Rows are ordered top-to-bottom. Each row begins with its y coordinate; x:text cells preserve left-to-right columns. Keep values with their visible labels/columns.',
         'A missing extracted cell means NOT_SHOWN, never EXPLICITLY_BLANK. Use EXPLICITLY_BLANK only when the captured layout visibly contains a label with an empty or no-value marker.',

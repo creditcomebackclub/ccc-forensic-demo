@@ -30,7 +30,9 @@ assert.equal(hybridBlocks.filter((block) => block.type === 'document').length, 1
 assert.match(hybridBlocks.find((block) => block.text?.startsWith('VISION SUPPLEMENT'))?.text || '', /LOCAL PAGE 2/);
 
 const worker = readFileSync(new URL('../netlify/functions/audit-run-background.mjs', import.meta.url), 'utf8');
-assert.match(worker, /extractNativePdfText\(chunk\.bytes\)/);
+assert.match(worker, /extractNativePdfText\(chunk\.bytes, \{[\s\S]*contextOnlyPageLegends:/);
+assert.match(worker, /NATIVE_PDF_CONTEXT_LEGEND_FORMAT/);
+assert.match(worker, /contextRepresentation: NATIVE_PDF_CONTEXT_LEGEND_FORMAT/);
 assert.match(worker, /nativeTextCanDriveCheckpoint/);
 assert.match(worker, /inputMode: nativeText\.status === 'hybrid' \? 'hybrid_native_pdf' : 'native_pdf_text'/);
 assert.match(worker, /'hybrid_native_pdf'/);
@@ -45,7 +47,7 @@ assert.match(worker, /checkpointProviderContent\(input, combinedExtractionPrompt
 assert.match(worker, /checkpointProviderContent\(input, bureauExtractionPrompt/);
 assert.match(worker, /visionSupplements: input\.visionSupplements/);
 assert.match(worker, /strictNativePlan/);
-assert.match(worker, /maxPages: RESUMABLE_PDF_CHUNK_PAGES/);
+assert.match(worker, /maxPages: contextSourcePage === COMBINED_CONTEXT_SOURCE_PAGE[\s\S]*RESUMABLE_PDF_CHUNK_PAGES/);
 assert.match(worker, /input_provenance: inputProvenance/);
 assert.match(worker, /extractionInputsFromCheckpoints/);
 assert.match(worker, /requestSha256: checkpoint\.usage\.request_sha256/);

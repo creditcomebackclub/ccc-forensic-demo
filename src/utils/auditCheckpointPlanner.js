@@ -49,6 +49,11 @@ export const AUDIT_CHECKPOINT_PLANNER_PROFILE = Object.freeze({
 });
 
 export const COMBINED_FIXED_COLUMN_CONTEXT_POLICY = 'combined-visible-column-context-v1';
+export const COMBINED_FIXED_COLUMN_CONTEXT_COLUMNS = Object.freeze([
+  Object.freeze({ position: 'left', bureau: 'transunion' }),
+  Object.freeze({ position: 'center', bureau: 'equifax' }),
+  Object.freeze({ position: 'right', bureau: 'experian' }),
+]);
 const THREE_BUREAU_LABELS = Object.freeze(['equifax', 'experian', 'transunion']);
 
 export function resolveFrozenCombinedContextPolicy(checkpoint) {
@@ -335,6 +340,9 @@ export function detectFixedThreeBureauColumnLegend(textContent, {
     matched,
     policy: matched ? COMBINED_FIXED_COLUMN_CONTEXT_POLICY : null,
     contextSourcePage: matched ? 1 : null,
+    columns: matched
+      ? COMBINED_FIXED_COLUMN_CONTEXT_COLUMNS.map((column) => ({ ...column }))
+      : [],
     gridBandCount,
     reportFamilySignature,
   };

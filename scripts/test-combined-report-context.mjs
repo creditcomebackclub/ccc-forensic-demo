@@ -7,6 +7,7 @@ import {
   mapExtractionPageRefs,
 } from '../src/utils/deterministicAudit.js';
 import {
+  COMBINED_FIXED_COLUMN_CONTEXT_COLUMNS,
   COMBINED_FIXED_COLUMN_CONTEXT_POLICY,
   detectFixedThreeBureauColumnLegend,
   planAdaptiveAuditCheckpointRanges,
@@ -84,6 +85,8 @@ assert.equal(fixedLegend.matched, true);
 assert.equal(fixedLegend.policy, COMBINED_FIXED_COLUMN_CONTEXT_POLICY);
 assert.equal(fixedLegend.gridBandCount, 14);
 assert.equal(fixedLegend.reportFamilySignature, true);
+assert.deepEqual(fixedLegend.columns, COMBINED_FIXED_COLUMN_CONTEXT_COLUMNS,
+  'the persisted policy binds the source-derived left-to-right bureau order');
 assert.equal(detectFixedThreeBureauColumnLegend({
   items: fixedGridItems.filter((item) => !/transunion|equifax/i.test(item.str)),
 }).matched, false, 'a sequential one-bureau first page must not become a global legend');
@@ -167,6 +170,14 @@ assert.throws(
   /context-only bureau legend/i,
 );
 assert.throws(
+  () => assertCombinedCheckpointAttribution({ reports: [{
+    ...report('transunion', 2),
+    reportDate: '2026-08-24',
+    reportDateEvidencePage: 1,
+  }] }, { contextLocalPages: [1] }),
+  /cannot be claimed as report-date evidence/i,
+);
+assert.throws(
   () => mapExtractionPageRefs(extraction, [1]),
   /outside the provider attachment map/i,
 );
@@ -178,9 +189,10 @@ const prompt = combinedExtractionPrompt({
   chunkCount: 5,
   index: 1,
 }, { contextLocalPage: 1, dataLocalPages: [2, 3, 4, 5, 6] });
-assert.match(prompt, /context-only copy of original source page 1/i);
+assert.match(prompt, /context-only, source-derived bureau-column legend from original source page 1/i);
 assert.match(prompt, /left-to-right bureau-column layout/i);
 assert.match(prompt, /Do not extract client\/profile values, accounts, inquiries/i);
+assert.match(prompt, /Only bureauEvidencePage may cite the context page/i);
 assert.match(prompt, /reportSectionStart must be false/i);
 assert.match(prompt, /DATA LOCAL PAGES 2, 3, 4, 5, 6/);
 
@@ -220,6 +232,9 @@ assert.match(worker, /detectCombinedPdfContextPolicy/);
 assert.match(worker, /COMBINED_FIXED_COLUMN_CONTEXT_POLICY/);
 assert.match(worker, /ccc_retire_incompatible_combined_audit_job/);
 assert.match(worker, /extractPdfPages\(report\.bytes, \{ pageNumbers: sourcePageMap \}\)/);
+assert.match(worker, /contextOnlyPageLegends: contextLocalPages\.map/);
+assert.match(worker, /context_legend_native_required/);
+assert.match(worker, /context_legend_supplement_violation/);
 assert.match(worker, /combinedExtractionPrompt\(input\.chunk, \{[\s\S]*contextLocalPage:[\s\S]*dataLocalPages:/);
 assert.match(worker, /assertCombinedCheckpointAttribution\(parsed/);
 assert.match(worker, /mapExtractionPageRefs\(parsed, input\.chunk\.sourcePageMap\)/);
@@ -229,6 +244,6 @@ assert.match(worker, /globalThis\.ImageData \|\|= ImageData/);
 assert.match(worker, /globalThis\.Path2D \|\|= Path2D/);
 assert.match(worker, /import\('pdfjs-dist\/legacy\/build\/pdf\.mjs'\)/);
 assert.match(worker, /maxPages: contextSourcePage === COMBINED_CONTEXT_SOURCE_PAGE[\s\S]*COMBINED_SOURCE_PDF_DATA_PAGES/);
-assert.match(netlifyConfig, /\[functions\][\s\S]*external_node_modules = \["@napi-rs\/canvas"\]/);
+assert.match(netlifyConfig, /\[functions\][\s\S]*external_node_modules = \["@napi-rs\/canvas", "pdfjs-dist"\]/);
 
 console.log('Combined-report source-context assertions passed.');

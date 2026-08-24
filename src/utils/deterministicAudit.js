@@ -374,9 +374,9 @@ function substantiveEvidencePages(report) {
 }
 
 /**
- * Guard a combined checkpoint before source-page mapping. Context pages may
- * prove bureau/report metadata only; all substantive facts must cite a data
- * page. A data-bearing report without a bureau remains a hard failure.
+ * Guard a combined checkpoint before source-page mapping. A sanitized context
+ * page may prove bureau identity only; every other fact must cite a data page.
+ * A data-bearing report without a bureau remains a hard failure.
  */
 export function assertCombinedCheckpointAttribution(extraction, {
   contextLocalPages = [],
@@ -403,6 +403,9 @@ export function assertCombinedCheckpointAttribution(extraction, {
     if (!contextPages.size) continue;
     if (report?.reportSectionStart === true) {
       throw new Error('A context-only bureau legend cannot be claimed as this checkpoint\'s report section start.');
+    }
+    if (contextPages.has(Number(report?.reportDateEvidencePage))) {
+      throw new Error('A context-only bureau legend cannot be claimed as report-date evidence.');
     }
     if (substantiveEvidencePages(report).some((page) => contextPages.has(page))) {
       throw new Error('A combined-report checkpoint cited context-only page data as substantive evidence.');

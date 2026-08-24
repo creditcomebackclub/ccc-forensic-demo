@@ -14,7 +14,7 @@ function check(condition, label) {
   console.error(`FAIL: ${label}`);
 }
 
-async function makeNativeTablePdf({ smallImage = false } = {}) {
+async function makeNativeTablePdf({ smallImage = false, firstPageOnlyText = null } = {}) {
   const document = await PDFDocument.create();
   const font = await document.embedFont(StandardFonts.Helvetica);
   const smallPng = smallImage ? await document.embedPng(Buffer.from(
@@ -31,6 +31,9 @@ async function makeNativeTablePdf({ smallImage = false } = {}) {
     page.drawText('Bureau C', { x: 390, y: 720, size: 10, font });
     page.drawText('Account details', { x: 48, y: 720, size: 10, font });
     page.drawText('Bureau A', { x: 220, y: 720, size: 10, font });
+    if (pageIndex === 0 && firstPageOnlyText) {
+      page.drawText(firstPageOnlyText, { x: 48, y: 548, size: 10, font });
+    }
     page.drawText('Balance', { x: 48, y: 692, size: 10, font });
     page.drawText('300', { x: 390, y: 692, size: 10, font });
     page.drawText('100', { x: 220, y: 692, size: 10, font });
@@ -165,6 +168,52 @@ check(hybrid.visionSupplementPageNumbers?.length === 1
   && hybrid.visionSupplementPageNumbers[0] === 1,
 'hybrid result identifies the exact local vision-supplement page');
 check(hybrid.compactText !== null, 'hybrid mode retains the validated native layout');
+
+const contextOnlySecret = 'SOURCE PAGE ONE SUBSTANTIVE PROFILE VALUE MUST NOT LEAK';
+const sanitizedContext = await extractNativePdfText(await makeNativeTablePdf({
+  smallImage: true,
+  firstPageOnlyText: contextOnlySecret,
+}), {
+  contextOnlyPageLegends: [{
+    pageNumber: 1,
+    columns: [
+      { position: 'left', bureau: 'transunion' },
+      { position: 'center', bureau: 'equifax' },
+      { position: 'right', bureau: 'experian' },
+    ],
+  }],
+});
+check(sanitizedContext.status === 'eligible',
+  'a painted context page does not force an otherwise native range into source-PDF fallback');
+check(sanitizedContext.pages[0]?.classification === 'context_only',
+  'the source-derived legend page is explicitly classified as context-only');
+check(sanitizedContext.visionSupplementPageNumbers?.length === 0,
+  'a context-only page is never sent as a vision supplement');
+check(sanitizedContext.compactText?.includes('CONTEXT_ONLY;ccc-source-derived-bureau-column-legend-v1'),
+  'compact native input identifies the deterministic context representation');
+check(sanitizedContext.compactText?.includes('LEFT COLUMN=TRANSUNION')
+  && sanitizedContext.compactText?.includes('CENTER COLUMN=EQUIFAX')
+  && sanitizedContext.compactText?.includes('RIGHT COLUMN=EXPERIAN'),
+'the safe context stub retains only the source-policy-bound column order');
+check(!sanitizedContext.compactText?.includes(contextOnlySecret),
+  'substantive source-page-one text is absent from provider input');
+let invalidContextOrderRejected = false;
+try {
+  await extractNativePdfText(new Uint8Array([1]), {
+    contextOnlyPageLegends: [{
+      pageNumber: 1,
+      columns: [
+        { position: 'left', bureau: 'equifax' },
+        { position: 'center', bureau: 'transunion' },
+        { position: 'right', bureau: 'experian' },
+      ],
+    }],
+  });
+} catch (error) {
+  invalidContextOrderRejected = /bureau-column order is invalid/i.test(error?.message || '');
+}
+check(invalidContextOrderRejected,
+  'the SmartCredit context representation rejects a bureau permutation before reading the PDF');
 
 const imageBytes = await makeImageOnlyPdf();
 const imageOnly = await extractNativePdfText(imageBytes);

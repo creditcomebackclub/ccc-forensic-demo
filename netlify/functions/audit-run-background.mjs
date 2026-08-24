@@ -21,6 +21,7 @@ import {
   decodeCompactCombinedExtraction,
 } from '../../src/utils/compactCreditExtractionCodec.js';
 import {
+  COMBINED_FIXED_COLUMN_CONTEXT_COLUMNS,
   COMBINED_FIXED_COLUMN_CONTEXT_POLICY,
   detectCombinedPdfContextPolicy,
   measureAuditPdfPageDensity,
@@ -46,7 +47,10 @@ import { requireStaffOrSystem } from './_requireAuth.cjs';
 import {
   buildNativeReportContent, buildReportContent, accountEnrichmentPrompt, todayLong,
 } from '../../src/utils/auditPrompts.js';
-import { extractNativePdfText } from '../../src/utils/nativePdfText.js';
+import {
+  NATIVE_PDF_CONTEXT_LEGEND_FORMAT,
+  extractNativePdfText,
+} from '../../src/utils/nativePdfText.js';
 import {
   describePdfChunk, extractPdfPageRange, extractPdfPages, splitPdfByPages,
 } from '../../src/utils/pdfPageChunks.js';
@@ -276,6 +280,9 @@ function extractionInputsFromCheckpoints(checkpoints) {
       ...(input.inputPolicy === COMBINED_FIXED_COLUMN_CONTEXT_POLICY && sourcePageMap
         ? {
           inputPolicy: input.inputPolicy,
+          ...(input.contextRepresentation === NATIVE_PDF_CONTEXT_LEGEND_FORMAT
+            ? { contextRepresentation: input.contextRepresentation }
+            : {}),
           sourcePageMap,
           contextLocalPages,
         }
@@ -1447,12 +1454,25 @@ export const handler = async (event) => {
       nativeText = await extractNativePdfText(chunk.bytes, {
         pdfJsLoader: auditPdfJsLoader,
         pdfLibLoader: auditPdfLibLoader,
+        contextOnlyPageLegends: contextLocalPages.map((pageNumber) => ({
+          pageNumber,
+          columns: COMBINED_FIXED_COLUMN_CONTEXT_COLUMNS,
+        })),
       });
     }
     const localPageCount = chunk.sourcePageMap.length;
     const nativeEligible = nativeTextCanDriveCheckpoint(nativeText)
       && nativeText.totalPages === localPageCount
       && typeof nativeText.compactText === 'string';
+    if (report.mediaType.includes('pdf') && contextLocalPages.length && !nativeEligible) {
+      const contextFallback = new Error(
+        'The context-only bureau legend could not be isolated from the source PDF for this range.',
+      );
+      contextFallback.auditNativeFallbackSplit = true;
+      contextFallback.auditErrorType = 'context_legend_native_required';
+      contextFallback.auditUserMessage = 'CCC could not isolate the bureau legend safely. No report page was sent for paid analysis; the saved range will split or stop for review.';
+      throw contextFallback;
+    }
     if (report.mediaType.includes('pdf') && !nativeEligible
         && localPageCount > RESUMABLE_PDF_CHUNK_PAGES) {
       const fallbackSplit = new Error('Native text became unavailable for a range larger than the source-PDF vision limit.');
@@ -1464,6 +1484,12 @@ export const handler = async (event) => {
     const visionSupplements = [];
     if (nativeEligible && nativeText.status === 'hybrid') {
       for (const localPage of nativeText.visionSupplementPageNumbers || []) {
+        if (contextLocalPages.includes(localPage)) {
+          throw terminalAuditError(
+            'A context-only page was incorrectly selected as a vision supplement.',
+            'context_legend_supplement_violation',
+          );
+        }
         const supplement = await extractPdfPageRange(chunk.bytes, {
           startPage: localPage,
           endPage: localPage,
@@ -1500,6 +1526,7 @@ export const handler = async (event) => {
       ...(checkpoint.kind === 'combined_chunk' && contextSourcePage === COMBINED_CONTEXT_SOURCE_PAGE
         ? {
           inputPolicy: COMBINED_FIXED_COLUMN_CONTEXT_POLICY,
+          contextRepresentation: NATIVE_PDF_CONTEXT_LEGEND_FORMAT,
           sourcePageMap: chunk.sourcePageMap,
           contextLocalPages: chunk.contextLocalPages,
         }
