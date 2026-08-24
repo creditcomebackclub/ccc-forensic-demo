@@ -19,10 +19,18 @@ const START_RETRIES = 2;               // same job ID: safe with server claim
 const REDISPATCH_MS = 15 * 1000;        // checkpoint chains normally beat this
 export const AUDIT_RECOVERY_LOOKUP_TIMEOUT_MS = 8_000;
 export const SAVED_AUDIT_TIMEOUT_MESSAGE = 'This saved audit reached a provider time limit before CCC could publish a complete result. Your report and completed checkpoints are preserved.';
+export const SAVED_AUDIT_FINALIZATION_MESSAGE = 'This saved audit completed report analysis but paused before CCC could publish the deterministic result. Your report and completed checkpoints are preserved.';
 export const SAVED_AUDIT_ACTIVE_MESSAGE = 'This audit already has a durable report and saved work in progress. Resume this exact audit instead of uploading the report again.';
 const AUDIT_JOB_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const AUDIT_RECOVERY_STORAGE_PREFIX = 'ccc:recoverable-audit:';
 const ACTIVE_AUDIT_JOB_STATUSES = new Set(['queued', 'waiting', 'retryable', 'running', 'finalizing']);
+const LEGACY_SIDE_BY_SIDE_ATTRIBUTION_ERROR = 'A combined-report chunk contains data without a visible bureau identity.';
+const RETRY_SAFE_FINALIZATION_PREFIXES = [
+  'Could not load completed audit checkpoints:',
+  'Could not verify final audit idempotency:',
+  'Audit ran but could not be saved:',
+  'Could not atomically finish logical audit job:',
+];
 
 export class AuditJobFailure extends Error {
   constructor(message, { jobId, canResume = false, safeToUpload = false } = {}) {
@@ -45,11 +53,30 @@ function isRecoverableProviderTimeoutJob(job) {
     || /request was aborted/i.test(message);
 }
 
+function isRecoverableFinalizationJob(job) {
+  if (job?.status !== 'error' || job?.workflow_version !== RESUMABLE_AUDIT_VERSION) return false;
+  const message = String(job.error || '');
+  if (message === LEGACY_SIDE_BY_SIDE_ATTRIBUTION_ERROR
+      || !RETRY_SAFE_FINALIZATION_PREFIXES.some((prefix) => message.startsWith(prefix))) {
+    return false;
+  }
+  const expected = Number(job.expected_checkpoint_count);
+  const completed = Number(job.completed_checkpoint_count);
+  return Number.isInteger(expected) && expected > 0 && completed === expected;
+}
+
+function recoverableAuditMessage(job) {
+  if (isRecoverableProviderTimeoutJob(job)) return SAVED_AUDIT_TIMEOUT_MESSAGE;
+  if (isRecoverableFinalizationJob(job)) return SAVED_AUDIT_FINALIZATION_MESSAGE;
+  return null;
+}
+
 export function auditJobFailureFromRow(job) {
-  const canResume = isRecoverableProviderTimeoutJob(job);
+  const recoveryMessage = recoverableAuditMessage(job);
+  const canResume = Boolean(recoveryMessage);
   const rawMessage = String(job?.error || '').trim();
-  const message = canResume
-    ? SAVED_AUDIT_TIMEOUT_MESSAGE
+  const message = recoveryMessage
+    ? recoveryMessage
     : looksLikeProviderInternals(rawMessage)
       ? 'The audit stopped before CCC could publish a complete result. No incomplete audit was saved.'
       : rawMessage || 'Audit failed on the server.';
@@ -118,7 +145,7 @@ export async function withAuditRecoveryDeadline(
 
 export async function findLatestRecoverableAuditJob() {
   const query = supabase.from('audit_jobs')
-    .select('id,status,error,workflow_version,source_cleanup_at,expires_at,updated_at')
+    .select('id,status,error,workflow_version,source_cleanup_at,expires_at,updated_at,expected_checkpoint_count,completed_checkpoint_count')
     .eq('status', 'error')
     .eq('workflow_version', RESUMABLE_AUDIT_VERSION)
     .is('source_cleanup_at', null)
@@ -127,7 +154,7 @@ export async function findLatestRecoverableAuditJob() {
     .limit(20);
   const { data, error } = await withAuditRecoveryDeadline(query);
   if (error) throw new Error('Could not verify saved audit recovery.');
-  return (data || []).find(isRecoverableProviderTimeoutJob) || null;
+  return (data || []).find((job) => Boolean(recoverableAuditMessage(job))) || null;
 }
 
 export function auditRecoveryDisposition(job, nowMs = Date.now()) {
@@ -148,6 +175,9 @@ export function auditRecoveryDisposition(job, nowMs = Date.now()) {
   if (isRecoverableProviderTimeoutJob(job)) {
     return { kind: 'resume', canResume: true, message: SAVED_AUDIT_TIMEOUT_MESSAGE };
   }
+  if (isRecoverableFinalizationJob(job)) {
+    return { kind: 'resume', canResume: true, message: SAVED_AUDIT_FINALIZATION_MESSAGE };
+  }
   if (ACTIVE_AUDIT_JOB_STATUSES.has(job.status)) {
     return { kind: 'resume', canResume: true, message: SAVED_AUDIT_ACTIVE_MESSAGE };
   }
@@ -155,12 +185,13 @@ export function auditRecoveryDisposition(job, nowMs = Date.now()) {
 }
 
 export function selectAuditRecoveryCandidate(exactJob, latestRecoverableJob, nowMs = Date.now()) {
-  if (latestRecoverableJob && isRecoverableProviderTimeoutJob(latestRecoverableJob)) {
+  const latestRecoveryMessage = recoverableAuditMessage(latestRecoverableJob);
+  if (latestRecoverableJob && latestRecoveryMessage) {
     return {
       kind: 'resume',
       jobId: latestRecoverableJob.id,
       canResume: true,
-      message: SAVED_AUDIT_TIMEOUT_MESSAGE,
+      message: latestRecoveryMessage,
     };
   }
   const exact = auditRecoveryDisposition(exactJob, nowMs);
@@ -170,7 +201,7 @@ export function selectAuditRecoveryCandidate(exactJob, latestRecoverableJob, now
 export async function findOwnedAuditJob(jobId, userId) {
   if (!AUDIT_JOB_UUID_RE.test(String(jobId || '')) || !userId) return null;
   const query = supabase.from('audit_jobs')
-    .select('id,user_id,status,error,workflow_version,source_cleanup_at,expires_at,updated_at,result')
+    .select('id,user_id,status,error,workflow_version,source_cleanup_at,expires_at,updated_at,result,expected_checkpoint_count,completed_checkpoint_count')
     .eq('id', jobId)
     .eq('user_id', userId)
     .maybeSingle();

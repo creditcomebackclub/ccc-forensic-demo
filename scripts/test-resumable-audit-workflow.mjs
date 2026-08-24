@@ -99,7 +99,7 @@ assert.match(worker, /timeout: 6 \* 60 \* 1000/);
 assert.match(worker, /RESUMABLE_PDF_CHUNK_PAGES = 8/);
 assert.match(worker, /MAX_PROVIDER_CONCURRENCY = 3/);
 assert.match(worker, /EXTRACTION_PROVIDER_TIMEOUT_MS = 3 \* 60 \* 1000/);
-assert.match(worker, /measureAuditPdfPageDensity\(report\.bytes\)[\s\S]*planAdaptiveAuditCheckpointRanges\(measurement\.pages\)/);
+assert.match(worker, /measureAuditPdfPageDensity\(report\.bytes,\s*\{[\s\S]*planAdaptiveAuditCheckpointRanges\(measurement\.pages/);
 assert.match(worker, /providerTimeoutMs: EXTRACTION_PROVIDER_TIMEOUT_MS/);
 assert.match(worker, /preflightTokenCount[\s\S]*providerWindowMs[\s\S]*AbortSignal\.timeout/);
 assert.match(worker, /claimedCheckpoints\.length < MAX_PROVIDER_CONCURRENCY|index < MAX_PROVIDER_CONCURRENCY/);
@@ -128,7 +128,8 @@ assert.match(worker, /activeCheckpoint\.end_page[\s\S]*activeCheckpoint\.start_p
 assert.match(worker, /const unsettledCheckpoints = new Map\(\)/);
 assert.match(worker, /for \(const checkpoint of \[\.\.\.unsettledCheckpoints\.values\(\)\]\)[\s\S]*deferCheckpoint\(checkpoint/);
 assert.match(worker, /for \(const checkpoint of claimedCheckpoints\)[\s\S]*preparedInputs\.push\(\{ status: 'fulfilled', value: await checkpointInput\(checkpoint\) \}\)[\s\S]*Promise\.allSettled/);
-assert.match(worker, /strictNativePlan[\s\S]*splitPdfByPages\(report\.bytes, \{ maxPages: RESUMABLE_PDF_CHUNK_PAGES \}\)/);
+assert.match(worker, /if \(strictNativePlan\)[\s\S]*chunks = adaptiveChunks/);
+assert.match(worker, /splitPdfByPages\(report\.bytes,\s*\{\s*maxPages:\s*contextSourcePage === COMBINED_CONTEXT_SOURCE_PAGE\s*\? COMBINED_SOURCE_PDF_DATA_PAGES\s*:\s*RESUMABLE_PDF_CHUNK_PAGES/);
 assert.match(worker, /checkpointSplitReason[\s\S]*auditNativeFallbackSplit[\s\S]*native_fallback/);
 assert.match(worker, /assertExtractionPageBounds\(decoded, localPageCount\)[\s\S]*rebaseExtractionPageRefs[\s\S]*assertExtractionPageBounds\(rebased, checkpoint\.total_pages\)/);
 

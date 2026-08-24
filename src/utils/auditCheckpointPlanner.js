@@ -6,7 +6,7 @@
 // when binding a plan to a source manifest.
 
 export const AUDIT_CHECKPOINT_PLANNER_PROFILE = Object.freeze({
-  plannerVersion: 'adaptive-density-v1',
+  plannerVersion: 'adaptive-density-v2-combined-context',
   metricVersion: 'pdfjs-text-density-v1',
   limits: Object.freeze({
     maxPages: 12,
@@ -47,6 +47,37 @@ export const AUDIT_CHECKPOINT_PLANNER_PROFILE = Object.freeze({
     overlapPages: 2,
   }),
 });
+
+export const COMBINED_FIXED_COLUMN_CONTEXT_POLICY = 'combined-visible-column-context-v1';
+const THREE_BUREAU_LABELS = Object.freeze(['equifax', 'experian', 'transunion']);
+
+export function resolveFrozenCombinedContextPolicy(checkpoint) {
+  if (checkpoint?.context_policy_state === 'matched'
+      && checkpoint?.context_policy === COMBINED_FIXED_COLUMN_CONTEXT_POLICY
+      && Number(checkpoint?.context_source_page) === 1) {
+    return {
+      matched: true,
+      policy: COMBINED_FIXED_COLUMN_CONTEXT_POLICY,
+      contextSourcePage: 1,
+      detectionStatus: 'matched',
+      inferredFromInputSha256: false,
+    };
+  }
+  if (checkpoint?.context_policy_state === 'proven_no_match'
+      && checkpoint?.context_policy == null && checkpoint?.context_source_page == null) {
+    return {
+      matched: false,
+      policy: null,
+      contextSourcePage: null,
+      detectionStatus: 'proven_no_match',
+      inferredFromInputSha256: false,
+    };
+  }
+  // Null-state rows predate the strengthened, persisted detector contract.
+  // Their input digest cannot prove which detector version selected the plan,
+  // so every such combined plan is retired instead of being inferred.
+  return null;
+}
 
 const METRIC_KEYS = Object.freeze([
   'textChars',
@@ -207,6 +238,152 @@ function emptyTotals() {
 
 function normalizeText(value) {
   return String(value || '').normalize('NFKC').replace(/\s+/gu, ' ').trim();
+}
+
+function normalizedBureauLabel(value) {
+  const compact = normalizeText(value).toLowerCase().replace(/[^a-z]/gu, '');
+  return THREE_BUREAU_LABELS.includes(compact) ? compact : null;
+}
+
+/**
+ * Detect a first page that visibly contains all three bureau labels and a
+ * repeated three-column data grid. This deliberately rejects sequential 3B
+ * exports whose first page names one bureau (or merely mentions all three in
+ * prose), so page 1 is never reused as a global attribution key without
+ * source-derived fixed-column evidence.
+ */
+export function detectFixedThreeBureauColumnLegend(textContent, {
+  pageWidth = 612,
+  pageHeight = 792,
+  minimumGridBands = 12,
+} = {}) {
+  const bureauAnchors = [];
+  const horizontalBands = new Map();
+  for (const item of textContent?.items || []) {
+    const bureau = normalizedBureauLabel(item?.str);
+    const x = Number(item?.transform?.[4]);
+    const y = Number(item?.transform?.[5]);
+    if (bureau && Number.isFinite(x) && Number.isFinite(y)) {
+      bureauAnchors.push({ bureau, x, y });
+    }
+    if (!normalizeText(item?.str) || !Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const band = Math.round(y / 3);
+    if (!horizontalBands.has(band)) horizontalBands.set(band, []);
+    horizontalBands.get(band).push(x);
+  }
+
+  const width = Number(pageWidth);
+  const height = Number(pageHeight);
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+    return {
+      matched: false,
+      policy: null,
+      contextSourcePage: null,
+      gridBandCount: 0,
+      reportFamilySignature: false,
+    };
+  }
+  const zones = [
+    [width * 0.16, width * 0.38],
+    [width * 0.38, width * 0.62],
+    [width * 0.62, width * 0.86],
+  ];
+  const qualifyingGridBands = [...horizontalBands.entries()].filter(([, xValues]) => (
+    zones.every(([minX, maxX]) => xValues.some((x) => x >= minX && x < maxX))
+  ));
+  const gridBandCount = qualifyingGridBands.length;
+  const gridYValues = qualifyingGridBands.map(([band]) => band * 3).sort((a, b) => a - b);
+  const gridYSpan = gridYValues.length > 1 ? gridYValues.at(-1) - gridYValues[0] : 0;
+
+  // SmartCredit's fixed-column export has a distinctive first-page signature:
+  // its three bureau navigation labels sit together, in this exact order, in
+  // the upper-right area, while the report body repeats three aligned data
+  // columns over most of the page. A generic page that merely mentions all
+  // bureaus and contains a small three-column summary must not qualify.
+  const legendBands = new Map();
+  for (const anchor of bureauAnchors) {
+    const band = Math.round(anchor.y / 3);
+    if (!legendBands.has(band)) legendBands.set(band, []);
+    legendBands.get(band).push(anchor);
+  }
+  const matchingLegend = [...legendBands.values()].find((anchors) => {
+    const byBureau = new Map(anchors.map((anchor) => [anchor.bureau, anchor]));
+    if (!THREE_BUREAU_LABELS.every((bureau) => byBureau.has(bureau))) return false;
+    const ordered = ['transunion', 'equifax', 'experian'].map((bureau) => byBureau.get(bureau));
+    const xValues = ordered.map((anchor) => anchor.x);
+    const yValues = ordered.map((anchor) => anchor.y);
+    const xSpan = Math.max(...xValues) - Math.min(...xValues);
+    return xValues[0] < xValues[1]
+      && xValues[1] < xValues[2]
+      && Math.min(...xValues) >= width * 0.70
+      && Math.max(...xValues) <= width * 0.90
+      && xSpan >= width * 0.06
+      && xSpan <= width * 0.14
+      && Math.min(...yValues) >= height * 0.68
+      && Math.max(...yValues) - Math.min(...yValues) <= 3;
+  });
+  const gridMostlyBelowLegend = matchingLegend
+    ? gridYValues.filter((y) => y < Math.min(...matchingLegend.map((anchor) => anchor.y)) - 12).length
+      >= Math.ceil(gridBandCount * 0.8)
+    : false;
+  const reportFamilySignature = Boolean(matchingLegend)
+    && gridBandCount >= minimumGridBands
+    && gridYSpan >= height * 0.40
+    && gridMostlyBelowLegend;
+  const matched = reportFamilySignature;
+  return {
+    matched,
+    policy: matched ? COMBINED_FIXED_COLUMN_CONTEXT_POLICY : null,
+    contextSourcePage: matched ? 1 : null,
+    gridBandCount,
+    reportFamilySignature,
+  };
+}
+
+export async function detectCombinedPdfContextPolicy(pdfBytes, {
+  pdfJsLoader = defaultPdfJsLoader,
+} = {}) {
+  let document = null;
+  try {
+    const pdfJs = await pdfJsLoader();
+    if (!pdfJs || typeof pdfJs.getDocument !== 'function') {
+      throw new Error('PDF.js loader did not provide getDocument.');
+    }
+    document = await pdfJs.getDocument({
+      data: pdfBytesForPdfJs(pdfBytes),
+      disableWorker: true,
+      useSystemFonts: true,
+      verbosity: 0,
+    }).promise;
+    const page = await document.getPage(1);
+    try {
+      const detection = detectFixedThreeBureauColumnLegend(await page.getTextContent(), {
+        pageWidth: page.getViewport({ scale: 1 }).width,
+        pageHeight: page.getViewport({ scale: 1 }).height,
+      });
+      return {
+        ...detection,
+        detectionStatus: detection.matched ? 'matched' : 'proven_no_match',
+        detectionErrorCode: null,
+      };
+    } finally {
+      page.cleanup?.();
+    }
+  } catch {
+    // A parser/layout failure is unknown—not proof that the fixed-column
+    // legend is absent. Callers must retry or reuse a frozen saved policy.
+    return {
+      matched: null,
+      policy: null,
+      contextSourcePage: null,
+      gridBandCount: null,
+      reportFamilySignature: null,
+      detectionStatus: 'detection_error',
+      detectionErrorCode: 'pdf_context_detection_failed',
+    };
+  } finally {
+    try { await document?.destroy?.(); } catch { /* layout detection cleanup is best-effort */ }
+  }
 }
 
 function pageMetric(pageNumber, textContent) {
@@ -386,11 +563,29 @@ function overlapPagesForBoundary(metrics, firstUncoveredIndex, maxOverlapPages) 
  */
 export function planAdaptiveAuditCheckpointRanges(pageMetrics, {
   profile: profileOverrides = AUDIT_CHECKPOINT_PLANNER_PROFILE,
+  contextPageMetric = null,
 } = {}) {
   const profile = normalizeAuditCheckpointPlannerProfile(profileOverrides);
   const metrics = normalizedMetrics(pageMetrics);
+  const contextMetric = contextPageMetric
+    ? normalizedMetrics([{ ...contextPageMetric, pageNumber: 1 }])[0]
+    : null;
   const ranges = [];
   let firstUncoveredIndex = 0;
+
+  const aggregateRange = (startIndex, endIndex) => {
+    const aggregate = aggregateMetrics(metrics, startIndex, endIndex, profile.weights);
+    const usesContext = Boolean(contextMetric && startIndex > 0);
+    if (usesContext) {
+      for (const key of METRIC_KEYS) aggregate[key] += contextMetric[key];
+      aggregate.weightedUnits += pageWeightedUnits(contextMetric, profile.weights);
+    }
+    return {
+      aggregate,
+      usesContext,
+      providerPageCount: endIndex - startIndex + 1 + (usesContext ? 1 : 0),
+    };
+  };
 
   while (firstUncoveredIndex < metrics.length) {
     const boundaryOverlapPages = overlapPagesForBoundary(
@@ -404,18 +599,18 @@ export function planAdaptiveAuditCheckpointRanges(pageMetrics, {
     // overlap page(s) until the first new page fits, preserving as much overlap
     // as the same density limits safely allow.
     while (startIndex < firstUncoveredIndex) {
-      const seed = aggregateMetrics(metrics, startIndex, firstUncoveredIndex, profile.weights);
-      if (!exceededLimits(seed, firstUncoveredIndex - startIndex + 1, profile.limits).length) break;
+      const seed = aggregateRange(startIndex, firstUncoveredIndex);
+      if (!exceededLimits(seed.aggregate, seed.providerPageCount, profile.limits).length) break;
       startIndex += 1;
     }
 
     let endIndex = firstUncoveredIndex;
-    let aggregate = aggregateMetrics(metrics, startIndex, endIndex, profile.weights);
+    let rangeMetrics = aggregateRange(startIndex, endIndex);
     while (endIndex + 1 < metrics.length) {
-      const candidate = aggregateMetrics(metrics, startIndex, endIndex + 1, profile.weights);
-      if (exceededLimits(candidate, endIndex - startIndex + 2, profile.limits).length) break;
+      const candidate = aggregateRange(startIndex, endIndex + 1);
+      if (exceededLimits(candidate.aggregate, candidate.providerPageCount, profile.limits).length) break;
       endIndex += 1;
-      aggregate = candidate;
+      rangeMetrics = candidate;
     }
 
     ranges.push({
@@ -425,8 +620,14 @@ export function planAdaptiveAuditCheckpointRanges(pageMetrics, {
       newPageStart: firstUncoveredIndex + 1,
       totalPages: metrics.length,
       overlapPages: firstUncoveredIndex - startIndex,
-      density: aggregate,
-      exceededLimits: exceededLimits(aggregate, endIndex - startIndex + 1, profile.limits),
+      contextSourcePage: rangeMetrics.usesContext ? 1 : null,
+      providerPageCount: rangeMetrics.providerPageCount,
+      density: rangeMetrics.aggregate,
+      exceededLimits: exceededLimits(
+        rangeMetrics.aggregate,
+        rangeMetrics.providerPageCount,
+        profile.limits,
+      ),
     });
     firstUncoveredIndex = endIndex + 1;
   }
@@ -469,6 +670,13 @@ export function auditCheckpointPlanHashInput({
       endPage: positiveInteger(range.endPage, 'range.endPage'),
       newPageStart: positiveInteger(range.newPageStart, 'range.newPageStart'),
       overlapPages,
+      contextSourcePage: range.contextSourcePage == null
+        ? null
+        : positiveInteger(range.contextSourcePage, 'range.contextSourcePage'),
+      providerPageCount: positiveInteger(
+        range.providerPageCount || (Number(range.endPage) - Number(range.startPage) + 1),
+        'range.providerPageCount',
+      ),
       density: Object.fromEntries([
         ...METRIC_KEYS,
         'weightedUnits',

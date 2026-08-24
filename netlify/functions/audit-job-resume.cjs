@@ -5,6 +5,17 @@ const { requireStaff } = require('./_requireAuth.cjs');
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTIVE_STATUSES = new Set(['queued', 'waiting', 'retryable', 'running', 'finalizing']);
 const DISPATCH_TIMEOUT_MS = 5_000;
+const RETRY_SAFE_FINALIZATION_PREFIXES = [
+  'Could not load completed audit checkpoints:',
+  'Could not verify final audit idempotency:',
+  'Audit ran but could not be saved:',
+  'Could not atomically finish logical audit job:',
+];
+
+function isRetrySafeFinalizationError(message) {
+  const value = String(message || '');
+  return RETRY_SAFE_FINALIZATION_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
 
 function json(statusCode, payload) {
   return {
@@ -58,7 +69,7 @@ function createResumeAuditJobHandler(options = {}) {
 
     const loadOwnedJob = async () => {
       const result = await db.from('audit_jobs')
-        .select('id,user_id,status,workflow_version,source_cleanup_at,expires_at')
+        .select('id,user_id,status,error,workflow_version,source_cleanup_at,expires_at,expected_checkpoint_count,completed_checkpoint_count')
         .eq('id', jobId)
         .maybeSingle();
       if (result.error) throw result.error;
@@ -99,16 +110,18 @@ function createResumeAuditJobHandler(options = {}) {
     let resumed = false;
     if (job.status === 'error') {
       // The job-level row intentionally exposes only a safe user message.
-      // Verify the exact terminal cause from its private checkpoint before
-      // invoking the service-only recovery RPC.
-      let errorCheckpoints;
+      // Verify the exact private checkpoint state before invoking either
+      // service-only recovery RPC. Finalization-only recovery is deliberately
+      // narrower than a generic job retry: every active checkpoint must be
+      // immutable and done, so dispatch cannot repeat provider work.
+      let activeCheckpoints;
       try {
         const result = await db.from('audit_job_checkpoints')
-          .select('id,error_type')
+          .select('id,status,error_type')
           .eq('job_id', jobId)
-          .eq('status', 'error');
+          .neq('status', 'superseded');
         if (result.error) throw result.error;
-        errorCheckpoints = result.data || [];
+        activeCheckpoints = result.data || [];
       } catch (error) {
         console.error('[audit-resume] checkpoint lookup failed', jobId, error?.message || 'database error');
         return json(500, {
@@ -116,15 +129,25 @@ function createResumeAuditJobHandler(options = {}) {
           message: 'CCC could not verify the saved checkpoint yet. No new audit was created.',
         });
       }
-      if (!errorCheckpoints.length
-          || errorCheckpoints.some((checkpoint) => checkpoint.error_type !== 'provider_timeout')) {
+
+      const errorCheckpoints = activeCheckpoints
+        .filter((checkpoint) => checkpoint.status === 'error');
+      const providerTimeoutRecovery = errorCheckpoints.length > 0
+        && errorCheckpoints.every((checkpoint) => checkpoint.error_type === 'provider_timeout');
+      const finalizationOnlyRecovery = activeCheckpoints.length > 0
+        && activeCheckpoints.every((checkpoint) => checkpoint.status === 'done')
+        && isRetrySafeFinalizationError(job.error);
+      if (!providerTimeoutRecovery && !finalizationOnlyRecovery) {
         return json(409, {
           code: 'not_recoverable',
           message: 'This audit stopped for a reason that requires Operations review.',
         });
       }
 
-      const { data, error } = await db.rpc('ccc_resume_failed_audit_job', { p_job_id: jobId });
+      const recoveryRpc = finalizationOnlyRecovery
+        ? 'ccc_resume_audit_finalization'
+        : 'ccc_resume_failed_audit_job';
+      const { data, error } = await db.rpc(recoveryRpc, { p_job_id: jobId });
       if (error) {
         console.error('[audit-resume] recovery RPC failed', jobId, error?.message || 'database error');
         return json(500, {

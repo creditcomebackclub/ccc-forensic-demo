@@ -74,6 +74,10 @@
 
 [functions]
   node_bundler = "esbuild"
+  # PDF.js' server-side layout extraction uses native canvas primitives. Keep
+  # this package external so Netlify installs the platform-correct `.node`
+  # binary instead of asking esbuild to parse a native module.
+  external_node_modules = ["@napi-rs/canvas"]
 
 [functions."daily-cron"]
   schedule = "0 15 * * *"

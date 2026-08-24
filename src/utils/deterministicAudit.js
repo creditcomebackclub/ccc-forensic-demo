@@ -265,37 +265,39 @@ export function assertReportCohort(reports, {
   };
 }
 
-/** Map model page references from a split attachment back to the source PDF. */
-export function rebaseExtractionPageRefs(extraction, pageOffset = 0) {
-  const offset = Number(pageOffset);
-  if (!Number.isInteger(offset) || offset < 0) throw new Error('Page-reference offset must be a non-negative integer.');
+function transformExtractionPageRefs(extraction, transformPage) {
   const copy = JSON.parse(JSON.stringify(extraction || {}));
+  const mapPage = (value) => (
+    isPageReference(value) ? transformPage(Number(value)) : value
+  );
   const shiftReport = (report) => {
     if (!report || typeof report !== 'object') return;
-    if (isPageReference(report.bureauEvidencePage)) report.bureauEvidencePage = Number(report.bureauEvidencePage) + offset;
+    report.bureauEvidencePage = mapPage(report.bureauEvidencePage);
     if (isPageReference(report.reportSectionStartEvidencePage)) {
-      report.reportSectionStartEvidencePage = Number(report.reportSectionStartEvidencePage) + offset;
+      report.reportSectionStartEvidencePage = mapPage(report.reportSectionStartEvidencePage);
     }
-    if (isPageReference(report.reportDateEvidencePage)) report.reportDateEvidencePage = Number(report.reportDateEvidencePage) + offset;
-    if (isPageReference(report.client?.nameEvidencePage)) report.client.nameEvidencePage = Number(report.client.nameEvidencePage) + offset;
-    if (isPageReference(report.client?.addressEvidencePage)) report.client.addressEvidencePage = Number(report.client.addressEvidencePage) + offset;
-    if (isPageReference(report.client?.scoreEvidencePage)) report.client.scoreEvidencePage = Number(report.client.scoreEvidencePage) + offset;
+    report.reportDateEvidencePage = mapPage(report.reportDateEvidencePage);
+    if (report.client) {
+      report.client.nameEvidencePage = mapPage(report.client.nameEvidencePage);
+      report.client.addressEvidencePage = mapPage(report.client.addressEvidencePage);
+      report.client.scoreEvidencePage = mapPage(report.client.scoreEvidencePage);
+    }
     if (isPageReference(report.personalInfo?.dateOfBirthEvidencePage)) {
-      report.personalInfo.dateOfBirthEvidencePage = Number(report.personalInfo.dateOfBirthEvidencePage) + offset;
+      report.personalInfo.dateOfBirthEvidencePage = mapPage(report.personalInfo.dateOfBirthEvidencePage);
     }
     if (isPageReference(report.personalInfo?.phoneEvidencePage)) {
-      report.personalInfo.phoneEvidencePage = Number(report.personalInfo.phoneEvidencePage) + offset;
+      report.personalInfo.phoneEvidencePage = mapPage(report.personalInfo.phoneEvidencePage);
     }
     if (isPageReference(report.personalInfo?.currentAddressEvidencePage)) {
-      report.personalInfo.currentAddressEvidencePage = Number(report.personalInfo.currentAddressEvidencePage) + offset;
+      report.personalInfo.currentAddressEvidencePage = mapPage(report.personalInfo.currentAddressEvidencePage);
     }
     for (const listName of ['formerAddressEvidence', 'nameVariantEvidence', 'formerEmployerEvidence']) {
       for (const entry of report.personalInfo?.[listName] || []) {
-        if (isPageReference(entry?.page)) entry.page = Number(entry.page) + offset;
+        if (isPageReference(entry?.page)) entry.page = mapPage(entry.page);
       }
     }
     for (const inquiry of report.inquiries || []) {
-      if (isPageReference(inquiry?.evidencePage)) inquiry.evidencePage = Number(inquiry.evidencePage) + offset;
+      if (isPageReference(inquiry?.evidencePage)) inquiry.evidencePage = mapPage(inquiry.evidencePage);
     }
     for (const account of report.accounts || []) {
       for (const property of [
@@ -305,19 +307,108 @@ export function rebaseExtractionPageRefs(extraction, pageOffset = 0) {
         'consumerDisputeIndicatorEvidencePage',
         'remarksEvidencePage',
       ]) {
-        if (isPageReference(account?.[property])) account[property] = Number(account[property]) + offset;
+        if (isPageReference(account?.[property])) account[property] = mapPage(account[property]);
       }
       for (const field of account.fields || []) {
-        if (isPageReference(field.page)) field.page = Number(field.page) + offset;
+        if (isPageReference(field.page)) field.page = mapPage(field.page);
       }
       for (const evidence of account.evidence || []) {
-        if (isPageReference(evidence.page)) evidence.page = Number(evidence.page) + offset;
+        if (isPageReference(evidence.page)) evidence.page = mapPage(evidence.page);
       }
     }
   };
   if (Array.isArray(copy.reports)) copy.reports.forEach(shiftReport);
   else shiftReport(copy);
   return copy;
+}
+
+/** Map model page references from a contiguous split attachment back to the source PDF. */
+export function rebaseExtractionPageRefs(extraction, pageOffset = 0) {
+  const offset = Number(pageOffset);
+  if (!Number.isInteger(offset) || offset < 0) throw new Error('Page-reference offset must be a non-negative integer.');
+  return transformExtractionPageRefs(extraction, (page) => page + offset);
+}
+
+/**
+ * Map model-local pages through an exact provider-attachment/source-page map.
+ * This is required when a combined-report checkpoint prepends a context page.
+ */
+export function mapExtractionPageRefs(extraction, sourcePageMap) {
+  if (!Array.isArray(sourcePageMap) || !sourcePageMap.length
+      || sourcePageMap.some((page) => !Number.isInteger(Number(page)) || Number(page) < 1)) {
+    throw new Error('Source page map must contain positive source page numbers.');
+  }
+  const normalizedMap = sourcePageMap.map(Number);
+  return transformExtractionPageRefs(extraction, (localPage) => {
+    const sourcePage = normalizedMap[localPage - 1];
+    if (!Number.isInteger(sourcePage)) {
+      throw new Error(`Extraction cites local page ${localPage}, outside the provider attachment map.`);
+    }
+    return sourcePage;
+  });
+}
+
+function substantiveEvidencePages(report) {
+  return [
+    report?.reportSectionStartEvidencePage,
+    report?.client?.nameEvidencePage,
+    report?.client?.addressEvidencePage,
+    report?.client?.scoreEvidencePage,
+    report?.personalInfo?.dateOfBirthEvidencePage,
+    report?.personalInfo?.phoneEvidencePage,
+    report?.personalInfo?.currentAddressEvidencePage,
+    ...(report?.personalInfo?.formerAddressEvidence || []).map((entry) => entry?.page),
+    ...(report?.personalInfo?.nameVariantEvidence || []).map((entry) => entry?.page),
+    ...(report?.personalInfo?.formerEmployerEvidence || []).map((entry) => entry?.page),
+    ...(report?.inquiries || []).map((inquiry) => inquiry?.evidencePage),
+    ...(report?.accounts || []).flatMap((account) => [
+      account?.accountIdentityEvidencePage,
+      account?.reportedTypeEvidencePage,
+      account?.statusTextEvidencePage,
+      account?.consumerDisputeIndicatorEvidencePage,
+      account?.remarksEvidencePage,
+      ...(account?.fields || []).map((field) => field?.page),
+      ...(account?.evidence || []).map((entry) => entry?.page),
+    ]),
+  ].filter(isPageReference).map(Number);
+}
+
+/**
+ * Guard a combined checkpoint before source-page mapping. Context pages may
+ * prove bureau/report metadata only; all substantive facts must cite a data
+ * page. A data-bearing report without a bureau remains a hard failure.
+ */
+export function assertCombinedCheckpointAttribution(extraction, {
+  contextLocalPages = [],
+} = {}) {
+  const contextPages = new Set((contextLocalPages || []).map(Number));
+  if ([...contextPages].some((page) => !Number.isInteger(page) || page < 1)) {
+    throw new Error('Combined checkpoint context pages are invalid.');
+  }
+  const seenBureaus = new Set();
+  for (const report of extraction?.reports || []) {
+    const dataBearing = (report?.accounts || []).length
+      || (report?.inquiries || []).length
+      || substantiveEvidencePages(report).length;
+    const key = bureauKey(report?.bureau);
+    if (dataBearing && !key) {
+      throw new Error('A combined-report checkpoint contains data without a source-bound bureau identity.');
+    }
+    if (key) {
+      if (seenBureaus.has(key)) {
+        throw new Error(`A combined-report checkpoint contains more than one ${key} report object.`);
+      }
+      seenBureaus.add(key);
+    }
+    if (!contextPages.size) continue;
+    if (report?.reportSectionStart === true) {
+      throw new Error('A context-only bureau legend cannot be claimed as this checkpoint\'s report section start.');
+    }
+    if (substantiveEvidencePages(report).some((page) => contextPages.has(page))) {
+      throw new Error('A combined-report checkpoint cited context-only page data as substantive evidence.');
+    }
+  }
+  return extraction;
 }
 
 /** Validate every model-supplied page reference against the exact source. */

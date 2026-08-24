@@ -59,6 +59,55 @@ export async function extractPdfPageRange(pdfBytes, { startPage, endPage } = {})
 }
 
 /**
+ * Rebuild an exact ordered set of 1-indexed source pages.
+ *
+ * Combined-report checkpoints use this to prepend the report's visible
+ * bureau-layout page without pretending that the copied page is part of the
+ * checkpoint's contiguous data range. `sourcePageMap[localPage - 1]` is the
+ * only valid way to map provider page references back to the source PDF.
+ */
+export async function extractPdfPages(pdfBytes, { pageNumbers } = {}) {
+  const bytes = toUint8Array(pdfBytes);
+  const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  const totalPages = src.getPageCount();
+  if (!Array.isArray(pageNumbers) || !pageNumbers.length) {
+    throw new Error('At least one PDF source page is required');
+  }
+  const sourcePageMap = pageNumbers.map((pageNumber) => Number(pageNumber));
+  if (sourcePageMap.some((pageNumber) => (
+    !Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > totalPages
+  ))) {
+    throw new Error(`Invalid PDF source page map for ${totalPages} pages`);
+  }
+  if (new Set(sourcePageMap).size !== sourcePageMap.length) {
+    throw new Error('PDF source page map cannot contain duplicate pages');
+  }
+
+  const isWholeDocument = sourcePageMap.length === totalPages
+    && sourcePageMap.every((pageNumber, index) => pageNumber === index + 1);
+  if (isWholeDocument) {
+    return {
+      bytes,
+      base64: Buffer.from(bytes).toString('base64'),
+      totalPages,
+      sourcePageMap,
+    };
+  }
+
+  const doc = await PDFDocument.create();
+  const copied = await doc.copyPages(src, sourcePageMap.map((pageNumber) => pageNumber - 1));
+  copied.forEach((page) => doc.addPage(page));
+  const output = await doc.save();
+  const outputBytes = output instanceof Uint8Array ? output : new Uint8Array(output);
+  return {
+    bytes: outputBytes,
+    base64: Buffer.from(outputBytes).toString('base64'),
+    totalPages,
+    sourcePageMap,
+  };
+}
+
+/**
  * Split a PDF into page ranges of at most `maxPages` (with optional overlap).
  * Returns one chunk when the file is already under the limit.
  *

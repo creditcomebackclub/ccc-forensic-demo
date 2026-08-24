@@ -8,7 +8,9 @@
 // writes progress to the row as it goes, saves the finished audit to the
 // audits table (so a closed tab loses nothing), and marks the job done.
 import Anthropic from '@anthropic-ai/sdk';
+import { DOMMatrix, ImageData, Path2D } from '@napi-rs/canvas';
 import { createClient } from '@supabase/supabase-js';
+import { PDFDocument } from 'pdf-lib';
 import ws from 'ws';
 import { ACCOUNT_ENRICHMENT_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { COMBINED_CREDIT_EXTRACTION_SCHEMA, CREDIT_BUREAU_EXTRACTION_SCHEMA } from '../../src/utils/creditExtractionSchemas.js';
@@ -19,17 +21,22 @@ import {
   decodeCompactCombinedExtraction,
 } from '../../src/utils/compactCreditExtractionCodec.js';
 import {
+  COMBINED_FIXED_COLUMN_CONTEXT_POLICY,
+  detectCombinedPdfContextPolicy,
   measureAuditPdfPageDensity,
   planAdaptiveAuditCheckpointRanges,
+  resolveFrozenCombinedContextPolicy,
 } from '../../src/utils/auditCheckpointPlanner.js';
 import { CREDIT_EXTRACTION_SYSTEM_PROMPT, bureauExtractionPrompt, combinedExtractionPrompt } from '../../src/prompts/extractionPrompts.js';
 import {
   assertReportCohort,
+  assertCombinedCheckpointAttribution,
   assertExtractionPageBounds,
   buildDeterministicAudit,
   coerceBureauExtraction,
   mergeBureauExtractions,
   mergeCombinedExtractions,
+  mapExtractionPageRefs,
   rebaseExtractionPageRefs,
 } from '../../src/utils/deterministicAudit.js';
 import { resolveAuditIdentities } from '../../src/utils/accountIdentity.js';
@@ -40,7 +47,9 @@ import {
   buildNativeReportContent, buildReportContent, accountEnrichmentPrompt, todayLong,
 } from '../../src/utils/auditPrompts.js';
 import { extractNativePdfText } from '../../src/utils/nativePdfText.js';
-import { describePdfChunk, extractPdfPageRange, splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
+import {
+  describePdfChunk, extractPdfPageRange, extractPdfPages, splitPdfByPages,
+} from '../../src/utils/pdfPageChunks.js';
 import { logClaudeCall, preflightTokenCount, usageFromMessage } from './_claudeRuntime.mjs';
 import {
   anthropicJsonSchemaFormat,
@@ -95,6 +104,22 @@ const MAX_PROVIDER_CONCURRENCY = 3;
 // its product latency target; never burn the full six-minute client timeout on
 // one provider range.
 const EXTRACTION_PROVIDER_TIMEOUT_MS = 3 * 60 * 1000;
+const COMBINED_CONTEXT_SOURCE_PAGE = 1;
+const COMBINED_SOURCE_PDF_DATA_PAGES = RESUMABLE_PDF_CHUNK_PAGES - 1;
+let auditPdfJsRuntimePromise = null;
+const auditPdfJsLoader = async () => {
+  // PDF.js' Node build normally installs these through a runtime `require`.
+  // Netlify bundles the function into ESM/CJS glue where that auto-polyfill
+  // path cannot resolve `import.meta.url`, so install the exact canvas-backed
+  // primitives before the lazy import. Without this, the deployed function
+  // crashes at module initialization with `DOMMatrix is not defined`.
+  globalThis.DOMMatrix ||= DOMMatrix;
+  globalThis.ImageData ||= ImageData;
+  globalThis.Path2D ||= Path2D;
+  auditPdfJsRuntimePromise ||= import('pdfjs-dist/legacy/build/pdf.mjs');
+  return auditPdfJsRuntimePromise;
+};
+const auditPdfLibLoader = async () => ({ PDFDocument });
 
 function canonicalJson(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -119,14 +144,39 @@ function checkpointSplitReason(error) {
   return null;
 }
 
-function checkpointInputSha256({ sourceSha256, startPage, endPage, totalPages }) {
-  return sha256(canonicalJson({
+function checkpointSourcePageMap({ kind, startPage, endPage, contextSourcePage = null }) {
+  const start = Number(startPage);
+  const end = Number(endPage);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
+    throw new Error('Checkpoint source page range is invalid.');
+  }
+  const dataPages = Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  const contextPage = Number(contextSourcePage);
+  return kind === 'combined_chunk'
+      && Number.isInteger(contextPage)
+      && contextPage > 0
+      && contextPage < start
+    ? [contextPage, ...dataPages]
+    : dataPages;
+}
+
+function checkpointInputSha256({
+  sourceSha256, startPage, endPage, totalPages, kind = null, contextSourcePage = null,
+}) {
+  const base = {
     workflowVersion: RESUMABLE_WORKFLOW_VERSION,
     sourceSha256,
     startPage,
     endPage,
     totalPages,
-  }));
+  };
+  if (kind === 'combined_chunk' && Number(contextSourcePage) === COMBINED_CONTEXT_SOURCE_PAGE) {
+    base.inputPolicy = COMBINED_FIXED_COLUMN_CONTEXT_POLICY;
+    base.sourcePageMap = checkpointSourcePageMap({
+      kind, startPage, endPage, contextSourcePage,
+    });
+  }
+  return sha256(canonicalJson(base));
 }
 
 function uuidFromSha256(value) {
@@ -205,6 +255,17 @@ function extractionInputsFromCheckpoints(checkpoints) {
     if (['native_pdf_text', 'hybrid_native_pdf', 'source_html', 'source_text'].includes(input.inputMode)
         && (typeof input.parserVersion !== 'string'
           || !/^[0-9a-f]{64}$/.test(String(input.derivedPayloadSha256 || '')))) return [];
+    const sourcePageMap = Array.isArray(input.sourcePageMap)
+      ? input.sourcePageMap.map(Number)
+      : null;
+    if (sourcePageMap && (sourcePageMap.length !== Number(input.localPageCount)
+        || sourcePageMap.some((page) => !Number.isInteger(page) || page < 1))) return [];
+    const contextLocalPages = Array.isArray(input.contextLocalPages)
+      ? input.contextLocalPages.map(Number)
+      : [];
+    if (contextLocalPages.some((page) => (
+      !Number.isInteger(page) || page < 1 || page > Number(input.localPageCount)
+    ))) return [];
     return [{
       inputMode: input.inputMode,
       parserVersion: input.parserVersion || null,
@@ -212,6 +273,13 @@ function extractionInputsFromCheckpoints(checkpoints) {
       localPageCount: Number(input.localPageCount),
       sourceStartPage: Number(input.sourceStartPage),
       sourceEndPage: Number(input.sourceEndPage),
+      ...(input.inputPolicy === COMBINED_FIXED_COLUMN_CONTEXT_POLICY && sourcePageMap
+        ? {
+          inputPolicy: input.inputPolicy,
+          sourcePageMap,
+          contextLocalPages,
+        }
+        : {}),
       ...(input.inputMode === 'hybrid_native_pdf' && Array.isArray(input.visionSupplements)
         ? {
           visionSupplements: input.visionSupplements.flatMap((supplement) => (
@@ -932,6 +1000,7 @@ export const handler = async (event) => {
   }
 
   const downloadedReports = new Map();
+  const combinedContextPolicyBySource = new Map();
   let downloadedReportBytes = 0;
   async function downloadReport(file) {
     if (downloadedReports.has(file.path)) return downloadedReports.get(file.path);
@@ -975,6 +1044,39 @@ export const handler = async (event) => {
     downloadedReportBytes += bytes.length;
     downloadedReports.set(file.path, report);
     return report;
+  }
+
+  async function combinedContextPolicy(report) {
+    if (job.mode !== 'combined' || !report?.mediaType?.includes('pdf')) {
+      return {
+        matched: false, policy: null, contextSourcePage: null, columns: [],
+        detectionStatus: 'proven_no_match', detectionErrorCode: null,
+      };
+    }
+    if (!combinedContextPolicyBySource.has(report.sourceSha256)) {
+      combinedContextPolicyBySource.set(
+        report.sourceSha256,
+        detectCombinedPdfContextPolicy(report.bytes, { pdfJsLoader: auditPdfJsLoader }),
+      );
+    }
+    const detection = await combinedContextPolicyBySource.get(report.sourceSha256);
+    if (detection?.detectionStatus === 'detection_error') {
+      const error = new Error('Combined-report context detection could not read the source layout. The saved audit will retry without changing its parsing policy.');
+      error.auditErrorType = detection.detectionErrorCode || 'pdf_context_detection_failed';
+      error.auditUserMessage = 'CCC could not verify the report layout yet. The same saved audit will retry; do not upload a duplicate.';
+      throw error;
+    }
+    if (!['matched', 'proven_no_match'].includes(detection?.detectionStatus)) {
+      throw terminalAuditError('Combined-report context detector returned an invalid state.', 'invalid_context_detection_state');
+    }
+    return detection;
+  }
+
+  function frozenCheckpointContextPolicy(checkpoint) {
+    if (checkpoint.kind !== 'combined_chunk') {
+      return { matched: false, policy: null, contextSourcePage: null, detectionStatus: 'proven_no_match' };
+    }
+    return resolveFrozenCombinedContextPolicy(checkpoint);
   }
 
   async function pdfChunksForReport(report) {
@@ -1037,13 +1139,53 @@ export const handler = async (event) => {
 
   async function ensureCheckpointPlan() {
     const { data: existingRows, error: existingError } = await db.from('audit_job_checkpoints')
-      .select('id,checkpoint_key,status,source_index,source_path,source_sha256,source_bytes,input_sha256,start_page,end_page,total_pages,chunk_index,chunk_count,kind,bureau,sequence')
+      .select('id,checkpoint_key,status,source_index,source_path,source_sha256,source_bytes,input_sha256,start_page,end_page,total_pages,chunk_index,chunk_count,kind,bureau,sequence,context_policy_state,context_policy,context_source_page')
       .eq('job_id', jobId).order('sequence');
     if (existingError) throw new Error('Could not load audit checkpoint plan: ' + existingError.message);
     if ((job.expected_checkpoint_count || 0) > 0) {
       const active = (existingRows || []).filter((row) => row.status !== 'superseded');
       if (active.length !== Number(job.expected_checkpoint_count)) {
         throw terminalAuditError('Saved audit checkpoint plan count no longer matches the logical job.', 'checkpoint_plan_mismatch');
+      }
+      for (const checkpoint of active) {
+        if (checkpoint.kind === 'merge') continue;
+        const file = (job.files || [])[Number(checkpoint.source_index)];
+        if (!file || file.path !== checkpoint.source_path) {
+          throw terminalAuditError('Saved checkpoint source binding is invalid.', 'checkpoint_source_mismatch');
+        }
+        await downloadReport(file);
+        const contextPolicy = frozenCheckpointContextPolicy(checkpoint);
+        if (!contextPolicy) {
+          if (job.mode === 'combined') {
+            const { data: retired, error: retirementError } = await db.rpc(
+              'ccc_retire_incompatible_combined_audit_job',
+              { p_job_id: jobId, p_lease_token: leaseToken },
+            );
+            if (!retirementError && retired === true) {
+              leaseClosed = true;
+              return null;
+            }
+            throw new Error('Could not retire an incompatible combined-report checkpoint plan: '
+              + (retirementError?.message || 'lease mismatch'));
+          }
+          throw terminalAuditError('Saved audit checkpoint context policy is invalid.', 'checkpoint_context_policy_mismatch');
+        }
+        const expectedInputSha256 = checkpointInputSha256({
+          sourceSha256: checkpoint.source_sha256,
+          startPage: checkpoint.start_page,
+          endPage: checkpoint.end_page,
+          totalPages: checkpoint.total_pages,
+          kind: checkpoint.kind,
+          contextSourcePage: contextPolicy.matched ? contextPolicy.contextSourcePage : null,
+        });
+        if (checkpoint.input_sha256 === expectedInputSha256) continue;
+        if (job.mode === 'combined') {
+          throw terminalAuditError(
+            'Saved combined-report checkpoint digest does not match its frozen context policy.',
+            'checkpoint_context_policy_mismatch',
+          );
+        }
+        throw terminalAuditError('Saved audit checkpoint input no longer matches its source-bound plan.', 'checkpoint_input_mismatch');
       }
       return active;
     }
@@ -1064,11 +1206,23 @@ export const handler = async (event) => {
         const report = await downloadReport(file);
         const bureau = job.mode === 'combined' ? null : normalizeBureauKey(file.bureau);
         const kind = job.mode === 'combined' ? 'combined_chunk' : 'bureau_chunk';
+        const contextPolicy = kind === 'combined_chunk'
+          ? await combinedContextPolicy(report)
+          : { matched: false, contextSourcePage: null };
+        const contextSourcePage = contextPolicy.matched
+          ? contextPolicy.contextSourcePage
+          : null;
         let chunks;
         if (report.mediaType.includes('pdf')) {
-          const measurement = await measureAuditPdfPageDensity(report.bytes);
+          const measurement = await measureAuditPdfPageDensity(report.bytes, {
+            pdfJsLoader: auditPdfJsLoader,
+          });
           if (measurement.status === 'measured') {
-            const adaptivePlan = planAdaptiveAuditCheckpointRanges(measurement.pages);
+            const adaptivePlan = planAdaptiveAuditCheckpointRanges(measurement.pages, {
+              contextPageMetric: contextSourcePage === COMBINED_CONTEXT_SOURCE_PAGE
+                ? measurement.pages[0]
+                : null,
+            });
             const adaptiveChunks = adaptivePlan.ranges.map((range, index) => ({
               startPage: range.startPage,
               endPage: range.endPage,
@@ -1079,11 +1233,23 @@ export const handler = async (event) => {
             let strictNativePlan = true;
             let strictFallbackReason = null;
             for (const candidate of adaptiveChunks) {
-              const candidateRange = await extractPdfPageRange(report.bytes, {
+              const sourcePageMap = checkpointSourcePageMap({
+                kind,
                 startPage: candidate.startPage,
                 endPage: candidate.endPage,
+                contextSourcePage,
               });
-              const nativeCandidate = await extractNativePdfText(candidateRange.bytes);
+              const candidateRange = sourcePageMap.length
+                  > (candidate.endPage - candidate.startPage + 1)
+                ? await extractPdfPages(report.bytes, { pageNumbers: sourcePageMap })
+                : await extractPdfPageRange(report.bytes, {
+                  startPage: candidate.startPage,
+                  endPage: candidate.endPage,
+                });
+              const nativeCandidate = await extractNativePdfText(candidateRange.bytes, {
+                pdfJsLoader: auditPdfJsLoader,
+                pdfLibLoader: auditPdfLibLoader,
+              });
               if (!nativeTextCanDriveCheckpoint(nativeCandidate)) {
                 strictNativePlan = false;
                 strictFallbackReason = nativeCandidate?.eligibility?.reasonCodes?.[0]
@@ -1104,21 +1270,33 @@ export const handler = async (event) => {
                   startPage: range.startPage,
                   endPage: range.endPage,
                   overlapPages: range.overlapPages,
+                  contextSourcePage: range.contextSourcePage,
+                  providerPageCount: range.providerPageCount,
                   exceededLimits: range.exceededLimits,
                 })),
               }));
             } else {
-              chunks = await splitPdfByPages(report.bytes, { maxPages: RESUMABLE_PDF_CHUNK_PAGES });
+              chunks = await splitPdfByPages(report.bytes, {
+                maxPages: contextSourcePage === COMBINED_CONTEXT_SOURCE_PAGE
+                  ? COMBINED_SOURCE_PDF_DATA_PAGES
+                  : RESUMABLE_PDF_CHUNK_PAGES,
+              });
               console.warn('[audit-plan] strict native layout unavailable; capping source-PDF vision ranges', JSON.stringify({
                 sourceIndex,
                 totalPages: adaptivePlan.totalPages,
                 reason: strictFallbackReason,
                 checkpointCount: chunks.length,
-                maxPages: RESUMABLE_PDF_CHUNK_PAGES,
+                maxPages: contextSourcePage === COMBINED_CONTEXT_SOURCE_PAGE
+                  ? COMBINED_SOURCE_PDF_DATA_PAGES
+                  : RESUMABLE_PDF_CHUNK_PAGES,
               }));
             }
           } else {
-            chunks = await splitPdfByPages(report.bytes, { maxPages: RESUMABLE_PDF_CHUNK_PAGES });
+            chunks = await splitPdfByPages(report.bytes, {
+              maxPages: contextSourcePage === COMBINED_CONTEXT_SOURCE_PAGE
+                ? COMBINED_SOURCE_PDF_DATA_PAGES
+                : RESUMABLE_PDF_CHUNK_PAGES,
+            });
             console.warn('[audit-plan] PDF text density unavailable; using conservative fixed-page fallback', JSON.stringify({
               sourceIndex,
               totalPages: measurement.totalPages,
@@ -1146,11 +1324,22 @@ export const handler = async (event) => {
             source_sha256: report.sourceSha256,
             source_bytes: report.sourceBytes,
             source_media_type: report.mediaType,
+            context_policy_state: kind === 'combined_chunk'
+              ? contextPolicy.detectionStatus
+              : null,
+            context_policy: kind === 'combined_chunk' && contextPolicy.matched
+              ? contextPolicy.policy
+              : null,
+            context_source_page: kind === 'combined_chunk' && contextPolicy.matched
+              ? contextPolicy.contextSourcePage
+              : null,
             input_sha256: checkpointInputSha256({
               sourceSha256: report.sourceSha256,
               startPage: chunk.startPage,
               endPage: chunk.endPage,
               totalPages: chunk.totalPages,
+              kind,
+              contextSourcePage,
             }),
             start_page: chunk.startPage,
             end_page: chunk.endPage,
@@ -1193,18 +1382,48 @@ export const handler = async (event) => {
         || report.mediaType !== checkpoint.source_media_type) {
       throw terminalAuditError('Checkpoint source no longer matches its immutable manifest.', 'checkpoint_source_mismatch');
     }
+    const contextPolicy = frozenCheckpointContextPolicy(checkpoint);
+    if (!contextPolicy) {
+      throw terminalAuditError('Checkpoint context policy no longer matches its immutable input digest.', 'checkpoint_context_policy_mismatch');
+    }
+    const contextSourcePage = contextPolicy.matched
+      ? contextPolicy.contextSourcePage
+      : null;
     let chunk;
-    if (report.mediaType.includes('pdf')) {
-      chunk = await extractPdfPageRange(report.bytes, {
+    const sourcePageMap = checkpoint.kind === 'merge'
+      ? []
+      : checkpointSourcePageMap({
+        kind: checkpoint.kind,
         startPage: checkpoint.start_page,
         endPage: checkpoint.end_page,
+        contextSourcePage,
       });
+    const contextLocalPages = checkpoint.kind === 'combined_chunk'
+        && sourcePageMap.length > (Number(checkpoint.end_page) - Number(checkpoint.start_page) + 1)
+      ? [1]
+      : [];
+    if (report.mediaType.includes('pdf')) {
+      chunk = contextLocalPages.length
+        ? await extractPdfPages(report.bytes, { pageNumbers: sourcePageMap })
+        : await extractPdfPageRange(report.bytes, {
+          startPage: checkpoint.start_page,
+          endPage: checkpoint.end_page,
+        });
+      chunk.startPage = Number(checkpoint.start_page);
+      chunk.endPage = Number(checkpoint.end_page);
       chunk.index = checkpoint.chunk_index;
       chunk.chunkCount = checkpoint.chunk_count;
+      chunk.sourcePageMap = sourcePageMap;
+      chunk.contextLocalPages = contextLocalPages;
+      chunk.contextSourcePage = contextSourcePage;
+      chunk.dataLocalPages = sourcePageMap.flatMap((sourcePage, index) => (
+        contextLocalPages.includes(index + 1) ? [] : [index + 1]
+      ));
     } else {
       chunk = {
         bytes: report.bytes, base64: report.base64,
         startPage: 1, endPage: 1, totalPages: 1, index: 0, chunkCount: 1,
+        sourcePageMap: [1], contextLocalPages: [], dataLocalPages: [1],
       };
     }
     const expectedInputSha256 = checkpointInputSha256({
@@ -1212,6 +1431,8 @@ export const handler = async (event) => {
       startPage: checkpoint.start_page,
       endPage: checkpoint.end_page,
       totalPages: checkpoint.total_pages,
+      kind: checkpoint.kind,
+      contextSourcePage,
     });
     if (!chunk || expectedInputSha256 !== checkpoint.input_sha256
         || chunk.totalPages !== checkpoint.total_pages) {
@@ -1219,9 +1440,12 @@ export const handler = async (event) => {
     }
     let nativeText = null;
     if (report.mediaType.includes('pdf')) {
-      nativeText = await extractNativePdfText(chunk.bytes);
+      nativeText = await extractNativePdfText(chunk.bytes, {
+        pdfJsLoader: auditPdfJsLoader,
+        pdfLibLoader: auditPdfLibLoader,
+      });
     }
-    const localPageCount = Number(checkpoint.end_page) - Number(checkpoint.start_page) + 1;
+    const localPageCount = chunk.sourcePageMap.length;
     const nativeEligible = nativeTextCanDriveCheckpoint(nativeText)
       && nativeText.totalPages === localPageCount
       && typeof nativeText.compactText === 'string';
@@ -1269,6 +1493,13 @@ export const handler = async (event) => {
       localPageCount,
       sourceStartPage: Number(checkpoint.start_page),
       sourceEndPage: Number(checkpoint.end_page),
+      ...(checkpoint.kind === 'combined_chunk' && contextSourcePage === COMBINED_CONTEXT_SOURCE_PAGE
+        ? {
+          inputPolicy: COMBINED_FIXED_COLUMN_CONTEXT_POLICY,
+          sourcePageMap: chunk.sourcePageMap,
+          contextLocalPages: chunk.contextLocalPages,
+        }
+        : {}),
     } : {
       inputMode: nonPdfMode || 'source_pdf',
       parserVersion: nonPdfParserVersion,
@@ -1277,6 +1508,13 @@ export const handler = async (event) => {
       sourceStartPage: Number(checkpoint.start_page),
       sourceEndPage: Number(checkpoint.end_page),
       fallbackReason: nativeText?.eligibility?.reasonCodes?.[0] || null,
+      ...(checkpoint.kind === 'combined_chunk' && contextSourcePage === COMBINED_CONTEXT_SOURCE_PAGE
+        ? {
+          inputPolicy: COMBINED_FIXED_COLUMN_CONTEXT_POLICY,
+          sourcePageMap: chunk.sourcePageMap,
+          contextLocalPages: chunk.contextLocalPages,
+        }
+        : {}),
     };
     return {
       file,
@@ -1294,6 +1532,8 @@ export const handler = async (event) => {
         format: input.nativeText.format,
         localPageCount: input.inputProvenance.localPageCount,
         visionSupplements: input.visionSupplements,
+        sourcePageMap: input.chunk.sourcePageMap,
+        contextLocalPages: input.chunk.contextLocalPages,
       });
     }
     return buildReportContent(input.chunk.base64, prompt, input.report.mediaType);
@@ -1316,7 +1556,10 @@ export const handler = async (event) => {
     let raw;
     if (checkpoint.kind === 'combined_chunk') {
       raw = await claudeCall(
-        checkpointProviderContent(input, combinedExtractionPrompt(input.chunk)),
+        checkpointProviderContent(input, combinedExtractionPrompt(input.chunk, {
+          contextLocalPage: input.chunk.contextLocalPages[0] || null,
+          dataLocalPages: input.chunk.dataLocalPages,
+        })),
         {
           schema: COMPACT_COMBINED_CREDIT_EXTRACTION_SCHEMA,
           onTokens: progress(stage, pct),
@@ -1326,15 +1569,18 @@ export const handler = async (event) => {
         },
       );
       const parsed = decodeCompactCombinedExtraction(parseAuditJSON(raw));
-      const localPageCount = Number(checkpoint.end_page) - Number(checkpoint.start_page) + 1;
+      const localPageCount = input.chunk.sourcePageMap.length;
       for (const extractedReport of parsed?.reports || []) {
         assertExtractionPageBounds(extractedReport, localPageCount);
       }
-      const rebased = rebaseExtractionPageRefs(parsed, checkpoint.start_page - 1);
-      for (const extractedReport of rebased?.reports || []) {
+      assertCombinedCheckpointAttribution(parsed, {
+        contextLocalPages: input.chunk.contextLocalPages,
+      });
+      const mapped = mapExtractionPageRefs(parsed, input.chunk.sourcePageMap);
+      for (const extractedReport of mapped?.reports || []) {
         assertExtractionPageBounds(extractedReport, checkpoint.total_pages);
       }
-      return rebased;
+      return mapped;
     }
 
     const bureauKey = normalizeBureauKey(checkpoint.bureau);
@@ -1426,17 +1672,32 @@ export const handler = async (event) => {
     if (pageCount < 3) throw new Error('Checkpoint page range cannot be split safely.');
     const mid = Math.floor((Number(checkpoint.start_page) + Number(checkpoint.end_page)) / 2);
     const leftEnd = pageCount === 3 ? mid : mid + 1;
+    const contextSourcePage = checkpoint.kind === 'combined_chunk'
+        && checkpoint.input_sha256 === checkpointInputSha256({
+          sourceSha256: checkpoint.source_sha256,
+          startPage: Number(checkpoint.start_page),
+          endPage: Number(checkpoint.end_page),
+          totalPages: Number(checkpoint.total_pages),
+          kind: checkpoint.kind,
+          contextSourcePage: COMBINED_CONTEXT_SOURCE_PAGE,
+        })
+      ? COMBINED_CONTEXT_SOURCE_PAGE
+      : null;
     const leftInputSha256 = checkpointInputSha256({
       sourceSha256: checkpoint.source_sha256,
       startPage: Number(checkpoint.start_page),
       endPage: leftEnd,
       totalPages: Number(checkpoint.total_pages),
+      kind: checkpoint.kind,
+      contextSourcePage,
     });
     const rightInputSha256 = checkpointInputSha256({
       sourceSha256: checkpoint.source_sha256,
       startPage: mid,
       endPage: Number(checkpoint.end_page),
       totalPages: Number(checkpoint.total_pages),
+      kind: checkpoint.kind,
+      contextSourcePage,
     });
     const { data, error } = await db.rpc('ccc_split_audit_checkpoint_v2', {
       p_checkpoint_id: checkpoint.id,
@@ -2088,7 +2349,10 @@ export const handler = async (event) => {
   try {
     const t = todayLong();
     const files = job.files || [];
-    await ensureCheckpointPlan();
+    const checkpointPlan = await ensureCheckpointPlan();
+    if (!checkpointPlan) {
+      return { statusCode: 409, body: 'saved combined audit retired for parser upgrade' };
+    }
 
     const claimedCheckpoints = [];
     for (let index = 0; index < MAX_PROVIDER_CONCURRENCY; index += 1) {

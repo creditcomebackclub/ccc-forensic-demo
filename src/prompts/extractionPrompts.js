@@ -29,8 +29,16 @@ export function bureauExtractionPrompt(bureau, chunk = null) {
   return `The operator placed this file in the ${bureau} upload slot. Independently extract the credit report into the schema.${chunkNote(chunk)} The slot label is not evidence: set bureau only from a visible bureau name/logo/header in the document, and use null if this attached part does not show one. Include every account and hard inquiry visible. JSON only.`;
 }
 
-export function combinedExtractionPrompt(chunk = null) {
-  return `Extract this combined three-bureau credit report into reports, with one report object for each bureau actually displayed.${chunkNote(chunk)} Keep each bureau's values separate. Do not merge accounts and do not compare values. JSON only.`;
+export function combinedExtractionPrompt(chunk = null, {
+  contextLocalPage = null,
+  dataLocalPages = [],
+} = {}) {
+  const contextPage = Number(contextLocalPage);
+  const dataPages = (dataLocalPages || []).map(Number);
+  const contextNote = Number.isInteger(contextPage) && contextPage > 0
+    ? ` LOCAL PAGE ${contextPage} is a context-only copy of original source page 1. It visibly establishes the report's bureau labels and left-to-right bureau-column layout. Use it only to bind bureau identity/report metadata to the same fixed columns on DATA LOCAL PAGES ${dataPages.join(', ')}. Do not extract client/profile values, accounts, inquiries, cleanup items, or account fields from the context page. Do not mark reportSectionStart from the copied context page; reportSectionStart must be false in this checkpoint. Bureau/report-date evidence may cite the context page. Every other evidence page must be one of the listed data pages.`
+    : '';
+  return `Extract this combined three-bureau credit report into reports, with one report object for each bureau actually displayed.${chunkNote(chunk)}${contextNote} Keep each bureau's values separate. Do not merge accounts and do not compare values. JSON only.`;
 }
 
 export const RESPONSE_EXTRACTION_SYSTEM_PROMPT = `You are a document transcription system. Extract factual statements from a furnisher or credit-bureau response into the supplied JSON schema.
