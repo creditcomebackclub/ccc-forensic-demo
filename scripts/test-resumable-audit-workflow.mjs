@@ -24,6 +24,14 @@ const parallelMigration = read('../supabase/migrations/20260820550000_parallel_a
 const watchdog = read('../netlify/functions/audit-job-watchdog.cjs');
 const config = read('../netlify.toml');
 
+// PDF.js resolves its adjacent fake-worker module at runtime. Both PDF.js and
+// the native canvas shim must remain external so Netlify installs a complete,
+// platform-correct package instead of bundling pdf.mjs without pdf.worker.mjs.
+assert.match(
+  config,
+  /\[functions\][\s\S]*external_node_modules\s*=\s*\[[^\]]*"@napi-rs\/canvas"[^\]]*"pdfjs-dist"[^\]]*\]/,
+);
+
 // Browser identity/idempotency: content hashes are durable inputs and an
 // existing logical job is polled/resumed instead of creating a retry row.
 const sample = new Blob(['same report bytes'], { type: 'application/pdf' });

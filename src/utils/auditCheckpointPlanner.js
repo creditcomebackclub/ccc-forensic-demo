@@ -340,6 +340,19 @@ export function detectFixedThreeBureauColumnLegend(textContent, {
   };
 }
 
+function safePdfContextDetectionError(error) {
+  const clean = (value, limit) => String(value || '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit) || null;
+  return {
+    name: clean(error?.name || error?.constructor?.name, 80),
+    code: clean(error?.code, 80),
+    message: clean(error?.message, 320),
+  };
+}
+
 export async function detectCombinedPdfContextPolicy(pdfBytes, {
   pdfJsLoader = defaultPdfJsLoader,
 } = {}) {
@@ -369,7 +382,7 @@ export async function detectCombinedPdfContextPolicy(pdfBytes, {
     } finally {
       page.cleanup?.();
     }
-  } catch {
+  } catch (error) {
     // A parser/layout failure is unknown—not proof that the fixed-column
     // legend is absent. Callers must retry or reuse a frozen saved policy.
     return {
@@ -380,6 +393,7 @@ export async function detectCombinedPdfContextPolicy(pdfBytes, {
       reportFamilySignature: null,
       detectionStatus: 'detection_error',
       detectionErrorCode: 'pdf_context_detection_failed',
+      detectionErrorDetail: safePdfContextDetectionError(error),
     };
   } finally {
     try { await document?.destroy?.(); } catch { /* layout detection cleanup is best-effort */ }

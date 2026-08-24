@@ -1061,6 +1061,10 @@ export const handler = async (event) => {
     }
     const detection = await combinedContextPolicyBySource.get(report.sourceSha256);
     if (detection?.detectionStatus === 'detection_error') {
+      console.error('[audit] combined PDF context detection failed', JSON.stringify({
+        jobId,
+        error: detection.detectionErrorDetail || null,
+      }));
       const error = new Error('Combined-report context detection could not read the source layout. The saved audit will retry without changing its parsing policy.');
       error.auditErrorType = detection.detectionErrorCode || 'pdf_context_detection_failed';
       error.auditUserMessage = 'CCC could not verify the report layout yet. The same saved audit will retry; do not upload a duplicate.';
