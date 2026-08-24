@@ -28,8 +28,17 @@ assert.equal(isProviderTimeoutError(new Error('Authentication failed')), false);
 // the unchanged-checkpoint retry branch.
 assert.match(worker, /providerSignal = AbortSignal\.timeout\([\s\S]*messages\.stream\(params, \{ signal: providerSignal \}\)/);
 assert.match(worker, /isProviderTimeoutError\(error, providerSignal\)[\s\S]*error\.auditProviderTimeout = true/);
-assert.match(worker, /e\?\.auditProviderTimeout[\s\S]*ccc_split_audit_checkpoint/);
+assert.match(worker, /function checkpointSplitReason\(error\)[\s\S]*error\?\.auditProviderTimeout[\s\S]*return 'provider_timeout'/);
+assert.match(worker, /const splitReason = checkpointSplitReason\(error\)[\s\S]*splitCheckpoint\(checkpoint, splitReason\)/);
 assert.match(worker, /auditErrorType = 'provider_timeout'/);
 assert.match(worker, /auditUserMessage = 'A report section took too long to analyze\./);
+assert.match(worker, /Completed sections are saved, and this same audit can resume without another upload/);
+assert.doesNotMatch(worker, /retry the audit or contact support if it happens again/);
+assert.match(worker, /usage: \{[\s\S]*observation: 'partial_not_final'[\s\S]*preflight_input_tokens:[\s\S]*streamed_text_chars:[\s\S]*streamed_thinking_chars:/);
+assert.match(worker, /recoverable provider limit; splitting saved checkpoint/);
+const splitLogIndex = worker.indexOf('recoverable provider limit; splitting saved checkpoint');
+const fatalLogIndex = worker.indexOf("console.error('audit-run failed:'");
+assert.ok(splitLogIndex >= 0 && fatalLogIndex > splitLogIndex,
+  'Handled provider limits must log recovery before the fatal-only fallback');
 
 console.log('Audit provider abort recovery tests passed.');

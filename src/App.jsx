@@ -3,6 +3,17 @@ import { LayoutDashboard, BookOpen, Users, AlertCircle, LogOut, Shield, UserCog,
 import { Toaster } from 'react-hot-toast';
 import { supabase } from './utils/supabase';
 import { runAudit, runTripleBureauAudit, runSingleBureauAudit, runMergeBureauAudits } from './utils/api';
+import {
+  auditRecoveryDisposition,
+  SAVED_AUDIT_TIMEOUT_MESSAGE,
+  findLatestRecoverableAuditJob,
+  findOwnedAuditJob,
+  forgetAuditRecovery,
+  readRememberedAuditRecovery,
+  rememberAuditRecovery,
+  resumeAuditJob,
+  selectAuditRecoveryCandidate,
+} from './utils/auditJobs.js';
 import { getUnanalyzedResponseStats } from './utils/actionItems';
 import { computeClientCommission } from './utils/affiliateCommission';
 import { getSettings } from './utils/settings';
@@ -328,6 +339,8 @@ export default function App() {
   const [auditMode, setAuditMode] = useState(null);
   const [auditProgress, setAuditProgress] = useState(null);
   const [error, setError] = useState(null);
+  const [failedAuditRecovery, setFailedAuditRecovery] = useState(null);
+  const [auditRecoveryChecked, setAuditRecoveryChecked] = useState(false);
   const [auditClientName, setAuditClientName] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [isClient, setIsClient] = useState(false);
@@ -349,6 +362,7 @@ export default function App() {
     import('./utils/actionItems').then(m => m.getNewLeadsCount()).then(c => setNewLeadsCount(c)).catch(() => {});
   };
   const loadUserInFlight = React.useRef(false);
+  const recoveryHydratedForUser = React.useRef(null);
   // Mirror of profile state for the visibilitychange handler, which is bound
   // once on mount and would otherwise close over stale values
   const appStateRef = React.useRef({ profile: null, profileLoading: false });
@@ -360,6 +374,74 @@ export default function App() {
     if (session && profile && !isClient && !isAffiliate) {
       refreshActionItems();
     }
+  }, [session, profile, isClient, isAffiliate]);
+
+  // A terminal provider timeout owns a durable report and paid checkpoints.
+  // Hydrate that exact job before exposing UploadZone so a refresh, closed
+  // tab, or deploy cannot accidentally turn recovery into a second paid job.
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || !profile || isClient || isAffiliate) return;
+    if (recoveryHydratedForUser.current === userId) return;
+    recoveryHydratedForUser.current = userId;
+    setAuditRecoveryChecked(false);
+    setFailedAuditRecovery(null);
+    setError(null);
+    setState(STATE.IDLE);
+    let cancelled = false;
+    const rememberedJobId = readRememberedAuditRecovery(userId);
+    let unresolvedRememberedJobId = rememberedJobId;
+    const showRecovery = (jobId, message = SAVED_AUDIT_TIMEOUT_MESSAGE, canResume = true) => {
+      if (cancelled) return;
+      setFailedAuditRecovery({ jobId: jobId || null, canResume });
+      setError(message);
+      setFileName('Saved forensic audit');
+      setView(VIEW.AUDIT);
+      setState(STATE.ERROR);
+      if (jobId) rememberAuditRecovery(userId, jobId);
+    };
+
+    const hydrateRecovery = async () => {
+      try {
+        let exactJob = null;
+        if (rememberedJobId) {
+          exactJob = await findOwnedAuditJob(rememberedJobId, userId);
+          const disposition = auditRecoveryDisposition(exactJob);
+          if (['done', 'missing', 'expired'].includes(disposition.kind)) {
+            forgetAuditRecovery(userId, rememberedJobId);
+            unresolvedRememberedJobId = null;
+          }
+        }
+
+        const latestJob = await findLatestRecoverableAuditJob();
+        const candidate = selectAuditRecoveryCandidate(exactJob, latestJob);
+        if (candidate.kind === 'resume' || candidate.kind === 'operations') {
+          showRecovery(
+            candidate.jobId,
+            candidate.message,
+            candidate.kind === 'resume' && candidate.canResume === true,
+          );
+          return;
+        }
+        if (candidate.kind === 'done') {
+          if (cancelled) return;
+          setAuditResult(candidate.audit);
+          setFileName('Saved forensic audit');
+          setView(VIEW.AUDIT);
+          setState(STATE.RESULTS);
+        }
+      } catch (_) {
+        showRecovery(
+          unresolvedRememberedJobId,
+          'CCC could not verify whether a saved audit is waiting. Do not re-upload the report; retry recovery or open Operations.',
+          Boolean(unresolvedRememberedJobId),
+        );
+      } finally {
+        if (!cancelled) setAuditRecoveryChecked(true);
+      }
+    };
+    void hydrateRecovery();
+    return () => { cancelled = true; };
   }, [session, profile, isClient, isAffiliate]);
 
   useEffect(() => {
@@ -639,10 +721,29 @@ export default function App() {
     refreshActionItems();
   };
 
+  const captureAuditFailure = (err, fallbackMessage = 'Audit failed') => {
+    setError(err?.message || fallbackMessage);
+    const jobId = err?.auditJobId || null;
+    const blocksNewUpload = Boolean(jobId) && err?.auditSafeToUpload !== true;
+    if (blocksNewUpload) {
+      setFailedAuditRecovery({ jobId, canResume: err?.auditCanResume === true });
+      rememberAuditRecovery(session?.user?.id, jobId);
+    } else {
+      setFailedAuditRecovery(null);
+    }
+  };
+
   const handleAuditStart = async (payload) => {
+    if (!auditRecoveryChecked || failedAuditRecovery) {
+      setView(VIEW.AUDIT);
+      setState(STATE.ERROR);
+      setError('CCC must resolve the saved audit before another report can be uploaded.');
+      return;
+    }
     setView(VIEW.AUDIT);
     setState(STATE.PROCESSING);
     setError(null);
+    setFailedAuditRecovery(null);
     setAuditProgress(null);
     setAuditMode(payload.mode || 'combined');
     try {
@@ -665,7 +766,33 @@ export default function App() {
       setState(STATE.RESULTS);
     } catch (err) {
       console.error(err);
-      setError(err.message || 'Audit failed');
+      captureAuditFailure(err);
+      setState(STATE.ERROR);
+    }
+  };
+
+  const handleResumeFailedAudit = async () => {
+    const jobId = failedAuditRecovery?.jobId;
+    if (!jobId) return;
+    setState(STATE.PROCESSING);
+    setError(null);
+    setAuditProgress({
+      stage: 'Recovering the saved audit from its completed checkpoints',
+      pct: null,
+      tokens: 0,
+    });
+    try {
+      const res = await resumeAuditJob(jobId, setAuditProgress);
+      setAuditResult(res.audit);
+      setFailedAuditRecovery(null);
+      forgetAuditRecovery(session?.user?.id, jobId);
+      setState(STATE.RESULTS);
+    } catch (err) {
+      console.error(err);
+      if (err?.auditSafeToUpload === true) {
+        forgetAuditRecovery(session?.user?.id, jobId);
+      }
+      captureAuditFailure(err, 'CCC could not resume the saved audit yet.');
       setState(STATE.ERROR);
     }
   };
@@ -678,6 +805,7 @@ export default function App() {
     }
     setState(STATE.PROCESSING);
     setError(null);
+    setFailedAuditRecovery(null);
     setFileName('Merge bureau parses');
     try {
       const rows = await listBureauParsesForClient({
@@ -696,12 +824,24 @@ export default function App() {
       setState(STATE.RESULTS);
     } catch (err) {
       console.error(err);
-      setError(err.message || 'Merge failed');
+      captureAuditFailure(err, 'Merge failed');
       setState(STATE.ERROR);
     }
   };
 
-  const handleReset = () => { setView(VIEW.AUDIT); setState(STATE.IDLE); setAuditResult(null); setError(null); };
+  const handleReset = () => {
+    if (failedAuditRecovery) {
+      setView(VIEW.AUDIT);
+      setState(STATE.ERROR);
+      setError('Resume the saved audit or open Operations before starting another audit.');
+      return;
+    }
+    setView(VIEW.AUDIT);
+    setState(STATE.IDLE);
+    setAuditResult(null);
+    setError(null);
+    setFailedAuditRecovery(null);
+  };
   const handleOpenSavedAudit = (audit) => {
     setAuditResult(audit);
     setState(STATE.RESULTS);
@@ -740,7 +880,12 @@ export default function App() {
             {view === VIEW.OPERATIONS && isAdmin && <OperationsPage onNavigate={handleNavigate} />}
             {view === VIEW.AUDIT && (
               <>
-                {state === STATE.IDLE && <UploadZone onAuditStart={handleAuditStart} />}
+                {state === STATE.IDLE && !auditRecoveryChecked && (
+                  <div className="min-h-[240px] flex items-center justify-center" role="status" aria-live="polite">
+                    <div className="text-[12px] text-ink-muted">Checking for a saved audit…</div>
+                  </div>
+                )}
+                {state === STATE.IDLE && auditRecoveryChecked && <UploadZone onAuditStart={handleAuditStart} />}
                 {state === STATE.PROCESSING && <AuditProgress fileName={fileName} progress={auditProgress} mode={auditMode} />}
                 {state === STATE.RESULTS && auditResult?.kind === 'bureau_parse' && (
                   <BureauParseStatus
@@ -752,7 +897,20 @@ export default function App() {
                 {state === STATE.RESULTS && auditResult && auditResult.kind !== 'bureau_parse' && (
                   <AuditResults audit={auditResult} onReset={handleReset} onBackToClients={() => setView(VIEW.CLIENTS)} />
                 )}
-                {state === STATE.ERROR && <ErrorView error={error} onReset={handleReset} />}
+                {state === STATE.ERROR && (
+                  <ErrorView
+                    error={error}
+                    recoveryJobId={failedAuditRecovery?.jobId || null}
+                    locked={Boolean(failedAuditRecovery)}
+                    onResume={failedAuditRecovery?.canResume && failedAuditRecovery?.jobId
+                      ? handleResumeFailedAudit
+                      : null}
+                    onOperations={failedAuditRecovery && isAdmin
+                      ? () => handleNavigate(VIEW.OPERATIONS)
+                      : null}
+                    onReset={handleReset}
+                  />
+                )}
               </>
             )}
           </Suspense>
@@ -906,15 +1064,38 @@ function TopBar({ view, state, isAdmin }) {
   );
 }
 
-function ErrorView({ error, onReset }) {
+function ErrorView({ error, recoveryJobId, locked, onResume, onOperations, onReset }) {
   return (
     <div className="max-w-md mx-auto bg-white border border-red-200 rounded p-8 text-center">
       <AlertCircle size={32} className="text-red-600 mx-auto mb-3" strokeWidth={1.5} />
-      <h2 className="ccc-display text-xl text-ink font-medium">Audit failed</h2>
+      <h2 className="ccc-display text-xl text-ink font-medium">{locked ? 'Saved audit paused' : 'Audit failed'}</h2>
       <p className="text-[12px] text-ink-muted mt-2">{error}</p>
-      <button onClick={onReset} className="mt-5 px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm bg-navy text-white hover:bg-navy-dark">
-        Try Again
-      </button>
+      {locked && (
+        <>
+          <p className="text-[11px] text-ink-muted mt-3">
+            CCC will reuse the report and every completed checkpoint. It will not upload the report or create a new audit job.
+          </p>
+          {recoveryJobId && <p className="text-[10px] text-ink-muted mt-1 break-all">Recovery reference: {recoveryJobId}</p>}
+          {onResume && (
+            <button onClick={onResume} className="mt-5 px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm bg-navy text-white hover:bg-navy-dark">
+              Resume saved audit
+            </button>
+          )}
+          {!onResume && onOperations && (
+            <button onClick={onOperations} className="mt-5 px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm bg-navy text-white hover:bg-navy-dark">
+              Open Operations
+            </button>
+          )}
+          {!onResume && !onOperations && (
+            <p className="text-[11px] text-ink-muted mt-4">Ask an administrator to review this saved audit in Operations.</p>
+          )}
+        </>
+      )}
+      {!locked && (
+        <button onClick={onReset} className="mt-5 px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm bg-navy text-white hover:bg-navy-dark">
+          Back to audit upload
+        </button>
+      )}
     </div>
   );
 }

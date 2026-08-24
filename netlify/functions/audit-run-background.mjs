@@ -12,6 +12,16 @@ import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { ACCOUNT_ENRICHMENT_SCHEMA } from '../../src/utils/auditSchemas.js';
 import { COMBINED_CREDIT_EXTRACTION_SCHEMA, CREDIT_BUREAU_EXTRACTION_SCHEMA } from '../../src/utils/creditExtractionSchemas.js';
+import {
+  COMPACT_COMBINED_CREDIT_EXTRACTION_SCHEMA,
+  COMPACT_CREDIT_BUREAU_EXTRACTION_SCHEMA,
+  decodeCompactBureauExtraction,
+  decodeCompactCombinedExtraction,
+} from '../../src/utils/compactCreditExtractionCodec.js';
+import {
+  measureAuditPdfPageDensity,
+  planAdaptiveAuditCheckpointRanges,
+} from '../../src/utils/auditCheckpointPlanner.js';
 import { CREDIT_EXTRACTION_SYSTEM_PROMPT, bureauExtractionPrompt, combinedExtractionPrompt } from '../../src/prompts/extractionPrompts.js';
 import {
   assertReportCohort,
@@ -27,8 +37,9 @@ import { normalizeFurnisher } from '../../src/utils/diffEngine.js';
 import { createHash, randomUUID } from 'crypto';
 import { requireStaffOrSystem } from './_requireAuth.cjs';
 import {
-  buildReportContent, accountEnrichmentPrompt, todayLong,
+  buildNativeReportContent, buildReportContent, accountEnrichmentPrompt, todayLong,
 } from '../../src/utils/auditPrompts.js';
+import { extractNativePdfText } from '../../src/utils/nativePdfText.js';
 import { describePdfChunk, extractPdfPageRange, splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
 import { logClaudeCall, preflightTokenCount, usageFromMessage } from './_claudeRuntime.mjs';
 import {
@@ -36,12 +47,21 @@ import {
   parseAndValidateAnthropicJsonEnvelope,
   withLocalSchemaContract,
 } from './_anthropicSchema.mjs';
+import { settleEveryAuditCheckpoint } from '../../src/utils/auditResume.js';
 
 // This is deliberately a pinned application choice, not an environment
 // fallback. A future model change must be reviewed in code and will be
 // rejected at runtime if Anthropic routes the request anywhere else.
 const AUDIT_MODEL = 'claude-sonnet-5';
-const AUDIT_EFFORT = 'high';
+// Credit-report extraction is document transcription, not open-ended
+// reasoning. Medium is the cost/latency release candidate and must remain
+// covered by the extraction-quality regression gate.
+const AUDIT_EFFORT = 'medium';
+// Sonnet 5 enables adaptive thinking by default. This pipeline is strict
+// document transcription with full local schema/provenance validation, not a
+// reasoning task; adaptive thinking added minutes and paid tokens without
+// strengthening the deterministic boundary. Disable it explicitly.
+const AUDIT_THINKING = Object.freeze({ type: 'disabled' });
 const ANTHROPIC_OPTIONS = {
   // Durable checkpoint attempts own retries. SDK retries can otherwise turn
   // one provider dispatch into multiple long requests that outlive both the
@@ -65,9 +85,16 @@ const WORKER_LEASE_SECONDS = 13 * 60;
 const WORKER_BUDGET_MS = 11.5 * 60 * 1000;
 const MIN_PROVIDER_BUDGET_MS = 7 * 60 * 1000;
 // The real 29-page timeout must never collapse back into one provider call.
-// Eight-page windows (with splitPdfByPages' two-page overlap) keep each call
-// bounded while the deterministic merge de-duplicates repeated evidence.
+// Image-only/unreadable PDFs retain the conservative fixed-page fallback.
+// Text-readable PDFs use the compact-contract density planner below.
 const RESUMABLE_PDF_CHUNK_PAGES = 8;
+// Three extraction calls may overlap inside one exclusively leased worker.
+// Checkpoint writes remain serial and immutable after the calls settle.
+const MAX_PROVIDER_CONCURRENCY = 3;
+// A dense range should split and resume while the overall audit can still meet
+// its product latency target; never burn the full six-minute client timeout on
+// one provider range.
+const EXTRACTION_PROVIDER_TIMEOUT_MS = 3 * 60 * 1000;
 
 function canonicalJson(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -77,6 +104,19 @@ function canonicalJson(value) {
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function nativeTextCanDriveCheckpoint(nativeText) {
+  return ['eligible', 'hybrid'].includes(nativeText?.status)
+    && typeof nativeText?.compactText === 'string'
+    && nativeText.compactText.length > 0;
+}
+
+function checkpointSplitReason(error) {
+  if (error?.auditNativeFallbackSplit) return 'native_fallback';
+  if (error?.auditProviderTimeout) return 'provider_timeout';
+  if (error?.auditOutputLimit) return 'output_limit';
+  return null;
 }
 
 function checkpointInputSha256({ sourceSha256, startPage, endPage, totalPages }) {
@@ -123,7 +163,10 @@ function cohortKeyFor(clientId, cohort) {
   }));
 }
 
-function sourceRecord({ bureauParse, report, file, parseId = null, sourceJobId, pageCount = null, chunkCount = null }) {
+function sourceRecord({
+  bureauParse, report, file, parseId = null, sourceJobId,
+  pageCount = null, chunkCount = null, extractionInputs = null,
+}) {
   return {
     bureau: bureauParse.bureau,
     reportDate: bureauParse.reportDate,
@@ -144,7 +187,50 @@ function sourceRecord({ bureauParse, report, file, parseId = null, sourceJobId, 
     mediaType: report?.mediaType || null,
     pageCount,
     chunkCount,
+    ...(Array.isArray(extractionInputs) && extractionInputs.length
+      ? { extractionInputs }
+      : {}),
   };
+}
+
+function extractionInputsFromCheckpoints(checkpoints) {
+  return (checkpoints || []).flatMap((checkpoint) => {
+    const input = checkpoint?.usage?.input_provenance;
+    if (!input || ![
+      'native_pdf_text', 'hybrid_native_pdf', 'source_pdf', 'source_html', 'source_text',
+    ].includes(input.inputMode)) return [];
+    if (!Number.isInteger(Number(input.localPageCount))
+        || !Number.isInteger(Number(input.sourceStartPage))
+        || !Number.isInteger(Number(input.sourceEndPage))) return [];
+    if (['native_pdf_text', 'hybrid_native_pdf', 'source_html', 'source_text'].includes(input.inputMode)
+        && (typeof input.parserVersion !== 'string'
+          || !/^[0-9a-f]{64}$/.test(String(input.derivedPayloadSha256 || '')))) return [];
+    return [{
+      inputMode: input.inputMode,
+      parserVersion: input.parserVersion || null,
+      derivedPayloadSha256: input.derivedPayloadSha256 || null,
+      localPageCount: Number(input.localPageCount),
+      sourceStartPage: Number(input.sourceStartPage),
+      sourceEndPage: Number(input.sourceEndPage),
+      ...(input.inputMode === 'hybrid_native_pdf' && Array.isArray(input.visionSupplements)
+        ? {
+          visionSupplements: input.visionSupplements.flatMap((supplement) => (
+            Number.isInteger(Number(supplement?.localPage))
+              && /^[0-9a-f]{64}$/.test(String(supplement?.sha256 || ''))
+              ? [{ localPage: Number(supplement.localPage), sha256: supplement.sha256 }]
+              : []
+          )),
+        }
+        : {}),
+      ...(/^[0-9a-f]{64}$/.test(String(checkpoint?.usage?.request_sha256 || ''))
+        ? { requestSha256: checkpoint.usage.request_sha256 }
+        : {}),
+      ...(/^[0-9a-f]{64}$/.test(String(checkpoint?.output_sha256 || ''))
+        ? { outputSha256: checkpoint.output_sha256 }
+        : {}),
+      ...(input.fallbackReason ? { fallbackReason: String(input.fallbackReason) } : {}),
+    }];
+  });
 }
 
 function buildAuditProvenance({ mode, sourceJobId, cohort, cohortKey, sources, evaluatedAt }) {
@@ -612,6 +698,11 @@ export const handler = async (event) => {
 
   const anthropic = new Anthropic({ apiKey: anthropicKey, ...ANTHROPIC_OPTIONS });
   const usageLog = [];
+  const usageByCheckpoint = new Map();
+  // Every claimed checkpoint remains here until a confirmed DB transition
+  // (done/superseded/retryable/error). The outer catch uses this map to settle
+  // the whole batch instead of leaking sibling leases after one RPC failure.
+  const unsettledCheckpoints = new Map();
   let lastWrite = 0;
 
   const updateJob = async (patch, force = false) => {
@@ -630,6 +721,8 @@ export const handler = async (event) => {
   async function claudeCall(userContent, {
     maxTokens = 64000, schema = null, onTokens = null, effort = AUDIT_EFFORT,
     operation = 'audit.analysis', checkpoint = null,
+    providerTimeoutMs = ANTHROPIC_OPTIONS.timeout,
+    inputProvenance = null,
   } = {}) {
     // Anthropic rejects both several standard validation keywords and the
     // compiled size of this full extraction contract. Keep that exact schema
@@ -638,9 +731,11 @@ export const handler = async (event) => {
     const providerFormat = schema ? anthropicJsonSchemaFormat() : null;
     const providerSchema = providerFormat?.schema || null;
     const providerContent = schema ? withLocalSchemaContract(userContent, schema) : userContent;
+    const providerContentSha256 = sha256(canonicalJson(providerContent));
     const params = {
       model: AUDIT_MODEL,
       max_tokens: maxTokens,
+      thinking: AUDIT_THINKING,
       system: SYSTEM,
       messages: [{ role: 'user', content: providerContent }],
       output_config: { effort },
@@ -653,18 +748,27 @@ export const handler = async (event) => {
     }
     const startedAt = new Date();
     let providerAttempt = null;
+    let requestSha256 = null;
     let providerSignal = null;
+    let providerStream = null;
+    let preflightInputTokens = 0;
+    let streamedTextChars = 0;
+    let streamedThinkingChars = 0;
     let msg = null;
     if (checkpoint) {
       const { data: attemptRow } = await db.from('audit_job_attempts')
         .select('id').eq('job_id', jobId).eq('lease_token', leaseToken).eq('status', 'running').maybeSingle();
-      const requestSha256 = sha256(canonicalJson({
+      requestSha256 = sha256(canonicalJson({
         model: AUDIT_MODEL, effort, maxTokens, operation,
+        thinking: AUDIT_THINKING,
         checkpointId: checkpoint.id, inputSha256: checkpoint.input_sha256,
         // Bind the durable provider attempt to both the envelope sent to the
         // grammar compiler and the richer local contract carried in prompt.
         schema: providerSchema,
         localSchemaSha256: schema ? sha256(canonicalJson(schema)) : null,
+        providerContentSha256,
+        systemSha256: sha256(canonicalJson(SYSTEM)),
+        inputProvenance,
       }));
       const { data: providerRow, error: providerInsertError } = await db.from('audit_provider_attempts').insert({
         job_id: jobId,
@@ -682,13 +786,13 @@ export const handler = async (event) => {
     }
 
     try {
-      await preflightTokenCount(anthropic, params, { operation: 'Credit report analysis' });
+      preflightInputTokens = await preflightTokenCount(anthropic, params, { operation: 'Credit report analysis' });
       // Count-tokens is also a network request. Recompute the hard window
       // after it returns, then abort the provider stream before either the
       // durable lease or Netlify budget can expire.
       const leaseRemainingMs = new Date(job.lease_expires_at || 0).getTime() - Date.now();
       const providerWindowMs = Math.min(
-        ANTHROPIC_OPTIONS.timeout,
+        providerTimeoutMs,
         remainingBudgetMs() - 30_000,
         leaseRemainingMs - 30_000,
       );
@@ -698,11 +802,12 @@ export const handler = async (event) => {
         throw deadlineError;
       }
       providerSignal = AbortSignal.timeout(Math.floor(providerWindowMs));
-      const stream = anthropic.messages.stream(params, { signal: providerSignal });
+      providerStream = anthropic.messages.stream(params, { signal: providerSignal });
       if (onTokens) {
         let chars = 0;
-        stream.on('text', (delta) => {
+        providerStream.on('text', (delta) => {
           chars += delta.length;
+          streamedTextChars += delta.length;
           // Progress is operational telemetry; an intermittent write must not
           // crash an otherwise-valid model stream through an unhandled promise.
           void onTokens(Math.round(chars / 4)).catch((e) => {
@@ -710,7 +815,10 @@ export const handler = async (event) => {
           }); // ~4 chars/token readout
         });
       }
-      msg = await stream.finalMessage();
+      providerStream.on('thinking', (delta) => {
+        streamedThinkingChars += delta.length;
+      });
+      msg = await providerStream.finalMessage();
       const providerText = textFromVerifiedModelMessage(msg, 'Audit analysis');
       const text = schema
         ? JSON.stringify(parseAndValidateAnthropicJsonEnvelope(providerText, schema))
@@ -725,22 +833,45 @@ export const handler = async (event) => {
         cache_write: u.cache_creation_input_tokens || 0,
         est_cost_usd: Math.round(usdFor(u) * 10000) / 10000,
         stop_reason: msg.stop_reason,
+        input_provenance: inputProvenance,
+        request_sha256: requestSha256,
       };
-      if (providerAttempt) {
-        const { error: providerUpdateError } = await db.from('audit_provider_attempts').update({
-          status: 'completed', provider_request_id: msg._request_id || null,
-          stop_reason: msg.stop_reason || null, response_sha256: sha256(text),
-          usage: callUsage, finished_at: new Date().toISOString(),
-        }).eq('id', providerAttempt.id).eq('status', 'started');
-        if (providerUpdateError) throw new Error('Could not record completed provider attempt: ' + providerUpdateError.message);
-      }
-      await logClaudeCall(db, {
-        userId: ownerUserId, operation, entityType: 'audit_job', entityId: jobId,
-        model: AUDIT_MODEL, effort, promptVersion: 'audit-v2', attempt: checkpoint?.attempt_count || usageLog.length + 1,
-        status: 'completed', startedAt, requestId: msg._request_id, usage: u,
-        stopReason: msg.stop_reason,
-      });
+      // The checkpoint row is the authoritative paid-output boundary. Record
+      // usage in memory before best-effort telemetry so an observability write
+      // can never turn a valid provider response into another paid request.
       usageLog.push(callUsage);
+      if (checkpoint?.id) usageByCheckpoint.set(checkpoint.id, callUsage);
+      if (providerAttempt) {
+        try {
+          const { error: providerUpdateError } = await db.from('audit_provider_attempts').update({
+            status: 'completed', provider_request_id: msg._request_id || null,
+            stop_reason: msg.stop_reason || null, response_sha256: sha256(text),
+            usage: callUsage, finished_at: new Date().toISOString(),
+          }).eq('id', providerAttempt.id).eq('status', 'started');
+          if (providerUpdateError) throw providerUpdateError;
+        } catch (telemetryError) {
+          console.warn('[audit] completed provider-attempt telemetry write failed; preserving paid output', JSON.stringify({
+            jobId,
+            checkpointId: checkpoint?.id || null,
+            providerAttemptId: providerAttempt.id,
+            error: telemetryError?.message || 'telemetry write failed',
+          }));
+        }
+      }
+      try {
+        await logClaudeCall(db, {
+          userId: ownerUserId, operation, entityType: 'audit_job', entityId: jobId,
+          model: AUDIT_MODEL, effort, promptVersion: 'audit-v2', attempt: checkpoint?.attempt_count || usageLog.length,
+          status: 'completed', startedAt, requestId: msg._request_id, usage: u,
+          stopReason: msg.stop_reason,
+        });
+      } catch (telemetryError) {
+        console.warn('[audit] Claude telemetry write failed; preserving paid output', JSON.stringify({
+          jobId,
+          checkpointId: checkpoint?.id || null,
+          error: telemetryError?.message || 'telemetry write failed',
+        }));
+      }
       console.log('[audit-usage]', JSON.stringify(callUsage));
       return text;
     } catch (error) {
@@ -750,10 +881,11 @@ export const handler = async (event) => {
       if (providerTimeout && error && typeof error === 'object') {
         error.auditProviderTimeout = true;
         error.auditErrorType = 'provider_timeout';
-        error.auditUserMessage = 'A report section took too long to analyze. CCC did not publish an incomplete audit; retry the audit or contact support if it happens again.';
+        error.auditUserMessage = 'A report section took too long to analyze. Completed sections are saved, and this same audit can resume without another upload.';
       }
       const invalidRequest = isProviderInvalidRequestError(error);
-      const providerRequestId = msg?._request_id || error?.requestID || error?.request_id || error?.error?.request_id || null;
+      const providerRequestId = msg?._request_id || providerStream?.request_id
+        || error?.requestID || error?.request_id || error?.error?.request_id || null;
       const providerErrorType = error?.type || error?.error?.error?.type || error?.error?.type || error?.name || 'provider_error';
       if (invalidRequest && error && typeof error === 'object') {
         // A provider 400 is deterministic configuration/schema failure, not
@@ -766,12 +898,25 @@ export const handler = async (event) => {
           : 'The audit provider rejected the request configuration. No audit result was saved.';
       }
       if (providerAttempt) {
+        const partialUsage = usageFromMessage(providerStream?.currentMessage || null);
         await db.from('audit_provider_attempts').update({
           status: outputLimit ? 'output_limit' : 'failed',
           provider_request_id: providerRequestId,
           stop_reason: msg?.stop_reason || null,
           error_type: outputLimit ? 'output_limit' : providerErrorType,
           error_message: error?.message || 'Provider request failed',
+          usage: {
+            observation: 'partial_not_final',
+            preflight_input_tokens: preflightInputTokens,
+            input: partialUsage.input_tokens || 0,
+            output: partialUsage.output_tokens || 0,
+            thinking: partialUsage.thinking_tokens || 0,
+            cache_read: partialUsage.cache_read_input_tokens || 0,
+            cache_write: partialUsage.cache_creation_input_tokens || 0,
+            streamed_text_chars: streamedTextChars,
+            streamed_thinking_chars: streamedThinkingChars,
+            elapsed_ms: Math.max(0, Date.now() - startedAt.getTime()),
+          },
           finished_at: new Date().toISOString(),
         }).eq('id', providerAttempt.id).eq('status', 'started');
       }
@@ -921,7 +1066,66 @@ export const handler = async (event) => {
         const kind = job.mode === 'combined' ? 'combined_chunk' : 'bureau_chunk';
         let chunks;
         if (report.mediaType.includes('pdf')) {
-          chunks = await splitPdfByPages(report.bytes, { maxPages: RESUMABLE_PDF_CHUNK_PAGES });
+          const measurement = await measureAuditPdfPageDensity(report.bytes);
+          if (measurement.status === 'measured') {
+            const adaptivePlan = planAdaptiveAuditCheckpointRanges(measurement.pages);
+            const adaptiveChunks = adaptivePlan.ranges.map((range, index) => ({
+              startPage: range.startPage,
+              endPage: range.endPage,
+              totalPages: adaptivePlan.totalPages,
+              index,
+              chunkCount: adaptivePlan.ranges.length,
+            }));
+            let strictNativePlan = true;
+            let strictFallbackReason = null;
+            for (const candidate of adaptiveChunks) {
+              const candidateRange = await extractPdfPageRange(report.bytes, {
+                startPage: candidate.startPage,
+                endPage: candidate.endPage,
+              });
+              const nativeCandidate = await extractNativePdfText(candidateRange.bytes);
+              if (!nativeTextCanDriveCheckpoint(nativeCandidate)) {
+                strictNativePlan = false;
+                strictFallbackReason = nativeCandidate?.eligibility?.reasonCodes?.[0]
+                  || 'native_text_unavailable';
+                break;
+              }
+            }
+            if (strictNativePlan) {
+              chunks = adaptiveChunks;
+              console.log('[audit-plan]', JSON.stringify({
+                planner: adaptivePlan.plannerVersion,
+                metric: adaptivePlan.metricVersion,
+                sourceIndex,
+                inputMode: 'native_or_hybrid',
+                totalPages: adaptivePlan.totalPages,
+                checkpointCount: adaptivePlan.ranges.length,
+                ranges: adaptivePlan.ranges.map((range) => ({
+                  startPage: range.startPage,
+                  endPage: range.endPage,
+                  overlapPages: range.overlapPages,
+                  exceededLimits: range.exceededLimits,
+                })),
+              }));
+            } else {
+              chunks = await splitPdfByPages(report.bytes, { maxPages: RESUMABLE_PDF_CHUNK_PAGES });
+              console.warn('[audit-plan] strict native layout unavailable; capping source-PDF vision ranges', JSON.stringify({
+                sourceIndex,
+                totalPages: adaptivePlan.totalPages,
+                reason: strictFallbackReason,
+                checkpointCount: chunks.length,
+                maxPages: RESUMABLE_PDF_CHUNK_PAGES,
+              }));
+            }
+          } else {
+            chunks = await splitPdfByPages(report.bytes, { maxPages: RESUMABLE_PDF_CHUNK_PAGES });
+            console.warn('[audit-plan] PDF text density unavailable; using conservative fixed-page fallback', JSON.stringify({
+              sourceIndex,
+              totalPages: measurement.totalPages,
+              reason: measurement.fallback?.reason || 'density_unavailable',
+              checkpointCount: chunks.length,
+            }));
+          }
         } else {
           chunks = [{
             bytes: report.bytes, base64: report.base64,
@@ -1013,7 +1217,86 @@ export const handler = async (event) => {
         || chunk.totalPages !== checkpoint.total_pages) {
       throw terminalAuditError('Checkpoint input page range no longer matches the saved source-bound plan.', 'checkpoint_input_mismatch');
     }
-    return { file, report, chunk };
+    let nativeText = null;
+    if (report.mediaType.includes('pdf')) {
+      nativeText = await extractNativePdfText(chunk.bytes);
+    }
+    const localPageCount = Number(checkpoint.end_page) - Number(checkpoint.start_page) + 1;
+    const nativeEligible = nativeTextCanDriveCheckpoint(nativeText)
+      && nativeText.totalPages === localPageCount
+      && typeof nativeText.compactText === 'string';
+    if (report.mediaType.includes('pdf') && !nativeEligible
+        && localPageCount > RESUMABLE_PDF_CHUNK_PAGES) {
+      const fallbackSplit = new Error('Native text became unavailable for a range larger than the source-PDF vision limit.');
+      fallbackSplit.auditNativeFallbackSplit = true;
+      fallbackSplit.auditErrorType = 'native_fallback_split';
+      fallbackSplit.auditUserMessage = 'A report range needs smaller vision checkpoints. CCC will split and resume it before any paid analysis.';
+      throw fallbackSplit;
+    }
+    const visionSupplements = [];
+    if (nativeEligible && nativeText.status === 'hybrid') {
+      for (const localPage of nativeText.visionSupplementPageNumbers || []) {
+        const supplement = await extractPdfPageRange(chunk.bytes, {
+          startPage: localPage,
+          endPage: localPage,
+        });
+        visionSupplements.push({
+          localPage,
+          base64: supplement.base64,
+          sha256: sha256(supplement.bytes),
+        });
+      }
+    }
+    let nonPdfPayloadSha256 = null;
+    let nonPdfMode = null;
+    let nonPdfParserVersion = null;
+    if (!report.mediaType.includes('pdf')) {
+      const sourceBlock = buildReportContent(chunk.base64, '', report.mediaType)[0];
+      nonPdfPayloadSha256 = sha256(canonicalJson(sourceBlock));
+      nonPdfMode = report.mediaType.includes('html') ? 'source_html' : 'source_text';
+      nonPdfParserVersion = report.mediaType.includes('html')
+        ? 'ccc-html-to-text-v1'
+        : 'ccc-utf8-text-v1';
+    }
+    const inputProvenance = nativeEligible ? {
+      inputMode: nativeText.status === 'hybrid' ? 'hybrid_native_pdf' : 'native_pdf_text',
+      parserVersion: nativeText.format,
+      derivedPayloadSha256: sha256(nativeText.compactText),
+      visionSupplements: visionSupplements.map((supplement) => ({
+        localPage: supplement.localPage,
+        sha256: supplement.sha256,
+      })),
+      localPageCount,
+      sourceStartPage: Number(checkpoint.start_page),
+      sourceEndPage: Number(checkpoint.end_page),
+    } : {
+      inputMode: nonPdfMode || 'source_pdf',
+      parserVersion: nonPdfParserVersion,
+      derivedPayloadSha256: nonPdfPayloadSha256,
+      localPageCount,
+      sourceStartPage: Number(checkpoint.start_page),
+      sourceEndPage: Number(checkpoint.end_page),
+      fallbackReason: nativeText?.eligibility?.reasonCodes?.[0] || null,
+    };
+    return {
+      file,
+      report,
+      chunk,
+      nativeText: nativeEligible ? nativeText : null,
+      visionSupplements,
+      inputProvenance,
+    };
+  }
+
+  function checkpointProviderContent(input, prompt) {
+    if (input.nativeText) {
+      return buildNativeReportContent(input.nativeText.compactText, prompt, {
+        format: input.nativeText.format,
+        localPageCount: input.inputProvenance.localPageCount,
+        visionSupplements: input.visionSupplements,
+      });
+    }
+    return buildReportContent(input.chunk.base64, prompt, input.report.mediaType);
   }
 
   function checkpointStage(checkpoint) {
@@ -1022,32 +1305,31 @@ export const handler = async (event) => {
     return `Extracting ${label} · pages ${checkpoint.start_page}–${checkpoint.end_page} of ${checkpoint.total_pages}`;
   }
 
-  async function processExtractionCheckpoint(checkpoint) {
-    const input = await checkpointInput(checkpoint);
+  async function processExtractionCheckpoint(checkpoint, preparedInput = null) {
+    const input = preparedInput || await checkpointInput(checkpoint);
     const stage = checkpointStage(checkpoint);
-    const pct = Math.max(2, Math.min(82, Math.round((checkpoint.sequence + 1) / Math.max(1, job.expected_checkpoint_count) * 80)));
+    const pct = Math.max(2, Math.min(82, Math.round(
+      2 + ((Number(checkpoint.start_page || 1) - 1) / Math.max(1, Number(checkpoint.total_pages || 1))) * 78,
+    )));
     await progress(stage, pct)(0);
-    if (remainingBudgetMs() < MIN_PROVIDER_BUDGET_MS) {
-      await releaseLease({
-        status: 'waiting',
-        stage: 'Saved checkpoint ready for the next worker',
-        checkpointId: checkpoint.id,
-      });
-      await dispatchNext();
-      return { yielded: true };
-    }
 
     let raw;
     if (checkpoint.kind === 'combined_chunk') {
       raw = await claudeCall(
-        buildReportContent(input.chunk.base64, combinedExtractionPrompt(input.chunk), input.report.mediaType),
+        checkpointProviderContent(input, combinedExtractionPrompt(input.chunk)),
         {
-          schema: COMBINED_CREDIT_EXTRACTION_SCHEMA,
+          schema: COMPACT_COMBINED_CREDIT_EXTRACTION_SCHEMA,
           onTokens: progress(stage, pct),
           operation: 'audit.report_extraction', checkpoint,
+          providerTimeoutMs: EXTRACTION_PROVIDER_TIMEOUT_MS,
+          inputProvenance: input.inputProvenance,
         },
       );
-      const parsed = parseAuditJSON(raw);
+      const parsed = decodeCompactCombinedExtraction(parseAuditJSON(raw));
+      const localPageCount = Number(checkpoint.end_page) - Number(checkpoint.start_page) + 1;
+      for (const extractedReport of parsed?.reports || []) {
+        assertExtractionPageBounds(extractedReport, localPageCount);
+      }
       const rebased = rebaseExtractionPageRefs(parsed, checkpoint.start_page - 1);
       for (const extractedReport of rebased?.reports || []) {
         assertExtractionPageBounds(extractedReport, checkpoint.total_pages);
@@ -1057,28 +1339,123 @@ export const handler = async (event) => {
 
     const bureauKey = normalizeBureauKey(checkpoint.bureau);
     raw = await claudeCall(
-      buildReportContent(input.chunk.base64, bureauExtractionPrompt(bureauKey, input.chunk), input.report.mediaType),
+      checkpointProviderContent(input, bureauExtractionPrompt(bureauKey, input.chunk)),
       {
-        schema: CREDIT_BUREAU_EXTRACTION_SCHEMA,
+        schema: COMPACT_CREDIT_BUREAU_EXTRACTION_SCHEMA,
         onTokens: progress(stage, pct),
         operation: 'audit.report_extraction', checkpoint,
+        providerTimeoutMs: EXTRACTION_PROVIDER_TIMEOUT_MS,
+        inputProvenance: input.inputProvenance,
       },
     );
-    const rebased = rebaseExtractionPageRefs(parseAuditJSON(raw), checkpoint.start_page - 1);
+    const decoded = decodeCompactBureauExtraction(parseAuditJSON(raw));
+    const localPageCount = Number(checkpoint.end_page) - Number(checkpoint.start_page) + 1;
+    assertExtractionPageBounds(decoded, localPageCount);
+    const rebased = rebaseExtractionPageRefs(decoded, checkpoint.start_page - 1);
     assertExtractionPageBounds(rebased, checkpoint.total_pages);
     return rebased;
   }
 
   async function completeCheckpoint(checkpoint, output) {
-    const callUsage = usageLog[usageLog.length - 1] || null;
-    const { data, error } = await db.rpc('ccc_complete_audit_checkpoint', {
+    const callUsage = usageByCheckpoint.get(checkpoint.id) || null;
+    const outputSha256 = parseSha256(output);
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const { data, error } = await db.rpc('ccc_complete_audit_checkpoint', {
+        p_checkpoint_id: checkpoint.id,
+        p_lease_token: leaseToken,
+        p_output: output,
+        p_output_sha256: outputSha256,
+        p_usage: callUsage,
+      });
+      if (!error && data === true) {
+        usageByCheckpoint.delete(checkpoint.id);
+        unsettledCheckpoints.delete(checkpoint.id);
+        return;
+      }
+      lastError = error;
+      // A committed RPC whose HTTP response was lost is already safe. Re-read
+      // the exact immutable digest before deciding to pay for this range again.
+      const { data: saved } = await db.from('audit_job_checkpoints')
+        .select('status,output_sha256').eq('id', checkpoint.id).eq('job_id', jobId).maybeSingle();
+      if (saved?.status === 'done' && saved.output_sha256 === outputSha256) {
+        usageByCheckpoint.delete(checkpoint.id);
+        unsettledCheckpoints.delete(checkpoint.id);
+        return;
+      }
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+    }
+    throw new Error('Could not save completed audit checkpoint: ' + (lastError?.message || 'lease mismatch'));
+  }
+
+  async function deferCheckpoint(checkpoint, {
+    status, errorType = null, errorMessage = null, retryAt = null,
+  }) {
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const { data, error } = await db.rpc('ccc_defer_audit_checkpoint', {
+        p_job_id: jobId,
+        p_checkpoint_id: checkpoint.id,
+        p_lease_token: leaseToken,
+        p_status: status,
+        p_error_type: errorType,
+        p_error_message: errorMessage,
+        p_next_retry_at: retryAt,
+      });
+      if (!error && data === true) {
+        unsettledCheckpoints.delete(checkpoint.id);
+        return;
+      }
+      lastError = error;
+      const { data: saved } = await db.from('audit_job_checkpoints')
+        .select('status,lease_token').eq('id', checkpoint.id).eq('job_id', jobId).maybeSingle();
+      if (saved?.status === status && saved.lease_token == null) {
+        unsettledCheckpoints.delete(checkpoint.id);
+        return;
+      }
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+    }
+    throw new Error('Could not settle audit checkpoint safely: ' + (lastError?.message || 'lease mismatch'));
+  }
+
+  async function splitCheckpoint(checkpoint, reason) {
+    if (!['output_limit', 'provider_timeout', 'native_fallback'].includes(reason)) {
+      throw new Error('Checkpoint split reason is invalid.');
+    }
+    const pageCount = Number(checkpoint.end_page) - Number(checkpoint.start_page) + 1;
+    if (pageCount < 3) throw new Error('Checkpoint page range cannot be split safely.');
+    const mid = Math.floor((Number(checkpoint.start_page) + Number(checkpoint.end_page)) / 2);
+    const leftEnd = pageCount === 3 ? mid : mid + 1;
+    const leftInputSha256 = checkpointInputSha256({
+      sourceSha256: checkpoint.source_sha256,
+      startPage: Number(checkpoint.start_page),
+      endPage: leftEnd,
+      totalPages: Number(checkpoint.total_pages),
+    });
+    const rightInputSha256 = checkpointInputSha256({
+      sourceSha256: checkpoint.source_sha256,
+      startPage: mid,
+      endPage: Number(checkpoint.end_page),
+      totalPages: Number(checkpoint.total_pages),
+    });
+    const { data, error } = await db.rpc('ccc_split_audit_checkpoint_v2', {
       p_checkpoint_id: checkpoint.id,
       p_lease_token: leaseToken,
-      p_output: output,
-      p_output_sha256: parseSha256(output),
-      p_usage: callUsage,
+      p_left_input_sha256: leftInputSha256,
+      p_right_input_sha256: rightInputSha256,
+      p_reason: reason,
     });
-    if (error || data !== true) throw new Error('Could not save completed audit checkpoint: ' + (error?.message || 'lease mismatch'));
+    if (!error && data === true) {
+      unsettledCheckpoints.delete(checkpoint.id);
+      return;
+    }
+    const { data: saved } = await db.from('audit_job_checkpoints')
+      .select('status,error_type').eq('id', checkpoint.id).eq('job_id', jobId).maybeSingle();
+    if (saved?.status === 'superseded' && saved.error_type === `${reason}_split`) {
+      unsettledCheckpoints.delete(checkpoint.id);
+      return;
+    }
+    throw new Error('Could not split a dense audit checkpoint safely: ' + (error?.message || 'lease mismatch'));
   }
 
   async function runBureauChunks(chunks, { bureauKey, bureauName, stage, pct }) {
@@ -1191,7 +1568,10 @@ export const handler = async (event) => {
     return { clientName: selectedJobClient.name, clientId: selectedJobClient.id };
   }
 
-  async function saveBureauParseRow({ bureauKey, bureauParse, report, file, pageCount = null, chunkCount = null }) {
+  async function saveBureauParseRow({
+    bureauKey, bureauParse, report, file, pageCount = null, chunkCount = null,
+    extractionInputs = null,
+  }) {
     const { clientName, clientId } = await resolveClientForParse(bureauParse);
     const cohort = assertReportCohort([bureauParse], {
       requireThree: false,
@@ -1202,6 +1582,7 @@ export const handler = async (event) => {
     const parseId = uuidFromSha256(`${jobId}:${bureauKey}:${report.sourceSha256}`);
     const source = sourceRecord({
       bureauParse, report, file, parseId, sourceJobId: jobId, pageCount, chunkCount,
+      extractionInputs,
     });
     const provenance = buildAuditProvenance({
       mode: 'single', sourceJobId: jobId, cohort, cohortKey,
@@ -1709,35 +2090,175 @@ export const handler = async (event) => {
     const files = job.files || [];
     await ensureCheckpointPlan();
 
-    const { data: claimedCheckpointRows, error: checkpointClaimError } = await db.rpc(
-      'ccc_claim_next_audit_checkpoint',
-      { p_job_id: jobId, p_lease_token: leaseToken },
-    );
-    if (checkpointClaimError) throw new Error('Could not claim the next audit checkpoint: ' + checkpointClaimError.message);
-    activeCheckpoint = Array.isArray(claimedCheckpointRows) ? claimedCheckpointRows[0] : claimedCheckpointRows;
+    const claimedCheckpoints = [];
+    for (let index = 0; index < MAX_PROVIDER_CONCURRENCY; index += 1) {
+      const { data: claimedCheckpointRows, error: checkpointClaimError } = await db.rpc(
+        'ccc_claim_next_audit_checkpoint',
+        { p_job_id: jobId, p_lease_token: leaseToken },
+      );
+      if (checkpointClaimError) throw new Error('Could not claim the next audit checkpoint: ' + checkpointClaimError.message);
+      const checkpoint = Array.isArray(claimedCheckpointRows) ? claimedCheckpointRows[0] : claimedCheckpointRows;
+      if (!checkpoint) break;
+      claimedCheckpoints.push(checkpoint);
+      unsettledCheckpoints.set(checkpoint.id, checkpoint);
+      // Merge mode contains no provider work and must finalize under this
+      // same exclusive job lease rather than claiming unrelated work.
+      if (checkpoint.kind === 'merge') break;
+    }
 
-    if (activeCheckpoint) {
-      if (activeCheckpoint.kind === 'merge') {
+    if (claimedCheckpoints.length) {
+      if (claimedCheckpoints[0].kind === 'merge') {
+        activeCheckpoint = claimedCheckpoints[0];
         await completeCheckpoint(activeCheckpoint, {
           ready: true,
           mergeSelectionSha256: sha256(canonicalJson(job.merge_selection || null)),
         });
       } else {
-        const output = await processExtractionCheckpoint(activeCheckpoint);
-        if (output?.yielded) return { statusCode: 200, body: 'yielded before provider dispatch' };
-        await completeCheckpoint(activeCheckpoint, output);
-      }
-
-      // One provider-bearing checkpoint per invocation. This is the boundary
-      // that prevents a three-report audit from becoming a 15-minute
-      // sequential monolith. The next background invocation reclaims no work;
-      // it starts from the next durable checkpoint.
-      if (activeCheckpoint.kind !== 'merge') {
-        await releaseLease({ status: 'waiting', stage: 'Checkpoint saved · continuing audit' });
-        try { await dispatchNext(); } catch (chainError) {
-          console.warn('[audit] checkpoint saved; watchdog will resume after chain failure:', chainError.message);
+        if (remainingBudgetMs() < MIN_PROVIDER_BUDGET_MS) {
+          const retryAt = new Date().toISOString();
+          for (const checkpoint of claimedCheckpoints) {
+            await deferCheckpoint(checkpoint, {
+              status: 'retryable',
+              errorType: 'worker_budget_deferred',
+              errorMessage: 'Checkpoint is ready for a fresh provider window.',
+              retryAt,
+            });
+          }
+          await releaseLease({ status: 'waiting', stage: 'Saved checkpoints ready for the next worker', retryAt });
+          try { await dispatchNext(); } catch (chainError) {
+            console.warn('[audit] deferred batch saved; watchdog will resume after chain failure:', chainError.message);
+          }
+          return { statusCode: 200, body: 'yielded before provider batch' };
         }
-        return { statusCode: 200, body: 'checkpoint saved' };
+
+        // PDFDocument.load/copy can briefly hold the whole source plus a
+        // generated range in memory. Materialize ranges serially, then overlap
+        // only the provider network/model work below. This keeps a large 3B
+        // from tripling its peak PDF memory when three checkpoints are claimed.
+        const preparedInputs = [];
+        for (const checkpoint of claimedCheckpoints) {
+          try {
+            preparedInputs.push({ status: 'fulfilled', value: await checkpointInput(checkpoint) });
+          } catch (error) {
+            preparedInputs.push({ status: 'rejected', reason: error });
+          }
+        }
+        if (remainingBudgetMs() < MIN_PROVIDER_BUDGET_MS) {
+          const retryAt = new Date().toISOString();
+          for (const checkpoint of claimedCheckpoints) {
+            await deferCheckpoint(checkpoint, {
+              status: 'retryable',
+              errorType: 'worker_budget_deferred',
+              errorMessage: 'Checkpoint is ready for a fresh provider window.',
+              retryAt,
+            });
+          }
+          await releaseLease({ status: 'waiting', stage: 'Prepared checkpoints ready for the next worker', retryAt });
+          try { await dispatchNext(); } catch (chainError) {
+            console.warn('[audit] prepared batch saved; watchdog will resume after chain failure:', chainError.message);
+          }
+          return { statusCode: 200, body: 'yielded after safe checkpoint preparation' };
+        }
+
+        // Only provider-bound extraction runs concurrently. Every checkpoint
+        // completion/split/defer write is settled serially below so immutable
+        // provenance and aggregate counters remain deterministic.
+        const results = await Promise.allSettled(
+          claimedCheckpoints.map((checkpoint, index) => (
+            preparedInputs[index].status === 'fulfilled'
+              ? processExtractionCheckpoint(checkpoint, preparedInputs[index].value)
+              : Promise.reject(preparedInputs[index].reason)
+          )),
+        );
+        activeCheckpoint = null;
+        let terminalFailure = null;
+        let earliestRetryAt = null;
+        let completedCount = 0;
+        let splitCount = 0;
+        const settlementCauses = new Map();
+
+        const settlementFailures = await settleEveryAuditCheckpoint(results, async (result, index) => {
+          const checkpoint = claimedCheckpoints[index];
+          let providerFailure = null;
+          if (result.status === 'fulfilled') {
+            await completeCheckpoint(checkpoint, result.value);
+            completedCount += 1;
+            return;
+          }
+
+          const error = result.reason instanceof Error ? result.reason : new Error('Audit provider request failed.');
+          providerFailure = error;
+          settlementCauses.set(checkpoint.id, providerFailure);
+          const splitReason = checkpointSplitReason(error);
+          const canSplit = splitReason
+            && Number(checkpoint.end_page) - Number(checkpoint.start_page) + 1 >= 3;
+          if (canSplit) {
+            console.warn('[audit] recoverable provider limit; splitting saved checkpoint', JSON.stringify({
+              jobId,
+              checkpointId: checkpoint.id,
+              startPage: checkpoint.start_page,
+              endPage: checkpoint.end_page,
+              reason: splitReason,
+            }));
+            await splitCheckpoint(checkpoint, splitReason);
+            splitCount += 1;
+            return;
+          }
+
+          const attempts = Number(checkpoint.attempt_count || 0);
+          const unsplittableTimeout = error.auditProviderTimeout
+            && Number(checkpoint.end_page) - Number(checkpoint.start_page) + 1 < 3;
+          const retryable = !error.auditTerminal && !error.auditOutputLimit
+            && !error.auditNativeFallbackSplit
+            && attempts < (unsplittableTimeout ? 2 : 3);
+          const delayMs = Math.min(5 * 60 * 1000, 5000 * (2 ** Math.max(0, attempts - 1)));
+          const retryAt = retryable ? new Date(Date.now() + delayMs).toISOString() : null;
+          await deferCheckpoint(checkpoint, {
+            status: retryable ? 'retryable' : 'error',
+            errorType: error.auditErrorType || error.name || 'audit_error',
+            errorMessage: error.auditUserMessage || error.message || 'Audit failed',
+            retryAt,
+          });
+          if (retryAt && (!earliestRetryAt || retryAt < earliestRetryAt)) earliestRetryAt = retryAt;
+          if (!retryable && !terminalFailure) terminalFailure = error;
+        });
+
+        for (const failure of settlementFailures) {
+          const checkpoint = claimedCheckpoints[failure.index];
+          if (!settlementCauses.has(checkpoint.id)) settlementCauses.set(checkpoint.id, failure.error);
+          console.error('[audit] checkpoint settlement failed after preserving sibling work', JSON.stringify({
+            jobId,
+            checkpointId: checkpoint.id,
+            error: failure.error?.message || 'checkpoint settlement failed',
+          }));
+        }
+
+        if (settlementFailures.length) {
+          const settlementError = new Error(`Could not durably settle ${settlementFailures.length} audit checkpoint${settlementFailures.length === 1 ? '' : 's'}.`);
+          settlementError.auditCheckpointCauses = settlementCauses;
+          settlementError.auditTerminalSibling = terminalFailure;
+          throw settlementError;
+        }
+
+        if (terminalFailure) {
+          await releaseLease({
+            status: 'error',
+            stage: 'Audit stopped for review',
+            errorType: terminalFailure.auditErrorType || terminalFailure.name || 'audit_error',
+            errorMessage: terminalFailure.auditUserMessage || terminalFailure.message || 'Audit failed',
+          });
+          return { statusCode: 500, body: 'audit checkpoint stopped for review' };
+        }
+
+        const stage = [
+          completedCount ? `${completedCount} checkpoint${completedCount === 1 ? '' : 's'} saved` : null,
+          splitCount ? `${splitCount} slow range${splitCount === 1 ? '' : 's'} split` : null,
+        ].filter(Boolean).join(' · ') || 'Checkpoint batch safely deferred';
+        await releaseLease({ status: 'waiting', stage: `${stage} · continuing audit`, retryAt: earliestRetryAt });
+        try { await dispatchNext(); } catch (chainError) {
+          console.warn('[audit] checkpoint batch saved; watchdog will resume after chain failure:', chainError.message);
+        }
+        return { statusCode: 200, body: 'checkpoint batch saved' };
       }
     }
 
@@ -1809,9 +2330,10 @@ export const handler = async (event) => {
         });
         const cohortKey = cohortKeyFor(selectedJobClient.id, cohort);
         const sourceReport = await downloadReport(files[0]);
+        const extractionInputs = extractionInputsFromCheckpoints(checkpoints);
         const sources = reports.map((bureauParse) => sourceRecord({
           bureauParse, report: sourceReport, file: files[0], sourceJobId: jobId,
-          pageCount, chunkCount: checkpoints.length,
+          pageCount, chunkCount: checkpoints.length, extractionInputs,
         }));
         const provenance = buildAuditProvenance({
           mode: 'combined', sourceJobId: jobId, cohort, cohortKey, sources, evaluatedAt: job.created_at,
@@ -1834,7 +2356,11 @@ export const handler = async (event) => {
           ), bureauDisplayName(key));
           const pageCount = Number(bureauCheckpoints[0].total_pages) || 1;
           assertExtractionPageBounds(parsed[key], pageCount);
-          meta[key] = { pageCount, chunkCount: bureauCheckpoints.length };
+          meta[key] = {
+            pageCount,
+            chunkCount: bureauCheckpoints.length,
+            extractionInputs: extractionInputsFromCheckpoints(bureauCheckpoints),
+          };
         }
 
         if (job.mode === 'single') {
@@ -1843,6 +2369,7 @@ export const handler = async (event) => {
           const staged = await saveBureauParseRow({
             bureauKey: key, bureauParse: parsed[key], report, file: files[0],
             pageCount: meta[key].pageCount, chunkCount: meta[key].chunkCount,
+            extractionInputs: meta[key].extractionInputs,
           });
           audit = assertAuditOutput(buildDeterministicAudit([parsed[key]], {
             reportDate: parsed[key].reportDate, evaluatedAt: job.created_at, provenance: staged.provenance,
@@ -1872,6 +2399,7 @@ export const handler = async (event) => {
             file: fileByBureau[bureauParse.bureau], sourceJobId: jobId,
             pageCount: meta[bureauParse.bureau].pageCount,
             chunkCount: meta[bureauParse.bureau].chunkCount,
+            extractionInputs: meta[bureauParse.bureau].extractionInputs,
           }));
           const provenance = buildAuditProvenance({
             mode: 'individual', sourceJobId: jobId, cohort, cohortKey, sources, evaluatedAt: job.created_at,
@@ -1902,37 +2430,101 @@ export const handler = async (event) => {
     if (finishError || finished !== true) throw new Error('Could not atomically finish logical audit job: ' + (finishError?.message || 'lease mismatch'));
     leaseClosed = true;
   } catch (e) {
-    console.error('audit-run failed:', e);
-    if ((e?.auditOutputLimit || e?.auditProviderTimeout) && activeCheckpoint
-        && Number(activeCheckpoint.end_page) - Number(activeCheckpoint.start_page) + 1 >= 4) {
-      const mid = Math.floor((Number(activeCheckpoint.start_page) + Number(activeCheckpoint.end_page)) / 2);
-      const leftInputSha256 = checkpointInputSha256({
-        sourceSha256: activeCheckpoint.source_sha256,
-        startPage: Number(activeCheckpoint.start_page),
-        endPage: mid + 1,
-        totalPages: Number(activeCheckpoint.total_pages),
-      });
-      const rightInputSha256 = checkpointInputSha256({
-        sourceSha256: activeCheckpoint.source_sha256,
-        startPage: mid,
-        endPage: Number(activeCheckpoint.end_page),
-        totalPages: Number(activeCheckpoint.total_pages),
-      });
-      const { data: split, error: splitError } = await db.rpc('ccc_split_audit_checkpoint', {
-        p_checkpoint_id: activeCheckpoint.id,
-        p_lease_token: leaseToken,
-        p_left_input_sha256: leftInputSha256,
-        p_right_input_sha256: rightInputSha256,
-      });
-      if (!splitError && split === true) {
+    if (unsettledCheckpoints.size > 0) {
+      let anyTerminal = Boolean(e?.auditTerminalSibling);
+      let earliestRetryAt = null;
+      let settlementWriteFailed = false;
+      for (const checkpoint of [...unsettledCheckpoints.values()]) {
+        try {
+          const checkpointError = e?.auditCheckpointCauses?.get?.(checkpoint.id) || e;
+          const pageCount = Number(checkpoint.end_page) - Number(checkpoint.start_page) + 1;
+          const splitReason = checkpointSplitReason(checkpointError);
+          if (splitReason && pageCount >= 3) {
+            await splitCheckpoint(checkpoint, splitReason);
+            continue;
+          }
+          const attempts = Number(checkpoint.attempt_count || 0);
+          const unsplittableTimeout = checkpointError?.auditProviderTimeout && pageCount < 3;
+          const retryableCheckpoint = !checkpointError?.auditTerminal && !checkpointError?.auditOutputLimit
+            && !checkpointError?.auditNativeFallbackSplit
+            && attempts < (unsplittableTimeout ? 2 : 3);
+          const delayMs = Math.min(5 * 60 * 1000, 5000 * (2 ** Math.max(0, attempts - 1)));
+          const retryAt = retryableCheckpoint ? new Date(Date.now() + delayMs).toISOString() : null;
+          await deferCheckpoint(checkpoint, {
+            status: retryableCheckpoint ? 'retryable' : 'error',
+            errorType: checkpointError?.auditErrorType || checkpointError?.name || 'audit_error',
+            errorMessage: checkpointError?.auditUserMessage || checkpointError?.message || 'Audit failed',
+            retryAt,
+          });
+          if (!retryableCheckpoint) anyTerminal = true;
+          if (retryAt && (!earliestRetryAt || retryAt < earliestRetryAt)) earliestRetryAt = retryAt;
+        } catch (settlementError) {
+          settlementWriteFailed = true;
+          console.error('[audit] could not settle claimed checkpoint before job release', JSON.stringify({
+            jobId,
+            checkpointId: checkpoint.id,
+            error: settlementError?.message || 'checkpoint settlement failed',
+          }));
+        }
+      }
+
+      // Release the job once after attempting every exact checkpoint. Any row
+      // still carrying the lease is recovered by the watchdog only after that
+      // lease expires; siblings already transitioned above never repeat.
+      const recoverable = !anyTerminal;
+      const releaseError = e?.auditTerminalSibling || e;
+      if (!leaseClosed) {
+        try {
+          await releaseLease({
+            status: recoverable ? 'retryable' : 'error',
+            stage: recoverable
+              ? 'Saved checkpoint batch paused · safe resume scheduled'
+              : 'Audit stopped for review',
+            errorType: releaseError?.auditErrorType || releaseError?.name || 'audit_error',
+            errorMessage: recoverable
+              ? (settlementWriteFailed
+                ? 'One saved checkpoint is waiting for lease recovery; completed siblings were preserved.'
+                : null)
+              : (releaseError?.auditUserMessage || releaseError?.message || 'Audit failed'),
+            retryAt: recoverable ? (earliestRetryAt || new Date().toISOString()) : null,
+          });
+        } catch (jobWriteError) {
+          console.error('audit-run: could not release checkpoint batch', jobWriteError.message);
+        }
+      }
+      if (recoverable) {
+        try { await dispatchNext(); } catch (chainError) {
+          console.warn('[audit] deferred batch will resume through watchdog:', chainError.message);
+        }
+        return { statusCode: 200, body: 'checkpoint batch safely deferred' };
+      }
+      console.error('audit-run failed:', e);
+      return { statusCode: 500, body: 'audit checkpoint batch stopped for review' };
+    }
+
+    const activeSplitReason = checkpointSplitReason(e);
+    const canSplitCheckpoint = activeSplitReason && activeCheckpoint
+      && Number(activeCheckpoint.end_page) - Number(activeCheckpoint.start_page) + 1 >= 3;
+    if (canSplitCheckpoint) {
+      console.warn('[audit] recoverable provider limit; splitting saved checkpoint', JSON.stringify({
+        jobId,
+        checkpointId: activeCheckpoint.id,
+        startPage: activeCheckpoint.start_page,
+        endPage: activeCheckpoint.end_page,
+        reason: activeSplitReason,
+      }));
+      try {
+        await splitCheckpoint(activeCheckpoint, activeSplitReason);
         await releaseLease({ status: 'waiting', stage: 'Dense or slow pages saved as smaller checkpoints' });
         try { await dispatchNext(); } catch (chainError) {
           console.warn('[audit] split saved; watchdog will resume after chain failure:', chainError.message);
         }
         return { statusCode: 200, body: 'dense checkpoint split safely' };
+      } catch (splitError) {
+        console.error('audit-run: provider-limit split failed', splitError?.message || 'lease mismatch');
       }
-      console.error('audit-run: output-limit split failed', splitError?.message || 'lease mismatch');
     }
+    console.error('audit-run failed:', e);
     const attempts = Number(activeCheckpoint?.attempt_count || 0);
     const consecutiveJobRetries = Number(job?.retry_count || 0);
     // Never pay for the exact same deterministic output-limit failure again.

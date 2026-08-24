@@ -13,10 +13,10 @@ import {
 import { DISPUTE_SCREENSHOT_POLICIES } from './disputeScreenshots.js';
 
 export const CCC_SOP_CONTROL = Object.freeze({
-  id: 'CCC-SOP-2026.08.20-PHASE1',
-  version: '2026.08.20.2',
+  id: 'CCC-SOP-2026.08.23-PHASE1',
+  version: '2026.08.23.1',
   methodVersion: CCC_METHOD_VERSION,
-  effectiveDate: '2026-08-20',
+  effectiveDate: '2026-08-23',
   status: 'Controlled staff standard · Phase 1',
   owner: 'Credit Comeback Club',
   changeSummary: Object.freeze([
@@ -25,7 +25,7 @@ export const CCC_SOP_CONTROL = Object.freeze({
     'Bound training ladders, physical-template aliases, and screenshot requirements to live application constants.',
     'Documented the human-only and Claude-assisted letter-writing boundaries.',
     'Added role-based daily and weekly operating checklists plus explicit clarification holds.',
-    'Retired First Work Fee from active pricing; set Standard to $149/month, VIP to $299/month, and Paid In Full to $997 while preserving historical agreement and ledger snapshots.',
+    'Retired First Work Fee from active pricing; set Standard to $149/month, VIP to $299/month, and Paid In Full to $849 while preserving historical agreement and ledger snapshots.',
   ]),
 });
 
@@ -188,11 +188,11 @@ export const CCC_SOP_MODULES = Object.freeze([
     sourceIds: source('CCC-OWNER-POLICY-2026-08-20'),
     blocks: Object.freeze([
       steps('Owner starts onboarding', [
-        'Open the client billing setup and confirm the selected plan: Standard at $149 per month, VIP at $299 per month, or Paid In Full at $997. The active plans do not use a First Work Fee.',
+        'Open the client billing setup and confirm the selected plan: Standard at $149 per month, VIP at $299 per month, or Paid In Full at $849. The active plans do not use a First Work Fee.',
         'Choose and save the current service agreement; verify that client name and pricing are populated from the saved records.',
         'Send the secure onboarding link. Do not send a retired authorization form.',
       ]),
-      callout('gold', 'Opening invoice rule', 'For a new Standard or VIP agreement, the owner-created opening invoice is the first monthly payment only. For a new Paid In Full agreement, it is the $997 flat service price. Creating the invoice never charges a card automatically. Historical signed agreements and ledger entries keep their original terms.'),
+      callout('gold', 'Opening invoice rule', 'For a new Standard or VIP agreement, the owner-created opening invoice is the first monthly payment only. For a new Paid In Full agreement, it is the $849 flat service price. Creating the invoice never charges a card automatically. Historical signed agreements and ledger entries keep their original terms.'),
       steps('Client completes one wizard', [
         'Create a portal password from the secure invitation.',
         'Review the required disclosure and sign the current service agreement.',

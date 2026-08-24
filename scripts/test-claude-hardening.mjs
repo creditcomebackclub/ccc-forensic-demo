@@ -44,6 +44,9 @@ assert.match(runtime, /maxRetries: 2/);
 assert.match(runtime, /timeout: 8 \* 60 \* 1000/);
 assert.match(runtime, /messages\.countTokens/);
 assert.match(audit, /effort: 'medium'/);
+assert.match(audit, /const AUDIT_THINKING = Object\.freeze\(\{ type: 'disabled' \}\)/,
+  'deterministic report transcription must explicitly disable Sonnet 5 adaptive thinking');
+assert.match(audit, /thinking: AUDIT_THINKING/);
 assert.match(audit, /preflightTokenCount/);
 assert.match(phase2, /MAX_TOTAL_RESPONSE_BYTES/);
 assert.match(phase2, /splitPdfByPages/);

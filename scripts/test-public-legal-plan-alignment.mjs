@@ -8,7 +8,7 @@ const privacy = await readFile(new URL('public/privacy.html', root), 'utf8');
 for (const phrase of [
   '$149.00 per month',
   '$299.00 per month',
-  '$997.00 for 6 months of Standard-level service',
+  '$849.00 for 6 months of Standard-level service',
   'up to 3 individualized correspondence pieces per monthly service cycle',
   'up to 5 individualized correspondence pieces per monthly service cycle',
   'Chris personally reviews, directs, and works on the client file',

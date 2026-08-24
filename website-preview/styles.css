@@ -1324,6 +1324,154 @@ p {
   color: var(--blue-light);
 }
 
+.guide-resource-section {
+  background: var(--white);
+  padding: 0 0 112px;
+  position: relative;
+}
+
+.guide-resource-card {
+  background:
+    radial-gradient(circle at 91% 15%, rgba(102, 199, 244, 0.22), transparent 28%),
+    linear-gradient(135deg, #07101a 0%, #0a2639 100%);
+  border: 1px solid rgba(102, 199, 244, 0.24);
+  border-radius: 32px;
+  box-shadow: var(--shadow-md);
+  color: var(--white);
+  display: grid;
+  gap: 30px 56px;
+  grid-template-columns: minmax(0, 0.9fr) minmax(390px, 1.1fr);
+  overflow: hidden;
+  padding: 44px;
+  position: relative;
+}
+
+.guide-resource-card::before {
+  border: 1px solid rgba(102, 199, 244, 0.13);
+  border-radius: 50%;
+  content: "";
+  height: 320px;
+  pointer-events: none;
+  position: absolute;
+  right: -190px;
+  top: -170px;
+  width: 320px;
+}
+
+.guide-resource-copy,
+.guide-resource-list,
+.guide-resource-note {
+  position: relative;
+  z-index: 1;
+}
+
+.guide-resource-copy .eyebrow {
+  color: var(--blue-light);
+  margin-bottom: 13px;
+}
+
+.guide-resource-copy h2 {
+  font-size: clamp(32px, 3.2vw, 46px);
+  line-height: 1.02;
+  margin-bottom: 16px;
+  max-width: 520px;
+}
+
+.guide-resource-copy > p:not(.eyebrow) {
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 12px;
+  line-height: 1.72;
+  margin-bottom: 24px;
+  max-width: 510px;
+}
+
+.button-guide {
+  background: var(--blue-light);
+  color: var(--ink);
+  height: 54px;
+  width: auto;
+  padding: 0 22px;
+}
+
+.button-guide:hover {
+  background: var(--white);
+}
+
+.button-guide svg {
+  fill: none;
+  height: 16px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  width: 16px;
+}
+
+.guide-resource-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.guide-resource-list li {
+  align-items: start;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 38px 1fr;
+  padding: 16px 0;
+}
+
+.guide-resource-list li:first-child {
+  padding-top: 1px;
+}
+
+.guide-resource-list li:last-child {
+  border-bottom: 0;
+  padding-bottom: 1px;
+}
+
+.guide-resource-list li > span {
+  align-items: center;
+  background: rgba(102, 199, 244, 0.12);
+  border: 1px solid rgba(102, 199, 244, 0.28);
+  border-radius: 11px;
+  color: var(--blue-light);
+  display: inline-flex;
+  font-size: 8px;
+  font-weight: 900;
+  height: 38px;
+  justify-content: center;
+  letter-spacing: 0.08em;
+  width: 38px;
+}
+
+.guide-resource-list strong,
+.guide-resource-list small {
+  display: block;
+}
+
+.guide-resource-list strong {
+  color: var(--white);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.guide-resource-list small {
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.guide-resource-note {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 9px;
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 18px;
+}
+
 .simulator-section {
   background:
     radial-gradient(circle at 0% 100%, rgba(102, 199, 244, 0.18), transparent 30%),
@@ -4649,6 +4797,12 @@ select[aria-invalid="true"] {
     gap: 50px;
   }
 
+  .guide-resource-card {
+    gap: 30px;
+    grid-template-columns: minmax(0, 0.85fr) minmax(350px, 1.15fr);
+    padding: 38px;
+  }
+
   .founder-visual {
     min-height: 500px;
   }
@@ -4730,6 +4884,18 @@ select[aria-invalid="true"] {
 
   .hero {
     min-height: 0;
+  }
+
+  .guide-resource-section {
+    padding-bottom: 86px;
+  }
+
+  .guide-resource-card {
+    grid-template-columns: 1fr;
+  }
+
+  .guide-resource-note {
+    grid-column: auto;
   }
 
   .hero-layout {
@@ -4883,6 +5049,24 @@ select[aria-invalid="true"] {
   .hero-layout {
     padding-bottom: 62px;
     padding-top: 52px;
+  }
+
+  .guide-resource-section {
+    padding-bottom: 70px;
+  }
+
+  .guide-resource-card {
+    border-radius: 25px;
+    gap: 28px;
+    padding: 30px 24px;
+  }
+
+  .guide-resource-copy h2 {
+    font-size: 34px;
+  }
+
+  .button-guide {
+    width: 100%;
   }
 
   .hero-logo-watermark {

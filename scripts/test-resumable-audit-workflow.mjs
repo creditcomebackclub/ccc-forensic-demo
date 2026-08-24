@@ -8,6 +8,7 @@ import {
   auditRetryDelayMs,
   buildAuditSourceMeta,
   isResumableAuditActive,
+  settleEveryAuditCheckpoint,
 } from '../src/utils/auditResume.js';
 import { extractPdfPageRange, splitPdfByPages } from '../src/utils/pdfPageChunks.js';
 
@@ -19,6 +20,7 @@ const worker = read('../netlify/functions/audit-run-background.mjs');
 const browser = read('../src/utils/auditJobs.js');
 const storage = read('../src/utils/storage.js');
 const migration = read('../supabase/migrations/20260820530000_resumable_audit_jobs.sql');
+const parallelMigration = read('../supabase/migrations/20260820550000_parallel_audit_checkpoint_defer.sql');
 const watchdog = read('../netlify/functions/audit-job-watchdog.cjs');
 const config = read('../netlify.toml');
 
@@ -77,16 +79,35 @@ assert.equal(auditJobCanDispatch({ status: 'running', lease_expires_at: new Date
 assert.equal(auditRetryDelayMs(1), 5000);
 assert.equal(auditRetryDelayMs(99), 300000);
 
-// One provider-bearing checkpoint per invocation, with a pre-kill deadline
-// guard and a durable completion before chaining the next invocation.
+// A failure saving the second paid result must not prevent the third result
+// from reaching its own settlement boundary.
+const settlementVisits = [];
+const settlementFailures = await settleEveryAuditCheckpoint(['first', 'second', 'third'], async (entry) => {
+  settlementVisits.push(entry);
+  if (entry === 'second') throw new Error('injected database settlement failure');
+});
+assert.deepEqual(settlementVisits, ['first', 'second', 'third']);
+assert.equal(settlementFailures.length, 1);
+assert.equal(settlementFailures[0].entry, 'second');
+
+// A bounded provider batch shares one exclusive job lease. Provider work may
+// overlap, but every immutable checkpoint write is settled before the job is
+// released and chained.
 assert.match(worker, /WORKER_BUDGET_MS = 11\.5 \* 60 \* 1000/);
 assert.match(worker, /maxRetries: 0/);
 assert.match(worker, /timeout: 6 \* 60 \* 1000/);
 assert.match(worker, /RESUMABLE_PDF_CHUNK_PAGES = 8/);
+assert.match(worker, /MAX_PROVIDER_CONCURRENCY = 3/);
+assert.match(worker, /EXTRACTION_PROVIDER_TIMEOUT_MS = 3 \* 60 \* 1000/);
+assert.match(worker, /measureAuditPdfPageDensity\(report\.bytes\)[\s\S]*planAdaptiveAuditCheckpointRanges\(measurement\.pages\)/);
+assert.match(worker, /providerTimeoutMs: EXTRACTION_PROVIDER_TIMEOUT_MS/);
 assert.match(worker, /preflightTokenCount[\s\S]*providerWindowMs[\s\S]*AbortSignal\.timeout/);
-assert.match(worker, /remainingBudgetMs\(\) < MIN_PROVIDER_BUDGET_MS[\s\S]*releaseLease[\s\S]*dispatchNext/);
-assert.match(worker, /remainingBudgetMs\(\) < MIN_PROVIDER_BUDGET_MS[\s\S]*checkpointId: checkpoint\.id[\s\S]*dispatchNext/);
-assert.match(worker, /await completeCheckpoint\(activeCheckpoint, output\)[\s\S]*activeCheckpoint\.kind !== 'merge'[\s\S]*releaseLease[\s\S]*dispatchNext[\s\S]*return \{ statusCode: 200, body: 'checkpoint saved' \}/);
+assert.match(worker, /claimedCheckpoints\.length < MAX_PROVIDER_CONCURRENCY|index < MAX_PROVIDER_CONCURRENCY/);
+assert.match(worker, /Promise\.allSettled\([\s\S]*processExtractionCheckpoint/);
+assert.match(worker, /usageByCheckpoint\.set\(checkpoint\.id, callUsage\)[\s\S]*usageByCheckpoint\.get\(checkpoint\.id\)/);
+assert.match(worker, /remainingBudgetMs\(\) < MIN_PROVIDER_BUDGET_MS[\s\S]*deferCheckpoint\(checkpoint[\s\S]*releaseLease[\s\S]*dispatchNext/);
+assert.match(worker, /settleEveryAuditCheckpoint\(results[\s\S]*checkpoint settlement failed after preserving sibling work/);
+assert.match(worker, /releaseLease\(\{ status: 'waiting'[\s\S]*dispatchNext[\s\S]*body: 'checkpoint batch saved'/);
 assert.match(worker, /ccc_claim_next_audit_checkpoint/);
 assert.match(worker, /checkpoint\.output_sha256 !== parseSha256\(checkpoint\.output\)/);
 assert.match(worker, /source\.sha256 !== checkpoint\.source_sha256/);
@@ -98,10 +119,18 @@ const providerBlock = worker.slice(worker.indexOf("from('audit_provider_attempts
 assert.match(providerBlock, /status: 'started'/);
 assert.match(providerBlock, /anthropic\.messages\.stream/);
 assert.match(providerBlock, /status: 'completed'/);
+assert.match(providerBlock, /telemetry write failed; preserving paid output/);
+assert.doesNotMatch(providerBlock, /throw new Error\('Could not record completed provider attempt/);
 assert.match(providerBlock, /outputLimit \? 'output_limit' : 'failed'/);
-assert.match(worker, /ccc_split_audit_checkpoint/);
+assert.match(worker, /ccc_split_audit_checkpoint_v2/);
 assert.match(worker, /sequence: sourceIndex \* 1000000 \+ chunk\.startPage \* 100/);
-assert.match(worker, /activeCheckpoint\.end_page[\s\S]*activeCheckpoint\.start_page[\s\S]*>= 4/);
+assert.match(worker, /activeCheckpoint\.end_page[\s\S]*activeCheckpoint\.start_page[\s\S]*>= 3/);
+assert.match(worker, /const unsettledCheckpoints = new Map\(\)/);
+assert.match(worker, /for \(const checkpoint of \[\.\.\.unsettledCheckpoints\.values\(\)\]\)[\s\S]*deferCheckpoint\(checkpoint/);
+assert.match(worker, /for \(const checkpoint of claimedCheckpoints\)[\s\S]*preparedInputs\.push\(\{ status: 'fulfilled', value: await checkpointInput\(checkpoint\) \}\)[\s\S]*Promise\.allSettled/);
+assert.match(worker, /strictNativePlan[\s\S]*splitPdfByPages\(report\.bytes, \{ maxPages: RESUMABLE_PDF_CHUNK_PAGES \}\)/);
+assert.match(worker, /checkpointSplitReason[\s\S]*auditNativeFallbackSplit[\s\S]*native_fallback/);
+assert.match(worker, /assertExtractionPageBounds\(decoded, localPageCount\)[\s\S]*rebaseExtractionPageRefs[\s\S]*assertExtractionPageBounds\(rebased, checkpoint\.total_pages\)/);
 
 // All four modes route through durable checkpoints and preserve the existing
 // deterministic cohort/provenance guards.
@@ -117,6 +146,15 @@ assert.match(worker, /buildDeterministicAudit/);
 // Database owns logical idempotency, leases, immutable checkpoints, and
 // service-only mutation. Expired workers are retry-visible and reclaimable.
 assert.match(migration, /audit_jobs_user_logical_key_uidx/);
+assert.match(parallelMigration, /create or replace function public\.ccc_defer_audit_checkpoint/);
+assert.match(parallelMigration, /job\.lease_token = p_lease_token[\s\S]*checkpoint\.lease_token = p_lease_token/);
+assert.match(parallelMigration, /revoke all on function public\.ccc_defer_audit_checkpoint[\s\S]*from authenticated/);
+assert.match(parallelMigration, /grant execute on function public\.ccc_defer_audit_checkpoint[\s\S]*to service_role/);
+assert.match(parallelMigration, /create or replace function public\.ccc_split_audit_checkpoint_v2/);
+assert.match(parallelMigration, /p_reason not in \('output_limit', 'provider_timeout', 'native_fallback'\)/);
+assert.match(parallelMigration, /when 'native_fallback' then 'Native text eligibility changed before dispatch; replaced by smaller source-PDF checkpoints\.'/);
+assert.match(parallelMigration, /when 'native_fallback' then 'Native text range split before provider dispatch'/);
+assert.match(parallelMigration, /create or replace function public\.ccc_resume_failed_audit_job/);
 assert.match(migration, /workflow_version = 'legacy'[\s\S]*Legacy audit requires a deliberate rerun/);
 assert.match(migration, /pg_advisory_xact_lock/);
 assert.match(migration, /force_direct_audit_job_legacy/);

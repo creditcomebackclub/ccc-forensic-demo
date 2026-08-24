@@ -202,16 +202,24 @@ check(
 check(
   liveHtml.includes('<strong>$149</strong>')
     && liveHtml.includes('<strong>$299</strong>')
-    && liveHtml.includes('<strong>$997</strong>')
+    && liveHtml.includes('<strong>$849</strong>')
     && liveHtml.includes('The same managed scope and correspondence capacity as Standard for one defined six-month service term'),
   'live promotion preserves approved prices and paid-in-full scope',
 );
 check(
-  ['/login', '/join?ref=', '/affiliate/apply', '/terms', '/privacy', '/croa-statement']
+  ['/login', '/freeguide', '/affiliate/apply', '/terms', '/privacy', '/croa-statement']
     .every((destination) => liveHtml.includes(`href="${destination}"`))
+    && liveHtml.includes('>Free guide</a>')
+    && liveHtml.includes('>Free dispute guide</a>')
+    && liveHtml.includes('>Partner application</a>')
+    && liveHtml.includes('href="https://www.facebook.com/groups/creditcomebackclub" target="_blank" rel="noopener noreferrer">Facebook community</a>')
+    && liveHtml.includes('class="guide-resource-section"')
+    && liveHtml.includes('Free 24-page field guide')
+    && !liveHtml.includes('/join?ref=')
+    && !liveHtml.includes('Affiliate referral intake')
     && !liveHtml.includes('data-preview-destination')
     && !liveHtml.includes('preview-destination'),
-  'member, referral, affiliate, and legal destinations remain real navigable links in live mode',
+  'member, free-guide, partner, community, and legal destinations remain real navigable links in live mode',
 );
 check(
   /from = "\/"[\s\S]*?to = "\/site-live\/index\.html"[\s\S]*?status = 200[\s\S]*?force = true/.test(netlifyConfig)

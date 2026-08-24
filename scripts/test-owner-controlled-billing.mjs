@@ -35,9 +35,14 @@ assert.throws(() => agreementOpeningInvoicePreview({
   templateVersion: 'ccc-service-agreement-v2-service-only', status: 'sent',
 }), /unsigned legacy agreement uses retired pricing/i);
 
-assert.equal(agreementOpeningInvoicePreview({
+const historicalPaidInFullSnapshot = {
   mode: 'tier', billingTier: 'Paid In Full', label: 'Paid In Full', flatFee: 997,
-}).total, 997);
+};
+assert.equal(
+  agreementOpeningInvoicePreview(historicalPaidInFullSnapshot).total,
+  997,
+  'an immutable historical signed snapshot keeps its original $997 amount',
+);
 const customMonthly = agreementOpeningInvoicePreview({
   mode: 'custom', label: 'Custom monthly support', amount: 225,
   billingType: 'Automated Recurring', monthlyFee: 225, flatFee: null,

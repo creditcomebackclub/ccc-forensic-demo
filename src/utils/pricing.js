@@ -7,12 +7,12 @@
 // this file. Real pricing is inherently tiered; there is no single "the"
 // monthly fee.
 
-export const ACTIVE_PRICING_VERSION = 'ccc-pricing-v2-no-first-work-2026-08-20';
+export const ACTIVE_PRICING_VERSION = 'ccc-pricing-v3-pif-849-2026-08-23';
 
 export const DEFAULT_TIER_PRICING = {
   Standard: { monthlyFee: 149 },
   VIP: { monthlyFee: 299 },
-  'Paid In Full': { flatFee: 997, flatMonths: 6 },
+  'Paid In Full': { flatFee: 849, flatMonths: 6 },
 };
 
 const RECURRING_CHARGE_PATTERN = /monthly|membership/i;

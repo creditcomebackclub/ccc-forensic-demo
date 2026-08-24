@@ -23,6 +23,23 @@ export function auditRetryDelayMs(attemptCount) {
   return Math.min(5 * 60 * 1000, 5000 * (2 ** Math.min(attempt - 1, 6)));
 }
 
+// Settle every claimed checkpoint even when one database transition fails.
+// The caller decides how to reconcile failures afterward; this helper's only
+// invariant is that a failure at index N never skips paid sibling outputs at
+// N+1. Kept dependency-free so the exact failure ordering is executable in
+// regression tests.
+export async function settleEveryAuditCheckpoint(entries, settle) {
+  const failures = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    try {
+      await settle(entries[index], index);
+    } catch (error) {
+      failures.push({ entry: entries[index], index, error });
+    }
+  }
+  return failures;
+}
+
 export async function fileSha256(file) {
   const bytes = await file.arrayBuffer();
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);

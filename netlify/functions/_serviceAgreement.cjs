@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const LEGACY_AGREEMENT_TEMPLATE_VERSION = 'ccc-service-agreement-v1-draft';
 const PRIOR_SERVICE_ONLY_AGREEMENT_TEMPLATE_VERSION = 'ccc-service-agreement-v2-service-only';
 const AGREEMENT_TEMPLATE_VERSION = 'ccc-service-agreement-v3-no-first-work';
-const ACTIVE_PRICING_VERSION = 'ccc-pricing-v2-no-first-work-2026-08-20';
+const ACTIVE_PRICING_VERSION = 'ccc-pricing-v3-pif-849-2026-08-23';
 const SERVICE_ONLY_PACKET_KIND = 'service_agreement_only';
 const UNRESOLVED_PRINCIPAL_ADDRESS = '[PRINCIPAL BUSINESS ADDRESS REQUIRED BEFORE APPROVAL]';
 const PRINCIPAL_BUSINESS_ADDRESS = '3088 Colorado Ave, Grand Junction, CO 81504';
@@ -20,7 +20,7 @@ const CONTACT = {
 const DEFAULT_TIER_PRICING = Object.freeze({
   Standard: Object.freeze({ monthlyFee: 149, label: 'Standard', serviceTerm: 'month-to-month service plan' }),
   VIP: Object.freeze({ monthlyFee: 299, label: 'VIP', serviceTerm: 'month-to-month service plan' }),
-  'Paid In Full': Object.freeze({ flatFee: 997, flatMonths: 6, label: 'Paid In Full', serviceTerm: 'six months of Standard service' }),
+  'Paid In Full': Object.freeze({ flatFee: 849, flatMonths: 6, label: 'Paid In Full', serviceTerm: 'six months of Standard service' }),
 });
 const PLAN_SERVICE_SCOPES = Object.freeze({
   Standard: Object.freeze({

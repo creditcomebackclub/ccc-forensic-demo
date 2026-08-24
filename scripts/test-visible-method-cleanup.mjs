@@ -49,7 +49,7 @@ for (const file of ['../public/home.html', '../public/freeguide.html', '../publi
   const source = sources.get(file);
   assert.match(source, /149/);
   assert.match(source, /299/);
-  assert.match(source, /997/);
+  assert.match(source, /849/);
   assert.match(source, /6(?:-|\s)*month/i);
 }
 

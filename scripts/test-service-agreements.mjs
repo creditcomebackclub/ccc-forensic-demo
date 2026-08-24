@@ -43,7 +43,7 @@ assert.match(vip.serviceScope.includedServices.join(' '), /funding-partner netwo
 assert.match(vip.serviceScope.qualifiers.join(' '), /does not guarantee approval, funding amount, rate, terms, or timing/i);
 assert.throws(() => agreement.planSnapshot(
   { billing_tier: 'Standard', service_agreement_mode: 'tier' },
-  { version: agreement.ACTIVE_PRICING_VERSION, tiers: { Standard: { monthlyFee: 149, flatFee: 997 } } },
+  { version: agreement.ACTIVE_PRICING_VERSION, tiers: { Standard: { monthlyFee: 149, flatFee: 849 } } },
 ), /cannot contain flatFee or flatMonths/i);
 assert.throws(() => agreement.planSnapshot(
   { billing_tier: 'VIP', service_agreement_mode: 'tier' },
@@ -51,11 +51,11 @@ assert.throws(() => agreement.planSnapshot(
 ), /cannot contain flatFee or flatMonths/i);
 assert.throws(() => agreement.planSnapshot(
   { billing_tier: 'Paid In Full', service_agreement_mode: 'tier' },
-  { version: agreement.ACTIVE_PRICING_VERSION, tiers: { 'Paid In Full': { flatFee: 997, flatMonths: 6, monthlyFee: 149 } } },
+  { version: agreement.ACTIVE_PRICING_VERSION, tiers: { 'Paid In Full': { flatFee: 849, flatMonths: 6, monthlyFee: 149 } } },
 ), /cannot contain a monthlyFee/i);
 assert.throws(() => agreement.planSnapshot(
   { billing_tier: 'Paid In Full', service_agreement_mode: 'tier' },
-  { version: agreement.ACTIVE_PRICING_VERSION, tiers: { 'Paid In Full': { flatFee: 997, flatMonths: 5 } } },
+  { version: agreement.ACTIVE_PRICING_VERSION, tiers: { 'Paid In Full': { flatFee: 849, flatMonths: 5 } } },
 ), /exactly 6 months/i);
 assert.throws(() => agreement.planSnapshot(
   { billing_tier: 'Standard', service_agreement_mode: 'tier' },
@@ -82,10 +82,10 @@ assert.throws(() => agreement.planSnapshot({
 }), /no more than two decimal places/i);
 
 const paid = agreement.planSnapshot({ billing_tier: 'Paid In Full', service_agreement_mode: 'tier' });
-assert.equal(paid.flatFee, 997);
+assert.equal(paid.flatFee, 849);
 assert.equal(paid.flatMonths, 6);
 assert.equal(paid.firstWorkFee, undefined);
-assert.equal(paid.amount, 997);
+assert.equal(paid.amount, 849);
 assert.equal(paid.serviceTerm, 'six months of Standard service');
 assert.equal(paid.serviceScope.scopeBasis, 'Standard');
 assert.equal(paid.serviceScope.correspondenceLimit, 3);
@@ -162,6 +162,19 @@ const retiredStoredPricing = await agreementOnboarding._test.loadPricingSettings
 assert.deepEqual(retiredStoredPricing.tiers, {});
 assert.equal(retiredStoredPricing.version, agreement.ACTIVE_PRICING_VERSION);
 assert.equal(retiredStoredPricing.source, 'owner_approved_defaults_retired_legacy_settings');
+globalThis.fetch = async () => ({
+  ok: true, status: 200,
+  text: async () => JSON.stringify({
+    pricing: {
+      version: 'ccc-pricing-v2-no-first-work-2026-08-20',
+      tiers: { 'Paid In Full': { flatFee: 997, flatMonths: 6 } },
+    },
+  }),
+});
+const priorStoredPricing = await agreementOnboarding._test.loadPricingSettings('https://example.supabase.co', 'service-key');
+assert.deepEqual(priorStoredPricing.tiers, {});
+assert.equal(priorStoredPricing.version, agreement.ACTIVE_PRICING_VERSION);
+assert.equal(priorStoredPricing.source, 'owner_approved_defaults_retired_legacy_settings');
 globalThis.fetch = async () => ({ ok: false, status: 404, text: async () => 'Object not found' });
 assert.deepEqual(
   await agreementOnboarding._test.loadPricingSettings('https://example.supabase.co', 'service-key'),

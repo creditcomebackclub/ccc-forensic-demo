@@ -79,7 +79,7 @@ check(evidenceAssetAvailability.every(Boolean), 'all seven client evidence image
 
 const destinations = [
   '/login',
-  '/join?ref=',
+  '/freeguide',
   '/affiliate/apply',
   '/terms',
   '/privacy',
@@ -120,6 +120,28 @@ check(
     && html.includes('rel="noopener noreferrer"')
     && html.includes('Join the free Facebook community'),
   'Facebook group is presented as a meaningful, safely linked education-community CTA',
+);
+check(
+  html.includes('<a class="preview-destination" href="/freeguide" data-preview-destination="/freeguide">Free guide</a>')
+    && html.includes('class="guide-resource-section"')
+    && html.includes('Free 24-page field guide')
+    && html.includes('3-bureau review workflow')
+    && html.includes('Fill-in letter framework')
+    && html.includes('Worksheets and response tracking')
+    && html.includes('Educational information only. The guide does not promise deletions, score changes, or any other result.')
+    && html.includes('Get the free guide')
+    && css.includes('.guide-resource-card')
+    && css.includes('.guide-resource-list'),
+  'primary navigation and compact premium resource section lead safely to the factual 24-page field guide',
+);
+check(
+  html.includes('<a class="preview-destination" href="/freeguide" data-preview-destination="/freeguide">Free dispute guide</a>')
+    && html.includes('<a href="https://www.facebook.com/groups/creditcomebackclub" target="_blank" rel="noopener noreferrer">Facebook community</a>')
+    && html.includes('href="/affiliate/apply" data-preview-destination="/affiliate/apply">Partner application</a>')
+    && !html.includes('/join?ref=')
+    && !html.includes('Affiliate referral intake')
+    && !html.includes('>Affiliate application</a>'),
+  'footer exposes the guide, community, and clearly named partner application without the empty referral route',
 );
 check(html.includes('Your Story. The Facts. The Pressure.'), 'owner-approved public framework leads the method');
 check(
@@ -376,7 +398,7 @@ check(html.includes('<span class="program-label">Paid in Full</span>'), 'Paid in
 check(
   html.includes('<strong>$149</strong>')
     && html.includes('<strong>$299</strong>')
-    && html.includes('<strong>$997</strong>'),
+    && html.includes('<strong>$849</strong>'),
   'owner-approved public prices are shown exactly',
 );
 check(
@@ -418,7 +440,7 @@ check(
     && html.includes('<dd>Exclusive CCC partner access and fast-track readiness review</dd>')
     && html.includes('<dd>Priority funding-partner referral when eligible</dd>')
     && html.includes('data-plan-panel="paid-in-full"')
-    && html.includes('<dd>$997 paid once</dd>')
+    && html.includes('<dd>$849 paid once</dd>')
     && html.includes('<dd>Fixed six months</dd>')
     && html.includes('<dd>Standard—not VIP</dd>')
     && html.includes('The same managed scope and correspondence capacity as Standard for one defined six-month service term'),
