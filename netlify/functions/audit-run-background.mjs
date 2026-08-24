@@ -256,9 +256,18 @@ function isOutputLimitError(err) {
   return err instanceof Error && /hit the output limit/i.test(err.message);
 }
 
-function isProviderTimeoutError(err) {
+export function isProviderTimeoutError(err, providerSignal = null) {
+  // Anthropic's streaming SDK translates an externally aborted signal into
+  // APIUserAbortError, but that instance has name === 'Error' and the generic
+  // message "Request was aborted.". Prefer the worker-owned timeout signal as
+  // the authoritative cause so this controlled deadline follows the durable
+  // split/resume path instead of retrying the same checkpoint unchanged.
+  if (providerSignal?.aborted && providerSignal.reason?.name === 'TimeoutError') return true;
   if (!(err instanceof Error)) return false;
-  return ['APIConnectionTimeoutError', 'TimeoutError', 'AbortError'].includes(err.name)
+  const errorNames = [err.name, err.constructor?.name].filter(Boolean);
+  return errorNames.some((name) => [
+    'APIConnectionTimeoutError', 'TimeoutError', 'AbortError', 'APIUserAbortError',
+  ].includes(name))
     || /\b(?:timed?\s*out|timeout)\b/i.test(err.message || '');
 }
 
@@ -644,6 +653,7 @@ export const handler = async (event) => {
     }
     const startedAt = new Date();
     let providerAttempt = null;
+    let providerSignal = null;
     let msg = null;
     if (checkpoint) {
       const { data: attemptRow } = await db.from('audit_job_attempts')
@@ -687,9 +697,8 @@ export const handler = async (event) => {
         deadlineError.auditDeadline = true;
         throw deadlineError;
       }
-      const stream = anthropic.messages.stream(params, {
-        signal: AbortSignal.timeout(Math.floor(providerWindowMs)),
-      });
+      providerSignal = AbortSignal.timeout(Math.floor(providerWindowMs));
+      const stream = anthropic.messages.stream(params, { signal: providerSignal });
       if (onTokens) {
         let chars = 0;
         stream.on('text', (delta) => {
@@ -737,8 +746,12 @@ export const handler = async (event) => {
     } catch (error) {
       const outputLimit = isOutputLimitError(error) || msg?.stop_reason === 'max_tokens';
       if (outputLimit && error && typeof error === 'object') error.auditOutputLimit = true;
-      const providerTimeout = isProviderTimeoutError(error);
-      if (providerTimeout && error && typeof error === 'object') error.auditProviderTimeout = true;
+      const providerTimeout = isProviderTimeoutError(error, providerSignal);
+      if (providerTimeout && error && typeof error === 'object') {
+        error.auditProviderTimeout = true;
+        error.auditErrorType = 'provider_timeout';
+        error.auditUserMessage = 'A report section took too long to analyze. CCC did not publish an incomplete audit; retry the audit or contact support if it happens again.';
+      }
       const invalidRequest = isProviderInvalidRequestError(error);
       const providerRequestId = msg?._request_id || error?.requestID || error?.request_id || error?.error?.request_id || null;
       const providerErrorType = error?.type || error?.error?.error?.type || error?.error?.type || error?.name || 'provider_error';

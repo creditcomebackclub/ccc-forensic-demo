@@ -22,6 +22,7 @@
     "test:lpoa-image-durability": "node scripts/test-lpoa-image-durability.mjs",
     "test:client-campaign-copy": "node scripts/test-client-campaign-copy.mjs",
     "test:pdf-page-chunks": "node scripts/test-pdf-page-chunks.mjs",
+    "test:audit-provider-abort": "node scripts/test-audit-provider-abort-recovery.mjs",
     "test:audit-bureau-parses": "node scripts/test-audit-bureau-parses.mjs",
     "test:recovery-blueprint": "node scripts/test-recovery-blueprint.mjs",
     "test:operations": "node scripts/test-operations-control-center.mjs",
