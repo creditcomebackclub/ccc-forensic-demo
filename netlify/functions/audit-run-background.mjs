@@ -51,6 +51,7 @@ import {
   NATIVE_PDF_CONTEXT_LEGEND_FORMAT,
   extractNativePdfText,
 } from '../../src/utils/nativePdfText.js';
+import { normalizeFixedColumnSectionStarts } from '../../src/utils/combinedFixedColumnSectionStarts.js';
 import {
   describePdfChunk, extractPdfPageRange, extractPdfPages, splitPdfByPages,
 } from '../../src/utils/pdfPageChunks.js';
@@ -308,7 +309,10 @@ function extractionInputsFromCheckpoints(checkpoints) {
   });
 }
 
-function buildAuditProvenance({ mode, sourceJobId, cohort, cohortKey, sources, evaluatedAt }) {
+function buildAuditProvenance({
+  mode, sourceJobId, cohort, cohortKey, sources, evaluatedAt,
+  structuralNormalizations = [],
+}) {
   const orderedSources = [...(sources || [])].sort((a, b) => String(a.bureau).localeCompare(String(b.bureau)));
   const base = {
     version: AUDIT_PROVENANCE_VERSION,
@@ -322,6 +326,9 @@ function buildAuditProvenance({ mode, sourceJobId, cohort, cohortKey, sources, e
     exactThreeBureau: cohort.complete === true,
     clientIdentity: cohort.identity,
     sources: orderedSources,
+    ...(Array.isArray(structuralNormalizations) && structuralNormalizations.length
+      ? { structuralNormalizations }
+      : {}),
   };
   const canonical = canonicalJson(base);
   return {
@@ -2617,7 +2624,25 @@ export const handler = async (event) => {
         }));
         jobResult = await finalizeUnifiedAudit(audit, { skipEnrichment: true, files: [], today: t });
       } else if (job.mode === 'combined') {
-        const reports = mergeCombinedExtractions(checkpoints.map((checkpoint) => checkpoint.output));
+        const usesFixedColumnPolicy = checkpoints.some((checkpoint) => (
+          checkpoint.context_policy_state === 'matched'
+          || checkpoint.context_policy === COMBINED_FIXED_COLUMN_CONTEXT_POLICY
+          || Number(checkpoint.context_source_page) === COMBINED_CONTEXT_SOURCE_PAGE
+        ));
+        const normalizedMerge = usesFixedColumnPolicy
+          ? normalizeFixedColumnSectionStarts(checkpoints, {
+            outputSha256For: parseSha256,
+            inputSha256For: (checkpoint) => checkpointInputSha256({
+              sourceSha256: checkpoint.source_sha256,
+              startPage: checkpoint.start_page,
+              endPage: checkpoint.end_page,
+              totalPages: checkpoint.total_pages,
+              kind: checkpoint.kind,
+              contextSourcePage: checkpoint.context_source_page,
+            }),
+          })
+          : { parts: checkpoints.map((checkpoint) => checkpoint.output), normalization: null };
+        const reports = mergeCombinedExtractions(normalizedMerge.parts);
         const pageCount = Number(checkpoints[0]?.total_pages) || 1;
         reports.forEach((reportParse) => assertExtractionPageBounds(reportParse, pageCount));
         const cohort = assertReportCohort(reports, {
@@ -2631,7 +2656,11 @@ export const handler = async (event) => {
           pageCount, chunkCount: checkpoints.length, extractionInputs,
         }));
         const provenance = buildAuditProvenance({
-          mode: 'combined', sourceJobId: jobId, cohort, cohortKey, sources, evaluatedAt: job.created_at,
+          mode: 'combined', sourceJobId: jobId, cohort, cohortKey, sources,
+          evaluatedAt: job.created_at,
+          structuralNormalizations: normalizedMerge.normalization
+            ? [normalizedMerge.normalization]
+            : [],
         });
         audit = assertAuditOutput(buildDeterministicAudit(reports, {
           reportDate: cohort.reportDate, evaluatedAt: job.created_at, provenance,
