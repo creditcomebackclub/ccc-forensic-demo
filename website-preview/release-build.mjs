@@ -14,7 +14,10 @@ export const WEBSITE_SHARED_FILES = Object.freeze([
   'robert-k-result.webp',
 ]);
 
-export const WEBSITE_LIVE_FILES = Object.freeze(['live-app.js']);
+export const WEBSITE_LIVE_FILES = Object.freeze([
+  'live-app.js',
+  'ccc-social-preview-2026.jpg',
+]);
 
 const MODES = new Set(['preview', 'live']);
 const BLOCK_KINDS = Object.freeze(['PREVIEW_ONLY', 'LIVE_ONLY']);

@@ -1,7 +1,11 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createWebsiteReleaseCss, createWebsiteReleaseHtml } from './release-build.mjs';
+import {
+  WEBSITE_LIVE_FILES,
+  createWebsiteReleaseCss,
+  createWebsiteReleaseHtml,
+} from './release-build.mjs';
 
 const previewRoot = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(previewRoot);
@@ -19,6 +23,36 @@ const [htmlSource, cssSource, previewJs, liveJs, viteConfig, netlifyConfig, robo
 const previewHtml = createWebsiteReleaseHtml(htmlSource, 'preview');
 const liveHtml = createWebsiteReleaseHtml(htmlSource, 'live');
 const liveCss = createWebsiteReleaseCss(cssSource, 'live');
+const socialImageUrl = 'https://creditcomebackclub.com/site-live/ccc-social-preview-2026.jpg';
+const socialImagePath = join(previewRoot, 'ccc-social-preview-2026.jpg');
+const [socialImageBytes, socialImageStat] = await Promise.all([
+  readFile(socialImagePath),
+  stat(socialImagePath),
+]);
+
+function jpegDimensions(bytes) {
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new Error('Social image is not a JPEG.');
+  let offset = 2;
+  const startOfFrameMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+  while (offset + 8 < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = bytes[offset + 1];
+    offset += 2;
+    if (marker === 0xd8 || marker === 0xd9) continue;
+    const segmentLength = bytes.readUInt16BE(offset);
+    if (startOfFrameMarkers.has(marker)) {
+      return { height: bytes.readUInt16BE(offset + 3), width: bytes.readUInt16BE(offset + 5) };
+    }
+    if (segmentLength < 2) break;
+    offset += segmentLength;
+  }
+  throw new Error('Could not read social JPEG dimensions.');
+}
+
+const socialImageDimensions = jpegDimensions(socialImageBytes);
 const assertions = [];
 const check = (condition, message) => assertions.push({ condition: Boolean(condition), message });
 
@@ -41,8 +75,37 @@ check(
   liveHtml.includes('data-live-site="true"')
     && liveHtml.includes('<meta name="robots" content="index,follow">')
     && liveHtml.includes('<title>Credit Comeback Club | Factual Credit Repair Support</title>')
-    && !/preview|production disconnected|local concept/i.test(liveHtml),
+    && !/Preview only|Production disconnected|Local concept preview|data-preview-only/i.test(liveHtml),
   'live artifact has production metadata and no preview ribbon or preview-only copy',
+);
+check(
+  liveHtml.includes(`<meta property="og:image" content="${socialImageUrl}">`)
+    && liveHtml.includes(`<meta property="og:image:secure_url" content="${socialImageUrl}">`)
+    && liveHtml.includes('<meta property="og:image:type" content="image/jpeg">')
+    && liveHtml.includes('<meta property="og:image:width" content="1200">')
+    && liveHtml.includes('<meta property="og:image:height" content="630">')
+    && liveHtml.includes('<meta property="og:image:alt" content="Credit Comeback Club — 3-bureau review, evidence-backed disputes, and client portal">')
+    && liveHtml.includes('<meta name="twitter:card" content="summary_large_image">')
+    && liveHtml.includes(`<meta name="twitter:image" content="${socialImageUrl}">`)
+    && liveHtml.includes('<meta name="twitter:image:alt" content="Credit Comeback Club — 3-bureau review, evidence-backed disputes, and client portal">'),
+  'live artifact publishes the exact versioned Open Graph and Twitter social image contract',
+);
+check(
+  liveHtml.includes(`"url": "${socialImageUrl}"`)
+    && liveHtml.includes('"width": 1200')
+    && liveHtml.includes('"height": 630')
+    && !liveHtml.includes('site-live/ccc-logo.jpg')
+    && !liveHtml.includes('og-image.png'),
+  'live JSON-LD uses the social artwork while retired social-image references remain absent',
+);
+check(
+  WEBSITE_LIVE_FILES.includes('ccc-social-preview-2026.jpg')
+    && socialImageBytes[0] === 0xff
+    && socialImageBytes[1] === 0xd8
+    && socialImageDimensions.width === 1200
+    && socialImageDimensions.height === 630
+    && socialImageStat.size < 500_000,
+  'versioned production social asset is a real optimized 1200x630 JPEG',
 );
 check(
   robots.includes('Allow: /')

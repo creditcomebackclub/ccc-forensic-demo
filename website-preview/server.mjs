@@ -14,6 +14,7 @@ const files = new Map([
   ['/app.js', { name: 'app.js', type: 'text/javascript; charset=utf-8' }],
   ['/ccc-logo.jpg', { name: 'ccc-logo.jpg', type: 'image/jpeg' }],
   ['/ccc-logo.webp', { name: 'ccc-logo.webp', type: 'image/webp' }],
+  ['/ccc-social-preview-2026.jpg', { name: 'ccc-social-preview-2026.jpg', type: 'image/jpeg' }],
   ['/founder-chris.webp', { name: 'founder-chris.webp', type: 'image/webp' }],
   ['/robert-k-result.png', { name: 'robert-k-result.png', type: 'image/png' }],
   ['/robert-k-result.webp', { name: 'robert-k-result.webp', type: 'image/webp' }],

@@ -56,6 +56,12 @@ try {
 } catch {
   founderAssetAvailable = false;
 }
+let socialAssetAvailable = true;
+try {
+  await access(join(previewRoot, 'ccc-social-preview-2026.jpg'));
+} catch {
+  socialAssetAvailable = false;
+}
 let legacyFounderPngPresent = true;
 try {
   await access(join(previewRoot, 'founder-chris.png'));
@@ -132,6 +138,12 @@ check(
   'supplied CCC logo appears prominently in the header, hero, Blueprint, and footer',
 );
 check(server.includes("'/ccc-logo.webp'"), 'preview server exposes the supplied CCC logo');
+check(
+  socialAssetAvailable
+    && server.includes("'/ccc-social-preview-2026.jpg'")
+    && server.includes("name: 'ccc-social-preview-2026.jpg', type: 'image/jpeg'"),
+  'preview server exposes the versioned social image with the correct JPEG content type',
+);
 check(html.includes('personal impact'), 'personal impact is explained');
 check(html.includes('inaccurate, incomplete, or inconsistent'), 'exact reporting-fact categories are explained');
 check(
