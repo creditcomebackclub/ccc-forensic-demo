@@ -170,8 +170,10 @@ function consistentValuePagePair(rows, {
 /**
  * Fail-closed identity comparison used before a report can be attached to a
  * selected CRM client. Middle names/initials and suffixes may differ, but the
- * normalized first and last names must match. When both sides expose a DOB it
- * must match as well.
+ * normalized first and last names must match. A CRM DOB, when present, must
+ * match every DOB visibly extracted from the report. The mutable CRM mailing
+ * address is deliberately not an audit-attribution key: clients may move, and
+ * the separately verified current letter identity owns outbound addresses.
  */
 export function assertConsistentReportIdentity(reports, selectedClient = null) {
   const rows = (reports || []).map((report) => ({
@@ -182,8 +184,6 @@ export function assertConsistentReportIdentity(reports, selectedClient = null) {
     dob: normalizedDob(report?.personalInfo?.dateOfBirth),
     nameEvidencePage: report?.client?.nameEvidencePage,
     dobEvidencePage: report?.personalInfo?.dateOfBirthEvidencePage,
-    address: normalizedIdentityAddress(report?.client?.address),
-    addressEvidencePage: report?.client?.addressEvidencePage,
   }));
   if (!rows.length || rows.some((row) => !row.signature)) {
     throw new Error('Every report must visibly identify the consumer by first and last name.');
@@ -210,19 +210,11 @@ export function assertConsistentReportIdentity(reports, selectedClient = null) {
     const selectedDobRaw = clean(selectedClient.dateOfBirth || selectedClient.date_of_birth);
     const selectedDob = normalizedDob(selectedDobRaw);
     if (selectedDobRaw && !selectedDob) throw new Error('The selected CRM client has an invalid date of birth.');
-    const selectedAddress = normalizedIdentityAddress(selectedClient.address);
-    for (const row of rows) {
-      if (row.dob) {
-        if (!selectedDob || row.dob !== selectedDob) {
+    if (selectedDob) {
+      for (const row of rows) {
+        if (row.dob && row.dob !== selectedDob) {
           throw new Error('A report date of birth does not match the selected CRM client.');
         }
-        continue;
-      }
-      const addressMatches = !!selectedAddress
-        && row.address === selectedAddress
-        && isPageReference(row.addressEvidencePage);
-      if (!addressMatches) {
-        throw new Error('Each report must independently match the selected CRM client by a visible date of birth or current address.');
       }
     }
   }

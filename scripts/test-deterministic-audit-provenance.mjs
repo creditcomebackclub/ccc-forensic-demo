@@ -116,18 +116,16 @@ assert.equal(cohort.identity.dateOfBirth, '1980-01-02');
 assert.doesNotThrow(() => assertReportCohort([
   report('equifax'),
 ], {
-  requireThree: false,
-  selectedClient: { name: 'Chris Holland', address: '10 Client Way, Phoenix, AZ 85001' },
-  now: EVALUATED_AT,
+  requireThree: false, selectedClient: { name: 'Chris Holland' }, now: EVALUATED_AT,
 }));
-assert.throws(() => assertReportCohort([
+assert.doesNotThrow(() => assertReportCohort([
   report('equifax'),
 ], {
   requireThree: false,
   selectedClient: { name: 'Chris Holland', address: '99 Wrong Way, Phoenix, AZ 85001' },
   now: EVALUATED_AT,
-}), /independently match the selected CRM client/i);
-assert.throws(() => assertReportCohort([
+}));
+assert.doesNotThrow(() => assertReportCohort([
   report('equifax', { personalInfo: { dateOfBirth: '1980-01-02', dateOfBirthEvidencePage: 1 } }),
   report('experian', { client: { address: '99 Wrong Way, Phoenix, AZ 85001' } }),
   report('transunion', { client: { address: '99 Wrong Way, Phoenix, AZ 85001' } }),
@@ -135,7 +133,14 @@ assert.throws(() => assertReportCohort([
   requireThree: true,
   selectedClient,
   now: EVALUATED_AT,
-}), /each report must independently match/i);
+}));
+assert.throws(() => assertReportCohort([
+  report('equifax', { personalInfo: { dateOfBirth: '1981-01-02', dateOfBirthEvidencePage: 1 } }),
+], {
+  requireThree: false,
+  selectedClient,
+  now: EVALUATED_AT,
+}), /date of birth does not match the selected CRM client/i);
 assert.throws(() => assertReportCohort([
   three[0], three[1], report('transunion', { personalInfo: { dateOfBirth: '1981-01-02', dateOfBirthEvidencePage: 1 } }),
 ], { selectedClient, now: EVALUATED_AT }), /conflicting dates of birth/i);

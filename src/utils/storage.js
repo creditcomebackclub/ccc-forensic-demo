@@ -489,8 +489,9 @@ function hydrateClientRecord(row, audits, letters, portal = null, deletions = []
     id: row.id,
     userId: row.user_id,
     name: row.name,
-    // A manually corrected CRM address wins over an audit-derived address.
-    address: row.address || audits.find((a) => a.clientAddress)?.clientAddress || null,
+    // Report addresses are historical audit evidence, not current CRM contact
+    // data. Only an explicitly saved profile address may hydrate this field.
+    address: row.address || null,
     audits,
     letters,
     deletions,

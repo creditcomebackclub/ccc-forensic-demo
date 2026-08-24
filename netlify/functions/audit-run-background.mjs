@@ -565,7 +565,7 @@ export const handler = async (event) => {
   }
 
   const { data: selectedRows, error: selectedClientError } = await db.from('clients')
-    .select('id,name,date_of_birth,address')
+    .select('id,name,date_of_birth')
     .eq('id', job.selected_client_id)
     .eq('user_id', ownerUserId)
     .limit(2);
@@ -1489,15 +1489,7 @@ export const handler = async (event) => {
     if (isComplete3B) try {
       const scores = audit.scores || (audit.client && audit.client.scores);
       if (clientName && scores) {
-        // address MUST be in this select list: the auto-populate below guards
-        // on `!existing[0].address` to "only fill blanks", and a column that
-        // isn't selected reads back undefined — so that guard silently
-        // inverted itself and overwrote the stored address on EVERY audit run.
-        // Cost a real correction: staff set Stefani Bryant's current Mesa AZ
-        // address by hand, then her next audit replaced it with the stale
-        // Alabama address her credit file still lists. date_of_birth and phone
-        // were already selected here, so only address was affected.
-        const PROFILE_COLS = 'score_eq_start,score_exp_start,score_tu_start,date_of_birth,phone,address';
+        const PROFILE_COLS = 'score_eq_start,score_exp_start,score_tu_start,phone';
         const existingQuery = db.from('clients').select(PROFILE_COLS)
           .eq('id', clientId).eq('user_id', userId).limit(1);
         const { data: existing } = await existingQuery;
@@ -1514,17 +1506,14 @@ export const handler = async (event) => {
           }
         }
 
-        // Auto-populate DOB, phone, and address from personalInfo — only fills blanks
+        // A report may contain historical identity/contact values. Keep those
+        // inside the audit evidence; only a source-backed phone may fill a
+        // blank contact field. DOB and current mailing address remain explicit
+        // CRM/verified-letter-identity inputs and are never mutated by an audit.
         const pi = audit.personalInfo || (audit.client && audit.client.personalInfo);
         if (pi && existing && existing.length > 0) {
           const profilePatch = {};
-          if (pi.dateOfBirth && pi.dateOfBirthEvidencePage && !existing[0].date_of_birth) profilePatch.date_of_birth = pi.dateOfBirth;
           if (pi.phone && pi.phoneEvidence?.page && !existing[0].phone) profilePatch.phone = pi.phone;
-          // Only the client address independently matched to the selected CRM
-          // identity may populate the canonical mailing profile. A bare PI
-          // cleanup value is not sufficient for future dispute mail.
-          const reportCurrentAddress = audit.client?.addressEvidence?.page ? clientAddress : null;
-          if (reportCurrentAddress && !existing[0].address) profilePatch.address = reportCurrentAddress;
 
           if (Object.keys(profilePatch).length > 0) {
             // Key on the resolved id when we have one — clients.name has no
