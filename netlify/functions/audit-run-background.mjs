@@ -31,6 +31,11 @@ import {
 } from '../../src/utils/auditPrompts.js';
 import { describePdfChunk, extractPdfPageRange, splitPdfByPages } from '../../src/utils/pdfPageChunks.js';
 import { logClaudeCall, preflightTokenCount, usageFromMessage } from './_claudeRuntime.mjs';
+import {
+  anthropicJsonSchemaFormat,
+  parseAndValidateAnthropicJsonEnvelope,
+  withLocalSchemaContract,
+} from './_anthropicSchema.mjs';
 
 // This is deliberately a pinned application choice, not an environment
 // fallback. A future model change must be reviewed in code and will be
@@ -255,6 +260,12 @@ function isProviderTimeoutError(err) {
   if (!(err instanceof Error)) return false;
   return ['APIConnectionTimeoutError', 'TimeoutError', 'AbortError'].includes(err.name)
     || /\b(?:timed?\s*out|timeout)\b/i.test(err.message || '');
+}
+
+function isProviderInvalidRequestError(err) {
+  if (!err || Number(err.status) !== 400) return false;
+  const type = err.type || err.error?.error?.type || err.error?.type;
+  return type === 'invalid_request_error' || /invalid_request_error/i.test(err.message || '');
 }
 
 function terminalAuditError(message, type = 'audit_integrity_error') {
@@ -611,14 +622,26 @@ export const handler = async (event) => {
     maxTokens = 64000, schema = null, onTokens = null, effort = AUDIT_EFFORT,
     operation = 'audit.analysis', checkpoint = null,
   } = {}) {
+    // Anthropic rejects both several standard validation keywords and the
+    // compiled size of this full extraction contract. Keep that exact schema
+    // in the prompt/local validators and constrain only a tiny JSON envelope
+    // at the provider boundary.
+    const providerFormat = schema ? anthropicJsonSchemaFormat() : null;
+    const providerSchema = providerFormat?.schema || null;
+    const providerContent = schema ? withLocalSchemaContract(userContent, schema) : userContent;
     const params = {
       model: AUDIT_MODEL,
       max_tokens: maxTokens,
       system: SYSTEM,
-      messages: [{ role: 'user', content: userContent }],
+      messages: [{ role: 'user', content: providerContent }],
       output_config: { effort },
     };
-    if (schema) params.output_config.format = { type: 'json_schema', schema };
+    if (providerFormat) {
+      params.output_config.format = {
+        type: providerFormat.type,
+        schema: providerSchema,
+      };
+    }
     const startedAt = new Date();
     let providerAttempt = null;
     let msg = null;
@@ -628,7 +651,10 @@ export const handler = async (event) => {
       const requestSha256 = sha256(canonicalJson({
         model: AUDIT_MODEL, effort, maxTokens, operation,
         checkpointId: checkpoint.id, inputSha256: checkpoint.input_sha256,
-        schema: schema || null,
+        // Bind the durable provider attempt to both the envelope sent to the
+        // grammar compiler and the richer local contract carried in prompt.
+        schema: providerSchema,
+        localSchemaSha256: schema ? sha256(canonicalJson(schema)) : null,
       }));
       const { data: providerRow, error: providerInsertError } = await db.from('audit_provider_attempts').insert({
         job_id: jobId,
@@ -676,7 +702,10 @@ export const handler = async (event) => {
         });
       }
       msg = await stream.finalMessage();
-      const text = textFromVerifiedModelMessage(msg, 'Audit analysis');
+      const providerText = textFromVerifiedModelMessage(msg, 'Audit analysis');
+      const text = schema
+        ? JSON.stringify(parseAndValidateAnthropicJsonEnvelope(providerText, schema))
+        : providerText;
       const u = usageFromMessage(msg);
       const callUsage = {
         model: msg.model,
@@ -710,12 +739,25 @@ export const handler = async (event) => {
       if (outputLimit && error && typeof error === 'object') error.auditOutputLimit = true;
       const providerTimeout = isProviderTimeoutError(error);
       if (providerTimeout && error && typeof error === 'object') error.auditProviderTimeout = true;
+      const invalidRequest = isProviderInvalidRequestError(error);
+      const providerRequestId = msg?._request_id || error?.requestID || error?.request_id || error?.error?.request_id || null;
+      const providerErrorType = error?.type || error?.error?.error?.type || error?.error?.type || error?.name || 'provider_error';
+      if (invalidRequest && error && typeof error === 'object') {
+        // A provider 400 is deterministic configuration/schema failure, not
+        // a transient report failure. Retrying the same checkpoint only burns
+        // attempts and can never repair the request.
+        error.auditTerminal = true;
+        error.auditErrorType = 'provider_invalid_request';
+        error.auditUserMessage = providerRequestId
+          ? `The audit provider rejected the request configuration. No audit result was saved. Reference: ${providerRequestId}`
+          : 'The audit provider rejected the request configuration. No audit result was saved.';
+      }
       if (providerAttempt) {
         await db.from('audit_provider_attempts').update({
           status: outputLimit ? 'output_limit' : 'failed',
-          provider_request_id: msg?._request_id || null,
+          provider_request_id: providerRequestId,
           stop_reason: msg?.stop_reason || null,
-          error_type: outputLimit ? 'output_limit' : (error?.name || 'provider_error'),
+          error_type: outputLimit ? 'output_limit' : providerErrorType,
           error_message: error?.message || 'Provider request failed',
           finished_at: new Date().toISOString(),
         }).eq('id', providerAttempt.id).eq('status', 'started');
@@ -724,8 +766,8 @@ export const handler = async (event) => {
         userId: ownerUserId, operation, entityType: 'audit_job', entityId: jobId,
         model: AUDIT_MODEL, effort, promptVersion: 'audit-v2',
         attempt: checkpoint?.attempt_count || usageLog.length + 1,
-        status: 'error', startedAt, requestId: msg?._request_id,
-        stopReason: msg?.stop_reason, errorType: error?.name, errorMessage: error?.message,
+        status: 'error', startedAt, requestId: providerRequestId,
+        stopReason: msg?.stop_reason, errorType: providerErrorType, errorMessage: error?.message,
       }).catch(() => {});
       throw error;
     }
@@ -1896,7 +1938,8 @@ export const handler = async (event) => {
         await releaseLease({
           status: retryable ? 'retryable' : 'error',
           stage: retryable ? 'Checkpoint paused · safe resume scheduled' : 'Audit stopped for review',
-          errorType: e.auditErrorType || e.name || 'audit_error', errorMessage: e.message || 'Audit failed',
+          errorType: e.auditErrorType || e.name || 'audit_error',
+          errorMessage: e.auditUserMessage || e.message || 'Audit failed',
           retryAt: retryable ? new Date(Date.now() + delayMs).toISOString() : null,
           checkpointId: activeCheckpoint?.id || null,
         });
