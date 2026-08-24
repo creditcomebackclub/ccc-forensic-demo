@@ -17,6 +17,7 @@ const RUN_STALL_MS = 10 * 60 * 1000;   // running but no row updates
 const MAX_READ_FAILURES = 15;          // consecutive poll read errors
 const START_RETRIES = 2;               // same job ID: safe with server claim
 const REDISPATCH_MS = 15 * 1000;        // checkpoint chains normally beat this
+export const AUDIT_RECOVERY_LOOKUP_TIMEOUT_MS = 8_000;
 export const SAVED_AUDIT_TIMEOUT_MESSAGE = 'This saved audit reached a provider time limit before CCC could publish a complete result. Your report and completed checkpoints are preserved.';
 export const SAVED_AUDIT_ACTIVE_MESSAGE = 'This audit already has a durable report and saved work in progress. Resume this exact audit instead of uploading the report again.';
 const AUDIT_JOB_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -97,8 +98,26 @@ export function forgetAuditRecovery(userId, jobId = null) {
   }
 }
 
+export async function withAuditRecoveryDeadline(
+  query,
+  timeoutMs = AUDIT_RECOVERY_LOOKUP_TIMEOUT_MS,
+) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error('Saved audit lookup timed out.')),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([Promise.resolve(query), timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function findLatestRecoverableAuditJob() {
-  const { data, error } = await supabase.from('audit_jobs')
+  const query = supabase.from('audit_jobs')
     .select('id,status,error,workflow_version,source_cleanup_at,expires_at,updated_at')
     .eq('status', 'error')
     .eq('workflow_version', RESUMABLE_AUDIT_VERSION)
@@ -106,6 +125,7 @@ export async function findLatestRecoverableAuditJob() {
     .gt('expires_at', new Date().toISOString())
     .order('updated_at', { ascending: false })
     .limit(20);
+  const { data, error } = await withAuditRecoveryDeadline(query);
   if (error) throw new Error('Could not verify saved audit recovery.');
   return (data || []).find(isRecoverableProviderTimeoutJob) || null;
 }
@@ -149,11 +169,12 @@ export function selectAuditRecoveryCandidate(exactJob, latestRecoverableJob, now
 
 export async function findOwnedAuditJob(jobId, userId) {
   if (!AUDIT_JOB_UUID_RE.test(String(jobId || '')) || !userId) return null;
-  const { data, error } = await supabase.from('audit_jobs')
+  const query = supabase.from('audit_jobs')
     .select('id,user_id,status,error,workflow_version,source_cleanup_at,expires_at,updated_at,result')
     .eq('id', jobId)
     .eq('user_id', userId)
     .maybeSingle();
+  const { data, error } = await withAuditRecoveryDeadline(query);
   if (error) throw new Error('Could not verify the exact saved audit.');
   if (!data || data.user_id !== userId) return null;
   return data;

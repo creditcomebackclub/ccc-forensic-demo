@@ -281,6 +281,12 @@ let executableClient = clientSource
   .replace('const MAX_READ_FAILURES = 15;', 'const MAX_READ_FAILURES = 2;');
 const clientModule = await import(`data:text/javascript;base64,${Buffer.from(executableClient).toString('base64')}`);
 
+await assert.rejects(
+  () => clientModule.withAuditRecoveryDeadline(new Promise(() => {}), 5),
+  /Saved audit lookup timed out/,
+  'a stalled saved-audit read must leave the spinner through a bounded error path',
+);
+
 assert.equal(clientModule.rememberAuditRecovery(OWNER_ID, JOB_ID), true);
 assert.equal(clientModule.readRememberedAuditRecovery(OWNER_ID), JOB_ID,
   'a refresh must be able to hydrate the exact saved job from durable browser storage');
@@ -429,6 +435,21 @@ assert.match(appSource, /readRememberedAuditRecovery\(userId\)/);
 assert.match(appSource, /findOwnedAuditJob\(rememberedJobId, userId\)/);
 assert.match(appSource, /selectAuditRecoveryCandidate\(exactJob, latestJob\)/);
 assert.match(appSource, /\['done', 'missing', 'expired'\]\.includes\(disposition\.kind\)/);
+const hydrationStart = appSource.indexOf('// A terminal provider timeout owns a durable report');
+const hydrationEnd = appSource.indexOf('\n  useEffect(() => {\n    const initAuth', hydrationStart);
+assert.ok(hydrationStart >= 0 && hydrationEnd > hydrationStart);
+const hydrationSource = appSource.slice(hydrationStart, hydrationEnd);
+assert.doesNotMatch(hydrationSource, /recoveryHydratedForUser/,
+  'auth refresh cleanup must not leave a one-way hydration latch behind');
+assert.match(
+  hydrationSource,
+  /\[auditRecoveryUserId, auditRecoveryProfileId, isClient, isAffiliate, auditRecoveryRetryKey\]/,
+  'saved-audit hydration must depend on stable identity primitives and an explicit retry key',
+);
+assert.match(hydrationSource, /finally[\s\S]*setAuditRecoveryChecked\(true\)/,
+  'every live hydration attempt must leave the loading screen');
+assert.match(appSource, /Retry saved-audit check/,
+  'a bounded lookup failure must expose a safe retry instead of the upload screen');
 assert.match(appSource, /if \(!auditRecoveryChecked \|\| failedAuditRecovery\)/);
 assert.match(appSource, /if \(failedAuditRecovery\) \{/);
 assert.match(appSource, /state === STATE\.IDLE && auditRecoveryChecked && <UploadZone/);

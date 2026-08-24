@@ -341,6 +341,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [failedAuditRecovery, setFailedAuditRecovery] = useState(null);
   const [auditRecoveryChecked, setAuditRecoveryChecked] = useState(false);
+  const [auditRecoveryRetryKey, setAuditRecoveryRetryKey] = useState(0);
   const [auditClientName, setAuditClientName] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [isClient, setIsClient] = useState(false);
@@ -362,7 +363,8 @@ export default function App() {
     import('./utils/actionItems').then(m => m.getNewLeadsCount()).then(c => setNewLeadsCount(c)).catch(() => {});
   };
   const loadUserInFlight = React.useRef(false);
-  const recoveryHydratedForUser = React.useRef(null);
+  const auditRecoveryUserId = session?.user?.id || null;
+  const auditRecoveryProfileId = profile?.id || null;
   // Mirror of profile state for the visibilitychange handler, which is bound
   // once on mount and would otherwise close over stale values
   const appStateRef = React.useRef({ profile: null, profileLoading: false });
@@ -380,10 +382,8 @@ export default function App() {
   // Hydrate that exact job before exposing UploadZone so a refresh, closed
   // tab, or deploy cannot accidentally turn recovery into a second paid job.
   useEffect(() => {
-    const userId = session?.user?.id;
-    if (!userId || !profile || isClient || isAffiliate) return;
-    if (recoveryHydratedForUser.current === userId) return;
-    recoveryHydratedForUser.current = userId;
+    const userId = auditRecoveryUserId;
+    if (!userId || !auditRecoveryProfileId || isClient || isAffiliate) return;
     setAuditRecoveryChecked(false);
     setFailedAuditRecovery(null);
     setError(null);
@@ -391,9 +391,14 @@ export default function App() {
     let cancelled = false;
     const rememberedJobId = readRememberedAuditRecovery(userId);
     let unresolvedRememberedJobId = rememberedJobId;
-    const showRecovery = (jobId, message = SAVED_AUDIT_TIMEOUT_MESSAGE, canResume = true) => {
+    const showRecovery = (
+      jobId,
+      message = SAVED_AUDIT_TIMEOUT_MESSAGE,
+      canResume = true,
+      canRetryCheck = false,
+    ) => {
       if (cancelled) return;
-      setFailedAuditRecovery({ jobId: jobId || null, canResume });
+      setFailedAuditRecovery({ jobId: jobId || null, canResume, canRetryCheck });
       setError(message);
       setFileName('Saved forensic audit');
       setView(VIEW.AUDIT);
@@ -435,6 +440,7 @@ export default function App() {
           unresolvedRememberedJobId,
           'CCC could not verify whether a saved audit is waiting. Do not re-upload the report; retry recovery or open Operations.',
           Boolean(unresolvedRememberedJobId),
+          true,
         );
       } finally {
         if (!cancelled) setAuditRecoveryChecked(true);
@@ -442,7 +448,7 @@ export default function App() {
     };
     void hydrateRecovery();
     return () => { cancelled = true; };
-  }, [session, profile, isClient, isAffiliate]);
+  }, [auditRecoveryUserId, auditRecoveryProfileId, isClient, isAffiliate, auditRecoveryRetryKey]);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -797,6 +803,17 @@ export default function App() {
     }
   };
 
+  const handleRetryAuditRecoveryCheck = () => {
+    setAuditRecoveryChecked(false);
+    setFailedAuditRecovery(null);
+    setError(null);
+    setAuditResult(null);
+    setAuditProgress(null);
+    setView(VIEW.AUDIT);
+    setState(STATE.IDLE);
+    setAuditRecoveryRetryKey((current) => current + 1);
+  };
+
   const handleMergeFromParseStatus = async () => {
     if (!auditResult?.clientId) {
       setError('Missing client id for merge — re-select the client and try Merge from the upload screen.');
@@ -904,6 +921,9 @@ export default function App() {
                     locked={Boolean(failedAuditRecovery)}
                     onResume={failedAuditRecovery?.canResume && failedAuditRecovery?.jobId
                       ? handleResumeFailedAudit
+                      : null}
+                    onRetryCheck={failedAuditRecovery?.canRetryCheck
+                      ? handleRetryAuditRecoveryCheck
                       : null}
                     onOperations={failedAuditRecovery && isAdmin
                       ? () => handleNavigate(VIEW.OPERATIONS)
@@ -1064,7 +1084,7 @@ function TopBar({ view, state, isAdmin }) {
   );
 }
 
-function ErrorView({ error, recoveryJobId, locked, onResume, onOperations, onReset }) {
+function ErrorView({ error, recoveryJobId, locked, onResume, onRetryCheck, onOperations, onReset }) {
   return (
     <div className="max-w-md mx-auto bg-white border border-red-200 rounded p-8 text-center">
       <AlertCircle size={32} className="text-red-600 mx-auto mb-3" strokeWidth={1.5} />
@@ -1073,20 +1093,29 @@ function ErrorView({ error, recoveryJobId, locked, onResume, onOperations, onRes
       {locked && (
         <>
           <p className="text-[11px] text-ink-muted mt-3">
-            CCC will reuse the report and every completed checkpoint. It will not upload the report or create a new audit job.
+            {recoveryJobId
+              ? 'CCC will reuse the report and every completed checkpoint. It will not upload the report or create a new audit job.'
+              : 'CCC is keeping new uploads locked until it can safely verify whether an audit is already saved.'}
           </p>
           {recoveryJobId && <p className="text-[10px] text-ink-muted mt-1 break-all">Recovery reference: {recoveryJobId}</p>}
-          {onResume && (
-            <button onClick={onResume} className="mt-5 px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm bg-navy text-white hover:bg-navy-dark">
-              Resume saved audit
-            </button>
-          )}
-          {!onResume && onOperations && (
-            <button onClick={onOperations} className="mt-5 px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm bg-navy text-white hover:bg-navy-dark">
-              Open Operations
-            </button>
-          )}
-          {!onResume && !onOperations && (
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            {onResume && (
+              <button onClick={onResume} className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm bg-navy text-white hover:bg-navy-dark">
+                Resume saved audit
+              </button>
+            )}
+            {onRetryCheck && (
+              <button onClick={onRetryCheck} className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm bg-navy text-white hover:bg-navy-dark">
+                Retry saved-audit check
+              </button>
+            )}
+            {!onResume && onOperations && (
+              <button onClick={onOperations} className="px-4 py-2 text-[12px] uppercase tracking-wider rounded-sm border border-border bg-white text-ink hover:bg-bg">
+                Open Operations
+              </button>
+            )}
+          </div>
+          {!onResume && !onRetryCheck && !onOperations && (
             <p className="text-[11px] text-ink-muted mt-4">Ask an administrator to review this saved audit in Operations.</p>
           )}
         </>
