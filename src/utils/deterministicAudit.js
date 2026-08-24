@@ -580,7 +580,7 @@ function mergeStrings(values) {
 const ACCOUNT_MERGE_NON_VALUE_KEYS = new Set([
   'evidence', 'fields', 'explicitlyBlankFields', 'unreadableFields',
   'accountIdentityEvidencePage', 'reportedTypeEvidencePage', 'statusTextEvidencePage',
-  'consumerDisputeIndicatorEvidencePage', 'remarksEvidencePage',
+  'consumerDisputeIndicatorEvidencePage', 'remarks', 'remarksEvidencePage',
 ]);
 
 const EXTRACTED_FIELD_STATE_RANK = Object.freeze({
@@ -646,9 +646,49 @@ function assertNoChunkAccountConflict(a, b) {
   }
 }
 
-function preferAccount(a, b) {
+function normalizedTextTokens(value) {
+  return String(value || '').normalize('NFKC').toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(/\s+/).filter(Boolean);
+}
+
+function containsTokenSequence(longer, shorter) {
+  if (!shorter.length || shorter.length > longer.length) return false;
+  for (let index = 0; index <= longer.length - shorter.length; index += 1) {
+    if (shorter.every((token, offset) => longer[index + offset] === token)) return true;
+  }
+  return false;
+}
+
+function mergeOverlapRemarks(a, b) {
+  const left = clean(a?.remarks);
+  const right = clean(b?.remarks);
+  if (!left) return { remarks: right, remarksEvidencePage: b?.remarksEvidencePage ?? null };
+  if (!right) return { remarks: left, remarksEvidencePage: a?.remarksEvidencePage ?? null };
+
+  const leftTokens = normalizedTextTokens(left);
+  const rightTokens = normalizedTextTokens(right);
+  if (leftTokens.length && rightTokens.length && leftTokens.join(' ') === rightTokens.join(' ')) {
+    return left.length >= right.length
+      ? { remarks: left, remarksEvidencePage: a?.remarksEvidencePage ?? null }
+      : { remarks: right, remarksEvidencePage: b?.remarksEvidencePage ?? null };
+  }
+  const leftPage = Number(a?.remarksEvidencePage);
+  const rightPage = Number(b?.remarksEvidencePage);
+  if (isPageReference(leftPage) && leftPage === rightPage) {
+    if (containsTokenSequence(leftTokens, rightTokens)) {
+      return { remarks: left, remarksEvidencePage: leftPage };
+    }
+    if (containsTokenSequence(rightTokens, leftTokens)) {
+      return { remarks: right, remarksEvidencePage: rightPage };
+    }
+  }
+  throw new Error('Overlapping report chunks contain conflicting remarks values for the same account.');
+}
+
+export function mergeOverlappingAccountExtracts(a, b) {
   if (!a) return { ...b };
   assertNoChunkAccountConflict(a, b);
+  const mergedRemarks = mergeOverlapRemarks(a, b);
   const score = (item) => Object.values(item || {}).filter((v) => v !== null && v !== '' && v !== undefined).length;
   const primary = score(b) > score(a) ? b : a;
   const secondary = primary === a ? b : a;
@@ -663,6 +703,8 @@ function preferAccount(a, b) {
   out.fields = mergeExtractedFields(a.fields, b.fields);
   out.explicitlyBlankFields = mergeStrings([...(a.explicitlyBlankFields || []), ...(b.explicitlyBlankFields || [])]);
   out.unreadableFields = mergeStrings([...(a.unreadableFields || []), ...(b.unreadableFields || [])]);
+  out.remarks = mergedRemarks.remarks;
+  out.remarksEvidencePage = mergedRemarks.remarksEvidencePage;
   return out;
 }
 
@@ -1219,7 +1261,7 @@ export function mergeBureauExtractions(parts, expectedBureau = null) {
     part.accounts.forEach((account, index) => {
       const base = baseKeys[index];
       const key = counts.get(base) > 1 ? `${base}::ambiguous::${index}` : base;
-      accounts.set(key, preferAccount(accounts.get(key), account));
+      accounts.set(key, mergeOverlappingAccountExtracts(accounts.get(key), account));
     });
   });
   const first = usable[0];
@@ -1678,7 +1720,7 @@ export function buildDeterministicAudit(rawReports, { reportDate = null, evaluat
       }
       const group = grouped.get(targetKey);
       if (!group.originalCreditorNorm && origNorm) group.originalCreditorNorm = origNorm;
-      group.variants[report.bureau] = preferAccount(group.variants[report.bureau], account);
+      group.variants[report.bureau] = mergeOverlappingAccountExtracts(group.variants[report.bureau], account);
     });
   });
 
