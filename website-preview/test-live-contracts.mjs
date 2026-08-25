@@ -156,22 +156,26 @@ check(
     ['sales_representative_id', '32175'],
     ['workflow_statusid', '30'],
     ['folder_statusid', '5'],
-    ['customer_statusid', '-1'],
+    ['customer_statusid', '3270'],
     ['portalAccess', '0'],
     ['customerAgreementIDs', ''],
   ].every(([name, value]) => liveHtml.includes(`name="${name}" value="${value}"`)),
   'live intake preserves the exact DisputeFox routing contract while disabling portal and agreement creation',
 );
 check(
-  liveHtml.includes('name="textArea1"')
+  liveHtml.includes('<h2>Request your free 3-bureau credit review.</h2>')
+    && liveHtml.includes('Share your contact information, then choose a time for a private 30-minute consultation with Chris.')
+    && liveHtml.includes('What would you most like help understanding? <small>optional</small>')
+    && liveHtml.includes('I agree to receive email and/or SMS communications from Credit Comeback Club about my consultation request.')
+    && liveHtml.includes('name="textArea1"')
     && liveHtml.includes('maxlength="1000"')
-    && liveHtml.includes('Do not include your SSN, date of birth, passwords, or account numbers.')
+    && liveHtml.includes('Please do not include SSNs, dates of birth, account numbers, passwords, or other sensitive information.')
     && liveJs.includes('disputeFoxSituation.length <= 1000')
     && liveJs.includes("phoneDigits.length >= 10")
     && liveJs.includes('emailField?.validity.valid')
     && liveJs.includes("formData.delete('website')")
     && liveJs.includes("formData.set('checkbox1', 'true')"),
-  'live validation bounds the optional situation field, warns against sensitive data, and validates contact consent',
+  'live consultation mirrors the approved copy while retaining bounded privacy-safe validation',
 );
 check(
   liveJs.includes("fetch(DISPUTEFOX_ENDPOINT")
