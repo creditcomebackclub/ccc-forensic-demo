@@ -9,7 +9,7 @@ import {
 
 const previewRoot = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(previewRoot);
-const [htmlSource, cssSource, previewJs, liveJs, viteConfig, netlifyConfig, robots, sitemap] = await Promise.all([
+const [htmlSource, cssSource, previewJs, liveJs, viteConfig, netlifyConfig, robots, sitemap, confirmationHtml] = await Promise.all([
   readFile(join(previewRoot, 'index.html'), 'utf8'),
   readFile(join(previewRoot, 'styles.css'), 'utf8'),
   readFile(join(previewRoot, 'app.js'), 'utf8'),
@@ -18,6 +18,7 @@ const [htmlSource, cssSource, previewJs, liveJs, viteConfig, netlifyConfig, robo
   readFile(join(repoRoot, 'netlify.toml'), 'utf8'),
   readFile(join(repoRoot, 'public/robots.txt'), 'utf8'),
   readFile(join(repoRoot, 'public/sitemap.xml'), 'utf8'),
+  readFile(join(repoRoot, 'public/success.html'), 'utf8'),
 ]);
 
 const previewHtml = createWebsiteReleaseHtml(htmlSource, 'preview');
@@ -263,6 +264,25 @@ check(
   /from = "\/"[\s\S]*?to = "\/site-live\/index\.html"[\s\S]*?status = 200[\s\S]*?force = true/.test(netlifyConfig)
     && /from = "\/new-site-preview"[\s\S]*?to = "\/site-preview\/index\.html"[\s\S]*?status = 200/.test(netlifyConfig),
   'Netlify root and owner-review routes select the separate live and inert artifacts',
+);
+check(
+  confirmationHtml.includes('<meta name="robots" content="noindex, nofollow">')
+    && confirmationHtml.includes('src="/site-live/ccc-logo.webp"')
+    && confirmationHtml.includes('src="/site-live/founder-chris.webp"')
+    && confirmationHtml.includes('You’re booked.')
+    && confirmationHtml.includes('30 minutes')
+    && confirmationHtml.includes('Have your newest three-bureau report ready')
+    && confirmationHtml.includes('What to expect')
+    && confirmationHtml.includes('No onboarding is required before the call.')
+    && !/Calendly|URLSearchParams|event_start_time|invitee_(?:first|full)_name/.test(confirmationHtml),
+  'booking confirmation is branded, private, preparation-focused, and free of retired Calendly parameters',
+);
+check(
+  /from = "\/consultation-confirmed"[\s\S]*?to = "\/success\.html"[\s\S]*?status = 200[\s\S]*?force = true/.test(netlifyConfig)
+    && /from = "\/consultation-confirmed\/"[\s\S]*?to = "\/success\.html"[\s\S]*?status = 200[\s\S]*?force = true/.test(netlifyConfig)
+    && /from = "\/success"[\s\S]*?to = "\/success\.html"[\s\S]*?status = 200[\s\S]*?force = true/.test(netlifyConfig)
+    && !/from = "\/(?:consultation-confirmed|success)\/?"[\s\S]{0,220}?to = "https:\/\/[^\"]*scorexer/.test(netlifyConfig),
+  'Netlify serves the branded confirmation page at the new route and the legacy success alias',
 );
 check(
   viteConfig.includes("directory: 'site-live'")

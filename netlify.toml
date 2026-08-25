@@ -46,18 +46,30 @@
   to = "/cancellation-refund-policy.html"
   status = 200
 
-# Retire the old Calendly confirmation artifact. DisputeFox/Scorexer owns the
-# current scheduling and confirmation experience.
+# Scorexer redirects completed bookings to this branded, noindex confirmation
+# page. Keep /success as a short backwards-compatible alias.
 [[redirects]]
-  from = "/success"
-  to = "https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99"
-  status = 302
+  from = "/consultation-confirmed"
+  to = "/success.html"
+  status = 200
   force = true
 
 [[redirects]]
-  from = "/success.html"
-  to = "https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99"
-  status = 302
+  from = "/consultation-confirmed/"
+  to = "/success.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/success"
+  to = "/success.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/success/"
+  to = "/success.html"
+  status = 200
   force = true
 
 # The legacy standalone signer is permanently retired. Proxying the old public
