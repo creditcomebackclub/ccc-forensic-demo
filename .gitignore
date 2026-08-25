@@ -18,4 +18,5 @@ e2e-individual-retest.local.mjs
 .claude/settings.local.json
 repomix-output.xml
 output/
+outputs/
 tmp/
