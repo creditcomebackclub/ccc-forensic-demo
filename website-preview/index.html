@@ -118,7 +118,7 @@
         <a href="#simulator">Score lab</a>
         <a href="#founder">Founder</a>
         <a href="#consultation">Consultation</a>
-        <a class="nav-login preview-destination" href="/login" data-preview-destination="/login">
+        <a class="nav-login preview-destination" href="https://creditcomeback.scorexer.com" data-preview-destination="/login">
           Member login
           <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M5 3.5h6.5v9H5M8 8h6M12 5l3 3-3 3"/></svg>
         </a>
@@ -992,11 +992,11 @@
         <div class="consultation-copy reveal">
           <p class="eyebrow">Start with a conversation</p>
           <h2>Request your free 3B review.</h2>
-          <p>Share your basic contact information, then choose a consultation time. Your appointment is confirmed only after you finish scheduling with Calendly.</p>
+          <p>Share your basic contact information, then choose a consultation time in our secure scheduler. Your appointment is confirmed only after you finish scheduling.</p>
 
           <div class="consultation-steps">
             <div><span>1</span><p><strong>Request</strong>Send name and contact details</p></div>
-            <div><span>2</span><p><strong>Schedule</strong>Choose a Calendly time</p></div>
+            <div><span>2</span><p><strong>Schedule</strong>Choose an available time</p></div>
             <div><span>3</span><p><strong>Prepare</strong>Bring a current three-bureau report</p></div>
           </div>
 
@@ -1008,15 +1008,11 @@
           <!-- CCC_PREVIEW_ONLY_END -->
         </div>
 
-        <div
-          class="consultation-widget reveal"
-          data-consultation-widget
-          data-production-calendar-url="https://calendly.com/creditcomebackclub/consultation?hide_gdpr_banner=1"
-        >
+        <div class="consultation-widget reveal" data-consultation-widget>
           <div class="widget-header">
             <div>
-              <span class="widget-kicker">Choose a consultation time</span>
-              <h3>Book a consultation</h3>
+              <span class="widget-kicker">Start your consultation request</span>
+              <h3>Tell us how to reach you</h3>
             </div>
             <!-- CCC_PREVIEW_ONLY_START -->
             <!-- Local safety indicator only; this is not customer-facing production copy. -->
@@ -1071,51 +1067,74 @@
 
           <!-- CCC_LIVE_ONLY_START -->
           <div data-live-only hidden>
-            <form class="consultation-form live-intake-form" data-live-intake-form novalidate>
+            <form
+              class="consultation-form live-intake-form"
+              action="https://pulse.disputeprocess.com/CustumFieldController?method=addWebFormData"
+              method="post"
+              enctype="multipart/form-data"
+              accept-charset="UTF-8"
+              data-live-intake-form
+            >
+              <input type="hidden" name="method" value="addWebFormData">
+              <input type="hidden" name="tab_info_id" value="RjFaeDcvSWpqYTJidVdyRDB3WVBsdz09">
+              <input type="hidden" name="redirect_url" value="https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99">
+              <input type="hidden" name="company_id" value="RkJJOWtkS1lYQ243V0Q5d3EybmlMUT09">
+              <input type="hidden" name="cust_type" value="1">
+              <input type="hidden" name="add_affiliate_flag" value="0">
+              <input type="hidden" name="assignedto_id" value="32175">
+              <input type="hidden" name="sales_representative_id" value="32175">
+              <input type="hidden" name="workflow_statusid" value="30">
+              <input type="hidden" name="folder_statusid" value="5">
+              <input type="hidden" name="customer_statusid" value="-1">
+              <input type="hidden" name="portalAccess" value="0">
+              <input type="hidden" name="customerAgreementIDs" value="">
               <div class="honeypot-field" aria-hidden="true">
                 <label for="consultation-website">Leave this field blank</label>
                 <input id="consultation-website" type="text" name="website" tabindex="-1" autocomplete="off">
               </div>
-              <input type="hidden" name="intent" value="consultation">
               <div class="form-grid">
                 <label>
-                  <span>Full name</span>
-                  <input type="text" name="name" autocomplete="name" maxlength="120" required placeholder="Your name">
+                  <span>First name</span>
+                  <input type="text" name="firstName" autocomplete="given-name" maxlength="80" required placeholder="First name">
+                </label>
+                <label>
+                  <span>Last name</span>
+                  <input type="text" name="lastName" autocomplete="family-name" maxlength="80" required placeholder="Last name">
                 </label>
                 <label>
                   <span>Email address</span>
-                  <input type="email" name="email" autocomplete="email" maxlength="254" required placeholder="you@example.com">
+                  <input type="email" name="email1" autocomplete="email" maxlength="254" required placeholder="you@example.com">
                 </label>
                 <label>
-                  <span>Phone</span>
-                  <input type="tel" name="phone" autocomplete="tel" maxlength="40" required placeholder="(970) 555-0123">
+                  <span>Cell phone</span>
+                  <input type="tel" name="mobilePhone1" autocomplete="tel" inputmode="tel" maxlength="40" required placeholder="(970) 555-0123">
                 </label>
-                <label>
-                  <span>Plan you want to discuss</span>
-                  <select name="tier" required>
-                    <option value="">Choose a plan</option>
-                    <option value="Standard">Standard — $149/month</option>
-                    <option value="VIP">VIP — $299/month</option>
-                    <option value="Paid In Full">Paid In Full — $849 once</option>
-                  </select>
+                <label class="form-field-wide">
+                  <span>Tell us about your credit situation <small>optional</small></span>
+                  <textarea
+                    name="textArea1"
+                    rows="5"
+                    maxlength="1000"
+                    aria-describedby="credit-situation-help"
+                    placeholder="Briefly share what you would like help understanding."
+                  ></textarea>
+                  <small class="form-help" id="credit-situation-help">Do not include your SSN, date of birth, passwords, or account numbers.</small>
                 </label>
               </div>
-              <p class="live-intake-disclosure">By continuing, you are requesting a consultation—not purchasing a service. Review our <a href="/privacy">Privacy Policy</a>.</p>
+              <label class="live-consent">
+                <input type="checkbox" name="checkbox1" value="true" required>
+                <span>I agree to receive email and/or SMS communications from Credit Comeback Club about my request. Message frequency varies; message and data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase.</span>
+              </label>
+              <p class="live-intake-disclosure">Submitting this form requests a consultation; it does not purchase a service or create portal access. Review our <a href="/terms">Terms</a>, <a href="/privacy">Privacy Policy</a>, and <a href="/cancellation-refund-policy">Cancellation &amp; Refund Policy</a>.</p>
               <p class="live-intake-status" role="status" aria-live="polite" data-live-intake-status></p>
+              <a
+                class="button button-dark live-intake-fallback"
+                href="https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99"
+                data-live-intake-fallback
+                hidden
+              >Continue directly to scheduling</a>
               <button class="button button-primary widget-button" type="submit" data-live-intake-submit>Continue to scheduling</button>
             </form>
-
-            <section class="live-calendar-stage" data-live-calendar-stage hidden tabindex="-1" aria-labelledby="live-calendar-heading">
-              <div class="calendar-brand">
-                <div class="calendar-mark" aria-hidden="true"></div>
-                <div>
-                  <strong id="live-calendar-heading">Choose your consultation time</strong>
-                  <span>Your request is saved. Calendly will confirm the appointment you select.</span>
-                </div>
-              </div>
-              <div class="calendly-inline-widget live-calendly-widget" data-live-calendly aria-label="Calendly consultation scheduler"></div>
-              <p class="live-intake-status" role="status" aria-live="polite" data-live-calendar-status></p>
-            </section>
           </div>
           <!-- CCC_LIVE_ONLY_END -->
         </div>
@@ -1127,7 +1146,7 @@
         <div class="section-heading reveal">
           <p class="eyebrow">Choose your level of support</p>
           <h2>A serious process, with a clear way in.</h2>
-          <p>Choose steady managed support, bring Chris directly into the strategy, or prepay six months of Standard. We will confirm the fit and put the exact scope in writing before you sign.</p>
+          <p>Choose steady managed support, bring Chris directly into the strategy, or ask about a fixed six-month Standard rate. We will confirm the fit, payment timing, and exact scope in writing before you sign.</p>
         </div>
 
         <div class="program-stack reveal">
@@ -1187,34 +1206,34 @@
               <a class="button button-dark" href="#consultation" data-tier="VIP">See if VIP fits</a>
             </article>
             <article class="program-card program-card-dark">
-              <div class="program-card-topline"><span class="program-index">03</span><span class="program-label">Paid in Full</span></div>
-              <h3>Six months of Standard. Settled once.</h3>
-              <p class="program-price"><strong>$849</strong><span>one payment</span></p>
-              <p class="program-fit">For clients who prefer one payment and a defined six-month Standard service term.</p>
+              <div class="program-card-topline"><span class="program-index">03</span><span class="program-label">Six-Month Standard</span></div>
+              <h3>A defined Standard service term.</h3>
+              <p class="program-price"><strong>$849</strong><span>total contract rate</span></p>
+              <p class="program-fit">For clients who want a defined six-month Standard term with payment timing stated in the signed agreement.</p>
               <ul class="program-feature-list">
                 <li>Six full months of Standard service</li>
                 <li>Up to 3 tailored letters per month when the file supports them</li>
-                <li>No monthly program payment during the six-month term</li>
+                <li>Payment only after the specific agreed service has been completed</li>
               </ul>
-              <span class="program-status">One payment <b>·</b> Six-month Standard term</span>
+              <span class="program-status">Fixed term <b>·</b> No advance payment for future work</span>
               <button
                 class="program-details-button"
                 type="button"
-                data-plan-open="paid-in-full"
+                data-plan-open="six-month-standard"
                 aria-haspopup="dialog"
                 aria-controls="plan-details-dialog"
               >
                 See what’s included
                 <svg aria-hidden="true" viewBox="0 0 18 18"><path d="M4 9h10M10 5l4 4-4 4"/></svg>
               </button>
-              <a class="button button-light" href="#consultation" data-tier="Paid In Full">Ask about paying in full</a>
+              <a class="button button-light" href="#consultation" data-tier="Six-Month Standard">Ask about six months</a>
             </article>
           </div>
 
           <div class="program-comparison" aria-label="Quick plan comparison">
             <div><span>Standard</span><strong>Up to 3</strong><small>supported letters / month</small></div>
             <div><span>VIP</span><strong>Up to 5</strong><small>plus direct founder strategy</small></div>
-            <div><span>Paid in Full</span><strong>6 months</strong><small>of Standard, paid once</small></div>
+            <div><span>Six-Month Standard</span><strong>$849 total</strong><small>payment follows completed work</small></div>
           </div>
           <p class="program-disclosure">Letter capacity is not a quota or promised outcome. CCC sends correspondence only when the file facts, strategy, and timing support it. Bureau, furnisher, collector, lender, and funding-partner decisions or response times are outside CCC’s control.</p>
 
@@ -1276,15 +1295,15 @@
                 </dl>
               </section>
 
-              <section class="plan-dialog-plan" data-plan-panel="paid-in-full" data-plan-name="Paid in Full" data-plan-cta="Ask about paying in full" hidden>
+              <section class="plan-dialog-plan" data-plan-panel="six-month-standard" data-plan-name="Six-Month Standard" data-plan-cta="Ask about six months" hidden>
                 <div class="plan-dialog-plan-copy">
-                  <span>Paid in Full</span>
-                  <h3>Six months of Standard, paid once.</h3>
-                  <p>The same managed scope and correspondence capacity as Standard for one defined six-month service term, without a monthly program payment during that term.</p>
+                  <span>Six-Month Standard</span>
+                  <h3>Six months of Standard at a fixed total rate.</h3>
+                  <p>The same managed scope and correspondence capacity as Standard for one defined six-month term. The signed agreement states when each amount becomes due after the corresponding service is completed.</p>
                 </div>
-                <p class="plan-dialog-price"><strong>$849</strong><span>one payment</span></p>
+                <p class="plan-dialog-price"><strong>$849</strong><span>total contract rate</span></p>
                 <dl class="plan-dialog-facts">
-                  <div><dt>Billing</dt><dd>$849 paid once</dd></div>
+                  <div><dt>Billing</dt><dd>Only after completed services; never prepaid for future work</dd></div>
                   <div><dt>Service term</dt><dd>Fixed six months</dd></div>
                   <div><dt>Service level</dt><dd>Standard—not VIP</dd></div>
                   <div><dt>Letter capacity</dt><dd>Up to 3 tailored letters each month when supported</dd></div>
@@ -1438,7 +1457,7 @@
 
       <div class="footer-column">
         <h2>Client &amp; partner access</h2>
-        <a class="preview-destination" href="/login" data-preview-destination="/login">Member login</a>
+        <a class="preview-destination" href="https://creditcomeback.scorexer.com" data-preview-destination="/login">Member login</a>
         <a class="preview-destination" href="/affiliate/apply" data-preview-destination="/affiliate/apply">Partner application</a>
       </div>
 
@@ -1446,6 +1465,7 @@
         <h2>Legal inventory</h2>
         <a class="preview-destination" href="/terms" data-preview-destination="/terms">Terms</a>
         <a class="preview-destination" href="/privacy" data-preview-destination="/privacy">Privacy</a>
+        <a class="preview-destination" href="/cancellation-refund-policy" data-preview-destination="/cancellation-refund-policy">Cancellation &amp; refunds</a>
         <a class="preview-destination" href="/croa-statement" data-preview-destination="/croa-statement">Consumer rights</a>
       </div>
     </div>

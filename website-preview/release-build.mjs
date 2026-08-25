@@ -85,7 +85,7 @@ export function createWebsiteReleaseHtml(htmlSource, mode) {
       .replace(/\sdata-preview-destination="[^"]*"/g, '');
     html = removeClassToken(html, 'preview-destination');
     html = html
-      .replace('</body>', `  <script src="${basePath}/live-app.js" defer></script>\n  <script src="/embed.js" defer></script>\n</body>`);
+      .replace('</body>', `  <script src="${basePath}/live-app.js" defer></script>\n</body>`);
   }
 
   return rewriteAssetPaths(html, basePath, assetNames);

@@ -155,7 +155,6 @@ input:focus { outline: none; border-color: var(--navy); }
   margin: 0 0 8px;
 }
 #successStep p { font-size: 13.5px; color: var(--muted); margin: 0 0 20px; line-height: 1.5; }
-.calendly-inline-widget { min-width: 280px; height: 380px; }
 .schedule-fallback { display:inline-block; margin-top:12px; color:var(--navy); font-size:13px; font-weight:700; text-underline-offset:3px; }
 @media (max-width: 480px) {
   .card { padding: 32px 22px 28px; border-radius: 16px; }
@@ -176,37 +175,54 @@ input:focus { outline: none; border-color: var(--navy); }
     <h1>Start Your Credit Comeback</h1>
     <p class="subcopy">We review how accounts appear across your three credit reports, build factual disputes around the details that do not match, and track each response. Tell us a little about you and we'll reach out to get started.</p>
 
-    <form id="leadForm">
+    <form id="leadForm" action="https://pulse.disputeprocess.com/CustumFieldController?method=addWebFormData" method="post" enctype="multipart/form-data" accept-charset="UTF-8">
+      <input type="hidden" name="method" value="addWebFormData">
+      <input type="hidden" name="tab_info_id" value="RjFaeDcvSWpqYTJidVdyRDB3WVBsdz09">
+      <input type="hidden" name="redirect_url" value="https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99">
+      <input type="hidden" name="company_id" value="RkJJOWtkS1lYQ243V0Q5d3EybmlMUT09">
+      <input type="hidden" name="cust_type" value="1">
+      <input type="hidden" name="add_affiliate_flag" value="0">
+      <input type="hidden" name="assignedto_id" value="32175">
+      <input type="hidden" name="sales_representative_id" value="32175">
+      <input type="hidden" name="workflow_statusid" value="30">
+      <input type="hidden" name="folder_statusid" value="5">
+      <input type="hidden" name="customer_statusid" value="-1">
+      <input type="hidden" name="portalAccess" value="0">
+      <input type="hidden" name="customerAgreementIDs" value="">
+      <input id="leadSource" type="hidden" name="textArea1" value="Source: CCC referral landing page">
       <div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
         <label for="leadWebsite">Leave this field blank</label>
-        <input type="text" id="leadWebsite" tabindex="-1" autocomplete="off">
+        <input type="text" id="leadWebsite" name="website" tabindex="-1" autocomplete="off">
       </div>
       <div>
-        <label for="leadName">Full Name</label>
-        <input type="text" id="leadName" required autocomplete="name">
+        <label for="leadFirstName">First Name</label>
+        <input type="text" id="leadFirstName" name="firstName" required maxlength="80" autocomplete="given-name">
+      </div>
+      <div>
+        <label for="leadLastName">Last Name</label>
+        <input type="text" id="leadLastName" name="lastName" required maxlength="80" autocomplete="family-name">
       </div>
       <div>
         <label for="leadEmail">Email</label>
-        <input type="email" id="leadEmail" required autocomplete="email">
+        <input type="email" id="leadEmail" name="email1" required maxlength="254" autocomplete="email">
       </div>
       <div>
-        <label for="leadPhone">Phone</label>
-        <input type="tel" id="leadPhone" autocomplete="tel">
+        <label for="leadPhone">Cell Phone</label>
+        <input type="tel" id="leadPhone" name="mobilePhone1" required maxlength="40" inputmode="tel" autocomplete="tel">
       </div>
+      <label class="disclosure" style="display:flex;gap:8px;align-items:flex-start;text-align:left;"><input name="checkbox1" type="checkbox" value="true" required style="width:auto;margin-top:2px;"><span>I agree to receive email and/or SMS communications from Credit Comeback Club about my request. Message frequency varies; message and data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase.</span></label>
       <button type="submit" class="btn-submit" id="submitBtn">Get My Free Consultation</button>
       <div class="error-msg" id="errorMsg"></div>
     </form>
 
-    <p class="disclosure">Credit Comeback Club, LLC provides credit repair services. We do not charge until after your free consultation and a service agreement is executed, per the Credit Repair Organizations Act and the Telemarketing Sales Rule.</p>
+    <p class="disclosure">Submitting requests a consultation; it does not purchase a service or create portal access. Review our <a href="/terms.html">Terms</a>, <a href="/privacy.html">Privacy Policy</a>, and <a href="/cancellation-refund-policy">Cancellation &amp; Refund Policy</a>.</p>
   </div>
 
   <div id="successStep">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
     <h2>Choose Your Consultation Time</h2>
-    <p data-intake-scheduling-note>Book below. Once Calendly confirms your appointment, we'll email your preparation steps.</p>
-    <div class="calendly-inline-widget" data-url="https://calendly.com/creditcomebackclub/consultation"></div>
-    <a class="schedule-fallback" data-intake-calendly-fallback href="https://calendly.com/creditcomebackclub/consultation" target="_blank" rel="noopener noreferrer">Calendar not loading? Open scheduling directly →</a>
-    <script type="text/javascript" src="https://assets.calendly.com/assets/external/widget.js" async></script>
+    <p data-intake-scheduling-note>Your request may already be saved. To avoid creating a duplicate, continue directly to scheduling.</p>
+    <a class="schedule-fallback" href="https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99">Open scheduling →</a>
   </div>
 </div>
 
@@ -220,39 +236,15 @@ if (isEmbedded) {
   document.body.style.background = 'transparent';
 }
 
-// Referral attribution — /join?ref=<affiliate id prefix>. Captured once on
-// load and threaded through to the intake payload so public-intake.cjs can
-// attribute the lead to the affiliate (referred_by). A missing/invalid ref
-// just means an unbranded page and no attribution — the form/submit path
-// is identical either way.
-const referralRef = new URLSearchParams(window.location.search).get('ref');
-if (referralRef && /^[0-9a-f]{6,36}$/i.test(referralRef.trim())) {
-  fetch('/api/public-affiliate-lookup', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ref: referralRef })
-  }).then((r) => r.json()).then((data) => {
-    const aff = data && data.affiliate;
-    if (!aff) return;
-    const label = aff.brandName || aff.company || aff.name;
-    const eyebrow = document.getElementById('eyebrow');
-    if (eyebrow && label) {
-      eyebrow.textContent = 'In Partnership With ' + label;
-      eyebrow.style.display = 'inline-block';
-    }
-    if (aff.logoUrl) {
-      const brandRow = document.getElementById('brandRow');
-      const x = document.createElement('span');
-      x.className = 'brand-x';
-      x.textContent = '×';
-      const img = document.createElement('img');
-      img.className = 'partner-logo';
-      img.src = aff.logoUrl;
-      img.alt = label || 'Partner';
-      brandRow.appendChild(x);
-      brandRow.appendChild(img);
-    }
-  }).catch(() => {});
+// Keep the existing referral code as a source note in DisputeFox. The old CCC
+// affiliate lookup and CRM attribution path are intentionally not used.
+const referralValue = new URLSearchParams(window.location.search).get('ref');
+const referralRef = referralValue && /^[a-z0-9_-]{1,64}$/i.test(referralValue.trim()) ? referralValue.trim() : '';
+document.getElementById('leadSource').value = `Source: CCC referral landing page\nReferral code: ${referralRef || 'Not provided'}\nConsent: ccc-contact-email-sms-v1`;
+if (referralRef) {
+  const eyebrow = document.getElementById('eyebrow');
+  eyebrow.textContent = 'Referral invitation';
+  eyebrow.style.display = 'inline-block';
 }
 
 const formStep = document.getElementById('formStep');
@@ -260,85 +252,77 @@ const successStep = document.getElementById('successStep');
 const leadForm = document.getElementById('leadForm');
 const submitBtn = document.getElementById('submitBtn');
 const errorMsg = document.getElementById('errorMsg');
-const INTAKE_REQUEST_TIMEOUT_MS = 15000;
+const DISPUTEFOX_ENDPOINT = 'https://pulse.disputeprocess.com/CustumFieldController?method=addWebFormData';
+const SCHEDULER_URL = 'https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99';
+const DISPUTEFOX_TIMEOUT_MS = 15000;
+const SUBMISSION_KEY = `ccc:join-submitted:v1:${referralRef || 'direct'}`;
+let submissionInFlight = false;
+function rememberSubmission() { try { sessionStorage.setItem(SUBMISSION_KEY, String(Date.now())); } catch {} }
+function submissionRemembered() { try { return Boolean(sessionStorage.getItem(SUBMISSION_KEY)); } catch { return false; } }
 
-function directCalendlyUrl(name, email) {
-  const url = new URL('https://calendly.com/creditcomebackclub/consultation');
-  url.searchParams.set('name', String(name || '').trim());
-  url.searchParams.set('email', String(email || '').trim().toLowerCase());
-  return url.toString();
+function responseMatchesScheduler(value) {
+  try { return new URL(String(value || '').trim()).href === new URL(SCHEDULER_URL).href; }
+  catch { return false; }
 }
 
-function initializeIntakeCalendly(name, email) {
-  const mount = successStep.querySelector('.calendly-inline-widget');
-  if (!mount) return;
-  const url = 'https://calendly.com/creditcomebackclub/consultation';
-  const prefill = { name: String(name || '').trim(), email: String(email || '').trim().toLowerCase() };
-  const fallback = successStep.querySelector('[data-intake-calendly-fallback]');
-  if (fallback) fallback.href = directCalendlyUrl(name, email);
-  const init = () => {
-    if (!window.Calendly?.initInlineWidget) return;
-    mount.innerHTML = '';
-    window.Calendly.initInlineWidget({ url, parentElement: mount, prefill });
-  };
-  if (window.Calendly?.initInlineWidget) init();
-  else {
-    const fallbackUrl = new URL(url);
-    fallbackUrl.searchParams.set('name', prefill.name);
-    fallbackUrl.searchParams.set('email', prefill.email);
-    mount.dataset.url = fallbackUrl.toString();
-    document.querySelector('script[src*="assets.calendly.com/assets/external/widget.js"]')?.addEventListener('load', init, { once: true });
-  }
-}
-
-function showIntakeScheduling(payload, uncertain = false) {
+function showIntakeScheduling(uncertain = false) {
+  rememberSubmission();
   const note = successStep.querySelector('[data-intake-scheduling-note]');
   if (note) note.textContent = uncertain
-    ? 'The confirmation took longer than expected. You can still schedule directly below; your Calendly booking will securely complete the request.'
-    : 'Book below. Once Calendly confirms your appointment, we\'ll email your preparation steps.';
-  initializeIntakeCalendly(payload.name, payload.email);
+    ? 'The confirmation took longer than expected and your request may already be saved. To avoid a duplicate, continue directly to scheduling.'
+    : 'Your request is saved. Continue directly to scheduling.';
   formStep.style.display = 'none';
   successStep.style.display = 'block';
 }
 
 leadForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (submissionInFlight) return;
   errorMsg.textContent = '';
+  submissionInFlight = true;
   submitBtn.disabled = true;
   submitBtn.textContent = 'Submitting…';
 
-  const payload = {
-    name: document.getElementById('leadName').value,
-    email: document.getElementById('leadEmail').value,
-    phone: document.getElementById('leadPhone').value,
-    ref: referralRef || undefined,
-    website: document.getElementById('leadWebsite').value
-  };
-
+  const formData = new FormData(leadForm);
+  const honeypot = String(formData.get('website') || '').trim();
+  formData.delete('website');
+  if (honeypot) { showIntakeScheduling(); return; }
   const controller = new AbortController();
-  const requestTimer = setTimeout(() => controller.abort(), INTAKE_REQUEST_TIMEOUT_MS);
+  const requestTimer = setTimeout(() => controller.abort(), DISPUTEFOX_TIMEOUT_MS);
   try {
-    const res = await fetch('/api/public-intake', {
+    const res = await fetch(DISPUTEFOX_ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: formData,
+      credentials: 'omit',
       signal: controller.signal
     });
-    if (!res.ok) throw new Error('Something went wrong — please try again.');
-    await res.json();
-    showIntakeScheduling(payload);
-  } catch (err) {
-    if (err?.name === 'AbortError') {
-      showIntakeScheduling(payload, true);
+    const body = await res.text();
+    if (body.includes('Account is in-activated')) {
+      errorMsg.textContent = 'Scheduling is temporarily unavailable. Please try again later.';
+      submissionInFlight = false;
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Get My Free Consultation';
       return;
     }
-    errorMsg.textContent = err.message || 'Something went wrong — please try again.';
-    submitBtn.disabled = false;
-    submitBtn.textContent = 'Get My Free Consultation';
+    if (res.status >= 400 && res.status < 500) {
+      errorMsg.textContent = 'The request could not be accepted. Check your information and try again.';
+      submissionInFlight = false;
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Get My Free Consultation';
+      return;
+    }
+    if (res.ok && responseMatchesScheduler(body)) {
+      window.location.assign(SCHEDULER_URL);
+      return;
+    }
+    showIntakeScheduling(true);
+  } catch (_err) {
+    showIntakeScheduling(true);
   } finally {
     clearTimeout(requestTimer);
   }
 });
+if (submissionRemembered()) showIntakeScheduling(true);
 
 </script>
 </body>

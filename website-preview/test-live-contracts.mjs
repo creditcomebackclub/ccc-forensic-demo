@@ -22,6 +22,10 @@ const [htmlSource, cssSource, previewJs, liveJs, viteConfig, netlifyConfig, robo
 
 const previewHtml = createWebsiteReleaseHtml(htmlSource, 'preview');
 const liveHtml = createWebsiteReleaseHtml(htmlSource, 'live');
+const liveIntakeMarker = liveHtml.indexOf('data-live-intake-form');
+const liveIntakeOpening = liveIntakeMarker >= 0
+  ? liveHtml.slice(liveHtml.lastIndexOf('<form', liveIntakeMarker), liveHtml.indexOf('>', liveIntakeMarker) + 1)
+  : '';
 const liveCss = createWebsiteReleaseCss(cssSource, 'live');
 const socialImageUrl = 'https://creditcomebackclub.com/site-live/ccc-social-preview-2026.jpg';
 const socialImagePath = join(previewRoot, 'ccc-social-preview-2026.jpg');
@@ -128,87 +132,121 @@ check(
   'live artifact resolves every shared release asset from its isolated directory',
 );
 check(
-  liveHtml.includes('name="name" autocomplete="name" maxlength="120" required')
-    && liveHtml.includes('name="email" autocomplete="email" maxlength="254" required')
-    && liveHtml.includes('name="phone" autocomplete="tel" maxlength="40" required')
-    && liveHtml.includes('name="tier" required')
-    && liveHtml.includes('name="intent" value="consultation"')
+  liveIntakeOpening.includes('action="https://pulse.disputeprocess.com/CustumFieldController?method=addWebFormData"')
+    && liveIntakeOpening.includes('method="post"')
+    && liveIntakeOpening.includes('enctype="multipart/form-data"')
+    && !liveIntakeOpening.includes('novalidate')
+    && liveHtml.includes('name="firstName" autocomplete="given-name" maxlength="80" required')
+    && liveHtml.includes('name="lastName" autocomplete="family-name" maxlength="80" required')
+    && liveHtml.includes('name="email1" autocomplete="email" maxlength="254" required')
+    && liveHtml.includes('name="mobilePhone1" autocomplete="tel" inputmode="tel" maxlength="40" required')
+    && liveHtml.includes('name="checkbox1" value="true" required')
     && liveHtml.includes('name="website" tabindex="-1" autocomplete="off"'),
-  'live intake exposes validated name, email, phone, tier, intent, and honeypot fields',
+  'live intake posts the required contact and consent fields directly to DisputeFox',
 );
 check(
-  ['Standard', 'VIP', 'Paid In Full'].every((tier) => liveHtml.includes(`<option value="${tier}">`))
-    && liveJs.includes("new Set(['Standard', 'VIP', 'Paid In Full'])")
-    && liveJs.includes("intent !== 'consultation'")
-    && liveJs.includes('phoneDigits.length >= 7')
-    && liveJs.includes('emailField.validity.valid'),
-  'live validation allows only the server-supported plan and consultation values',
+  [
+    ['method', 'addWebFormData'],
+    ['tab_info_id', 'RjFaeDcvSWpqYTJidVdyRDB3WVBsdz09'],
+    ['company_id', 'RkJJOWtkS1lYQ243V0Q5d3EybmlMUT09'],
+    ['cust_type', '1'],
+    ['add_affiliate_flag', '0'],
+    ['assignedto_id', '32175'],
+    ['sales_representative_id', '32175'],
+    ['workflow_statusid', '30'],
+    ['folder_statusid', '5'],
+    ['customer_statusid', '-1'],
+    ['portalAccess', '0'],
+    ['customerAgreementIDs', ''],
+  ].every(([name, value]) => liveHtml.includes(`name="${name}" value="${value}"`)),
+  'live intake preserves the exact DisputeFox routing contract while disabling portal and agreement creation',
 );
 check(
-  liveJs.includes("fetch('/api/public-intake'")
-    && liveJs.includes("'Content-Type': 'application/json'")
-    && liveJs.includes('JSON.stringify(payload)')
-    && liveJs.includes('body?.success !== true')
-    && liveJs.includes("response.status === 429")
-    && liveJs.includes("controller.abort()"),
-  'live intake posts JSON to the hardened public endpoint and handles timeout, rate-limit, and invalid success responses',
+  liveHtml.includes('name="textArea1"')
+    && liveHtml.includes('maxlength="1000"')
+    && liveHtml.includes('Do not include your SSN, date of birth, passwords, or account numbers.')
+    && liveJs.includes('disputeFoxSituation.length <= 1000')
+    && liveJs.includes("phoneDigits.length >= 10")
+    && liveJs.includes('emailField?.validity.valid')
+    && liveJs.includes("formData.delete('website')")
+    && liveJs.includes("formData.set('checkbox1', 'true')"),
+  'live validation bounds the optional situation field, warns against sensitive data, and validates contact consent',
+);
+check(
+  liveJs.includes("fetch(DISPUTEFOX_ENDPOINT")
+    && liveJs.includes("const DISPUTEFOX_ENDPOINT = 'https://pulse.disputeprocess.com/CustumFieldController?method=addWebFormData'")
+    && liveJs.includes("method: 'POST'")
+    && liveJs.includes('body: formData')
+    && liveJs.includes("credentials: 'omit'")
+    && liveJs.includes('signal: controller.signal')
+    && !liveJs.includes('/api/public-intake')
+    && !liveJs.includes('JSON.stringify('),
+  'live intake sends multipart data directly to DisputeFox without the retired CCC lead writer',
 );
 check(
   liveHtml.includes('data-live-intake-status')
     && liveHtml.includes('role="status" aria-live="polite"')
     && liveJs.includes("intakeForm.setAttribute('aria-busy', 'true')")
     && liveJs.includes("field.setAttribute('aria-invalid'")
-    && liveJs.includes('firstInvalid?.focus()')
-    && liveJs.includes('calendarStage.focus()'),
-  'live form exposes accessible validation, busy, status, and focus transitions',
+    && liveJs.includes('firstInvalid.focus()')
+    && liveJs.includes('if (submissionInFlight) return')
+    && liveJs.includes('submitButton.disabled = true'),
+  'live form exposes accessible validation and blocks duplicate in-flight submissions',
 );
 check(
-  liveHtml.includes('data-live-calendly')
-    && liveJs.includes("const CALENDLY_URL = 'https://calendly.com/creditcomebackclub/consultation?hide_gdpr_banner=1'")
-    && liveJs.includes("const CALENDLY_STYLE_URL = 'https://assets.calendly.com/assets/external/widget.css'")
-    && liveJs.includes("const CALENDLY_SCRIPT_URL = 'https://assets.calendly.com/assets/external/widget.js'")
-    && liveJs.includes('window.Calendly.initInlineWidget')
-    && liveJs.includes('prefill: { name: payload.name, email: payload.email }'),
-  'successful intake initializes the exact owner-provided Calendly inline widget with local name/email prefill',
+  liveJs.includes("const SCHEDULER_URL = 'https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99'")
+    && liveJs.includes("new URL(String(responseText || '').trim()).href === SCHEDULER_URL")
+    && liveJs.includes('window.location.assign(SCHEDULER_URL)')
+    && !liveJs.includes('window.location.assign(responseText)')
+    && !liveJs.includes('window.location.replace(responseText)'),
+  'successful intake follows only the exact allowlisted DisputeFox scheduler destination',
 );
 check(
-  liveJs.includes("error?.name === 'AbortError'")
-    && liveJs.includes('showDirectCalendlyFallback(')
-    && liveJs.includes("fallbackUrl.searchParams.set('name', payload.name)")
-    && liveJs.includes("fallbackUrl.searchParams.set('email', payload.email)")
-    && liveJs.includes("fallback.target = '_blank'")
-    && liveJs.includes("fallback.rel = 'noopener noreferrer'"),
-  'a timed-out intake reveals a direct, prefilled Calendly fallback instead of trapping the lead',
+  liveJs.includes('const SUBMISSION_TIMEOUT_MS = 15000')
+    && liveJs.includes('window.setTimeout(() => controller.abort(), SUBMISSION_TIMEOUT_MS)')
+    && liveJs.includes('showSchedulerFallback()')
+    && liveJs.includes('catch (_error)')
+    && liveJs.includes("submitButton.textContent = 'Request status pending'")
+    && liveHtml.includes('data-live-intake-fallback')
+    && liveHtml.includes('>Continue directly to scheduling</a>')
+    && liveJs.includes('window.clearTimeout(timeout)'),
+  'DisputeFox submission has a bounded timeout and a duplicate-safe direct scheduler fallback',
 );
 check(
-  liveJs.includes('const CALENDLY_LOAD_TIMEOUT_MS = 8000')
-    && liveJs.includes('window.setTimeout(')
-    && liveJs.includes("new Error('Calendly took too long to load.')")
-    && liveJs.includes('window.clearTimeout(timer)')
-    && liveJs.includes("showDirectCalendlyFallback(payload, 'The embedded calendar is unavailable."),
-  'a stalled Calendly script is bounded and falls back to the same direct scheduling link',
+  !/Calendly|calendly/.test(liveHtml)
+    && !/Calendly|calendly/.test(liveJs)
+    && !/localStorage|sessionStorage|console\./.test(liveJs)
+    && !liveJs.includes('searchParams.set('),
+  'canonical live intake contains no Calendly path and never writes PII to URLs, browser storage, or logs',
 );
 check(
-  liveHtml.includes('<script src="/embed.js" defer></script>'),
-  'live artifact mounts the existing root chat embed without copying or modifying it',
+  !liveHtml.includes('/embed.js')
+    && !liveHtml.includes('/widget')
+    && !liveHtml.includes('chat-prospect'),
+  'live marketing artifact does not mount the retired CCC prospect chatbot',
 );
 check(
   /href="#consultation" data-tier="Standard">See if Standard fits<\/a>/.test(liveHtml)
     && /href="#consultation" data-tier="VIP">See if VIP fits<\/a>/.test(liveHtml)
-    && /href="#consultation" data-tier="Paid In Full">Ask about paying in full<\/a>/.test(liveHtml)
-    && previewJs.includes("planDialogConsultation.dataset.tier = selectedPanel.dataset.planName || ''"),
-  'all card and dialog consultation CTAs retain exact plan-to-tier mapping',
+    && /href="#consultation" data-tier="Six-Month Standard">Ask about six months<\/a>/.test(liveHtml)
+    && previewJs.includes("planDialogConsultation.dataset.tier = selectedPanel.dataset.planName || ''")
+    && liveJs.includes("event.target.closest('[data-tier]')")
+    && liveJs.includes('Selected service: ${selectedTier')
+    && liveJs.includes('Source: creditcomebackclub.com homepage consultation'),
+  'all consultation CTAs retain exact plan mapping and bind source plus selected service into DisputeFox notes',
 );
 check(
   liveHtml.includes('<strong>$149</strong>')
     && liveHtml.includes('<strong>$299</strong>')
     && liveHtml.includes('<strong>$849</strong>')
-    && liveHtml.includes('The same managed scope and correspondence capacity as Standard for one defined six-month service term'),
-  'live promotion preserves approved prices and paid-in-full scope',
+    && liveHtml.includes('The same managed scope and correspondence capacity as Standard for one defined six-month term')
+    && liveHtml.includes('Only after completed services; never prepaid for future work'),
+  'live promotion preserves approved prices and lawful six-month payment timing',
 );
 check(
-  ['/login', '/freeguide', '/affiliate/apply', '/terms', '/privacy', '/croa-statement']
+  ['/freeguide', '/affiliate/apply', '/terms', '/privacy', '/cancellation-refund-policy', '/croa-statement']
     .every((destination) => liveHtml.includes(`href="${destination}"`))
+    && liveHtml.includes('href="https://creditcomeback.scorexer.com"')
     && liveHtml.includes('>Free guide</a>')
     && liveHtml.includes('>Free dispute guide</a>')
     && liveHtml.includes('>Partner application</a>')
@@ -236,12 +274,13 @@ check(
   'PWA navigation and precache rules exclude the root handoff and both marketing artifacts',
 );
 check(
-  liveCss.includes('.live-calendly-widget')
-    && liveCss.includes('min-width: 280px')
+  liveCss.includes('.live-consent')
+    && liveCss.includes('.form-help')
+    && liveCss.includes('textarea')
     && liveCss.includes('@media (max-width: 620px)')
     && liveCss.includes('.form-grid')
     && liveCss.includes('grid-template-columns: 1fr'),
-  'live intake and Calendly mount retain the existing 390px-compatible responsive form layout',
+  'live DisputeFox intake retains the existing 390px-compatible responsive form layout',
 );
 
 const failed = assertions.filter((assertion) => !assertion.condition);

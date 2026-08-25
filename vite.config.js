@@ -65,8 +65,8 @@ export default defineConfig({
         // (portal-agreement-view, guide-download) would otherwise load the
         // cached app shell into the new tab, which boots the SPA at its
         // default tab instead of showing the document.
-        navigateFallbackDenylist: [/^\/$/, /^\/freeguide/, /^\/home/, /^\/join/, /^\/terms/, /^\/privacy/, /^\/success/, /^\/sign-lpoa/, /^\/+affiliate(?:\/apply|-apply\.html)/, /^\/downloads\//, /^\/site-preview\//, /^\/site-live\//, /^\/new-site-preview\/?$/, /^\/\.netlify\//, /^\/api\//],
-        globIgnores: ['**/freeguide.html', '**/home.html', '**/join.html', '**/affiliate-apply.html', '**/terms.html', '**/privacy.html', '**/success.html', '**/sign-lpoa.html', 'downloads/**', 'site-preview/**', 'site-live/**'],
+        navigateFallbackDenylist: [/^\/$/, /^\/freeguide/, /^\/home/, /^\/join/, /^\/terms/, /^\/privacy/, /^\/croa-statement/, /^\/cancellation-refund-policy/, /^\/success/, /^\/sign-lpoa/, /^\/+affiliate(?:\/apply|-apply\.html)/, /^\/downloads\//, /^\/site-preview\//, /^\/site-live\//, /^\/new-site-preview\/?$/, /^\/\.netlify\//, /^\/api\//],
+        globIgnores: ['**/freeguide.html', '**/home.html', '**/join.html', '**/affiliate-apply.html', '**/terms.html', '**/privacy.html', '**/croa-statement.html', '**/cancellation-refund-policy.html', '**/success.html', '**/sign-lpoa.html', 'downloads/**', 'site-preview/**', 'site-live/**'],
       },
       manifest: {
         name: 'Credit Comeback Club',

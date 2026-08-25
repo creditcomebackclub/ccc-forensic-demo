@@ -70,6 +70,10 @@ try {
 }
 
 const assertions = [];
+const inertPreviewHtml = html.replace(
+  /<!-- CCC_LIVE_ONLY_START -->[\s\S]*?<!-- CCC_LIVE_ONLY_END -->/g,
+  '',
+);
 function check(condition, message) {
   assertions.push({ condition: Boolean(condition), message });
 }
@@ -78,11 +82,11 @@ check(ownerAssetAvailability.every(Boolean), 'all ten supplied image files exist
 check(evidenceAssetAvailability.every(Boolean), 'all seven client evidence image files exist in the isolated preview');
 
 const destinations = [
-  '/login',
   '/freeguide',
   '/affiliate/apply',
   '/terms',
   '/privacy',
+  '/cancellation-refund-policy',
   '/croa-statement',
 ];
 
@@ -100,11 +104,11 @@ check(
   'Netlify keeps the inert review URL separate from the live root artifact',
 );
 check(
-  html.includes('https://calendly.com/creditcomebackclub/consultation?hide_gdpr_banner=1'),
-  'exact configured Calendly URL is retained as inert preview configuration',
+  !/https:\/\/(?:calendly\.com|pulse\.scorexer\.com|pulse\.disputeprocess\.com)/i.test(inertPreviewHtml),
+  'inert preview source contains no live CRM or scheduler destination',
 );
 check(
-  html.includes('<span class="widget-kicker">Choose a consultation time</span>')
+  html.includes('<span class="widget-kicker">Start your consultation request</span>')
     && !html.includes('Calendly embed shell')
     && (html.match(/Preview only/g) || []).length === 1
     && html.includes('Local safety indicator only; this is not customer-facing production copy.'),
@@ -140,7 +144,8 @@ check(
     && html.includes('href="/affiliate/apply" data-preview-destination="/affiliate/apply">Partner application</a>')
     && !html.includes('/join?ref=')
     && !html.includes('Affiliate referral intake')
-    && !html.includes('>Affiliate application</a>'),
+    && !html.includes('>Affiliate application</a>')
+    && html.includes('href="/cancellation-refund-policy" data-preview-destination="/cancellation-refund-policy">Cancellation &amp; refunds</a>'),
   'footer exposes the guide, community, and clearly named partner application without the empty referral route',
 );
 check(html.includes('Your Story. The Facts. The Pressure.'), 'owner-approved public framework leads the method');
@@ -394,7 +399,7 @@ check(
 check(html.includes('No appointment was created'), 'calendar mock states its no-write outcome');
 check(html.includes('<span class="program-label">Standard</span>'), 'Standard program routes to lead capture');
 check(html.includes('<span class="program-label">VIP</span>'), 'VIP program routes to lead capture');
-check(html.includes('<span class="program-label">Paid in Full</span>'), 'Paid in Full program routes to lead capture');
+check(html.includes('<span class="program-label">Six-Month Standard</span>'), 'Six-Month Standard program routes to lead capture');
 check(
   html.includes('<strong>$149</strong>')
     && html.includes('<strong>$299</strong>')
@@ -439,11 +444,11 @@ check(
     && html.includes('<dd>Priority within CCC’s review and processing queue</dd>')
     && html.includes('<dd>Exclusive CCC partner access and fast-track readiness review</dd>')
     && html.includes('<dd>Priority funding-partner referral when eligible</dd>')
-    && html.includes('data-plan-panel="paid-in-full"')
-    && html.includes('<dd>$849 paid once</dd>')
+    && html.includes('data-plan-panel="six-month-standard"')
+    && html.includes('<dd>Only after completed services; never prepaid for future work</dd>')
     && html.includes('<dd>Fixed six months</dd>')
     && html.includes('<dd>Standard—not VIP</dd>')
-    && html.includes('The same managed scope and correspondence capacity as Standard for one defined six-month service term'),
+    && html.includes('The same managed scope and correspondence capacity as Standard for one defined six-month term'),
   'dialog states the owner-confirmed capacity, access, processing, funding, billing, and term differences',
 );
 check(
@@ -516,6 +521,10 @@ for (const destination of destinations) {
     'production destination inventory includes ' + destination,
   );
 }
+check(
+  html.includes('href="https://creditcomeback.scorexer.com" data-preview-destination="/login"'),
+  'production member access targets Scorexer while preview navigation remains inert',
+);
 
 const failed = assertions.filter((assertion) => !assertion.condition);
 for (const assertion of assertions) {

@@ -54,7 +54,8 @@ body.plan-dialog-open {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -1583,7 +1584,7 @@ p {
 }
 
 .score-input-grid label,
-.consultation-form label:not(.preview-consent) {
+.consultation-form label:not(.preview-consent):not(.live-consent) {
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -1600,7 +1601,8 @@ input[type="number"],
 input[type="text"],
 input[type="email"],
 input[type="tel"],
-select {
+select,
+textarea {
   appearance: none;
   background: #fbfdff;
   border: 1px solid #cedce5;
@@ -1613,7 +1615,16 @@ select {
   width: 100%;
 }
 
-input:hover {
+textarea {
+  line-height: 1.5;
+  min-height: 122px;
+  padding-block: 12px;
+  resize: vertical;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
   border-color: #aebfc9;
 }
 
@@ -1630,19 +1641,17 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   background: var(--white);
   border-color: var(--blue);
   box-shadow: 0 0 0 4px rgba(30, 154, 214, 0.11);
   outline: 0;
 }
 
-input[aria-invalid="true"] {
-  border-color: #ba3a3a;
-  box-shadow: 0 0 0 3px rgba(186, 58, 58, 0.1);
-}
-
-select[aria-invalid="true"] {
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+textarea[aria-invalid="true"] {
   border-color: #ba3a3a;
   box-shadow: 0 0 0 3px rgba(186, 58, 58, 0.1);
 }
@@ -3523,6 +3532,34 @@ select[aria-invalid="true"] {
   font-weight: 600;
 }
 
+.form-help {
+  color: #697580;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.live-consent {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.live-consent input {
+  accent-color: var(--blue);
+  flex: 0 0 auto;
+  height: 16px;
+  margin: 3px 0 0;
+  width: 16px;
+}
+
+.live-consent span {
+  color: var(--ink-muted);
+  font-size: 9px;
+  line-height: 1.55;
+}
+
 .preview-consent {
   align-items: flex-start;
   cursor: pointer;
@@ -3582,24 +3619,14 @@ select[aria-invalid="true"] {
   font-weight: 700;
 }
 
-.live-calendar-stage[hidden] {
-  display: none;
-}
-
-.live-calendar-stage:focus {
-  outline: 0;
-}
-
-.live-calendly-widget {
-  height: 700px;
-  min-width: 280px;
-  overflow: hidden;
+.live-intake-fallback {
+  justify-content: center;
+  margin: 0 0 12px;
   width: 100%;
 }
 
-.calendly-fallback-link {
-  margin: 22px auto;
-  width: fit-content;
+.live-intake-fallback[hidden] {
+  display: none;
 }
 
 .calendar-preview[hidden] {

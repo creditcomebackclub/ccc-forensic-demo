@@ -301,7 +301,7 @@ def proof_card(quote: str, name: str, context: str) -> Table:
 
 
 def consultation_button() -> Table:
-    href = "https://calendly.com/creditcomebackclub/consultation?hide_gdpr_banner=1"
+    href = "https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99"
     label = Paragraph(
         f'<link href="{href}" color="#FFFFFF"><b>Schedule a no-pressure consultation  →</b></link>',
         styles["CTAButton"],

@@ -1,20 +1,18 @@
-const CALENDLY_URL = 'https://calendly.com/creditcomebackclub/consultation?hide_gdpr_banner=1';
-const CALENDLY_SCRIPT_URL = 'https://assets.calendly.com/assets/external/widget.js';
-const CALENDLY_STYLE_URL = 'https://assets.calendly.com/assets/external/widget.css';
-const CALENDLY_LOAD_TIMEOUT_MS = 8000;
-const ALLOWED_TIERS = new Set(['Standard', 'VIP', 'Paid In Full']);
+const DISPUTEFOX_ENDPOINT = 'https://pulse.disputeprocess.com/CustumFieldController?method=addWebFormData';
+const SCHEDULER_URL = 'https://pulse.scorexer.com/Portal/meeting.jsp?id=5d235976-7de9-49d9-a061-dab6275c3c99';
+const SUBMISSION_TIMEOUT_MS = 15000;
 
 const intakeForm = document.querySelector('[data-live-intake-form]');
 const submitButton = document.querySelector('[data-live-intake-submit]');
 const intakeStatus = document.querySelector('[data-live-intake-status]');
-const calendarStage = document.querySelector('[data-live-calendar-stage]');
-const calendarMount = document.querySelector('[data-live-calendly]');
-const calendarStatus = document.querySelector('[data-live-calendar-status]');
+const schedulerFallback = document.querySelector('[data-live-intake-fallback]');
+let submissionInFlight = false;
+let selectedTier = '';
 
-function setStatus(node, message, tone = '') {
-  if (!node) return;
-  node.textContent = message;
-  node.dataset.tone = tone;
+function setStatus(message, tone = '') {
+  if (!intakeStatus) return;
+  intakeStatus.textContent = message;
+  intakeStatus.dataset.tone = tone;
 }
 
 function setFieldValidity(field, message = '') {
@@ -23,197 +21,175 @@ function setFieldValidity(field, message = '') {
   field.setAttribute('aria-invalid', String(Boolean(message)));
 }
 
-function validateIntake(formData) {
-  const nameField = intakeForm.elements.namedItem('name');
-  const emailField = intakeForm.elements.namedItem('email');
-  const phoneField = intakeForm.elements.namedItem('phone');
-  const tierField = intakeForm.elements.namedItem('tier');
-  const intentField = intakeForm.elements.namedItem('intent');
+function normalizeSingleLine(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
 
-  const name = String(formData.get('name') || '').trim().replace(/\s+/g, ' ');
-  const email = String(formData.get('email') || '').trim().toLowerCase();
-  const phone = String(formData.get('phone') || '').trim();
-  const tier = String(formData.get('tier') || '').trim();
-  const intent = String(formData.get('intent') || '').trim();
-  const website = String(formData.get('website') || '').trim();
+function validateIntake(formData) {
+  const website = normalizeSingleLine(formData.get('website'));
+  formData.delete('website');
+  if (website) return null;
+
+  const firstNameField = intakeForm.elements.namedItem('firstName');
+  const lastNameField = intakeForm.elements.namedItem('lastName');
+  const emailField = intakeForm.elements.namedItem('email1');
+  const phoneField = intakeForm.elements.namedItem('mobilePhone1');
+  const situationField = intakeForm.elements.namedItem('textArea1');
+  const consentField = intakeForm.elements.namedItem('checkbox1');
+
+  const firstName = normalizeSingleLine(formData.get('firstName'));
+  const lastName = normalizeSingleLine(formData.get('lastName'));
+  const email = normalizeSingleLine(formData.get('email1')).toLowerCase();
+  const phone = normalizeSingleLine(formData.get('mobilePhone1'));
+  const situation = String(formData.get('textArea1') || '').trim();
+  const sourceSummary = [
+    'Source: creditcomebackclub.com homepage consultation',
+    `Selected service: ${selectedTier || 'Not selected'}`,
+  ].join('\n');
+  const disputeFoxSituation = situation ? `${sourceSummary}\n${situation}` : sourceSummary;
   const phoneDigits = phone.replace(/\D/g, '');
 
-  setFieldValidity(nameField, name.length >= 2 && name.length <= 120 ? '' : 'Enter your full name.');
-  setFieldValidity(emailField, emailField.validity.valid && email.length <= 254 ? '' : 'Enter a valid email address.');
-  setFieldValidity(phoneField, phoneDigits.length >= 7 && phoneDigits.length <= 15 ? '' : 'Enter a valid phone number.');
-  setFieldValidity(tierField, ALLOWED_TIERS.has(tier) ? '' : 'Choose the plan you want to discuss.');
+  setFieldValidity(
+    firstNameField,
+    firstName.length >= 1 && firstName.length <= 80 ? '' : 'Enter your first name.',
+  );
+  setFieldValidity(
+    lastNameField,
+    lastName.length >= 1 && lastName.length <= 80 ? '' : 'Enter your last name.',
+  );
+  setFieldValidity(
+    emailField,
+    email.length <= 254 && emailField?.validity.valid ? '' : 'Enter a valid email address.',
+  );
+  setFieldValidity(
+    phoneField,
+    phoneDigits.length >= 10 && phoneDigits.length <= 15 ? '' : 'Enter a valid phone number.',
+  );
+  setFieldValidity(
+    situationField,
+    disputeFoxSituation.length <= 1000
+      ? ''
+      : 'Please shorten this response so the complete request stays under 1,000 characters.',
+  );
+  setFieldValidity(
+    consentField,
+    consentField?.checked ? '' : 'Consent is required before we can contact you.',
+  );
 
-  const firstInvalid = [nameField, emailField, phoneField, tierField]
-    .find((field) => field?.validationMessage);
-  if (firstInvalid || intent !== 'consultation' || website.length > 200) {
-    firstInvalid?.focus();
+  const firstInvalid = [
+    firstNameField,
+    lastNameField,
+    emailField,
+    phoneField,
+    situationField,
+    consentField,
+  ].find((field) => field?.validationMessage);
+
+  if (firstInvalid) {
+    firstInvalid.focus();
     return null;
   }
 
-  const refCandidate = new URLSearchParams(window.location.search).get('ref')?.trim() || '';
-  const ref = /^[0-9a-f]{6,36}$/i.test(refCandidate) ? refCandidate.toLowerCase() : undefined;
-  return { name, email, phone, tier, intent, website, ...(ref ? { ref } : {}) };
+  formData.set('firstName', firstName);
+  formData.set('lastName', lastName);
+  formData.set('email1', email);
+  formData.set('mobilePhone1', phone);
+  formData.set('textArea1', disputeFoxSituation);
+  formData.set('checkbox1', 'true');
+  return formData;
 }
 
-function ensureCalendlyStylesheet() {
-  if (document.querySelector(`link[href="${CALENDLY_STYLE_URL}"]`)) return;
-  const stylesheet = document.createElement('link');
-  stylesheet.rel = 'stylesheet';
-  stylesheet.href = CALENDLY_STYLE_URL;
-  document.head.appendChild(stylesheet);
-}
-
-function loadCalendlyWidget() {
-  ensureCalendlyStylesheet();
-  if (window.Calendly?.initInlineWidget) return Promise.resolve();
-
-  return new Promise((resolve, reject) => {
-    let script = document.querySelector(`script[src="${CALENDLY_SCRIPT_URL}"]`);
-    let settled = false;
-    let timer;
-    const finish = (callback, value) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      script?.removeEventListener('load', handleLoad);
-      script?.removeEventListener('error', handleError);
-      callback(value);
-    };
-    const handleLoad = () => window.Calendly?.initInlineWidget
-      ? finish(resolve)
-      : finish(reject, new Error('Calendly did not initialize.'));
-    const handleError = () => finish(reject, new Error('Calendly could not load.'));
-
-    if (!script) {
-      script = document.createElement('script');
-      script.src = CALENDLY_SCRIPT_URL;
-      script.async = true;
-    }
-    script.addEventListener('load', handleLoad, { once: true });
-    script.addEventListener('error', handleError, { once: true });
-    timer = window.setTimeout(
-      () => finish(reject, new Error('Calendly took too long to load.')),
-      CALENDLY_LOAD_TIMEOUT_MS,
-    );
-    if (!script.isConnected) document.head.appendChild(script);
-  });
-}
-
-function directCalendlyUrl(payload) {
-  const fallbackUrl = new URL(CALENDLY_URL);
-  fallbackUrl.searchParams.set('name', payload.name);
-  fallbackUrl.searchParams.set('email', payload.email);
-  return fallbackUrl.toString();
-}
-
-function showCalendarStage() {
-  intakeForm.hidden = true;
-  if (calendarStage) {
-    calendarStage.hidden = false;
-    calendarStage.focus();
-  }
-}
-
-function showDirectCalendlyFallback(payload, message) {
-  showCalendarStage();
-  if (!calendarMount) return;
-  const fallback = document.createElement('a');
-  fallback.href = directCalendlyUrl(payload);
-  fallback.className = 'button button-dark calendly-fallback-link';
-  fallback.textContent = 'Open the scheduling calendar';
-  fallback.target = '_blank';
-  fallback.rel = 'noopener noreferrer';
-  calendarMount.replaceChildren(fallback);
-  setStatus(calendarStatus, message, 'error');
-}
-
-async function initializeCalendly(payload) {
-  if (!calendarMount) return;
-  calendarMount.dataset.url = CALENDLY_URL;
-  setStatus(calendarStatus, 'Loading available consultation times…');
-
-  try {
-    await loadCalendlyWidget();
-    calendarMount.replaceChildren();
-    window.Calendly.initInlineWidget({
-      url: CALENDLY_URL,
-      parentElement: calendarMount,
-      prefill: { name: payload.name, email: payload.email },
-    });
-    setStatus(calendarStatus, 'Select a time in the scheduler above. Calendly will email your confirmation.');
-  } catch (_error) {
-    showDirectCalendlyFallback(payload, 'The embedded calendar is unavailable. Use the secure scheduling link above.');
-  }
-}
-
-document.querySelectorAll('[data-tier]').forEach((link) => {
-  link.addEventListener('click', () => {
-    const selectedTier = link.dataset.tier || '';
-    const tierField = intakeForm?.elements.namedItem('tier');
-    if (tierField && ALLOWED_TIERS.has(selectedTier)) {
-      tierField.value = selectedTier;
-      setFieldValidity(tierField);
-    }
-  });
+document.addEventListener('click', (event) => {
+  const tierLink = event.target instanceof Element ? event.target.closest('[data-tier]') : null;
+  if (!tierLink) return;
+  selectedTier = normalizeSingleLine(tierLink.dataset.tier);
 });
 
+function isExpectedSchedulerResponse(responseText) {
+  try {
+    return new URL(String(responseText || '').trim()).href === SCHEDULER_URL;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function restoreSubmitButton(buttonText) {
+  submissionInFlight = false;
+  intakeForm?.removeAttribute('aria-busy');
+  if (!submitButton) return;
+  submitButton.disabled = false;
+  submitButton.textContent = buttonText;
+}
+
+function showSchedulerFallback() {
+  submissionInFlight = false;
+  intakeForm?.removeAttribute('aria-busy');
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = 'Request status pending';
+  }
+  if (schedulerFallback) schedulerFallback.hidden = false;
+  setStatus(
+    'Confirmation took longer than expected. To avoid creating a duplicate request, continue directly to scheduling.',
+    'error',
+  );
+}
+
 intakeForm?.addEventListener('input', (event) => {
-  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) {
+  if (
+    event.target instanceof HTMLInputElement
+    || event.target instanceof HTMLTextAreaElement
+  ) {
     setFieldValidity(event.target);
   }
 });
 
 intakeForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
-  setStatus(intakeStatus, '');
+  if (submissionInFlight) return;
+  setStatus('');
 
-  const payload = validateIntake(new FormData(intakeForm));
-  if (!payload) {
-    setStatus(intakeStatus, 'Check the highlighted fields and try again.', 'error');
+  const formData = validateIntake(new FormData(intakeForm));
+  if (!formData) {
+    setStatus('Check the highlighted fields and try again.', 'error');
     return;
   }
 
   const originalButtonText = submitButton?.textContent || 'Continue to scheduling';
+  if (schedulerFallback) schedulerFallback.hidden = true;
+  submissionInFlight = true;
+  intakeForm.setAttribute('aria-busy', 'true');
   if (submitButton) {
     submitButton.disabled = true;
     submitButton.textContent = 'Saving your request…';
   }
-  intakeForm.setAttribute('aria-busy', 'true');
 
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 15000);
+  const timeout = window.setTimeout(() => controller.abort(), SUBMISSION_TIMEOUT_MS);
+
   try {
-    const response = await fetch('/api/public-intake', {
+    const response = await fetch(DISPUTEFOX_ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: formData,
+      credentials: 'omit',
       signal: controller.signal,
     });
-    let body = null;
-    try { body = await response.json(); } catch (_error) { body = null; }
-    if (!response.ok || body?.success !== true) {
-      if (response.status === 429) throw new Error('Too many requests. Please wait a few minutes and try again.');
-      throw new Error('We could not save your request. Please try again.');
-    }
+    const responseText = await response.text();
 
-    showCalendarStage();
-    await initializeCalendly(payload);
-  } catch (error) {
-    if (error?.name === 'AbortError') {
-      showDirectCalendlyFallback(
-        payload,
-        'Confirmation took longer than expected. Schedule directly above; Calendly will securely complete your request.',
-      );
+    if (responseText.includes('Account is in-activated')) {
+      setStatus('Scheduling is temporarily unavailable. Please try again later.', 'error');
+      restoreSubmitButton(originalButtonText);
       return;
     }
-    const message = error?.message || 'We could not save your request. Please try again.';
-    setStatus(intakeStatus, message, 'error');
-    if (submitButton) {
-      submitButton.disabled = false;
-      submitButton.textContent = originalButtonText;
+    if (!response.ok || !isExpectedSchedulerResponse(responseText)) {
+      showSchedulerFallback();
+      return;
     }
+
+    window.location.assign(SCHEDULER_URL);
+  } catch (_error) {
+    showSchedulerFallback();
   } finally {
     window.clearTimeout(timeout);
-    intakeForm.removeAttribute('aria-busy');
   }
 });

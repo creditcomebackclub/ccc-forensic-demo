@@ -52,10 +52,10 @@
       <img src="/logo.jpg" alt="Credit Comeback Club" class="logo">
       <div class="eyebrow">Partner Program</div>
       <h1>Help clients make a stronger credit comeback.</h1>
-      <p>Apply to become a Credit Comeback Club referral partner. We handle the credit-restoration work while approved partners receive access to referral tracking and commission reporting.</p>
+      <p>Apply to become a Credit Comeback Club referral partner. We handle the credit-restoration work and review each approved partner’s referrals and compensation under separate written terms.</p>
       <ul class="benefits">
-        <li><span class="check">✓</span><span>Submit and track client referrals from a secure partner portal.</span></li>
-        <li><span class="check">✓</span><span>Follow enrollment and commission status without chasing updates.</span></li>
+        <li><span class="check">✓</span><span>Receive an assigned referral method after approval.</span></li>
+        <li><span class="check">✓</span><span>Receive enrollment and compensation updates directly from CCC.</span></li>
         <li><span class="check">✓</span><span>Review your exact commission terms in a versioned partner agreement before activation.</span></li>
       </ul>
     </section>
@@ -63,67 +63,146 @@
     <section class="form-side">
       <div id="application">
         <h2>Apply to partner with us</h2>
-        <p class="lede">Tell us who you serve and how you expect to refer clients. Applications, partner terms, and the signed agreement are reviewed before portal access is activated.</p>
-        <form id="affiliateForm">
+        <p class="lede">Register your contact and business information. Credit Comeback Club will review the registration before any referral relationship or compensation terms are activated.</p>
+        <form id="affiliateForm" action="https://pulse.disputeprocess.com/CustumFieldController?method=addWebFormData" method="post" enctype="multipart/form-data" accept-charset="UTF-8">
+          <input type="hidden" name="method" value="addWebFormData">
+          <input type="hidden" name="tab_info_id" value="MGsvQUNYekVzd01aWlluRlU3Zm9yQT09">
+          <input type="hidden" name="redirect_url" value="">
+          <input type="hidden" name="company_id" value="RkJJOWtkS1lYQ243V0Q5d3EybmlMUT09">
+          <input type="hidden" name="cust_type" value="4">
+          <input type="hidden" name="add_affiliate_flag" value="1">
+          <input type="hidden" name="assignedto_id" value="32175">
+          <input type="hidden" name="sales_representative_id" value="32175">
+          <input type="hidden" name="workflow_statusid" value="30">
+          <input type="hidden" name="folder_statusid" value="null">
+          <input type="hidden" name="customer_statusid" value="-1">
+          <input type="hidden" name="portalAccess" value="1">
+          <input type="hidden" name="customerAgreementIDs" value="0">
           <div class="honeypot" aria-hidden="true">
             <label for="faxNumber">Leave this field blank</label>
             <input id="faxNumber" name="faxNumber" type="text" tabindex="-1" autocomplete="off">
           </div>
           <div class="row">
-            <div><label for="name">Full name *</label><input id="name" name="name" required maxlength="120" autocomplete="name"></div>
-            <div><label for="company">Company</label><input id="company" name="company" maxlength="160" autocomplete="organization"></div>
+            <div><label for="firstName">First name *</label><input id="firstName" name="firstName" required maxlength="80" autocomplete="given-name"></div>
+            <div><label for="lastName">Last name *</label><input id="lastName" name="lastName" required maxlength="80" autocomplete="family-name"></div>
           </div>
           <div class="row">
             <div><label for="email">Email *</label><input id="email" name="email" type="email" required maxlength="254" autocomplete="email"></div>
-            <div><label for="phone">Phone</label><input id="phone" name="phone" type="tel" maxlength="40" autocomplete="tel"></div>
+            <div><label for="phone">Mobile phone *</label><input id="phone" name="mobilePhone" type="tel" required maxlength="40" autocomplete="tel"></div>
           </div>
-          <div><label for="websiteUrl">Website or LinkedIn</label><input id="websiteUrl" name="websiteUrl" maxlength="500" placeholder="yourcompany.com"></div>
-          <div><label for="referralNotes">Who do you serve?</label><textarea id="referralNotes" name="referralNotes" maxlength="1200" placeholder="Briefly describe your clients or audience and how you expect to introduce Credit Comeback Club."></textarea></div>
-          <label class="ack" for="acknowledged"><input id="acknowledged" name="acknowledged" type="checkbox" required><span>I understand this is an application. Partner status and portal access begin only after owner approval, acceptance of the exact compensation terms, a signed partner agreement, and final activation.</span></label>
+          <div><label for="company">Company</label><input id="company" name="companyName" maxlength="120" autocomplete="organization"></div>
+          <div><label for="currentAddress">Current address *</label><input id="currentAddress" name="currentAddress" required maxlength="160" autocomplete="street-address"></div>
+          <div class="row">
+            <div><label for="city">City *</label><input id="city" name="city" required maxlength="100" autocomplete="address-level2"></div>
+            <div><label for="state">State *</label><input id="state" name="state" required maxlength="40" autocomplete="address-level1"></div>
+          </div>
+          <div><label for="zipCode">ZIP code *</label><input id="zipCode" name="zipCode" required maxlength="20" autocomplete="postal-code"></div>
+          <label class="ack" for="acknowledged"><input id="acknowledged" type="checkbox" required><span>I understand this registration does not guarantee approval or compensation. Any partner terms require separate review and acceptance, and I agree to receive communications from Credit Comeback Club about this registration.</span></label>
           <div class="error" id="errorMessage" role="alert"></div>
           <button id="submitButton" type="submit">Submit Partner Application</button>
-          <p class="fine">Your information is used only to review and administer the partner program. See our <a href="/privacy.html">Privacy Policy</a>.</p>
+          <p class="fine">Your information is used only to review and administer the partner program. See our <a href="/privacy.html">Privacy Policy</a> and <a href="/cancellation-refund-policy">Cancellation &amp; Refund Policy</a>.</p>
         </form>
       </div>
       <div id="success">
         <div class="icon">✓</div>
-        <h2>Application received</h2>
-        <p>Thank you for your interest in partnering with Credit Comeback Club. We’ll review your information and email you. If approved, a secure agreement-review invitation will arrive separately; portal access follows signature and final owner activation.</p>
+        <h2 id="successHeading">Application received</h2>
+        <p id="successMessage">Thank you for your interest in partnering with Credit Comeback Club. We’ll review your information and email you. If approved, partner terms will arrive separately.</p>
       </div>
     </section>
   </main>
 
   <script>
+    const DISPUTEFOX_ENDPOINT = 'https://pulse.disputeprocess.com/CustumFieldController?method=addWebFormData';
     const form = document.getElementById('affiliateForm');
     const submit = document.getElementById('submitButton');
     const error = document.getElementById('errorMessage');
+    const application = document.getElementById('application');
+    const success = document.getElementById('success');
+    const successHeading = document.getElementById('successHeading');
+    const successMessage = document.getElementById('successMessage');
+    const SUBMISSION_KEY = 'ccc:partner-application-submitted:v1';
+    const APPROVED_HANDOFF_HOSTS = new Set([
+      'pulse.disputeprocess.com',
+      'pulse.scorexer.com',
+      'creditcomeback.scorexer.com',
+    ]);
+    let submissionInFlight = false;
+    function rememberSubmission() { try { sessionStorage.setItem(SUBMISSION_KEY, String(Date.now())); } catch {} }
+    function submissionRemembered() { try { return Boolean(sessionStorage.getItem(SUBMISSION_KEY)); } catch { return false; } }
+    function approvedHandoffUrl(value) {
+      const trimmed = String(value || '').trim();
+      if (!trimmed) return null;
+      try {
+        const candidate = new URL(/^https:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+        if (candidate.protocol !== 'https:' || !APPROVED_HANDOFF_HOSTS.has(candidate.hostname)) return null;
+        return candidate.href;
+      } catch {
+        return null;
+      }
+    }
+    function showSuccess(uncertain = false) {
+      rememberSubmission();
+      successHeading.textContent = uncertain ? 'Application status pending' : 'Application received';
+      successMessage.textContent = uncertain
+        ? 'The confirmation took longer than expected and your application may already be saved. To avoid a duplicate, please do not resubmit. Email creditcomebackclub@gmail.com if you do not hear from us.'
+        : 'Thank you for your interest in partnering with Credit Comeback Club. We’ll review your information and email you. If approved, partner terms will arrive separately.';
+      application.style.display = 'none';
+      success.style.display = 'block';
+    }
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
+      if (submissionInFlight) return;
       error.textContent = '';
+      submissionInFlight = true;
       submit.disabled = true;
       submit.textContent = 'Submitting…';
       const data = new FormData(form);
+      const honeypot = String(data.get('faxNumber') || '').trim();
+      data.delete('faxNumber');
+      if (honeypot) { showSuccess(); return; }
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 15000);
       try {
-        const response = await fetch('/api/public-affiliate-application', {
+        const response = await fetch(DISPUTEFOX_ENDPOINT, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: data.get('name'), email: data.get('email'), phone: data.get('phone'),
-            company: data.get('company'), websiteUrl: data.get('websiteUrl'),
-            referralNotes: data.get('referralNotes'), faxNumber: data.get('faxNumber'),
-            acknowledged: data.get('acknowledged') === 'on'
-          })
+          body: data,
+          credentials: 'omit',
+          signal: controller.signal,
         });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(body.error || 'Could not submit your application.');
-        document.getElementById('application').style.display = 'none';
-        document.getElementById('success').style.display = 'block';
-      } catch (requestError) {
-        error.textContent = requestError.message || 'Could not submit your application.';
-        submit.disabled = false;
-        submit.textContent = 'Submit Partner Application';
+        const body = await response.text();
+        if (body.includes('Account is in-activated')) {
+          error.textContent = 'The partner application is temporarily unavailable. Please try again later.';
+          submissionInFlight = false;
+          submit.disabled = false;
+          submit.textContent = 'Submit Partner Application';
+          return;
+        }
+        if (response.status >= 400 && response.status < 500) {
+          error.textContent = 'The application could not be accepted. Check your information and try again.';
+          submissionInFlight = false;
+          submit.disabled = false;
+          submit.textContent = 'Submit Partner Application';
+          return;
+        }
+        const handoffUrl = response.ok ? approvedHandoffUrl(body) : null;
+        if (handoffUrl) {
+          rememberSubmission();
+          window.location.assign(handoffUrl);
+          return;
+        }
+        showSuccess(!response.ok);
+      } catch (_requestError) {
+        showSuccess(true);
+      } finally {
+        window.clearTimeout(timer);
       }
     });
+    if (new URLSearchParams(window.location.search).get('submitted') === '1') {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      showSuccess();
+    } else if (submissionRemembered()) {
+      showSuccess(true);
+    }
   </script>
 </body>
 </html>

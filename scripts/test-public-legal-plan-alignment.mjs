@@ -8,7 +8,6 @@ const privacy = await readFile(new URL('public/privacy.html', root), 'utf8');
 for (const phrase of [
   '$149.00 per month',
   '$299.00 per month',
-  '$849.00 for 6 months of Standard-level service',
   'up to 3 individualized correspondence pieces per monthly service cycle',
   'up to 5 individualized correspondence pieces per monthly service cycle',
   'Chris personally reviews, directs, and works on the client file',
@@ -27,11 +26,13 @@ for (const retired of [
   assert.doesNotMatch(`${terms}\n${privacy}`, new RegExp(retired.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), `Retired public copy remains: ${retired}`);
 }
 
-assert.match(terms, /href="\/login" class="btn-portal"/);
-assert.match(privacy, /href="\/login" class="btn-portal"/);
-for (const provider of ['Supabase', 'Netlify', 'Resend', 'Calendly', 'Lob', 'Anthropic', 'Google Gemini']) {
+assert.match(terms, /href="https:\/\/creditcomeback\.scorexer\.com" class="btn-portal"/);
+assert.match(privacy, /href="https:\/\/creditcomeback\.scorexer\.com" class="btn-portal"/);
+for (const provider of ['Supabase', 'Netlify', 'Resend', 'DisputeFox', 'Scorexer', 'Lob', 'Anthropic', 'Google Gemini']) {
   assert.match(privacy, new RegExp(`<strong>${provider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:<\\/strong>`), `Privacy provider missing: ${provider}`);
 }
 assert.doesNotMatch(privacy, /<strong>SendGrid:<\/strong>/);
+assert.doesNotMatch(`${terms}\n${privacy}`, /Calendly/i);
+assert.doesNotMatch(terms, /\$849|one payment|prepay(?:ment|ing)?/i);
 
 console.log('Public legal/plan alignment checks passed.');
