@@ -59,7 +59,7 @@ In the Calendly event editor:
 
 1. Open **More options**, then **Confirmation page**.
 2. Choose **Redirect to an external site**.
-3. Enter `https://ccc-forensic-demo.netlify.app/success` (one slash before `success`).
+3. Enter `https://credit-comeback-club.netlify.app/success` (one slash before `success`).
 4. Enable **Pass event details to your redirected page**.
 
 Calendly will append the booked event's start and end time to the redirect. The page displays those values in the visitor's current device timezone, then removes Calendly's query string from the visible URL so invitee details are not left in browser history.

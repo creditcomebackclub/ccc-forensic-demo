@@ -240,7 +240,7 @@ export const handler = async (event) => {
         update.emailBody = defaultEmailBody(update.narrative);
       }
       if (!row.narrative) {
-        const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://ccc-forensic-demo.netlify.app';
+        const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://credit-comeback-club.netlify.app';
         fetch(`${origin}/.netlify/functions/progress-narrative-background`, {
           method: 'POST',
           headers: {
@@ -315,7 +315,7 @@ export const handler = async (event) => {
         toReportDate: row.to_report_date,
       });
 
-      const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://ccc-forensic-demo.netlify.app';
+      const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://credit-comeback-club.netlify.app';
       const firstName = String(pair.clientName || 'there').split(' ')[0];
       const periodLabel = [monthLabel(row.from_report_date), monthLabel(row.to_report_date)].filter(Boolean).join(' → ');
       const html = progressEmailHtml({

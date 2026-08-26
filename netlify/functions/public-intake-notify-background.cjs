@@ -161,7 +161,7 @@ exports.handler = async (event) => {
     return reply(403, { error: 'Notification context rejected.' });
   }
 
-  const base = String(process.env.DEPLOY_URL || process.env.URL || 'https://ccc-forensic-demo.netlify.app').replace(/\/$/, '');
+  const base = String(process.env.DEPLOY_URL || process.env.URL || 'https://credit-comeback-club.netlify.app').replace(/\/$/, '');
   const failures = [];
   const adminEventKey = `public_intake_admin:${payload.intent}:${context.lead.id}`;
   try {

@@ -174,7 +174,7 @@ exports.handler = async (event) => {
 
     // Authentication links must use a server-configured operations origin;
     // a request Origin is attacker-controlled and can never choose redirectTo.
-    const configuredOrigin = process.env.APP_URL || process.env.URL || 'https://ccc-forensic-demo.netlify.app';
+    const configuredOrigin = process.env.APP_URL || process.env.URL || 'https://credit-comeback-club.netlify.app';
     const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
       type: 'magiclink', email: normEmail, options: { redirectTo: `${configuredOrigin.replace(/\/$/, '')}/login` },
     });

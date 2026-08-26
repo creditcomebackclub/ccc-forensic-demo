@@ -4,6 +4,7 @@
 
 const DEFAULT_FROM = 'Credit Comeback Club <chris@cccpartners.co>';
 const RESEND_API = 'https://api.resend.com/emails';
+const APP_ORIGIN = (process.env.APP_ORIGIN || 'https://credit-comeback-club.netlify.app').replace(/\/+$/, '');
 
 const BRAND = {
   navy: '#1B2A4A',
@@ -12,7 +13,7 @@ const BRAND = {
   muted: '#6B7280',
   faint: '#9CA3AF',
   border: '#E5E7EB',
-  portalUrl: process.env.APP_ORIGIN || 'https://ccc-forensic-demo.netlify.app',
+  portalUrl: `${APP_ORIGIN}/login`,
   phone: '970-644-0063',
   site: 'creditcomebackclub.com',
 };

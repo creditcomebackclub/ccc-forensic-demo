@@ -13,7 +13,7 @@ exports.handler = async (event) => {
     const url = process.env.VITE_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-    const origin = event.headers.origin || 'https://ccc-forensic-demo.netlify.app';
+    const origin = event.headers.origin || 'https://credit-comeback-club.netlify.app';
     const redirectUrl = `${origin}/login`;
 
     const res = await fetch(`${url}/auth/v1/admin/generate_link`, {

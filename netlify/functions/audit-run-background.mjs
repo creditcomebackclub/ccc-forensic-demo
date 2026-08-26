@@ -1109,7 +1109,7 @@ export const handler = async (event) => {
   let leaseClosed = false;
 
   async function dispatchNext(invoker = 'chain') {
-    const base = process.env.DEPLOY_URL || process.env.URL || 'https://ccc-forensic-demo.netlify.app';
+    const base = process.env.DEPLOY_URL || process.env.URL || 'https://credit-comeback-club.netlify.app';
     const response = await fetch(base + '/.netlify/functions/audit-run-background', {
       method: 'POST',
       headers: {
@@ -2171,7 +2171,7 @@ export const handler = async (event) => {
       try {
         const clientName = savedClientName || (audit && audit.client && audit.client.name) || null;
         if (!clientName) return;
-        const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+        const base = process.env.URL || process.env.DEPLOY_URL || 'https://credit-comeback-club.netlify.app';
         await fetch(base + '/.netlify/functions/progress-narrative-background', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + serviceKey },

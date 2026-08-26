@@ -195,7 +195,7 @@ exports.handler = async (event) => {
     });
 
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    const base = (process.env.APP_URL || event.headers.origin || 'https://ccc-forensic-demo.netlify.app').replace(/\/$/, '');
+    const base = (process.env.APP_URL || event.headers.origin || 'https://credit-comeback-club.netlify.app').replace(/\/$/, '');
     const portal = await preparePortalMagicLink({ client: { id: client.id, name: clientSnapshot.name, email: clientSnapshot.email }, url, key, origin: base });
     const sentRows = await rest('/rest/v1/client_service_agreements?id=eq.' + encodeURIComponent(agreement.id) + '&status=eq.draft', 'PATCH', {
       status: 'sent', signing_token_hash: null, signing_expires_at: expiresAt, sent_at: new Date().toISOString(),

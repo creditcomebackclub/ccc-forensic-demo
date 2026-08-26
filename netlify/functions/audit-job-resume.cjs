@@ -177,7 +177,7 @@ function createResumeAuditJobHandler(options = {}) {
     // The recovery transaction above is the durable success boundary. If the
     // detached dispatch is unavailable, the browser poller/watchdog can wake
     // this same job later; never turn that into a prompt to re-upload.
-    const base = env.DEPLOY_URL || env.URL || 'https://ccc-forensic-demo.netlify.app';
+    const base = env.DEPLOY_URL || env.URL || 'https://credit-comeback-club.netlify.app';
     let dispatched = false;
     try {
       const response = await fetchImpl(base + '/.netlify/functions/audit-run-background', {

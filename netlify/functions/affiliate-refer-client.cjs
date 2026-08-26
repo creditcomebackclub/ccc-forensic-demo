@@ -5,7 +5,7 @@ const { requireAuth } = require('./_requireAuth.cjs');
 const { requireAffiliatePortalAccess } = require('./_affiliateAccess.cjs');
 
 async function notifyAffiliateInternal(serviceKey, payload) {
-  const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+  const base = process.env.URL || process.env.DEPLOY_URL || 'https://credit-comeback-club.netlify.app';
   try {
     const res = await fetch(`${base}/.netlify/functions/notify-affiliate`, {
       method: 'POST',
@@ -99,7 +99,7 @@ exports.handler = async (event) => {
     const notificationMarker = 'affiliate_referral_admin_notification';
     const markers = Array.isArray(lead.lead_drips_sent) ? lead.lead_drips_sent : [];
     if (!markers.includes(notificationMarker)) {
-      const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+      const base = process.env.URL || process.env.DEPLOY_URL || 'https://credit-comeback-club.netlify.app';
       // Forward the affiliate JWT — send-lpoa rejects service-role for this action.
       const affiliateAuth = event.headers.authorization || event.headers.Authorization;
       const notificationRes = await fetch(`${base}/.netlify/functions/send-lpoa`, {

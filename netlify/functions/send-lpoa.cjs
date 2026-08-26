@@ -275,7 +275,7 @@ exports.handler = async (event) => {
       `<p style="margin:0 0 14px;">Hi ${escapeHtml(firstName)},</p>`
       + config.body
       + `<p style="margin:0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
-      { href: BRAND.portalUrl + '/login', label: 'Access Client Portal →' });
+      { href: BRAND.portalUrl, label: 'Access Client Portal →' });
 
     try {
       await sendMail(clientEmail, config.subject, html);
@@ -390,7 +390,7 @@ exports.handler = async (event) => {
       + `<p style="margin:0 0 14px;">Download a new report from the provider you choose and upload the complete file through your client portal. Please include all pages for Equifax, Experian, and TransUnion.</p>`
       + `<p style="margin:0 0 14px;">An account is not treated as corrected, deleted, or unchanged until the team reviews the current report or recipient correspondence and records the documented result.</p>`
       + `<p style="margin:0;">Questions? Reply to this email or call ${BRAND.phone}.</p>`,
-      { href: BRAND.portalUrl + '/login', label: 'Open Client Portal to Upload →' });
+      { href: BRAND.portalUrl, label: 'Open Client Portal to Upload →' });
 
     try {
       await sendMail(clientEmail, 'Action Requested: Upload your current three-bureau report', html);

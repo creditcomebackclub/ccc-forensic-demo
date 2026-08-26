@@ -82,7 +82,7 @@ exports.handler = async (event) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(409, { error: 'Add a valid affiliate email before sending.' });
     // Never trust a browser Origin when minting authentication links. APP_URL
     // should be the operations origin; Netlify's own URL is the safe fallback.
-    const origin = process.env.APP_URL || process.env.URL || 'https://ccc-forensic-demo.netlify.app';
+    const origin = process.env.APP_URL || process.env.URL || 'https://credit-comeback-club.netlify.app';
     const magic = await prepareMagicLink({ email, name: affiliate.name, origin, url, key });
     // A resend refreshes both the magic link and the agreement window. The
     // lifecycle RPC verifies the frozen packet and exact portal identity.

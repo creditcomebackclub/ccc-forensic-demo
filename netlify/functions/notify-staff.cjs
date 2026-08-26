@@ -146,7 +146,7 @@ exports.handler = async (event) => {
       // Partner milestone is independent of staff email prefs / staff marker.
       if (client?.referred_by && clientId) {
         try {
-          const base = process.env.URL || process.env.DEPLOY_URL || 'https://ccc-forensic-demo.netlify.app';
+          const base = process.env.URL || process.env.DEPLOY_URL || 'https://credit-comeback-club.netlify.app';
           const partnerRes = await fetch(base + '/.netlify/functions/notify-affiliate', {
             method: 'POST',
             headers: {

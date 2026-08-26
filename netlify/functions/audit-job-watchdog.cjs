@@ -104,7 +104,7 @@ function createWatchdogHandler(options = {}) {
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     // Bind dispatch to this deploy artifact during previews and atomic alias
     // transitions so a new schema never chains into an older worker bundle.
-    const base = process.env.DEPLOY_URL || process.env.URL || 'https://ccc-forensic-demo.netlify.app';
+    const base = process.env.DEPLOY_URL || process.env.URL || 'https://credit-comeback-club.netlify.app';
     if (!supabaseUrl || !serviceKey) return { statusCode: 500, body: 'server not configured' };
 
     const deadlineAt = now() + watchdogBudgetMs;

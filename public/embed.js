@@ -4,7 +4,7 @@
 
   const SCRIPT_URL = document.currentScript ? document.currentScript.src : '';
   // Default to the production URL, or derive it from the script location
-  const BASE_URL = SCRIPT_URL ? new URL(SCRIPT_URL).origin : 'https://ccc-forensic-demo.netlify.app';
+  const BASE_URL = SCRIPT_URL ? new URL(SCRIPT_URL).origin : 'https://credit-comeback-club.netlify.app';
 
   // 1. Create a container for the widget to isolate it
   const container = document.createElement('div');

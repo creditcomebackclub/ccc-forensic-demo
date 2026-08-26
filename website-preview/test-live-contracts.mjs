@@ -28,7 +28,7 @@ const liveIntakeOpening = liveIntakeMarker >= 0
   ? liveHtml.slice(liveHtml.lastIndexOf('<form', liveIntakeMarker), liveHtml.indexOf('>', liveIntakeMarker) + 1)
   : '';
 const liveCss = createWebsiteReleaseCss(cssSource, 'live');
-const socialImageUrl = 'https://creditcomebackclub.com/site-live/ccc-social-preview-2026.jpg';
+const socialImageUrl = 'https://credit-comeback-club.netlify.app/site-live/ccc-social-preview-2026.jpg';
 const socialImagePath = join(previewRoot, 'ccc-social-preview-2026.jpg');
 const [socialImageBytes, socialImageStat] = await Promise.all([
   readFile(socialImagePath),

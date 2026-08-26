@@ -240,7 +240,7 @@ exports.handler = async (event) => {
     const ownerUserId = await resolveOwnerUserId(supabaseUrl, serviceKey);
     const result = await upsertLead({ payload, ownerUserId, supabaseUrl, serviceKey });
     const lead = result.lead;
-    const base = String(process.env.DEPLOY_URL || process.env.URL || 'https://ccc-forensic-demo.netlify.app').replace(/\/$/, '');
+    const base = String(process.env.DEPLOY_URL || process.env.URL || 'https://credit-comeback-club.netlify.app').replace(/\/$/, '');
 
     // This call reaches a Netlify background function, whose only synchronous
     // work is accepting the job. Email delivery and affiliate notification

@@ -56,6 +56,7 @@
     "test:state-driven-campaign-studio": "node scripts/test-state-driven-campaign-studio.mjs",
     "test:round-reason-selection": "node scripts/test-round-reason-selection.mjs",
     "test:ccc-letter-identity": "node scripts/test-ccc-letter-identity.mjs",
+    "test:site-origin": "node scripts/test-site-origin-migration.mjs",
     "test:owner-controlled-billing": "node scripts/test-owner-controlled-billing.mjs"
   },
   "dependencies": {
