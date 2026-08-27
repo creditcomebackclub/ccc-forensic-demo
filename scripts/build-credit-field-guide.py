@@ -393,7 +393,7 @@ def build_story():
     story.append(cover_box)
     story.append(Spacer(1, 80))
     story.append(Paragraph(
-        "Credit Comeback Club, LLC<br/><font size='8'>2026 EDITION &nbsp; | &nbsp; EDUCATIONAL INFORMATION - NOT LEGAL ADVICE</font>",
+        "Credit Comeback Club<br/><font size='8'>2026 EDITION &nbsp; | &nbsp; EDUCATIONAL INFORMATION - NOT LEGAL ADVICE</font>",
         ParagraphStyle("CoverFooter", fontName=FONT_BOLD, fontSize=12, leading=17, textColor=WHITE),
     ))
     story.append(PageBreak())
@@ -830,7 +830,7 @@ def build_story():
         Spacer(1, 12),
         callout("The standard", "A careful file is reproducible: another reader can follow each statement back to a source, see what was sent, and understand why the next step was chosen."),
         Spacer(1, 12),
-        p("Credit Comeback Club, LLC", "H2"),
+        p("Credit Comeback Club", "H2"),
         p("This workbook is educational information for organizing a credit-report accuracy review. It is not legal advice, does not create an attorney-client relationship, and does not promise deletions, score changes, or any other outcome. Verify current official instructions and rules for your situation.", "Small"),
     ])
 
@@ -904,7 +904,7 @@ def build_story():
         '<link href="https://www.facebook.com/groups/creditcomebackclub" color="#2176B2"><b>Join the free Credit Comeback Club community</b></link>',
     ))
     story.append(Spacer(1, 10))
-    story.append(p("Credit Comeback Club, LLC · Veteran-owned · Attention to detail from report review through follow-through.", "Small"))
+    story.append(p("Credit Comeback Club · Veteran-owned · Attention to detail from report review through follow-through.", "Small"))
 
     # Remove terminal page break to avoid an empty page.
     if isinstance(story[-1], PageBreak):
@@ -918,7 +918,7 @@ def build_pdf(output: Path = OUTPUT):
         str(output), pagesize=letter,
         leftMargin=46, rightMargin=46, topMargin=54, bottomMargin=46,
         title="The Credit Report Field Guide",
-        author="Credit Comeback Club, LLC",
+        author="Credit Comeback Club",
         subject="DIY credit report accuracy review workbook",
         creator="Credit Comeback Club",
     )

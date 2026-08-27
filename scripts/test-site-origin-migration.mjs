@@ -54,7 +54,7 @@ assert.deepEqual(doubledLoginFiles, [], `Doubled login path remains in: ${double
 
 const liveSource = readFileSync(join(repoRoot, 'website-preview/index.html'), 'utf8');
 const socialImageUrl = `${activeOrigin}/site-live/ccc-social-preview-2026.jpg`;
-const logoUrl = `${activeOrigin}/site-live/ccc-logo.webp`;
+const logoUrl = `${activeOrigin}/brand-assets/ccc-profile-dark.png`;
 for (const metadata of [
   `<meta property="og:image" content="${socialImageUrl}">`,
   `<meta property="og:image:secure_url" content="${socialImageUrl}">`,

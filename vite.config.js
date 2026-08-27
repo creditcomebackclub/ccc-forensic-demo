@@ -49,7 +49,11 @@ export default defineConfig({
     websiteReleaseArtifacts(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['logo.jpg'],
+      includeAssets: [
+        'logo.jpg',
+        'brand-assets/ccc-app-icon-192.png',
+        'brand-assets/ccc-app-icon-512.png',
+      ],
       manifestFilename: 'manifest.json',
       workbox: {
         // These are static marketing/legal pages served alongside the SPA,
@@ -77,19 +81,19 @@ export default defineConfig({
         display: 'standalone',
         icons: [
           {
-            src: 'logo.jpg',
+            src: 'brand-assets/ccc-app-icon-192.png',
             sizes: '192x192',
-            type: 'image/jpeg'
+            type: 'image/png'
           },
           {
-            src: 'logo.jpg',
+            src: 'brand-assets/ccc-app-icon-512.png',
             sizes: '512x512',
-            type: 'image/jpeg'
+            type: 'image/png'
           },
           {
-            src: 'logo.jpg',
+            src: 'brand-assets/ccc-app-icon-512.png',
             sizes: '512x512',
-            type: 'image/jpeg',
+            type: 'image/png',
             purpose: 'maskable'
           }
         ]

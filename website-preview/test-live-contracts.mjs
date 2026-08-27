@@ -29,6 +29,7 @@ const liveIntakeOpening = liveIntakeMarker >= 0
   : '';
 const liveCss = createWebsiteReleaseCss(cssSource, 'live');
 const socialImageUrl = 'https://credit-comeback-club.netlify.app/site-live/ccc-social-preview-2026.jpg';
+const profileLogoUrl = 'https://credit-comeback-club.netlify.app/brand-assets/ccc-profile-dark.png';
 const socialImagePath = join(previewRoot, 'ccc-social-preview-2026.jpg');
 const [socialImageBytes, socialImageStat] = await Promise.all([
   readFile(socialImagePath),
@@ -97,6 +98,9 @@ check(
 );
 check(
   liveHtml.includes(`"url": "${socialImageUrl}"`)
+    && liveHtml.includes(`"url": "${profileLogoUrl}"`)
+    && liveHtml.includes('"width": 1254')
+    && liveHtml.includes('"height": 1254')
     && liveHtml.includes('"width": 1200')
     && liveHtml.includes('"height": 630')
     && !liveHtml.includes('site-live/ccc-logo.jpg')

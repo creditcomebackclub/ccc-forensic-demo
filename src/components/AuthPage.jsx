@@ -74,7 +74,7 @@ export default function AuthPage() {
         </div>
         
         <div className="relative z-10 text-[11px] text-white/30">
-          &copy; {new Date().getFullYear()} Credit Comeback Club, LLC. All rights reserved.
+          &copy; {new Date().getFullYear()} Credit Comeback Club. All rights reserved.
         </div>
       </div>
 

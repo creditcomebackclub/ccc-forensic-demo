@@ -57,6 +57,8 @@
     "test:round-reason-selection": "node scripts/test-round-reason-selection.mjs",
     "test:ccc-letter-identity": "node scripts/test-ccc-letter-identity.mjs",
     "test:site-origin": "node scripts/test-site-origin-migration.mjs",
+    "test:site-legal-identity": "node scripts/test-site-legal-identity.mjs",
+    "test:brand-assets": "node scripts/test-brand-assets.mjs",
     "test:owner-controlled-billing": "node scripts/test-owner-controlled-billing.mjs"
   },
   "dependencies": {
