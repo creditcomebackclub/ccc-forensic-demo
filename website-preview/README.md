@@ -3,7 +3,7 @@
 This directory is the shared source for two deliberately separate Credit Comeback Club marketing artifacts:
 
 - `/site-preview/` is exposed at `/new-site-preview` and remains production-disconnected for owner review.
-- `/site-live/` is exposed at the root URL and enables only the approved public-intake → Calendly consultation path plus the existing `/embed.js` chat mount.
+- `/site-live/` is exposed at the root URL and enables only the approved DisputeFox intake → Scorexer scheduling path.
 
 The release transformer removes live-only markup from the preview artifact and removes preview ribbon/safety copy from the live artifact. The preview JavaScript contains no network or persistence API.
 

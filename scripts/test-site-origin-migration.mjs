@@ -69,9 +69,9 @@ for (const [path, requiredValue] of [
   ['.env.example', `ALLOWED_ORIGINS=https://creditcomebackclub.com,${activeOrigin}`],
   ['render.yaml', `value: https://creditcomebackclub.com,${activeOrigin}`],
   ['public/success.html', `<link rel="canonical" href="${activeOrigin}/consultation-confirmed">`],
-  ['netlify/functions/_email.cjs', `const APP_ORIGIN = (process.env.APP_ORIGIN || '${activeOrigin}').replace(/\\/+$/, '');`],
-  ['netlify/functions/_email.cjs', 'portalUrl: `${APP_ORIGIN}/login`'],
-  ['netlify/functions/daily-cron.cjs', `href="${activeOrigin}/login"`],
+  ['netlify/functions/_email.cjs', "const MEMBER_PORTAL_URL = (process.env.MEMBER_PORTAL_URL || 'https://creditcomeback.scorexer.com').replace(/\\/+$/, '');"],
+  ['netlify/functions/_email.cjs', 'portalUrl: MEMBER_PORTAL_URL'],
+  ['netlify/functions/daily-cron.cjs', 'href="https://creditcomeback.scorexer.com"'],
 ]) {
   assert.ok(
     readFileSync(join(repoRoot, path), 'utf8').includes(requiredValue),

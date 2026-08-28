@@ -315,13 +315,12 @@ export const handler = async (event) => {
         toReportDate: row.to_report_date,
       });
 
-      const origin = process.env.URL || process.env.DEPLOY_PRIME_URL || 'https://credit-comeback-club.netlify.app';
       const firstName = String(pair.clientName || 'there').split(' ')[0];
       const periodLabel = [monthLabel(row.from_report_date), monthLabel(row.to_report_date)].filter(Boolean).join(' → ');
       const html = progressEmailHtml({
         firstName,
         teaser: bodyText,
-        portalUrl: origin.replace(/\/$/, '') + '/login',
+        portalUrl: (process.env.MEMBER_PORTAL_URL || 'https://creditcomeback.scorexer.com').replace(/\/$/, ''),
         deletedFurnishers,
         deletedCount: deleted.length,
         debtRemoved: Number(diff.totalDebtRemoved) || 0,

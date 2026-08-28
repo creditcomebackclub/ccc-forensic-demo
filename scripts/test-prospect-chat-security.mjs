@@ -36,16 +36,16 @@ assert.match(portalAgent, /gemini-3\.1-flash-lite/);
 assert.match(requirements, /^google-genai$/m);
 assert.doesNotMatch(requirements, /^anthropic$/m);
 
-// The widget code and its iframe are loaded only when needed, and the postMessage
-// close contract accepts events only from its own iframe.
+// The historical app code remains available for rollback, but the public embed
+// is a no-op and Netlify cannot route a visitor to the React widget.
 assert.match(app, /const ProspectChatWidget = lazy\(\(\) => import\('\.\/components\/ProspectChatWidget'\)\)/);
-assert.match(embed, /iframe\.dataset\.src = iframeUrl/);
-assert.match(embed, /const loadChat = \(\) =>/);
-assert.match(embed, /if \(isOpen\) \{\s*loadChat\(\)/);
-assert.match(embed, /event\.source === iframe\.contentWindow/);
+assert.match(embed, /Retired compatibility asset/);
+assert.doesNotMatch(embed, /iframe|\/widget|loadChat|postMessage/);
 
-// The app stays non-frameable except for the same-origin /widget route.
-assert.match(config, /for = "\/widget"[\s\S]*?X-Frame-Options = "SAMEORIGIN"[\s\S]*?frame-ancestors 'self'/);
+// The public route is permanently retired and no longer has a framing-policy
+// exception that could expose the old React surface.
+assert.match(config, /from = "\/widget"[\s\S]{0,120}?to = "\/#consultation"[\s\S]{0,80}?status = 301/);
+assert.doesNotMatch(config, /for = "\/widget"/);
 assert.match(config, /\[functions\."chat-prospect"\.rate_limit\][\s\S]*?window = "1m"[\s\S]*?limit = 10/);
 
 // The separate portal deployment has explicit health/config contracts.
@@ -58,4 +58,4 @@ for (const key of ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_KEY', 
 assert.match(portalAgent, /@app\.get\("\/healthz"\)/);
 assert.match(portalAgent, /@app\.get\("\/readyz"\)/);
 
-console.log('Separate public Netlify chat, portal Render chat, lazy embed, and frame-policy contracts passed.');
+console.log('Retired public React chat route and retained authenticated portal-agent contracts passed.');

@@ -9,12 +9,12 @@ import {
 
 const previewRoot = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(previewRoot);
-const [htmlSource, cssSource, previewJs, liveJs, viteConfig, netlifyConfig, robots, sitemap, confirmationHtml] = await Promise.all([
+const [htmlSource, cssSource, previewJs, liveJs, publicBuild, netlifyConfig, robots, sitemap, confirmationHtml] = await Promise.all([
   readFile(join(previewRoot, 'index.html'), 'utf8'),
   readFile(join(previewRoot, 'styles.css'), 'utf8'),
   readFile(join(previewRoot, 'app.js'), 'utf8'),
   readFile(join(previewRoot, 'live-app.js'), 'utf8'),
-  readFile(join(repoRoot, 'vite.config.js'), 'utf8'),
+  readFile(join(repoRoot, 'scripts/build-public-site.mjs'), 'utf8'),
   readFile(join(repoRoot, 'netlify.toml'), 'utf8'),
   readFile(join(repoRoot, 'public/robots.txt'), 'utf8'),
   readFile(join(repoRoot, 'public/sitemap.xml'), 'utf8'),
@@ -80,7 +80,9 @@ check(
 check(
   liveHtml.includes('data-live-site="true"')
     && liveHtml.includes('<meta name="robots" content="index,follow">')
-    && liveHtml.includes('<title>Credit Comeback Club | Factual Credit Repair Support</title>')
+    && liveHtml.includes('<title>Credit Comeback Club | Your Credit Comeback Starts Here</title>')
+    && liveHtml.includes('<meta property="og:title" content="Credit Comeback Club | Your Credit Comeback Starts Here">')
+    && liveHtml.includes('<meta name="twitter:title" content="Credit Comeback Club | Your Credit Comeback Starts Here">')
     && !/Preview only|Production disconnected|Local concept preview|data-preview-only/i.test(liveHtml),
   'live artifact has production metadata and no preview ribbon or preview-only copy',
 );
@@ -120,7 +122,7 @@ check(
   robots.includes('Allow: /')
     && !robots.includes('Disallow: /\n')
     && robots.includes('Disallow: /api/')
-    && robots.includes('Disallow: /login')
+    && !robots.includes('Disallow: /login')
     && robots.includes('Disallow: /site-preview/')
     && robots.includes('Sitemap: https://creditcomebackclub.com/sitemap.xml')
     && sitemap.includes('<loc>https://creditcomebackclub.com/</loc>')
@@ -293,13 +295,11 @@ check(
   'Netlify serves the branded confirmation page at the new route and the legacy success alias',
 );
 check(
-  viteConfig.includes("directory: 'site-live'")
-    && viteConfig.includes("directory: 'site-preview'")
-    && viteConfig.includes('/^\\/$/')
-    && viteConfig.includes('/^\\/site-live\\//')
-    && viteConfig.includes("'site-live/**'")
-    && viteConfig.includes("'site-preview/**'"),
-  'PWA navigation and precache rules exclude the root handoff and both marketing artifacts',
+  publicBuild.includes("emitRelease('live', 'site-live'")
+    && publicBuild.includes("emitRelease('preview', 'site-preview'")
+    && publicBuild.includes("join(distRoot, 'index.html')")
+    && !publicBuild.includes('VitePWA'),
+  'public release emits only the static marketing artifacts and root safety copy',
 );
 check(
   liveCss.includes('.live-consent')

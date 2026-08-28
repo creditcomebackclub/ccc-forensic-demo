@@ -809,7 +809,7 @@ exports.handler = async () => {
           + '<th style="text-align:left;padding:6px 8px;font-size:11px;text-transform:uppercase;color:#6B7280;border-bottom:1px solid #E5E7EB;">Current record</th>'
           + '</tr></thead><tbody>' + rows + '</tbody></table>'
           + '<p style="font-size:13px;color:#374151;margin:0 0 20px;">If you receive a response or updated credit report, please upload every page in your portal. CCC will document the result before a team member selects any next step.</p>'
-          + '<div style="text-align:center;margin:0 0 20px;"><a href="https://credit-comeback-club.netlify.app/login" style="background:#1B2A4A;color:#C9A84C;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;display:inline-block;">View your portal &#8594;</a></div>'
+          + '<div style="text-align:center;margin:0 0 20px;"><a href="https://creditcomeback.scorexer.com" style="background:#1B2A4A;color:#C9A84C;padding:12px 28px;text-decoration:none;border-radius:6px;font-weight:bold;font-size:13px;display:inline-block;">View your portal &#8594;</a></div>'
           + '<hr style="border:none;border-top:1px solid #E5E7EB;margin:20px 0;">'
           + '<p style="font-size:11px;color:#9CA3AF;margin:0;">Credit Comeback Club | creditcomebackclub.com | 970-644-0063</p>'
           + '</div></body></html>';
@@ -946,7 +946,7 @@ exports.handler = async () => {
           </div>` : ''}
           
           <div style="margin-top:32px;text-align:center;">
-            <a href="https://credit-comeback-club.netlify.app/login" style="display:inline-block;background:#1B2A4A;color:#C9A84C;padding:12px 24px;text-decoration:none;border-radius:4px;font-weight:600;font-size:14px;">Open CCC Dashboard</a>
+            <a href="https://pulse.disputeprocess.com" style="display:inline-block;background:#1B2A4A;color:#C9A84C;padding:12px 24px;text-decoration:none;border-radius:4px;font-weight:600;font-size:14px;">Open DisputeFox</a>
           </div>
         </div>
       </div>

@@ -4,7 +4,8 @@
 
 const DEFAULT_FROM = 'Credit Comeback Club <chris@cccpartners.co>';
 const RESEND_API = 'https://api.resend.com/emails';
-const APP_ORIGIN = (process.env.APP_ORIGIN || 'https://credit-comeback-club.netlify.app').replace(/\/+$/, '');
+const MEMBER_PORTAL_URL = (process.env.MEMBER_PORTAL_URL || 'https://creditcomeback.scorexer.com').replace(/\/+$/, '');
+const STAFF_WORKSPACE_URL = (process.env.STAFF_WORKSPACE_URL || 'https://pulse.disputeprocess.com').replace(/\/+$/, '');
 
 const BRAND = {
   navy: '#1B2A4A',
@@ -13,7 +14,8 @@ const BRAND = {
   muted: '#6B7280',
   faint: '#9CA3AF',
   border: '#E5E7EB',
-  portalUrl: `${APP_ORIGIN}/login`,
+  portalUrl: MEMBER_PORTAL_URL,
+  staffWorkspaceUrl: STAFF_WORKSPACE_URL,
   phone: '970-644-0063',
   site: 'creditcomebackclub.com',
 };
@@ -140,7 +142,7 @@ function wrapStaffEmail({ eyebrow, title, rows, footer, ctaLabel } = {}) {
     bodyHtml: `<p style="margin:0 0 8px;"><strong>${escapeHtml(title || '')}</strong></p>`
       + (rowHtml ? `<table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px;">${rowHtml}</table>` : '')
       + (footer || ''),
-    cta: { href: BRAND.portalUrl, label: ctaLabel || 'Open CRM →' },
+    cta: { href: BRAND.staffWorkspaceUrl, label: ctaLabel || 'Open DisputeFox →' },
   });
 }
 

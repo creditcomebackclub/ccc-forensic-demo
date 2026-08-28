@@ -4,12 +4,12 @@ import { fileURLToPath } from 'node:url';
 
 const previewRoot = dirname(fileURLToPath(import.meta.url));
 const repoRoot = dirname(previewRoot);
-const [html, css, js, server, viteConfig, netlifyConfig] = await Promise.all([
+const [html, css, js, server, publicBuild, netlifyConfig] = await Promise.all([
   readFile(join(previewRoot, 'index.html'), 'utf8'),
   readFile(join(previewRoot, 'styles.css'), 'utf8'),
   readFile(join(previewRoot, 'app.js'), 'utf8'),
   readFile(join(previewRoot, 'server.mjs'), 'utf8'),
-  readFile(join(repoRoot, 'vite.config.js'), 'utf8'),
+  readFile(join(repoRoot, 'scripts/build-public-site.mjs'), 'utf8'),
   readFile(join(repoRoot, 'netlify.toml'), 'utf8'),
 ]);
 
@@ -92,11 +92,11 @@ const destinations = [
 
 check(html.includes('data-preview-only="true"'), 'page declares preview-only mode');
 check(
-  viteConfig.includes("name: 'ccc-website-release-artifacts'")
-    && viteConfig.includes("directory: 'site-preview'")
-    && viteConfig.includes("resolve(process.cwd(), `dist/${release.directory}`)")
-    && viteConfig.includes("'site-preview/**'"),
-  'main production build emits an isolated, service-worker-excluded review snapshot',
+  publicBuild.includes("emitRelease('preview', 'site-preview'")
+    && publicBuild.includes("emitRelease('live', 'site-live'")
+    && publicBuild.includes("join(distRoot, 'index.html')")
+    && !publicBuild.includes('vite build'),
+  'public production build emits isolated review and live snapshots without the React build',
 );
 check(
   /from = "\/new-site-preview"[\s\S]*?to = "\/site-preview\/index\.html"[\s\S]*?status = 200/.test(netlifyConfig)
@@ -522,7 +522,7 @@ for (const destination of destinations) {
   );
 }
 check(
-  html.includes('href="https://creditcomeback.scorexer.com" data-preview-destination="/login"'),
+  html.includes('href="https://creditcomeback.scorexer.com" data-preview-destination="https://creditcomeback.scorexer.com"'),
   'production member access targets Scorexer while preview navigation remains inert',
 );
 

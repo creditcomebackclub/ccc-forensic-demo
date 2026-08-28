@@ -76,7 +76,7 @@ export function createWebsiteReleaseHtml(htmlSource, mode) {
     html = html
       .replace('<meta name="description" content="Local-only website concept for Credit Comeback Club.">', '<meta name="description" content="Veteran-owned credit repair support that reviews all three bureaus, builds factual disputes, explains the process, and documents every supported next step.">')
       .replace('<meta name="robots" content="noindex,nofollow">', '<meta name="robots" content="index,follow">')
-      .replace('<title>Credit Comeback Club — Website Preview</title>', '<title>Credit Comeback Club | Factual Credit Repair Support</title>')
+      .replace('<title>Credit Comeback Club — Website Preview</title>', '<title>Credit Comeback Club | Your Credit Comeback Starts Here</title>')
       .replace('<body data-preview-only="true">', '<body data-live-site="true">')
       .replaceAll('data-live-only hidden', 'data-live-only')
       .replaceAll('aria-label="Credit Comeback Club preview home"', 'aria-label="Credit Comeback Club home"')

@@ -1,5 +1,7 @@
 [build]
-  command = "npm run build"
+  # Public deploys contain the marketing/legal site only. The retired React
+  # portal can still be built locally for rollback, but is never published.
+  command = "npm run build:site"
   publish = "dist"
   functions = "netlify/functions"
 
@@ -7,6 +9,52 @@
   from = "/"
   to = "/site-live/index.html"
   status = 200
+  force = true
+
+# Give consultation links a stable, shareable path while the marketing page
+# keeps its single-page anchor navigation.
+[[redirects]]
+  from = "/consultation"
+  to = "/#consultation"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/consultation/"
+  to = "/#consultation"
+  status = 301
+  force = true
+
+# Retire every former React entry route. Members now authenticate in Scorexer;
+# the embedded React prospect widget is no longer part of the public site.
+[[redirects]]
+  from = "/login"
+  to = "https://creditcomeback.scorexer.com"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/login/"
+  to = "https://creditcomeback.scorexer.com"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/widget"
+  to = "/#consultation"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/widget/"
+  to = "/#consultation"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "/index.html"
+  to = "/"
+  status = 301
   force = true
 
 # The approved design is emitted separately for owner review and live marketing.
@@ -111,7 +159,7 @@
 
 [[redirects]]
   from = "/*"
-  to = "/index.html"
+  to = "/site-live/index.html"
   status = 200
 
 [build.environment]
@@ -119,7 +167,6 @@
   # Site was pinned to 20; that forced every createClient() call to supply a
   # `ws` transport or crash (see recovery-blueprint send path).
   NODE_VERSION = "22"
-  VITE_AGENTS_API_URL = "https://ccc-agents-api.onrender.com"
 
 [functions]
   node_bundler = "esbuild"
@@ -203,21 +250,15 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
-    # CSP: allow scripts/styles from self + Supabase + Google Fonts only.
-    # 'unsafe-inline' is required for React's inline styles; no eval is allowed.
-    # frame-src must allow blob: (client-side PDF preview) and Supabase
-    # signed URLs (approved Blueprint PDFs). Without those, Chrome shows
-    # "This content is blocked" in the Recovery Blueprint iframe.
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://assets.calendly.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; media-src 'self' https:; connect-src 'self' blob: https://pulse.disputeprocess.com https://*.supabase.co https://*.supabase.com https://api.anthropic.com https://generativelanguage.googleapis.com https://ccc-agents-api.onrender.com; frame-src 'self' blob: https://calendly.com https://*.supabase.co https://*.supabase.com; object-src 'self' blob: https://*.supabase.co https://*.supabase.com; form-action 'self' https://pulse.disputeprocess.com https://pulse.scorexer.com; base-uri 'self';"
+    # Marketing/legal pages only. No Supabase, AI-provider, blob-document, or
+    # React portal permissions remain in the public site's global policy.
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://assets.calendly.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob:; media-src 'self' https:; connect-src 'self' https://pulse.disputeprocess.com; frame-src 'self' https://calendly.com; object-src 'none'; form-action 'self' https://pulse.disputeprocess.com https://pulse.scorexer.com; base-uri 'self';"
 
-# The public assistant is intentionally framed only by this same CCC site.
-# This specific path overrides the app-wide DENY policy; all other app and
-# portal routes remain non-frameable.
 [[headers]]
-  for = "/widget"
+  for = "/sw.js"
   [headers.values]
-    X-Frame-Options = "SAMEORIGIN"
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'none';"
+    Cache-Control = "no-cache, no-store, must-revalidate"
+    Service-Worker-Allowed = "/"
 
 # /join is a public, no-auth, no-sensitive-data lead-capture page meant to be
 # embedded on affiliate sites (starting with FundHub) — it needs its own,
