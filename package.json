@@ -11,6 +11,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:site": "node scripts/build-public-site.mjs",
+    "build:email-signature": "node scripts/build-email-signature.mjs",
     "preview": "vite preview",
     "dev:netlify": "netlify dev",
     "backfill:followup-signatures": "node scripts/backfill-followup-signatures.mjs",
@@ -61,6 +62,7 @@
     "test:public-routes": "node scripts/test-public-route-retirement.mjs",
     "test:site-legal-identity": "node scripts/test-site-legal-identity.mjs",
     "test:brand-assets": "node scripts/test-brand-assets.mjs",
+    "test:email-signature": "node scripts/test-email-signature.mjs",
     "test:owner-controlled-billing": "node scripts/test-owner-controlled-billing.mjs"
   },
   "dependencies": {

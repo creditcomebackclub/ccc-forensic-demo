@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="color-scheme" content="light">
+  <title>CCC Gmail Signature</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #080b10;
+      --muted: #535d69;
+      --blue: #1e9ad6;
+      --blue-deep: #0877b2;
+      --blue-light: #66c7f4;
+      --ice: #f4faff;
+      --line: #d8e5ed;
+      --white: #ffffff;
+      font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background:
+        radial-gradient(circle at 16% 10%, rgba(30, 154, 214, 0.24), transparent 28rem),
+        radial-gradient(circle at 86% 90%, rgba(102, 199, 244, 0.14), transparent 30rem),
+        #07101d;
+      color: var(--white);
+    }
+
+    button, a { font: inherit; }
+
+    .page-shell {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 48px 0 64px;
+    }
+
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 34px;
+    }
+
+    .brand-lockup {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+
+    .brand-mark {
+      width: 46px;
+      height: 46px;
+      border: 1px solid rgba(102, 199, 244, 0.4);
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(30, 154, 214, 0.24);
+    }
+
+    .brand-lockup strong {
+      display: block;
+      font-size: 14px;
+      letter-spacing: 0.02em;
+    }
+
+    .brand-lockup span {
+      display: block;
+      margin-top: 3px;
+      color: rgba(255, 255, 255, 0.56);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: rgba(255, 255, 255, 0.72);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .status::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--blue-light);
+      box-shadow: 0 0 0 5px rgba(102, 199, 244, 0.12);
+      content: "";
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 0.82fr) minmax(540px, 1.18fr);
+      gap: 52px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      margin: 0 0 14px;
+      color: var(--blue-light);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 520px;
+      margin: 0;
+      font-size: clamp(40px, 5vw, 68px);
+      letter-spacing: -0.055em;
+      line-height: 0.98;
+    }
+
+    h1 span { color: var(--blue-light); }
+
+    .intro {
+      max-width: 470px;
+      margin: 22px 0 0;
+      color: rgba(255, 255, 255, 0.63);
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 30px;
+    }
+
+    .button {
+      min-height: 45px;
+      padding: 0 18px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+    }
+
+    .button:hover { transform: translateY(-1px); }
+    .button:focus-visible { outline: 3px solid var(--blue-light); outline-offset: 3px; }
+
+    .button-primary {
+      background: var(--blue);
+      color: var(--white);
+      box-shadow: 0 12px 34px rgba(30, 154, 214, 0.28);
+    }
+
+    .button-primary:hover { background: var(--blue-deep); }
+
+    .button-secondary {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.2);
+      color: rgba(255, 255, 255, 0.86);
+    }
+
+    .button-secondary:hover { border-color: rgba(102, 199, 244, 0.62); }
+
+    .install-note {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      max-width: 510px;
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      counter-reset: step;
+    }
+
+    .install-note span {
+      position: relative;
+      padding-left: 28px;
+      color: rgba(255, 255, 255, 0.54);
+      font-size: 11px;
+      line-height: 1.45;
+      counter-increment: step;
+    }
+
+    .install-note span::before {
+      position: absolute;
+      top: -1px;
+      left: 0;
+      display: grid;
+      width: 19px;
+      height: 19px;
+      place-items: center;
+      border: 1px solid rgba(102, 199, 244, 0.42);
+      border-radius: 50%;
+      color: var(--blue-light);
+      content: counter(step);
+      font-size: 9px;
+      font-weight: 800;
+    }
+
+    .gmail-window {
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 18px;
+      background: var(--white);
+      box-shadow: 0 42px 100px rgba(0, 0, 0, 0.4);
+      color: var(--ink);
+    }
+
+    .gmail-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 48px;
+      padding: 0 17px;
+      background: #f2f6fc;
+      color: #394457;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .window-actions { display: flex; gap: 12px; color: #657184; font-weight: 500; }
+
+    .gmail-fields {
+      padding: 0 19px;
+      border-bottom: 1px solid #e7ebf0;
+    }
+
+    .gmail-field {
+      display: flex;
+      min-height: 40px;
+      align-items: center;
+      border-bottom: 1px solid #edf0f4;
+      color: #687386;
+      font-size: 12px;
+    }
+
+    .gmail-field:last-child { border-bottom: 0; color: #202124; }
+    .gmail-field strong { min-width: 48px; color: #687386; font-weight: 500; }
+
+    .message-body {
+      min-height: 434px;
+      padding: 24px 26px 28px;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .message-copy { margin: 0 0 26px; color: #323943; }
+
+    .signature-stage {
+      width: fit-content;
+      max-width: 100%;
+      padding-top: 18px;
+      border-top: 1px solid #eef1f4;
+    }
+
+    .gmail-toolbar {
+      display: flex;
+      min-height: 58px;
+      align-items: center;
+      gap: 12px;
+      padding: 0 19px;
+      border-top: 1px solid #edf0f4;
+      color: #687386;
+      font-size: 12px;
+    }
+
+    .send-pill {
+      min-width: 78px;
+      padding: 9px 18px;
+      border-radius: 20px;
+      background: #0b57d0;
+      color: #fff;
+      text-align: center;
+      font-weight: 700;
+    }
+
+    .toast {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      z-index: 10;
+      max-width: min(390px, calc(100% - 44px));
+      padding: 14px 18px;
+      border: 1px solid rgba(102, 199, 244, 0.36);
+      border-radius: 10px;
+      background: #0d1b2c;
+      box-shadow: 0 18px 54px rgba(0, 0, 0, 0.38);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(12px);
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    .toast.visible { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 940px) {
+      .layout { grid-template-columns: 1fr; }
+      .copy-panel { text-align: center; }
+      .intro, .install-note { margin-inline: auto; }
+      .actions { justify-content: center; }
+      .gmail-window { width: min(620px, 100%); margin: 0 auto; }
+    }
+
+    @media (max-width: 560px) {
+      .page-shell { width: min(100% - 20px, 480px); padding-top: 22px; }
+      .topline { margin-bottom: 36px; }
+      .status { display: none; }
+      h1 { font-size: 42px; }
+      .install-note { grid-template-columns: 1fr; text-align: left; }
+      .gmail-bar, .gmail-fields, .gmail-toolbar { display: none; }
+      .message-body { min-height: 0; padding: 20px 12px 24px; overflow-x: auto; }
+      .message-copy { display: none; }
+      .signature-stage { padding-top: 0; border-top: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .button, .toast { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page-shell">
+    <header class="topline">
+      <div class="brand-lockup">
+        <img class="brand-mark" src="/brand-assets/ccc-app-icon-192.png" alt="" width="46" height="46">
+        <div><strong>Credit Comeback Club</strong><span>Signature Lab</span></div>
+      </div>
+      <div class="status">Gmail-ready build</div>
+    </header>
+
+    <div class="layout">
+      <section class="copy-panel" aria-labelledby="page-heading">
+        <p class="eyebrow">Company signature · animated</p>
+        <h1 id="page-heading">Built to get noticed. <span>Made to survive inboxes.</span></h1>
+        <p class="intro">The animation is intentionally compact and the contact block uses old-school email-safe HTML. Copy it once, paste it into Gmail, and the links and live motion come with it.</p>
+
+        <div class="actions">
+          <button class="button button-primary" type="button" data-copy-signature="animated">Copy animated signature</button>
+          <button class="button button-secondary" type="button" data-copy-signature="static">Copy static fallback</button>
+        </div>
+
+        <div class="install-note" aria-label="Installation steps">
+          <span>Copy the signature</span>
+          <span>Open Gmail Settings → General</span>
+          <span>Paste into a new signature and save</span>
+        </div>
+      </section>
+
+      <section class="gmail-window" aria-label="Gmail signature preview">
+        <div class="gmail-bar"><span>New Message</span><span class="window-actions">— □ ×</span></div>
+        <div class="gmail-fields">
+          <div class="gmail-field"><strong>To</strong> Future CCC client</div>
+          <div class="gmail-field"><strong>Subject</strong> Your credit comeback starts with the facts</div>
+        </div>
+        <div class="message-body">
+          <p class="message-copy">Hi there,<br><br>Thank you for reaching out. I’m looking forward to learning more about your credit goals.</p>
+          <div class="signature-stage">
+            <!-- Everything inside #ccc-email-signature is deliberately inline-styled for Gmail. -->
+            <table id="ccc-email-signature" role="presentation" cellpadding="0" cellspacing="0" border="0" width="400" style="width:400px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;color:#080b10;">
+              <tr>
+                <td style="padding:0 0 12px 0;">
+                  <a href="https://creditcomebackclub.com/" style="text-decoration:none;border:0;">
+                    <img
+                      src="/brand-assets/ccc-email-signature-animated.gif"
+                      width="400"
+                      height="100"
+                      alt="Credit Comeback Club — Credit repair, built like a case"
+                      style="display:block;width:400px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;"
+                    >
+                  </a>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:0 0 0 12px;border-left:3px solid #1e9ad6;">
+                  <div style="margin:0;color:#080b10;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;line-height:1.25;">Chris Holland</div>
+                  <div style="margin:2px 0 0;color:#0877b2;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;line-height:1.4;">Founder, Credit Comeback Club</div>
+                  <div style="margin:2px 0 0;color:#535d69;font-family:Arial,Helvetica,sans-serif;font-size:10px;line-height:1.4;">Factual credit-report review · Evidence-backed disputes · Documented follow-through</div>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:10px 0 0 15px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.5;">
+                  <a href="tel:+19706440063" style="color:#080b10;text-decoration:none;font-weight:700;">970-644-0063</a>
+                  <span style="color:#b7c5cf;padding:0 7px;">|</span>
+                  <a href="mailto:creditcomebackclub@gmail.com" style="color:#0877b2;text-decoration:none;font-weight:700;">creditcomebackclub@gmail.com</a>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:3px 0 0 15px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.5;">
+                  <a href="https://creditcomebackclub.com/" style="color:#080b10;text-decoration:none;font-weight:700;">creditcomebackclub.com</a>
+                  <span style="color:#b7c5cf;padding:0 7px;">|</span>
+                  <a href="https://creditcomebackclub.com/consultation" style="color:#1e9ad6;text-decoration:none;font-weight:700;">Request your free 3B review →</a>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:8px 0 0 15px;color:#7a8590;font-family:Arial,Helvetica,sans-serif;font-size:9px;font-weight:700;letter-spacing:0.08em;line-height:1.4;text-transform:uppercase;">Gilbert, Arizona · Veteran-Owned &amp; Operated</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+        <div class="gmail-toolbar"><span class="send-pill">Send</span><span>A&nbsp;&nbsp;⌕&nbsp;&nbsp;☺&nbsp;&nbsp;▣</span></div>
+      </section>
+    </div>
+  </main>
+
+  <div class="toast" role="status" aria-live="polite" data-toast></div>
+
+  <script type="module" src="/email-signature-installer.js"></script>
+</body>
+</html>
