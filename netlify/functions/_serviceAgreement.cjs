@@ -3,12 +3,12 @@ const crypto = require('crypto');
 const LEGACY_AGREEMENT_TEMPLATE_VERSION = 'ccc-service-agreement-v1-draft';
 const PRIOR_SERVICE_ONLY_AGREEMENT_TEMPLATE_VERSION = 'ccc-service-agreement-v2-service-only';
 const AGREEMENT_TEMPLATE_VERSION = 'ccc-service-agreement-v3-no-first-work';
-const ACTIVE_PRICING_VERSION = 'ccc-pricing-v3-pif-849-2026-08-23';
+const ACTIVE_PRICING_VERSION = 'ccc-pricing-v4-99-179-pif-vip-849-2026-09-08';
 const SERVICE_ONLY_PACKET_KIND = 'service_agreement_only';
 const UNRESOLVED_PRINCIPAL_ADDRESS = '[PRINCIPAL BUSINESS ADDRESS REQUIRED BEFORE APPROVAL]';
 const PRINCIPAL_BUSINESS_ADDRESS = '3088 Colorado Ave, Grand Junction, CO 81504';
 const CANCELLATION_CALENDAR_KIND = 'weekdays_only_counsel_approved';
-const PLAN_SCOPE_VERSION = 'ccc-plan-scope-v1-2026-08-21';
+const PLAN_SCOPE_VERSION = 'ccc-plan-scope-v2-pif-vip-2026-09-08';
 const CONTACT = {
   phone: '970-644-0063',
   city: 'Grand Junction',
@@ -18,9 +18,9 @@ const CONTACT = {
   email: 'info@creditcomebackclub.com',
 };
 const DEFAULT_TIER_PRICING = Object.freeze({
-  Standard: Object.freeze({ monthlyFee: 149, label: 'Standard', serviceTerm: 'month-to-month service plan' }),
-  VIP: Object.freeze({ monthlyFee: 299, label: 'VIP', serviceTerm: 'month-to-month service plan' }),
-  'Paid In Full': Object.freeze({ flatFee: 849, flatMonths: 6, label: 'Paid In Full', serviceTerm: 'six months of Standard service' }),
+  Standard: Object.freeze({ monthlyFee: 99, label: 'Standard', serviceTerm: 'month-to-month service plan' }),
+  VIP: Object.freeze({ monthlyFee: 179, label: 'VIP', serviceTerm: 'month-to-month service plan' }),
+  'Paid In Full': Object.freeze({ flatFee: 849, flatMonths: 6, label: 'Paid In Full', serviceTerm: 'six months of VIP service' }),
 });
 const PLAN_SERVICE_SCOPES = Object.freeze({
   Standard: Object.freeze({
@@ -57,18 +57,22 @@ const PLAN_SERVICE_SCOPES = Object.freeze({
     ]),
   }),
   'Paid In Full': Object.freeze({
-    scopeBasis: 'Standard',
-    correspondenceLimit: 3,
+    scopeBasis: 'VIP',
+    correspondenceLimit: 5,
     correspondencePeriod: 'monthly service cycle during the six-month term',
     includedServices: Object.freeze([
-      'Six months of Standard service.',
-      'Review of the client-provided credit file and supporting materials.',
-      'Preparation and management of individualized disputes or related correspondence when supported by the reviewed file.',
-      'Up to 3 individualized correspondence pieces per monthly service cycle during the six-month term when supported by the reviewed file.',
-      'Campaign status and document access through the client portal.',
+      'Six months of VIP service.',
+      'Everything included in Standard service.',
+      'One private 1-to-1 strategy call with Chris during each monthly service cycle.',
+      'Chris personally reviews, directs, and works on the client’s file.',
+      'Priority handling within Credit Comeback Club’s internal workflow.',
+      'Up to 5 individualized correspondence pieces per monthly service cycle during the six-month term when supported by the reviewed file.',
+      'Exclusive access to Credit Comeback Club’s funding-partner network, plus a fast-track funding-readiness review and priority partner referral when eligible.',
     ]),
     qualifiers: Object.freeze([
-      'Paid In Full changes the payment schedule, not the Standard service scope.',
+      'Paid In Full provides the VIP service scope for a fixed six-month term.',
+      'Priority handling applies only to Credit Comeback Club’s internal workflow and does not shorten bureau, furnisher, collector, or other third-party response times.',
+      'Funding partners independently determine eligibility. Access, review, or referral does not guarantee approval, funding amount, rate, terms, or timing.',
       'The correspondence limit is a maximum, not a guaranteed quantity; the reviewed file controls what work is appropriate.',
       'Recipient response times and outcomes remain outside Credit Comeback Club’s control.',
     ]),
@@ -272,7 +276,7 @@ function planSnapshot(client, pricing = {}) {
       };
   if (tier === 'Paid In Full') {
     if (!Number.isInteger(normalized.flatMonths) || normalized.flatMonths !== 6) {
-      throw new Error('Paid In Full must cover exactly 6 months of Standard service.');
+      throw new Error('Paid In Full must cover exactly 6 months of VIP service.');
     }
   }
 
@@ -284,7 +288,7 @@ function planSnapshot(client, pricing = {}) {
     recurringOverrideApplied = true;
   }
   const feeText = tier === 'Paid In Full'
-    ? `$${normalized.flatFee} flat for ${normalized.flatMonths} months of service.`
+    ? `$${normalized.flatFee} flat for ${normalized.flatMonths} months of VIP service.`
     : `$${normalized.monthlyFee}/month.`;
   return {
     mode: 'tier', billingTier: tier, label: String(defaults.label || tier),
@@ -317,6 +321,19 @@ function renderPlanScopeSummary(plan = {}) {
   return `<dt>Included service scope</dt><dd><ul>${itemHtml}</ul>${qualifierHtml ? `<p><strong>Important limits:</strong></p><ul>${qualifierHtml}</ul>` : ''}</dd>`;
 }
 
+function renderSelectedPlanSummary(plan = {}) {
+  const money = (value) => value == null ? null : `$${Number(value).toFixed(2)}`;
+  const priceRows = [
+    plan.monthlyFee == null ? '' : `<dt>Agreed monthly amount</dt><dd><strong>${escapeHtml(money(plan.monthlyFee))}</strong></dd>`,
+    plan.flatFee == null ? '' : `<dt>Agreed paid-in-full amount</dt><dd><strong>${escapeHtml(money(plan.flatFee))}</strong></dd>`,
+  ].join('');
+  return `<h2>Agreed service plan and price</h2><div class="summary" data-agreed-plan-summary="true"><dl><dt>Selected plan</dt><dd>${escapeHtml(plan.label || '—')}</dd><dt>Service term</dt><dd>${escapeHtml(plan.serviceTerm || '—')}</dd>${priceRows}<dt>Exact fee terms</dt><dd>${escapeHtml(plan.feeText || 'To be supplied in counsel-approved terms.')}</dd>${renderPlanScopeSummary(plan)}<dt>Signing action</dt><dd>No payment is created or collected by this signing process.</dd></dl></div>`;
+}
+
+function renderServiceAgreementReviewHtml({ plan, approvedTermsHtml = '' }) {
+  return `${renderSelectedPlanSummary(plan)}<h2>Client Service Agreement</h2>${approvedTermsHtml}`;
+}
+
 function renderPacket({ client, plan, signedAt, clientSignatureHtml, attorneySignatureHtml, approved, approvedTermsHtml = '' }) {
   const signingDate = signedAt ? new Date(signedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Pending signature';
   const title = approved ? 'Client Service Agreement & Limited Power of Attorney' : 'Draft Client Service Agreement & Limited Power of Attorney';
@@ -341,18 +358,11 @@ function renderServiceAgreementOnlyPacket({ client, plan, signedAt, clientSignat
   const title = approved ? 'Client Service Agreement' : 'Draft Client Service Agreement';
   const draftBanner = approved ? '' : '<div class="draft">COUNSEL REVIEW REQUIRED — THIS DRAFT CANNOT BE SENT OR SIGNED</div>';
   const signer = clientSignatureHtml || '<span class="pending">Awaiting client signature</span>';
-  const money = (value) => value == null ? null : `$${Number(value).toFixed(2)}`;
-  const priceRows = [
-    plan.monthlyFee == null ? '' : `<dt>Monthly service price</dt><dd>${escapeHtml(money(plan.monthlyFee))}</dd>`,
-    plan.flatFee == null ? '' : `<dt>Flat service price</dt><dd>${escapeHtml(money(plan.flatFee))}</dd>`,
-    plan.firstWorkFee == null ? '' : `<dt>First Work Fee</dt><dd>${escapeHtml(money(plan.firstWorkFee))}</dd>`,
-  ].join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>
     body{font-family:Arial,sans-serif;color:#161616;font-size:12px;line-height:1.55;margin:38px auto;max-width:760px;padding:0 30px}.brand{background:#1B2A4A;color:#fff;padding:24px 28px}.brand h1{color:#C9A84C;margin:0;font-size:19px}.brand p{margin:5px 0 0;font-size:11px}.draft{margin:18px 0;padding:10px 12px;background:#fff7ed;border:1px solid #f59e0b;color:#92400e;font-weight:bold}h2{font-size:12px;background:#1B2A4A;color:#fff;padding:6px 10px;margin:23px 0 9px;text-transform:uppercase;letter-spacing:.04em}.summary{border:1px solid #d9dee7;background:#f8fafc;padding:14px}.summary dt{font-weight:bold;float:left;clear:left;width:155px}.summary dd{margin-left:165px;margin-bottom:6px}.sigrow{display:flex;gap:36px;margin-top:30px}.sig{width:50%}.sigline{min-height:66px;border-bottom:1px solid #111;display:flex;align-items:flex-end;padding-bottom:4px}.small{font-size:10px;color:#555}.pending{color:#777;font-style:italic}.footer{font-size:10px;color:#666;text-align:center;margin-top:36px;border-top:1px solid #ddd;padding-top:12px}@media print{body{margin:0;max-width:none}.draft{display:none}}</style></head><body>
     <div class="brand"><h1>Credit Comeback Club</h1><p>${escapeHtml(title)} · ${escapeHtml(CONTACT.site)} · ${escapeHtml(CONTACT.phone)}</p></div>${draftBanner}
     <p><strong>Client:</strong> ${escapeHtml(client.name)}<br><strong>Agreement date:</strong> ${escapeHtml(signingDate)}</p>
-    <h2>Selected service plan</h2><div class="summary"><dl><dt>Plan</dt><dd>${escapeHtml(plan.label)}</dd><dt>Service term</dt><dd>${escapeHtml(plan.serviceTerm)}</dd>${priceRows}<dt>Exact fee terms</dt><dd>${escapeHtml(plan.feeText || 'To be supplied in counsel-approved terms.')}</dd>${renderPlanScopeSummary(plan)}<dt>Signing action</dt><dd>No payment is created or collected by this signing process.</dd></dl></div>
-    <h2>Client Service Agreement</h2>${approved && approvedTermsHtml ? approvedTermsHtml : '<p>The final counsel-approved agreement terms, service description, payment terms, and cancellation materials will appear in this versioned agreement. Credit Comeback Club does not guarantee any particular credit outcome.</p>'}
+    ${renderServiceAgreementReviewHtml({ plan, approvedTermsHtml: approved && approvedTermsHtml ? approvedTermsHtml : '<p>The final counsel-approved agreement terms, service description, payment terms, and cancellation materials will appear in this versioned agreement. Credit Comeback Club does not guarantee any particular credit outcome.</p>' })}
     <h2>Electronic records and acknowledgements</h2><p>${escapeHtml(SERVICE_ONLY_ELECTRONIC_ACKNOWLEDGEMENT_TEXT)}</p>
     <p style="font-size:14px;font-weight:bold;border:2px solid #111;padding:10px;margin:18px 0 4px">${escapeHtml(CONTRACT_CANCELLATION_SIGNATURE_NOTICE)}</p>
     <div class="sigrow"><div class="sig"><div class="sigline">${signer}</div><div class="small"><strong>${escapeHtml(client.signerName || client.name)}</strong> — Client<br>Date: ${escapeHtml(signingDate)}</div></div></div>
@@ -430,6 +440,8 @@ module.exports = {
   calculateCancellationWindow,
   planSnapshot,
   renderPlanScopeSummary,
+  renderSelectedPlanSummary,
+  renderServiceAgreementReviewHtml,
   renderPacket,
   renderServiceAgreementOnlyPacket,
   sanitizeDisclosurePresentationHtml,

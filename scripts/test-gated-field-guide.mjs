@@ -47,7 +47,7 @@ assert.match(guidePage, /dataset\.state='error'/);
 assert.match(guidePage, /Your download is ready/);
 assert.match(guidePage, /id="guideDownloadLink"/);
 assert.match(guidePage, /id="consultForm"[\s\S]*?name="mobilePhone1"/);
-assert.match(guidePage, /openIntake\('Standard'\)[\s\S]*openIntake\('VIP'\)[\s\S]*openIntake\('Six-Month Standard'\)/);
+assert.match(guidePage, /openIntake\('Standard'\)[\s\S]*openIntake\('VIP'\)[\s\S]*openIntake\('Six-Month VIP'\)/);
 assert.doesNotMatch(guidePage, /netlify\/functions\/assets|credit-comeback-club-credit-report-field-guide\.pdf/,
   'public page must not reveal the private bundled asset path or filename');
 

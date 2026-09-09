@@ -45,13 +45,16 @@ assert.match(followUp, /no longer creates or sends follow-up letters/);
 assert.doesNotMatch(followUp, /runPhase2Job|saveLetter|signatureInjection|metro2Fields/i,
   'the retired modal must not retain a live generator or signature dependency');
 
-for (const file of ['../public/home.html', '../public/freeguide.html', '../public/terms.html']) {
+for (const file of ['../public/home.html', '../public/freeguide.html']) {
   const source = sources.get(file);
-  assert.match(source, /149/);
-  assert.match(source, /299/);
+  assert.match(source, /99/);
+  assert.match(source, /179/);
   assert.match(source, /849/);
   assert.match(source, /6(?:-|\s)*month/i);
+  assert.match(source, /VIP service for 6 months|Six-Month VIP/i);
 }
+assert.match(sources.get('../public/terms.html'), /\$99\.00 per month/i);
+assert.match(sources.get('../public/terms.html'), /\$179\.00 per month/i);
 
 const guide = sources.get('../public/freeguide.html');
 assert.match(guide, /Review your credit reports with a/);

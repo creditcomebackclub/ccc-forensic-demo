@@ -6,8 +6,8 @@ const terms = await readFile(new URL('public/terms.html', root), 'utf8');
 const privacy = await readFile(new URL('public/privacy.html', root), 'utf8');
 
 for (const phrase of [
-  '$149.00 per month',
-  '$299.00 per month',
+  '$99.00 per month',
+  '$179.00 per month',
   'up to 3 individualized correspondence pieces per monthly service cycle',
   'up to 5 individualized correspondence pieces per monthly service cycle',
   'Chris personally reviews, directs, and works on the client file',

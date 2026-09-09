@@ -46,14 +46,14 @@ assert.equal(resolveRecurringMonthlyFee({
   billingType: 'Automated Recurring',
   billingTier: 'Standard',
   ledger: [],
-}), 149);
+}), 99);
 
 assert.equal(resolveRecurringMonthlyFee({
   billingStatus: 'Active',
   billingType: 'Automated Recurring',
   billingTier: 'VIP',
   ledger: [],
-}), 299);
+}), 179);
 
 assert.equal(resolveRecurringMonthlyFee({
   billingStatus: 'Active',

@@ -19,11 +19,11 @@ const require = createRequire(import.meta.url);
 const agreement = require('../netlify/functions/_serviceAgreement.cjs');
 
 assert.deepEqual(DEFAULT_TIER_PRICING, {
-  Standard: { monthlyFee: 149 },
-  VIP: { monthlyFee: 299 },
+  Standard: { monthlyFee: 99 },
+  VIP: { monthlyFee: 179 },
   'Paid In Full': { flatFee: 849, flatMonths: 6 },
 });
-assert.equal(ACTIVE_PRICING_VERSION, 'ccc-pricing-v3-pif-849-2026-08-23');
+assert.equal(ACTIVE_PRICING_VERSION, 'ccc-pricing-v4-99-179-pif-vip-849-2026-09-08');
 assert.equal(ACTIVE_PRICING_VERSION, agreement.ACTIVE_PRICING_VERSION);
 
 const retiredSettings = getTierPricing({
@@ -39,7 +39,7 @@ assert.deepEqual(retiredSettings, DEFAULT_TIER_PRICING, 'unversioned saved setti
 
 const priorVersionSettings = getTierPricing({
   pricing: {
-    version: 'ccc-pricing-v2-no-first-work-2026-08-20',
+    version: 'ccc-pricing-v3-pif-849-2026-08-23',
     tiers: {
       Standard: { monthlyFee: 149 },
       VIP: { monthlyFee: 299 },
@@ -47,7 +47,7 @@ const priorVersionSettings = getTierPricing({
     },
   },
 });
-assert.deepEqual(priorVersionSettings, DEFAULT_TIER_PRICING, 'saved v2 pricing must not override the new $849 schedule');
+assert.deepEqual(priorVersionSettings, DEFAULT_TIER_PRICING, 'saved v3 pricing must not override the new active schedule');
 
 const activeOverride = getTierPricing({
   pricing: {
@@ -57,10 +57,10 @@ const activeOverride = getTierPricing({
 });
 assert.equal(activeOverride.Standard.monthlyFee, 175);
 assert.equal(Object.hasOwn(activeOverride.Standard, 'firstWorkFee'), false);
-assert.equal(activeOverride.VIP.monthlyFee, 299);
+assert.equal(activeOverride.VIP.monthlyFee, 179);
 assert.doesNotMatch(describeTierFee('Standard', retiredSettings), /First Work/i);
-assert.equal(describeTierFee('Standard', retiredSettings), '$149/month.');
-assert.equal(describeTierFee('Paid In Full', retiredSettings), '$849 flat for 6 months of service (no monthly billing).');
+assert.equal(describeTierFee('Standard', retiredSettings), '$99/month.');
+assert.equal(describeTierFee('Paid In Full', retiredSettings), '$849 flat for 6 months of VIP service (no monthly billing).');
 
 const standardPlan = agreement.planSnapshot({ billing_tier: 'Standard', service_agreement_mode: 'tier' });
 const vipPlan = agreement.planSnapshot({ billing_tier: 'VIP', service_agreement_mode: 'tier' });
@@ -69,10 +69,10 @@ const migratedLegacyPlan = agreement.planSnapshot(
   { billing_tier: 'Standard', service_agreement_mode: 'tier' },
   { tiers: { Standard: { monthlyFee: 79, firstWorkFee: 75 } }, source: 'admin_settings_file' },
 );
-assert.equal(standardPlan.monthlyFee, 149);
-assert.equal(vipPlan.monthlyFee, 299);
+assert.equal(standardPlan.monthlyFee, 99);
+assert.equal(vipPlan.monthlyFee, 179);
 assert.equal(paidPlan.flatFee, 849);
-assert.equal(migratedLegacyPlan.monthlyFee, 149);
+assert.equal(migratedLegacyPlan.monthlyFee, 99);
 assert.equal(migratedLegacyPlan.pricingSource, 'owner_approved_defaults_retired_legacy_settings');
 for (const plan of [standardPlan, vipPlan, paidPlan]) {
   assert.equal(Object.hasOwn(plan, 'firstWorkFee'), false);
@@ -81,9 +81,9 @@ for (const plan of [standardPlan, vipPlan, paidPlan]) {
 }
 
 const newMonthlyInvoice = agreementOpeningInvoicePreview(standardPlan);
-assert.equal(newMonthlyInvoice.total, 149);
+assert.equal(newMonthlyInvoice.total, 99);
 assert.deepEqual(newMonthlyInvoice.lineItems, [
-  { code: 'first_monthly_payment', description: 'First Monthly Payment', amount: 149 },
+  { code: 'first_monthly_payment', description: 'First Monthly Payment', amount: 99 },
 ]);
 const legacyInvoice = agreementOpeningInvoicePreview({
   mode: 'tier', billingTier: 'Standard', label: 'Standard',
@@ -119,7 +119,7 @@ assert.doesNotMatch(settingsUi, /First Work Fee \(\$\)/i);
 assert.doesNotMatch(affiliatePortal, /of the First Work Fee/i);
 assert.doesNotMatch(affiliateInvite, /of the First Work Fee/i);
 assert.match(affiliatePortal, /actual eligible client revenue recorded as collected/i);
-assert.match(sop, /Standard at \$149 per month, VIP at \$299 per month, or Paid In Full at \$849/i);
+assert.match(sop, /Standard at \$99 per month, VIP at \$179 per month, or Paid In Full at \$849 for six months of VIP/i);
 assert.match(migration, /V3 starts in counsel_review/i);
 assert.doesNotMatch(migration, /set legal_status = 'approved'/i);
 assert.doesNotMatch(migration, /update public\.client_service_agreements\s+set plan_snapshot/i);

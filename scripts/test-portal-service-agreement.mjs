@@ -39,9 +39,9 @@ const snapshot = {
   preparedAt: '2026-08-20T12:00:00.000Z',
 };
 const plan = {
-  mode: 'tier', billingTier: 'Standard', label: 'Standard', amount: 149,
-  monthlyFee: 149, flatFee: null, flatMonths: null, firstMonthlyPayment: 149,
-  feeText: '$149/month.',
+  mode: 'tier', billingTier: 'Standard', label: 'Standard', amount: 99,
+  monthlyFee: 99, flatFee: null, flatMonths: null, firstMonthlyPayment: 99,
+  feeText: '$99/month.',
   serviceTerm: 'month-to-month service plan',
   pricingVersion: agreementCore.ACTIVE_PRICING_VERSION,
 };
@@ -183,7 +183,11 @@ try {
   assert.equal(loadedBody.agreement.id, ids.agreement);
   assert.equal(loadedBody.agreement.clientName, 'Jane Client');
   assert.deepEqual(loadedBody.agreement.plan, plan, 'the prepared price snapshot must be returned exactly');
-  assert.equal(loadedBody.agreement.serviceAgreementHtml, snapshot.agreementBodyHtml);
+  assert.match(loadedBody.agreement.serviceAgreementHtml, /Agreed service plan and price/i);
+  assert.match(loadedBody.agreement.serviceAgreementHtml, /Agreed monthly amount[\s\S]*\$99\.00/i,
+    'the client must review the frozen agreed amount inside the contract');
+  assert.match(loadedBody.agreement.serviceAgreementHtml, /Exact agreement body/i,
+    'the approved static agreement terms must remain visible after the personalized summary');
   assert.equal(loadedBody.agreement.consumerDisclosureHtml, snapshot.consumerDisclosureHtml);
   assert.equal(loadedBody.agreement.cancellationNoticeHtml, snapshot.cancellationNoticeHtml);
   assert.deepEqual(loadedBody.agreement.acknowledgementRequired, portal._test.REQUIRED_ACKNOWLEDGEMENTS);

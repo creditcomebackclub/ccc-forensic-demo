@@ -7,11 +7,11 @@
 // this file. Real pricing is inherently tiered; there is no single "the"
 // monthly fee.
 
-export const ACTIVE_PRICING_VERSION = 'ccc-pricing-v3-pif-849-2026-08-23';
+export const ACTIVE_PRICING_VERSION = 'ccc-pricing-v4-99-179-pif-vip-849-2026-09-08';
 
 export const DEFAULT_TIER_PRICING = {
-  Standard: { monthlyFee: 149 },
-  VIP: { monthlyFee: 299 },
+  Standard: { monthlyFee: 99 },
+  VIP: { monthlyFee: 179 },
   'Paid In Full': { flatFee: 849, flatMonths: 6 },
 };
 
@@ -93,7 +93,7 @@ export function describeTierFee(tier, pricing) {
   const p = pricing[tier];
   if (!p) return null;
   if (tier === 'Paid In Full') {
-    return `$${p.flatFee} flat for ${p.flatMonths} months of service (no monthly billing).`;
+    return `$${p.flatFee} flat for ${p.flatMonths} months of VIP service (no monthly billing).`;
   }
   return `$${p.monthlyFee}/month.`;
 }

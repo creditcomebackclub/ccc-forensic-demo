@@ -239,7 +239,7 @@ check(
 check(
   /href="#consultation" data-tier="Standard">See if Standard fits<\/a>/.test(liveHtml)
     && /href="#consultation" data-tier="VIP">See if VIP fits<\/a>/.test(liveHtml)
-    && /href="#consultation" data-tier="Six-Month Standard">Ask about six months<\/a>/.test(liveHtml)
+    && /href="#consultation" data-tier="Six-Month VIP">Ask about six months<\/a>/.test(liveHtml)
     && previewJs.includes("planDialogConsultation.dataset.tier = selectedPanel.dataset.planName || ''")
     && liveJs.includes("event.target.closest('[data-tier]')")
     && liveJs.includes('Selected service: ${selectedTier')
@@ -247,10 +247,10 @@ check(
   'all consultation CTAs retain exact plan mapping and bind source plus selected service into DisputeFox notes',
 );
 check(
-  liveHtml.includes('<strong>$149</strong>')
-    && liveHtml.includes('<strong>$299</strong>')
+  liveHtml.includes('<strong>$99</strong>')
+    && liveHtml.includes('<strong>$179</strong>')
     && liveHtml.includes('<strong>$849</strong>')
-    && liveHtml.includes('The same managed scope and correspondence capacity as Standard for one defined six-month term')
+    && liveHtml.includes('The full VIP service scope, including founder-directed strategy and expanded correspondence capacity')
     && liveHtml.includes('Only after completed services; never prepaid for future work'),
   'live promotion preserves approved prices and lawful six-month payment timing',
 );

@@ -196,7 +196,7 @@ export default function SettingsModal({ onClose, displayName, email, isAdmin = f
             {activeTab === 'pricing' && (
               <div className="space-y-5">
                 <p className="text-[12px] text-gray-500">
-                  These prices are snapshotted into the client's service agreement from the Billing panel. Standard and VIP opening invoices contain the first monthly payment only; Paid In Full contains the saved flat price.
+                  These prices are snapshotted into the client's service agreement from the Billing panel. Standard and VIP opening invoices contain the first monthly payment only; Paid In Full contains the saved flat price and six months of VIP scope.
                 </p>
                 {Object.entries(settings.pricing.tiers).map(([tierName, tier]) => (
                   <div key={tierName} className="border border-border rounded-sm p-3.5 space-y-3">

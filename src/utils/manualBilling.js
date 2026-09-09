@@ -23,7 +23,7 @@ export function agreementOpeningInvoicePreview(plan, agreementContext = {}) {
   if (plan.mode === 'tier' && ['Standard', 'VIP'].includes(plan.billingTier)) {
     const firstMonthlyPayment = money(plan.firstMonthlyPayment, 'First Monthly Payment');
     // Immutable v2 snapshots carry firstWorkFee and must continue to preview
-    // exactly what the client signed. New v3 snapshots omit that field and
+    // exactly what the client signed. Current snapshots omit that field and
     // create an opening invoice for the first monthly payment only.
     if (plan.firstWorkFee != null) {
       if (agreementContext.templateVersion === 'ccc-service-agreement-v2-service-only'

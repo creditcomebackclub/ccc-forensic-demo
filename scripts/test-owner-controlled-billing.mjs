@@ -90,6 +90,7 @@ const cron = readFileSync(new URL('../netlify/functions/daily-cron.cjs', import.
 const migration = readFileSync(new URL('../supabase/migrations/20260820300000_owner_controlled_billing.sql', import.meta.url), 'utf8');
 const retirementMigration = readFileSync(new URL('../supabase/migrations/20260820360000_retire_first_work_fee.sql', import.meta.url), 'utf8');
 const customInvoiceMigration = readFileSync(new URL('../supabase/migrations/20260820480000_custom_billing_invoice_integrity.sql', import.meta.url), 'utf8');
+const pricingV4Migration = readFileSync(new URL('../supabase/migrations/20260908000000_pricing_v4_pif_vip_scope.sql', import.meta.url), 'utf8');
 const panel = readFileSync(new URL('../src/components/ClientBillingPanel.jsx', import.meta.url), 'utf8');
 const manualBilling = readFileSync(new URL('../src/utils/manualBilling.js', import.meta.url), 'utf8');
 
@@ -145,6 +146,9 @@ assert.match(customInvoiceMigration, /from public, anon, authenticated, service_
 assert.match(customInvoiceMigration, /grant execute[\s\S]*to authenticated/);
 assert.doesNotMatch(customInvoiceMigration, /set\s+(billing_status|engagement_status|program_status)/i);
 assert.doesNotMatch(customInvoiceMigration, /send_email|net\.http|stripe|payment_method/i);
+assert.match(pricingV4Migration, /not in \(''Standard'', ''VIP''\)/i);
+assert.match(pricingV4Migration, /historical V3 Standard-scope snapshots remain invoice-compatible/i);
+assert.doesNotMatch(pricingV4Migration, /update public\.(?:clients|client_service_agreements|manual_agreement_invoice_commands)/i);
 
 assert.match(panel, /Create opening invoice/);
 assert.match(panel, /ccc_create_manual_agreement_invoice/);

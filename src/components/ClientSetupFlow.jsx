@@ -449,11 +449,18 @@ function WizardSection({ title, description, children }) {
 }
 
 function PlanSummary({ plan }) {
+  const agreedPrice = plan?.monthlyFee != null
+    ? `$${Number(plan.monthlyFee).toFixed(2)} per month`
+    : plan?.flatFee != null
+      ? `$${Number(plan.flatFee).toFixed(2)} paid in full`
+      : plan?.amount != null
+        ? `$${Number(plan.amount).toFixed(2)}`
+        : '—';
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 grid gap-3 sm:grid-cols-3 text-sm">
       <div><div className="text-[10px] uppercase tracking-wider font-bold text-gray-500">Selected plan</div><div className="font-bold text-slate-900">{plan?.label || '—'}</div></div>
       <div><div className="text-[10px] uppercase tracking-wider font-bold text-gray-500">Service term</div><div className="font-medium text-slate-800">{plan?.serviceTerm || '—'}</div></div>
-      <div><div className="text-[10px] uppercase tracking-wider font-bold text-gray-500">Exact fee snapshot</div><div className="font-medium text-slate-800">{plan?.feeText || '—'}</div></div>
+      <div><div className="text-[10px] uppercase tracking-wider font-bold text-gray-500">Agreed price</div><div className="font-bold text-slate-900">{agreedPrice}</div><div className="text-xs text-gray-500">{plan?.feeText || '—'}</div></div>
     </div>
   );
 }
@@ -466,7 +473,7 @@ function AgreementDocument({ title, html, height = 400, disclosure = false }) {
   const disclosureStyle = disclosure
     ? '.ccc-statutory-disclosure,.ccc-statutory-disclosure *{font-size:14px!important;font-weight:700!important}'
     : '';
-  const source = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#1f2937;font-size:13px;line-height:1.6;margin:0;padding:20px}h1,h2,h3{color:#0f172a}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:7px;text-align:left}${disclosureStyle}</style></head><body>${documentHtml}</body></html>`;
+  const source = `<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;color:#1f2937;font-size:13px;line-height:1.6;margin:0;padding:20px}h1,h2,h3{color:#0f172a}table{border-collapse:collapse;width:100%}th,td{border:1px solid #d1d5db;padding:7px;text-align:left}.summary{border:2px solid #0f172a;background:#f8fafc;padding:16px;margin-bottom:24px}.summary dl{margin:0}.summary dt{font-weight:700;float:left;clear:left;width:170px}.summary dd{margin-left:180px;margin-bottom:7px}.summary:after{content:'';display:block;clear:both}${disclosureStyle}</style></head><body>${documentHtml}</body></html>`;
   return <iframe title={title} sandbox="" srcDoc={source} className="w-full rounded-xl border border-gray-200 bg-white" style={{ height }} />;
 }
 

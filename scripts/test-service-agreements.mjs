@@ -19,10 +19,10 @@ assert.deepEqual({
   flatFee: standard.flatFee,
   amount: standard.amount,
 }, {
-  label: 'Standard', billingTier: 'Standard', monthlyFee: 149, flatFee: null, amount: 149,
+  label: 'Standard', billingTier: 'Standard', monthlyFee: 99, flatFee: null, amount: 99,
 });
 assert.equal(standard.firstWorkFee, undefined);
-assert.match(standard.feeText, /\$149\/month/i);
+assert.match(standard.feeText, /\$99\/month/i);
 assert.equal(standard.serviceScopeVersion, agreement.PLAN_SCOPE_VERSION);
 assert.equal(standard.serviceScope.correspondenceLimit, 3);
 assert.match(standard.serviceScope.includedServices.join(' '), /up to 3 individualized correspondence pieces/i);
@@ -86,10 +86,12 @@ assert.equal(paid.flatFee, 849);
 assert.equal(paid.flatMonths, 6);
 assert.equal(paid.firstWorkFee, undefined);
 assert.equal(paid.amount, 849);
-assert.equal(paid.serviceTerm, 'six months of Standard service');
-assert.equal(paid.serviceScope.scopeBasis, 'Standard');
-assert.equal(paid.serviceScope.correspondenceLimit, 3);
-assert.match(paid.serviceScope.includedServices.join(' '), /Six months of Standard service/i);
+assert.match(paid.feeText, /6 months of VIP service/i);
+assert.equal(paid.serviceTerm, 'six months of VIP service');
+assert.equal(paid.serviceScope.scopeBasis, 'VIP');
+assert.equal(paid.serviceScope.correspondenceLimit, 5);
+assert.match(paid.serviceScope.includedServices.join(' '), /Six months of VIP service/i);
+assert.match(paid.serviceScope.includedServices.join(' '), /private 1-to-1 strategy call with Chris/i);
 
 assert.throws(
   () => agreement.planSnapshot({ billing_tier: 'Standard', billing_type: 'Paid in Full', service_agreement_mode: 'tier' }),
@@ -230,7 +232,7 @@ assert.match(serviceOnlyHtml, /3088 Colorado Ave/);
 assert.match(serviceOnlyHtml, /3rd business day/i);
 assert.match(serviceOnlyHtml, /font-size:14px;font-weight:bold[^>]*>You may cancel this contract/i,
   'the cancellation statement immediately before signature must be bold and at least 10-point-equivalent');
-assert.match(serviceOnlyHtml, /Monthly service price[\s\S]*\$149\.00/i);
+assert.match(serviceOnlyHtml, /Agreed monthly amount[\s\S]*\$99\.00/i);
 assert.match(serviceOnlyHtml, /Included service scope/i);
 assert.match(serviceOnlyHtml, /Up to 3 individualized correspondence pieces/i);
 assert.doesNotMatch(serviceOnlyHtml, /First Work Fee/i);
@@ -238,6 +240,16 @@ assert.doesNotMatch(serviceOnlyHtml, /Limited Power of Attorney|certified mail|4
 assert.doesNotMatch(serviceOnlyHtml, /Christopher Holland[^<]*— Credit Comeback Club/);
 const footer = serviceOnlyHtml.match(/<div class="footer">([\s\S]*?)<\/div>/)?.[1] || '';
 assert.doesNotMatch(footer, /3088|Grand Junction|81504/);
+
+const personalizedReviewHtml = agreement.renderServiceAgreementReviewHtml({
+  plan: recurringOverride,
+  approvedTermsHtml: '<table><tr><td>Standard published price: $99/month</td></tr></table>',
+});
+assert.match(personalizedReviewHtml, /Agreed service plan and price/i);
+assert.match(personalizedReviewHtml, /Agreed monthly amount[\s\S]*\$92\.50/i,
+  'the exact saved client price must appear inside the agreement under review');
+assert.match(personalizedReviewHtml, /Standard published price: \$99\/month/i,
+  'the approved pricing table must remain in the agreement');
 
 const hostileDisclosureHtml = '<style>.copy p{font-size:8px!important;font-weight:400!important}</style><p style="font-size:8px!important;font-weight:400!important">Exact approved disclosure body.</p>';
 assert.equal(
@@ -282,6 +294,7 @@ const migration = readFileSync(new URL('../supabase/migrations/20260820260000_se
 const noFirstWorkMigration = readFileSync(new URL('../supabase/migrations/20260820360000_retire_first_work_fee.sql', import.meta.url), 'utf8');
 const scopeAlignmentMigration = readFileSync(new URL('../supabase/migrations/20260820460000_signed_plan_scope_alignment.sql', import.meta.url), 'utf8');
 const customInvoiceMigration = readFileSync(new URL('../supabase/migrations/20260820480000_custom_billing_invoice_integrity.sql', import.meta.url), 'utf8');
+const pricingV4Migration = readFileSync(new URL('../supabase/migrations/20260908000000_pricing_v4_pif_vip_scope.sql', import.meta.url), 'utf8');
 assert.match(migration, /'ccc-service-agreement-v2-service-only'/);
 assert.match(migration, /'counsel_review'/);
 assert.match(migration, /3088 Colorado Ave, Grand Junction, CO 81504/);
@@ -351,6 +364,9 @@ assert.match(customInvoiceMigration, /#>> '\{serviceScope,scopeBasis\}' is disti
 assert.match(customInvoiceMigration, /never charges, emails, activates, pauses/i);
 assert.match(customInvoiceMigration, /v_role is distinct from 'admin'/);
 assert.doesNotMatch(customInvoiceMigration, /grant execute[\s\S]*to (?:anon|service_role)/i);
+assert.match(pricingV4Migration, /pg_get_functiondef/i);
+assert.match(pricingV4Migration, /not in \(''Standard'', ''VIP''\)/i);
+assert.match(pricingV4Migration, /historical V3 Standard-scope snapshots remain invoice-compatible/i);
 assert.doesNotMatch(migration, /FIRST_WORK_PERFORMANCE_MILESTONE_REQUIRED|PAID_IN_FULL_PERFORMANCE_MILESTONE_REQUIRED/);
 
 const onboardingSource = readFileSync(new URL('../netlify/functions/agreement-onboarding.cjs', import.meta.url), 'utf8');

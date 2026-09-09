@@ -399,10 +399,10 @@ check(
 check(html.includes('No appointment was created'), 'calendar mock states its no-write outcome');
 check(html.includes('<span class="program-label">Standard</span>'), 'Standard program routes to lead capture');
 check(html.includes('<span class="program-label">VIP</span>'), 'VIP program routes to lead capture');
-check(html.includes('<span class="program-label">Six-Month Standard</span>'), 'Six-Month Standard program routes to lead capture');
+check(html.includes('<span class="program-label">Six-Month VIP</span>'), 'Six-Month VIP program routes to lead capture');
 check(
-  html.includes('<strong>$149</strong>')
-    && html.includes('<strong>$299</strong>')
+  html.includes('<strong>$99</strong>')
+    && html.includes('<strong>$179</strong>')
     && html.includes('<strong>$849</strong>'),
   'owner-approved public prices are shown exactly',
 );
@@ -431,12 +431,12 @@ check(
 );
 check(
   html.includes('data-plan-panel="standard"')
-    && html.includes('<dd>$149 each month</dd>')
+    && html.includes('<dd>$99 each month</dd>')
     && (html.match(/<dd>Month to month<\/dd>/g) || []).length === 2
     && html.includes('<dd>Up to 3 tailored letters each month when supported</dd>')
     && html.includes('CCC manages the core casework, prepares staff-reviewed correspondence')
     && html.includes('data-plan-panel="vip"')
-    && html.includes('<dd>$299 each month</dd>')
+    && html.includes('<dd>$179 each month</dd>')
     && html.includes('Everything in Standard, plus a private monthly 1:1 with Chris')
     && html.includes('<dd>Up to 5 tailored letters each month when supported</dd>')
     && html.includes('<dd>One private 1:1 call with Chris each month</dd>')
@@ -447,8 +447,8 @@ check(
     && html.includes('data-plan-panel="six-month-standard"')
     && html.includes('<dd>Only after completed services; never prepaid for future work</dd>')
     && html.includes('<dd>Fixed six months</dd>')
-    && html.includes('<dd>Standard—not VIP</dd>')
-    && html.includes('The same managed scope and correspondence capacity as Standard for one defined six-month term'),
+    && html.includes('<dd>VIP</dd>')
+    && html.includes('The full VIP service scope, including founder-directed strategy and expanded correspondence capacity'),
   'dialog states the owner-confirmed capacity, access, processing, funding, billing, and term differences',
 );
 check(
